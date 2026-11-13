@@ -165,6 +165,13 @@ impl UringIo {
         })
     }
 
+    /// Close the ring and keep only the buffer pool. Once the ring is gone
+    /// nothing is submitted or reaped again, and memory lent out of the pool
+    /// stays valid for as long as the caller keeps what this returns.
+    pub fn into_pool(mut self) -> Box<[u8]> {
+        core::mem::take(&mut self.bufs)
+    }
+
     /// `io_uring_enter` calls made so far.
     pub fn enters(&self) -> u64 {
         self.ring.enters

@@ -43,22 +43,24 @@
 //! caller that drives the I/O itself: the simulator in tests, or an event
 //! loop that already owns the core.
 
+mod buffer;
 mod lane;
 mod pending;
 mod threads;
 mod worker;
 
+pub use buffer::Buffer;
 pub use lane::{Lane, KEY_MAX};
 pub use pending::{Output, Pending};
 pub use threads::{BuildError, Builder};
 pub use worker::{Layout, Worker};
 
 use crate::store::s3::{Checksum, Fatal, Outcome, SubmitError};
+use buffer::Borrow;
 use lane::{Finished, Kind, Request};
 use std::future::Future;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 /// Why an operation did not do what was asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,69 +79,9 @@ pub enum Error {
     Unexpected,
 }
 
-/// A registered buffer on loan from a client. Dropping it returns it.
-///
-/// While an operation holds a buffer the caller cannot reach it: the
-/// operation takes the buffer and gives it back with its result.
-pub struct Buffer {
-    lane: Arc<Lane>,
-    index: u32,
-    /// Keeps the I/O threads, and so this buffer's memory, alive.
-    alive: Alive,
-}
-
 /// What keeps a threaded client's I/O threads running. `None` for a client
 /// over workers the caller drives.
 type Alive = Option<Arc<threads::Threads>>;
-
-impl Buffer {
-    /// The whole buffer.
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        // The index is held by this guard alone, and no operation holds it.
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                self.lane.base.add(self.index as usize * self.lane.buf_size),
-                self.lane.buf_size,
-            )
-        }
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        unsafe {
-            core::slice::from_raw_parts(
-                self.lane.base.add(self.index as usize * self.lane.buf_size),
-                self.lane.buf_size,
-            )
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.lane.buf_size
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.lane.buf_size == 0
-    }
-
-    /// Give the index to an operation without returning it to the pool.
-    fn into_parts(self) -> (Arc<Lane>, u32, Alive) {
-        let me = core::mem::ManuallyDrop::new(self);
-        // Move the fields out of a value whose `Drop` will not run.
-        unsafe {
-            (
-                core::ptr::read(&me.lane),
-                me.index,
-                core::ptr::read(&me.alive),
-            )
-        }
-    }
-}
-
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        self.lane.bufs.give(self.index);
-    }
-}
 
 /// A handle to the I/O threads. Cheap to clone, and usable from any thread.
 #[derive(Clone)]
@@ -184,46 +126,16 @@ impl Client {
             .expect("at least one lane")
     }
 
-    /// Borrow a buffer, waiting until one is free. The buffer belongs to
-    /// one I/O thread, and an operation that uses it runs on that thread.
+    /// Borrow a buffer, waiting until one is free on any I/O thread. The
+    /// buffer belongs to one I/O thread, and an operation that uses it runs
+    /// on that thread.
     pub fn buffer(&self) -> impl Future<Output = Buffer> + '_ {
-        // Wait on the least busy lane's pool, unless another has one now.
-        let lane = self.least_busy().clone();
-        let lanes = self.lanes.clone();
-        let alive = self.alive.clone();
-        core::future::poll_fn(move |cx: &mut Context<'_>| {
-            for l in lanes.iter() {
-                if let Some(index) = l.bufs.try_take() {
-                    return Poll::Ready(Buffer {
-                        lane: l.clone(),
-                        index,
-                        alive: alive.clone(),
-                    });
-                }
-            }
-            lane.bufs.poll_take(cx).map(|index| Buffer {
-                lane: lane.clone(),
-                index,
-                alive: alive.clone(),
-            })
-        })
+        Borrow::new(self.lanes.clone(), self.alive.clone())
     }
 
     /// Borrow a buffer, blocking the calling thread until one is free.
     pub fn buffer_blocking(&self) -> Buffer {
-        let alive = self.alive.clone();
-        for l in self.lanes.iter() {
-            if let Some(index) = l.bufs.try_take() {
-                return Buffer {
-                    lane: l.clone(),
-                    index,
-                    alive: alive.clone(),
-                };
-            }
-        }
-        let lane = self.least_busy().clone();
-        let index = lane.bufs.take_blocking();
-        Buffer { lane, index, alive }
+        lane::block_on(self.buffer())
     }
 
     /// Store the first `len` bytes of `body` under `key`, replacing any

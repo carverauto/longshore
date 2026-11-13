@@ -112,6 +112,18 @@ impl Builder {
         if self.host.is_empty() || self.host.len() > 253 {
             return bad("host must be 1 to 253 bytes");
         }
+        if self.region.len() > 64 {
+            return bad("region must be at most 64 bytes");
+        }
+        if self.nameservers.len() > crate::dns::resolver::SERVERS_MAX {
+            return bad("at most two nameservers");
+        }
+        let mut query = [0u8; 512];
+        if self.address.is_none()
+            && crate::dns::codec::encode_query(&self.host, 0, &mut query).is_err()
+        {
+            return bad("host is not a name DNS can look up");
+        }
         Ok(())
     }
 
@@ -166,6 +178,9 @@ impl Builder {
                 Ok(lane) => lanes.push(lane),
                 Err(e) => failed = Some(e),
             }
+        }
+        if failed.is_none() && lanes.len() != self.threads as usize {
+            failed = Some(std::io::Error::other("an I/O thread stopped while starting"));
         }
         let threads = Threads::new(lanes.clone(), joins);
         match failed {
@@ -332,9 +347,15 @@ mod linux {
             if worker.finished() {
                 break;
             }
-            // A failed tick is a broken ring: stop, and let callers see Closed.
             if io.tick(true, &mut out).is_err() {
-                break;
+                // A broken ring. Callers may hold the lent buffers until
+                // they shut the thread down, so their memory stays until then.
+                let pool = io.into_pool();
+                worker.abandon();
+                worker.refuse_until_shutdown();
+                drop(worker);
+                drop(pool);
+                return;
             }
             while let Some(c) = out.pop() {
                 worker.on_completion(&mut io, c);

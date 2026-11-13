@@ -5,7 +5,7 @@
 
 //! An operation in progress: a future, with a blocking wait as well.
 
-use super::lane::{Finished, Kind, Lane, Request};
+use super::lane::{block_on, waiter_id, Finished, Kind, Lane, Request};
 use super::{open, request, Alive, Buffer, Error};
 use std::future::Future;
 use std::pin::Pin;
@@ -48,6 +48,8 @@ pub struct Pending<T: Output> {
     lane: Arc<Lane>,
     alive: Alive,
     stage: Stage,
+    /// This operation's name while it waits for a slot.
+    waiter: u64,
     /// The request, until it is sent.
     request: Option<Request>,
     /// The lent buffer the operation holds, as an index in the lane.
@@ -88,6 +90,7 @@ impl<T: Output> Pending<T> {
             lane,
             alive,
             stage,
+            waiter: waiter_id(),
             request,
             buf,
             map,
@@ -146,7 +149,8 @@ impl<T: Output> Pending<T> {
     pub fn wait(mut self) -> T {
         if self.stage == Stage::Slot {
             if open(&self.lane) {
-                let op = self.lane.ops.take_blocking();
+                let (lane, waiter) = (&self.lane, self.waiter);
+                let op = block_on(core::future::poll_fn(|cx| lane.ops.poll_take(waiter, cx)));
                 self.send(op);
             } else {
                 self.stage = Stage::Early(Error::Closed);
@@ -183,7 +187,7 @@ impl<T: Output> Future for Pending<T> {
             if !open(&me.lane) {
                 me.stage = Stage::Early(Error::Closed);
             } else {
-                match me.lane.ops.poll_take(cx) {
+                match me.lane.ops.poll_take(me.waiter, cx) {
                     Poll::Ready(op) => me.send(op),
                     Poll::Pending => return Poll::Pending,
                 }
@@ -215,6 +219,9 @@ impl<T: Output> Future for Pending<T> {
 
 impl<T: Output> Drop for Pending<T> {
     fn drop(&mut self) {
+        if self.stage == Stage::Slot {
+            self.lane.ops.forget(self.waiter);
+        }
         if let Stage::Sent(op) = self.stage {
             let mut s = self.lane.cells[op as usize]
                 .state
