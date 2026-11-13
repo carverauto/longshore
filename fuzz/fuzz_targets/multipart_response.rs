@@ -14,7 +14,7 @@ use libfuzzer_sys::fuzz_target;
 #[allow(dead_code)]
 #[path = "../../crates/longshore/src/store/multipart.rs"]
 mod multipart;
-use multipart::{error_code_in, upload_id_in, write_manifest, PartTag, UploadId};
+use multipart::{error_code_in, upload_id_in, write_manifest, Part, PartTag, UploadId};
 
 fuzz_target!(|data: &[u8]| {
     let inside = |part: &[u8]| {
@@ -28,11 +28,26 @@ fuzz_target!(|data: &[u8]| {
     if let Some(code) = error_code_in(data) {
         assert!(inside(code));
     }
-    // Any bytes that fit a tag can be written into a manifest and never
-    // spill past the length reported.
+    // Any bytes that fit a tag, with or without a part checksum, can be
+    // written into a manifest and never spill past the length reported.
     if let Some(tag) = PartTag::new(&data[..data.len().min(64)]) {
+        let mut sum = [b'A'; 12];
+        let tail = &data[data.len().saturating_sub(12)..];
+        sum[..tail.len()].copy_from_slice(tail);
+        let parts = [
+            Part {
+                number: 1,
+                tag,
+                checksum: Some(sum),
+            },
+            Part {
+                number: 2,
+                tag,
+                checksum: None,
+            },
+        ];
         let mut out = [0xA5u8; 1024];
-        if let Some(n) = write_manifest(&mut out[..900], &[(1, tag), (2, tag)]) {
+        if let Some(n) = write_manifest(&mut out[..900], &parts) {
             assert!(n <= 900);
             assert!(out[900..].iter().all(|b| *b == 0xA5));
         }

@@ -7,7 +7,9 @@
 //!
 //! A part is kept in the object table under its whole request target, query
 //! included, so it never answers to a plain key. Completion assembles the
-//! parts the request lists into one object, which must fit one buffer.
+//! parts the request lists into one object, which must fit one buffer. A
+//! part stored with a CRC-64/NVME must be listed with that checksum, as
+//! stricter stores require of an upload that keeps checksums.
 
 use super::*;
 
@@ -155,7 +157,7 @@ impl Server {
             }
             b"POST" => {
                 // Read the list of parts, then reuse the body buffer to assemble them.
-                let mut listed = [(0u32, [0u8; TAG_LEN]); PARTS_MAX];
+                let mut listed = [(0u32, [0u8; TAG_LEN], None); PARTS_MAX];
                 let mut count = 0;
                 {
                     let mut rest = &io.buf(self.body_buf(i))[..c.request_len as usize];
@@ -175,13 +177,17 @@ impl Server {
                         }
                         let mut t = [b'"'; TAG_LEN];
                         t[1..17].copy_from_slice(&tag_at[..16]);
-                        listed[count] = (n, t);
+                        let end = after(tag_at, b"</Part>").map_or(0, |e| tag_at.len() - e.len());
+                        let sum: Option<[u8; 12]> =
+                            after(&tag_at[..end], b"<ChecksumCRC64NVME>")
+                                .and_then(|v| v.get(..12)?.try_into().ok());
+                        listed[count] = (n, t, sum);
                         count += 1;
                         rest = tag_at;
                     }
                 }
                 let mut total = 0usize;
-                for (n, claimed_tag) in &listed[..count] {
+                for (n, claimed_tag, claimed_sum) in &listed[..count] {
                     let part = self.objects.iter().find(|o| {
                         is_part(o)
                             && after(&o.target[..o.target_len], b"?partNumber=").and_then(number)
@@ -195,6 +201,16 @@ impl Server {
                             return true;
                         }
                     };
+                    // A CRC-32C (four zero bytes after it) is never listed.
+                    let kept = part.checksum.filter(|sum| sum[8..] != [0; 4]);
+                    if kept.is_some() && claimed_sum.is_none() {
+                        self.error_document(io, i, 400, "InvalidRequest");
+                        return true;
+                    }
+                    if claimed_sum.is_some() && *claimed_sum != kept {
+                        self.error_document(io, i, 400, "InvalidPart");
+                        return true;
+                    }
                     let len = part.len as usize;
                     if total + len > self.cfg.buffer_size as usize {
                         {

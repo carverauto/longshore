@@ -8,7 +8,7 @@
 //! is aborted.
 
 use super::*;
-use longshore::store::multipart::{write_manifest, PartTag, UploadId};
+use longshore::store::multipart::{write_manifest, Part, UploadId};
 
 const PARTS: u32 = 3;
 
@@ -69,20 +69,23 @@ pub(super) fn multipart(size: u32) {
             )
             .unwrap();
         }
-        let mut tags: [Option<PartTag>; PARTS as usize] = [None; PARTS as usize];
+        let mut parts: [Option<Part>; PARTS as usize] = [None; PARTS as usize];
         let mut attempts = 0;
         for _ in 0..PARTS {
             let d = wait(&mut io, &mut s3, &mut out);
             attempts += d.attempts;
             match d.outcome {
-                Outcome::PartStored { tag } => tags[d.token as usize - 1] = Some(tag),
+                Outcome::PartStored { tag, checksum } => {
+                    parts[d.token as usize - 1] = Some(Part {
+                        number: d.token as u32,
+                        tag,
+                        checksum: checksum.map(longshore::checksum::crc64_header_value),
+                    })
+                }
                 other => die(&format!("part {} -> {other:?}", d.token)),
             }
         }
-        let mut parts = [(0u32, tags[0].unwrap()); PARTS as usize];
-        for (i, p) in parts.iter_mut().enumerate() {
-            *p = (i as u32 + 1, tags[i].unwrap());
-        }
+        let parts = parts.map(Option::unwrap);
         let manifest = bufs[PARTS as usize];
         let len = write_manifest(io.buf(manifest), &parts).unwrap() as u32;
         // Google Cloud Storage keeps CRC-32C, so there is no CRC-64 to send it.

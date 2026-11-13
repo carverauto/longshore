@@ -142,9 +142,12 @@ pub enum Outcome {
     Begun {
         upload: UploadId,
     },
-    /// A part is stored. Keep the tag: completion sends it back.
+    /// A part is stored. Keep the tag and checksum: completion sends them
+    /// back. `checksum` is the CRC-64/NVME the part was sent with on S3;
+    /// `None` without one, and always on Google Cloud Storage.
     PartStored {
         tag: PartTag,
+        checksum: Option<u64>,
     },
     /// The upload is gone, by this call or already.
     Aborted,

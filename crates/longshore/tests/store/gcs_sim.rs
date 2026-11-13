@@ -386,7 +386,7 @@ fn corruption_in_transit_never_reaches_the_store_or_the_caller() {
 
 #[test]
 fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
-    use longshore::store::multipart::write_manifest;
+    use longshore::store::multipart::{write_manifest, Part};
     let mut w = world(7, Faults::default(), 3);
     // Asking for whole-object checksums changes nothing here: this store
     // takes a CRC-32C with each part without being asked.
@@ -410,10 +410,16 @@ fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
             Checksum::Compute,
         )
         .unwrap();
-        let Outcome::PartStored { tag } = w.last().outcome else {
+        let Outcome::PartStored { tag, checksum } = w.last().outcome else {
             panic!("expected a stored part")
         };
-        parts.push((number, tag));
+        // The part went with a CRC-32C, which completion does not list.
+        assert_eq!(checksum, None);
+        parts.push(Part {
+            number,
+            tag,
+            checksum: None,
+        });
     }
     let len = write_manifest(w.io.buf(TX), &parts).unwrap() as u32;
     w.s3.multipart_complete(&mut w.io, 20, "big", &upload, TX, len, None)

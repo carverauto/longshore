@@ -6,8 +6,8 @@
 //! Multipart upload: begin, store parts, complete or abort.
 //!
 //! An upload removes the limit of one buffer per object. The caller keeps
-//! the [`UploadId`] from [`Outcome::Begun`] and the [`PartTag`] from each
-//! [`Outcome::PartStored`], writes the list of parts into a registered buffer
+//! the [`UploadId`] from [`Outcome::Begun`] and the [`PartTag`] and checksum
+//! from each [`Outcome::PartStored`], writes the list of parts into a registered buffer
 //! with [`multipart::write_manifest`], and completes. Parts may be stored
 //! concurrently and in any order.
 //!
@@ -162,6 +162,7 @@ impl S3 {
         io: &mut IO,
         kind: Kind,
         r: client::Response,
+        crc: Option<u64>,
     ) -> Option<Result<Outcome, Class>> {
         match kind {
             Kind::Begin { .. } => {
@@ -178,7 +179,11 @@ impl S3 {
                     .header(io, r.conn, "etag")
                     .and_then(PartTag::new);
                 Some(Ok(tag.map_or(Outcome::Fatal(Fatal::BadResponse), |tag| {
-                    Outcome::PartStored { tag }
+                    Outcome::PartStored {
+                        tag,
+                        // A CRC-32C is not what completion lists for a part.
+                        checksum: crc.filter(|_| self.cfg.vendor == Vendor::S3),
+                    }
                 })))
             }
             Kind::Complete => {

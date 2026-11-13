@@ -6,10 +6,10 @@
 //! Values and documents of a multipart upload.
 //!
 //! The caller holds an upload's state: the [`UploadId`] returned when it
-//! begins and one [`PartTag`] per part stored. The store keeps no table of
-//! open uploads. To finish, the caller writes the list of parts into a
-//! registered buffer with [`write_manifest`] and sends it with
-//! `S3::multipart_complete`.
+//! begins and one [`PartTag`] per part stored, with the checksum the part
+//! was sent with. The store keeps no table of open uploads. To finish, the
+//! caller writes the list of parts into a registered buffer with
+//! [`write_manifest`] and sends it with `S3::multipart_complete`.
 
 /// Longest upload id a store may return.
 pub const UPLOAD_ID_MAX: usize = 256;
@@ -55,6 +55,20 @@ pub type UploadId = Fixed<UPLOAD_ID_MAX>;
 /// What the store returned for one stored part. Completion sends it back.
 pub type PartTag = Fixed<PART_TAG_MAX>;
 
+/// One part as the completion document lists it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Part {
+    /// 1 to [`PART_NUMBER_MAX`].
+    pub number: u32,
+    pub tag: PartTag,
+    /// The part's CRC-64/NVME in base64, as it was sent with the part
+    /// (`crate::checksum::crc64_header_value`). A store that keeps a
+    /// checksum for the upload refuses a completion that leaves it out of
+    /// any part. `None` for a part sent without one, and always on Google
+    /// Cloud Storage, whose part checksums are CRC-32C.
+    pub checksum: Option<[u8; 12]>,
+}
+
 /// The text of the first `<name>...</name>` element in `doc`.
 fn element<'a>(doc: &'a [u8], name: &str) -> Option<&'a [u8]> {
     let name = name.as_bytes();
@@ -93,7 +107,7 @@ pub fn error_code_in(doc: &[u8]) -> Option<&[u8]> {
 /// length. Parts must be in ascending part-number order, which is the order
 /// the store requires. `None` if they are not, a number is out of range, or
 /// `out` is too small.
-pub fn write_manifest(out: &mut [u8], parts: &[(u32, PartTag)]) -> Option<usize> {
+pub fn write_manifest(out: &mut [u8], parts: &[Part]) -> Option<usize> {
     let mut n = 0;
     let mut put = |bytes: &[u8]| -> Option<()> {
         out.get_mut(n..n + bytes.len())?.copy_from_slice(bytes);
@@ -102,14 +116,14 @@ pub fn write_manifest(out: &mut [u8], parts: &[(u32, PartTag)]) -> Option<usize>
     };
     put(b"<CompleteMultipartUpload>")?;
     let mut previous = 0;
-    for (number, tag) in parts {
-        if *number <= previous || *number > PART_NUMBER_MAX {
+    for part in parts {
+        if part.number <= previous || part.number > PART_NUMBER_MAX {
             return None;
         }
-        previous = *number;
+        previous = part.number;
         let mut digits = [0u8; 5];
         let mut d = digits.len();
-        let mut v = *number;
+        let mut v = part.number;
         while v > 0 {
             d -= 1;
             digits[d] = b'0' + (v % 10) as u8;
@@ -119,7 +133,7 @@ pub fn write_manifest(out: &mut [u8], parts: &[(u32, PartTag)]) -> Option<usize>
         put(&digits[d..])?;
         put(b"</PartNumber><ETag>")?;
         // A tag is quoted; the quotes are written as entities.
-        for b in tag.as_bytes() {
+        for b in part.tag.as_bytes() {
             match b {
                 b'"' => put(b"&quot;")?,
                 b'&' => put(b"&amp;")?,
@@ -128,7 +142,13 @@ pub fn write_manifest(out: &mut [u8], parts: &[(u32, PartTag)]) -> Option<usize>
                 _ => put(core::slice::from_ref(b))?,
             }
         }
-        put(b"</ETag></Part>")?;
+        put(b"</ETag>")?;
+        if let Some(sum) = &part.checksum {
+            put(b"<ChecksumCRC64NVME>")?;
+            put(sum)?;
+            put(b"</ChecksumCRC64NVME>")?;
+        }
+        put(b"</Part>")?;
     }
     put(b"</CompleteMultipartUpload>")?;
     Some(n)

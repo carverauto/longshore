@@ -32,6 +32,28 @@ What this settles:
   part. The client does not send a whole-object checksum there, because the
   one it has is CRC-64.
 
+## Part checksums in the completion document
+
+The runs above sent a completion document that listed each part's number
+and tag only. versitygw 1.11 (posix backend, on the same host's loopback)
+refuses that for an upload begun with CRC-64/NVME checksums: 400
+`InvalidRequest`, "The upload was created using a crc64nvme checksum. The
+complete request must include the checksum for each part." The completion
+document now carries each part's `<ChecksumCRC64NVME>` after its `<ETag>`,
+as Amazon S3's `CompletedPart` documents it, when the part was sent with
+one. Parts sent without a checksum, and every part on Google Cloud Storage
+(CRC-32C), are listed without it.
+
+Rerun 2026-11-13 against that versitygw:
+
+| Store | Transport | Part checksums | Whole-object checksum on completion | Result |
+|---|---|---|---|---|
+| versitygw 1.11 | HTTP | CRC-64/NVME, listed on completion | CRC-64/NVME | Passed |
+| versitygw 1.11 | HTTP | None | None | Passed |
+
+Amazon S3, Linode and Google Cloud Storage have not been rerun with the
+part checksums listed.
+
 Not covered here: a completion whose response is lost, a store answering a
 completion with status 200 and an error document, and damaged parts. Those
 are exercised in the simulator (`crates/longshore/tests/store/s3_multipart.rs`),

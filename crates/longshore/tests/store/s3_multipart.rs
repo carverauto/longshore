@@ -8,7 +8,7 @@
 
 mod common;
 use common::*;
-use longshore::store::multipart::{write_manifest, PartTag, UploadId};
+use longshore::store::multipart::{write_manifest, Part, UploadId};
 
 const PART: u32 = 4000;
 
@@ -48,14 +48,24 @@ impl World {
             .unwrap();
     }
 
-    fn tag_of(&self, token: u64) -> PartTag {
+    /// Part `number` as completion lists it, from the outcome of `token`.
+    fn part_of(&self, number: u32, token: u64) -> Part {
         match self
             .done
             .iter()
             .find(|d| d.token == token)
             .map(|d| d.outcome)
         {
-            Some(Outcome::PartStored { tag }) => tag,
+            Some(Outcome::PartStored { tag, checksum }) => {
+                // Every part here is sent with a computed CRC-64/NVME.
+                let crc = longshore::checksum::crc64_nvme(&part_bytes(number));
+                assert_eq!(checksum, Some(crc));
+                Part {
+                    number,
+                    tag,
+                    checksum: checksum.map(longshore::checksum::crc64_header_value),
+                }
+            }
             other => panic!("expected a stored part for token {token}, got {other:?}"),
         }
     }
@@ -69,11 +79,7 @@ impl World {
         self.send_part(11, key, upload, 1, TX);
         self.send_part(13, key, upload, 3, RX);
         self.run_until_done(self.done.len() + 2);
-        let parts = [
-            (1, self.tag_of(11)),
-            (2, self.tag_of(12)),
-            (3, self.tag_of(13)),
-        ];
+        let parts = [self.part_of(1, 11), self.part_of(2, 12), self.part_of(3, 13)];
         let len = write_manifest(self.io.buf(TX), &parts).unwrap() as u32;
         let object = [part_bytes(1), part_bytes(2), part_bytes(3)].concat();
         (len, object)
@@ -163,7 +169,7 @@ fn every_phase_is_retried_through_a_failure() {
     w.send_part(11, "k", &upload, 1, TX);
     w.send_part(13, "k", &upload, 3, RX);
     w.run_until_done(w.done.len() + 2);
-    let parts = [(1, w.tag_of(11)), (2, w.tag_of(12)), (3, w.tag_of(13))];
+    let parts = [w.part_of(1, 11), w.part_of(2, 12), w.part_of(3, 13)];
     let len = write_manifest(w.io.buf(TX), &parts).unwrap() as u32;
 
     // Status 200 with an error document is a failure. A transient one is retried.
@@ -280,4 +286,36 @@ fn a_damaged_part_is_refused_and_an_overlong_upload_id_is_an_error() {
 
     w.s3.multipart_begin(&mut w.io, 3, "k2", false).unwrap();
     assert_eq!(w.last().outcome, Outcome::Fatal(Fatal::BadResponse));
+}
+
+#[test]
+fn a_part_sent_without_a_checksum_is_listed_without_one() {
+    let mut w = world_with(5, Faults::default(), 3, true);
+    let upload = w.begin(1, "plain", false);
+    let bytes = part_bytes(1);
+    w.io.buf(TX)[..bytes.len()].copy_from_slice(&bytes);
+    w.s3.multipart_store_part(
+        &mut w.io,
+        2,
+        "plain",
+        &upload,
+        1,
+        TX,
+        bytes.len() as u32,
+        Checksum::None,
+    )
+    .unwrap();
+    let Outcome::PartStored { tag, checksum } = w.last().outcome else {
+        panic!("expected a stored part, got {:?}", w.last())
+    };
+    assert_eq!(checksum, None);
+    let part = Part {
+        number: 1,
+        tag,
+        checksum: None,
+    };
+    let len = write_manifest(w.io.buf(TX), &[part]).unwrap() as u32;
+    w.s3.multipart_complete(&mut w.io, 3, "plain", &upload, TX, len, None)
+        .unwrap();
+    assert_eq!(w.last().outcome, Outcome::Stored);
 }

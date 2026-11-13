@@ -42,7 +42,7 @@ impl S3 {
         // Statuses with a meaning specific to the operation.
         if let Ok(r) = result {
             if r.status == 200 {
-                match self.multipart_outcome(io, s.kind, r) {
+                match self.multipart_outcome(io, s.kind, r, s.crc) {
                     Some(Ok(outcome)) => return finish(self, outcome),
                     Some(Err(class)) => decided = Some(class),
                     None => {}
