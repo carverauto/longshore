@@ -9,6 +9,7 @@
 pub mod creds;
 pub mod list;
 pub mod multipart;
+pub mod presign;
 pub mod retry;
 pub mod s3;
 pub mod sharedkey;
