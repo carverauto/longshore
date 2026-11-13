@@ -151,18 +151,29 @@ pub(super) fn bench(
         secs,
         checksum,
     };
-    let start = std::sync::Arc::new(std::sync::Barrier::new(place.threads as usize));
-    let workers: Vec<_> = (0..place.threads)
+    let cpus: Vec<Option<usize>> = (0..place.threads)
         .map(|t| {
-            let start = start.clone();
-            let cpu = place.cpu.map(|c| c + t as usize * place.cpu_step);
-            std::thread::spawn(move || run(job, cpu, t, &start))
+            place.cpu.map(|c| {
+                (t as usize)
+                    .checked_mul(place.cpu_step)
+                    .and_then(|o| c.checked_add(o))
+                    .filter(|&cpu| cpu < 1024)
+                    .unwrap_or_else(|| die("a client thread's CPU is past 1023"))
+            })
         })
         .collect();
-    let runs: Vec<Run> = workers
-        .into_iter()
-        .map(|w| w.join().unwrap_or_else(|_| die("a client thread failed")))
+    let start = std::sync::Arc::new(std::sync::Barrier::new(place.threads as usize));
+    let workers: Vec<_> = (0..place.threads)
+        .zip(cpus)
+        .map(|(t, cpu)| {
+            let start = start.clone();
+            std::thread::spawn(move || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(job, cpu, t, &start)))
+                    .unwrap_or_else(|_| die("a client thread failed"))
+            })
+        })
         .collect();
+    let runs: Vec<Run> = workers.into_iter().map(|w| w.join().unwrap()).collect();
     let gb_per_s = |r: &Run| r.bytes as f64 / 1e9 / r.wall;
     let total: f64 = runs.iter().map(gb_per_s).sum();
     let wall = runs.iter().map(|r| r.wall).fold(0.0, f64::max);
@@ -170,6 +181,7 @@ pub(super) fn bench(
         .iter()
         .fold((0, 0), |a, r| (a.0 + r.requests, a.1 + r.attempts));
     let cpu_s: f64 = runs.iter().map(|r| r.cpu_s).sum();
+    let thread_cpu = runs.iter().map(|r| r.cpu_s / r.wall).sum::<f64>() / runs.len() as f64;
     let gb: f64 = runs.iter().map(|r| r.bytes as f64 / 1e9).sum();
     let per_thread: Vec<String> = runs.iter().map(|r| format!("{:.3}", gb_per_s(r))).collect();
     // `thread_cpu` is the busy share of one thread, averaged over the threads.
@@ -180,7 +192,7 @@ pub(super) fn bench(
         place.threads,
         total,
         total * 1000.0,
-        cpu_s / wall / place.threads as f64,
+        thread_cpu,
         gb / cpu_s.max(1e-9),
         runs.iter().map(|r| r.enters).sum::<u64>() as f64 / requests.max(1) as f64,
         runs.iter().map(|r| r.connects).sum::<u64>(),
