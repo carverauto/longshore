@@ -21,7 +21,7 @@ thread_local! {
 pub struct Guard;
 
 extern "C" {
-    fn write(fd: i32, buf: *const u8, n: usize) -> isize;
+    fn write(fd: i32, buf: *const core::ffi::c_void, n: usize) -> isize;
     fn abort() -> !;
 }
 
@@ -31,9 +31,9 @@ fn violation(what: &'static str) -> ! {
     let msg = b"alloc_guard: heap ";
     let tail = b" while sealed (allocation after initialization)\n";
     unsafe {
-        write(2, msg.as_ptr(), msg.len());
-        write(2, what.as_ptr(), what.len());
-        write(2, tail.as_ptr(), tail.len());
+        write(2, msg.as_ptr().cast(), msg.len());
+        write(2, what.as_ptr().cast(), what.len());
+        write(2, tail.as_ptr().cast(), tail.len());
         abort()
     }
 }
