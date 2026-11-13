@@ -144,7 +144,7 @@ of eight for HTTPS PUT (`m20-preference-and-comparison.md`).
 
 | Request | Graviton4, 300 Gbit/s card | AMD Zen 5, 200 Gbit/s card | Limit |
 |---|---|---|---|
-| PUT, plain HTTP | 36.7 GB/s | 22.4 GB/s | The network card |
+| PUT, plain HTTP | 36.7 GB/s | 22.4 GB/s | Graviton4: the network card. AMD: 22.4 GB/s is 179 Gbit/s on a 200 Gbit/s card with the client thread at 0.80, so neither the card nor the thread is clearly the limit |
 | PUT with a CRC-64 checksum on every body | 16.4 GB/s | 13.3 GB/s | The client's core |
 | GET | 4.4 GB/s | 7.9 GB/s | The client's core |
 | HTTPS PUT, 3 MiB send batch | 5.2 GB/s | 7.3 GB/s | The client's core |
@@ -184,9 +184,12 @@ held in RAM. Best run of each, with the cores busy across the machine.
 | GET over HTTPS | 11.5 on 43 | 4.0 on 6 | 2.8 on 1.1 | 17.9 on 11 |
 
 One client thread is the fastest of these for plain PUT and uses the fewest
-cores per byte for every request. For HTTPS and for GET, s5cmd on 40 to 70
-cores moves more in total than one client thread does, and four or more
-clients pass it. Those tools read and write files, which costs them a copy
+cores per byte for every request. For HTTPS and for GET, s5cmd on 42 to 54
+cores in its best runs moves more in total than one client thread does.
+Four clients side by side pass it for HTTPS PUT and plain GET on both
+machines and for HTTPS GET on the AMD machine. For HTTPS GET on the
+Graviton4 machine four clients give 9.8 to 10.0 GB/s against s5cmd's 11.2
+to 11.5, and eight clients give 17.6 to 17.9. Those tools read and write files, which costs them a copy
 that our benchmark does not make, and their runs lasted 3 to 17 seconds.
 The same file has the AMD figures and the conditions.
 
@@ -270,8 +273,9 @@ the client is mostly idle.
 
 ## Limits
 
-- Plain PUT fills every link we have had: 200 Gbit/s between our own
-  machines, and 100, 200 and 300 Gbit/s cards to S3. Where one thread
+- Plain PUT fills a 200 Gbit/s link between our own machines and 100 and
+  300 Gbit/s cards to S3, and reaches about 90 percent of the 200 Gbit/s
+  card on the AMD instance. Where one thread
   stops is unknown. The S3 figures need the preference for large-segment
   addresses, which is off by default.
 - Everything except plain PUT is bound by one core per client. More than

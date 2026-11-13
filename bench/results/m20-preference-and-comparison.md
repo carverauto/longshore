@@ -125,7 +125,7 @@ Each process is a complete client pinned to its own CPU, sharing nothing with th
 | HTTPS GET | 8 | 3 | 21.6 to 22.1 | 10.1 to 12.3 |
 
 - Throughput grows with the number of clients until the card is full. Eight clients upload over HTTPS at 34.5 to 36.2 GB/s on Graviton4, which is the card, against 5.0 for one.
-- Each client costs 1.2 to 1.9 cores of the machine, counting kernel network work on other cores.
+- Whole-machine cores divided by clients run from 1.05 to 2.35 across the rows, counting kernel network work on other cores, and 1.5 to 1.9 for the Graviton4 HTTPS PUT rows with four and eight clients.
 - On the AMD instance four clients fill the 200 Gbit/s card over HTTPS at 24.0 GB/s. Eight gave 16.7 GB/s in one run: more than the card can carry made it slower. Three give 21.8 to 22.1.
 - These are separate processes. A client that runs several I/O threads itself is planned and not built.
 
@@ -173,7 +173,7 @@ Side by side, best figures on the Graviton4 instance:
 | GET over HTTPS | 11.5 on 43 | 4.0 on 6 | 2.8 on 1.1 | 17.9 on 11 |
 
 - One client thread beats both for plain PUT, and uses far fewer cores per byte than either for every request.
-- One client thread is slower in total than s5cmd for HTTPS and for GET, because s5cmd spreads the work over 40 to 60 cores. Four or more clients side by side pass it.
+- For HTTPS and for GET, s5cmd on 42 to 54 cores in its best runs moves more in total than one client thread. Four clients side by side pass it for HTTPS PUT and plain GET on both machines and for HTTPS GET on the AMD machine. For HTTPS GET on the Graviton4 machine four clients give 9.8 to 10.0 GB/s against s5cmd's 11.2 to 11.5, and eight clients give 17.6 to 17.9.
 
 ## Linux 6.1
 
