@@ -95,7 +95,7 @@ fn an_operation_in_flight_when_the_io_fails_ends_closed_with_its_buffer() {
     let l = &mut r.lanes[0];
     l.worker.turn(&mut l.io);
     assert!(storing.as_mut().poll(&mut cx).is_pending());
-    l.worker.abandon();
+    l.worker.abandon(true);
     let (result, body) = match storing.as_mut().poll(&mut cx) {
         Poll::Ready(v) => v,
         Poll::Pending => panic!("an abandoned operation is still pending"),
@@ -123,7 +123,7 @@ fn every_operation_waiting_for_a_slot_ends_closed_when_the_io_fails() {
     l.worker.turn(&mut l.io);
     assert!(second.as_mut().poll(&mut cb).is_pending());
     assert!(third.as_mut().poll(&mut cc).is_pending());
-    l.worker.abandon();
+    l.worker.abandon(true);
     assert_eq!(first.as_mut().poll(&mut ca), Poll::Ready(Err(Error::Closed)));
     // Each waiter is polled once woken, as an executor would.
     assert!(b.0.get() > 0, "the freed slot woke nobody");
@@ -135,7 +135,7 @@ fn every_operation_waiting_for_a_slot_ends_closed_when_the_io_fails() {
 #[test]
 fn with_one_lane_failed_work_goes_to_the_lane_still_open() {
     let mut r = rig(2);
-    r.lanes[0].worker.abandon();
+    r.lanes[0].worker.abandon(true);
     assert_eq!(r.run(r.client.erase("k")), Ok(()));
     let mut body = r.buffer();
     fill(&mut body, 7);
@@ -152,14 +152,14 @@ fn once_every_lane_is_closed_a_waiter_takes_a_closed_lanes_buffer() {
     let mut r = rig(2);
     // Two buffers per lane, taken from lane 0 first.
     let mut bufs: Vec<Buffer> = (0..4).map(|_| r.buffer()).collect();
-    r.lanes[0].worker.abandon();
+    r.lanes[0].worker.abandon(true);
     let (woken, waker) = counted();
     let mut cx = Context::from_waker(&waker);
     let client = r.client.clone();
     // It waits on lane 1 alone, the only lane open.
     let mut waiting = pin!(client.buffer());
     assert!(waiting.as_mut().poll(&mut cx).is_pending());
-    r.lanes[1].worker.abandon();
+    r.lanes[1].worker.abandon(true);
     if woken.get() > 0 {
         assert!(waiting.as_mut().poll(&mut cx).is_pending());
     }
@@ -175,12 +175,12 @@ fn an_erase_asked_for_before_its_lane_failed_runs_on_another() {
     let erasing = r.client.erase("k");
     // Both lanes are idle, so either could have been picked: close each in
     // turn and the erase still finds the other.
-    r.lanes[0].worker.abandon();
+    r.lanes[0].worker.abandon(true);
     assert_eq!(r.run(erasing), Ok(()));
 
     let mut r = rig(2);
     let erasing = r.client.erase("k");
-    r.lanes[1].worker.abandon();
+    r.lanes[1].worker.abandon(true);
     assert_eq!(r.run(erasing), Ok(()));
 }
 
@@ -201,8 +201,41 @@ fn a_lane_failing_wakes_the_erases_waiting_for_its_slots() {
     let mut cw = Context::from_waker(&waker);
     let mut waiting = pin!(client.erase("k"));
     assert!(waiting.as_mut().poll(&mut cw).is_pending());
-    r.lanes[0].worker.abandon();
-    r.lanes[1].worker.abandon();
+    r.lanes[0].worker.abandon(true);
+    r.lanes[1].worker.abandon(true);
     assert!(woken.get() > 0, "the lanes closed under a waiting erase and woke nobody");
     assert_eq!(waiting.as_mut().poll(&mut cw), Poll::Ready(Err(Error::Closed)));
+}
+
+#[test]
+fn when_the_failed_io_cannot_be_stopped_its_buffers_are_void_and_never_lent_again() {
+    // Two buffers: one goes to a store in flight, one to a store dropped
+    // while in flight. Neither is safe to touch if the I/O did not stop.
+    let mut r = rig(1);
+    let (mut a, mut b) = (r.buffer(), r.buffer());
+    fill(&mut a, 1);
+    fill(&mut b, 2);
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut storing = pin!(r.client.store("a", a, LEN));
+    assert!(storing.as_mut().poll(&mut cx).is_pending());
+    {
+        let mut dropped = pin!(r.client.store("b", b, LEN));
+        assert!(dropped.as_mut().poll(&mut cx).is_pending());
+    }
+    let l = &mut r.lanes[0];
+    l.worker.turn(&mut l.io);
+    l.worker.abandon(false);
+    // The caller is not left waiting, but the buffer it gets back is empty.
+    let (result, a) = match storing.as_mut().poll(&mut cx) {
+        Poll::Ready(v) => v,
+        Poll::Pending => panic!("an abandoned operation is still pending"),
+    };
+    assert_eq!(result, Err(Error::Closed));
+    assert!(a.as_slice().is_empty());
+    assert_eq!(a.len(), 0);
+    drop(a);
+    // Neither buffer went back to the pool.
+    let client = r.client.clone();
+    let mut borrowing = pin!(client.buffer());
+    assert!(borrowing.as_mut().poll(&mut cx).is_pending());
 }

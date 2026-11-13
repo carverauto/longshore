@@ -69,17 +69,22 @@ struct Slot {
     wake_count: u64,
 }
 
-/// The kernel holds pointers into `bufs` and `slots` (the eventfd counter,
-/// timer specs, addresses) while operations are in flight, and closing the
-/// ring does not wait for them to end. So dropping this cancels every
-/// operation and reaps it ([`UringIo::quiesce`]), then closes the ring, then
-/// the eventfd, and only then frees `bufs` and `slots`. If the operations
-/// cannot be shown to have ended, those two are leaked instead of freed.
+/// The kernel holds pointers into `bufs`, `slots` and `quiet_ts` while
+/// operations are in flight, and closing the ring does not wait for them to
+/// end. The rule: that memory is freed only when `in_flight` is zero, and
+/// otherwise leaked, which is always safe. Dropping calls
+/// [`UringIo::quiesce`], closes the ring and then the eventfd, and frees the
+/// three if it returned true or leaks them if it returned false.
 pub struct UringIo {
     ring: ManuallyDrop<Ring>,
     limits: Limits,
     bufs: Box<[u8]>,
     slots: Box<[Slot]>,
+    /// Completions the kernel still owes: one per SQE pushed, and one more
+    /// after each that says more follow (a zero-copy send's notification).
+    in_flight: u32,
+    /// The wait bound of `quiesce`'s timer.
+    quiet_ts: Box<timespec>,
     free: Vec<u32>,
     /// Paths registered for `Op::ReadFile`, NUL-terminated for the kernel.
     files: Vec<CString>,
@@ -125,8 +130,9 @@ impl Drop for UringIo {
             unsafe { close(self.wake_fd) };
         }
         if !quiet {
-            core::mem::forget(core::mem::take(&mut self.slots));
-            core::mem::forget(core::mem::take(&mut self.bufs));
+            Box::leak(core::mem::take(&mut self.slots));
+            Box::leak(core::mem::take(&mut self.bufs));
+            Box::leak(core::mem::take(&mut self.quiet_ts));
         }
     }
 }
@@ -173,6 +179,11 @@ impl UringIo {
             limits,
             bufs,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
+            in_flight: 0,
+            quiet_ts: Box::new(timespec {
+                sec: 0,
+                nsec: 100_000_000,
+            }),
             free: (0..limits.ops_max).rev().collect(),
             files: Vec::new(),
             wake_fd: -1,
@@ -186,7 +197,7 @@ impl UringIo {
     /// ended within five seconds (a zero-copy send whose data the peer never
     /// acknowledges can hold its buffer that long). Dropping calls this.
     pub fn quiesce(&mut self) -> bool {
-        if self.slots.iter().all(|s| s.state == State::Free) {
+        if self.in_flight == 0 {
             return true;
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -201,14 +212,9 @@ impl UringIo {
             user_data: QUIESCE,
             ..Default::default()
         });
-        // Bounds each wait. The kernel copies it when the timer is submitted.
-        let tick = timespec {
-            sec: 0,
-            nsec: 100_000_000,
-        };
         let mut timing = false;
         let mut out = Completions::new(8);
-        while self.slots.iter().any(|s| s.state != State::Free) {
+        while self.in_flight > 0 {
             if std::time::Instant::now() > deadline {
                 return false;
             }
@@ -218,7 +224,7 @@ impl UringIo {
                 }
                 self.push(io_uring_sqe {
                     opcode: IORING_OP_TIMEOUT,
-                    addr: &tick as *const timespec as u64,
+                    addr: &*self.quiet_ts as *const timespec as u64,
                     len: 1,
                     user_data: QUIESCE | 1,
                     ..Default::default()
@@ -228,7 +234,7 @@ impl UringIo {
             if self.ring.enter(1).is_err() {
                 return false;
             }
-            while let Some(c) = self.ring.pop() {
+            while let Some(c) = self.reap() {
                 match c.user_data {
                     QUIESCE => {}
                     t if t == QUIESCE | 1 => timing = false,
@@ -240,6 +246,16 @@ impl UringIo {
             }
         }
         true
+    }
+
+    /// Take one completion, keeping `in_flight` exact.
+    fn reap(&mut self) -> Option<io_uring_cqe> {
+        let c = self.ring.pop()?;
+        self.in_flight -= 1;
+        if c.flags & IORING_CQE_F_MORE != 0 {
+            self.in_flight += 1;
+        }
+        Some(c)
     }
 
     /// `io_uring_enter` calls made so far.
@@ -266,5 +282,6 @@ impl UringIo {
         self.ring
             .push(sqe)
             .expect("submission queue sized for ops_max");
+        self.in_flight += 1;
     }
 }

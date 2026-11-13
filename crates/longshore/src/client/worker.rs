@@ -11,7 +11,7 @@
 use super::lane::{Cell, Finished, Kind, Lane, Pool, Request};
 use crate::io::{BufId, Completion, Io, Op, Token};
 use crate::store::s3::S3;
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
@@ -69,6 +69,7 @@ impl Worker {
             buf_size,
             in_flight: AtomicU32::new(0),
             closed: AtomicBool::new(false),
+            void: AtomicBool::new(false),
         });
         let worker = Worker {
             s3,
@@ -185,11 +186,17 @@ impl Worker {
         }
     }
 
-    /// The I/O under the store has failed. Call once the `Io` can no longer
-    /// touch the lent buffers, though their memory must stay: this marks the
-    /// lane closed and ends every operation running or queued, and callers
-    /// then hold the buffers again. The store is not driven after this.
-    pub fn abandon(&mut self) {
+    /// The I/O under the store has failed: mark the lane closed and end
+    /// every operation running or queued as closed. `quiet` says whether the
+    /// `Io` is known to have stopped using the lent buffers (see
+    /// [`crate::io::uring::UringIo::quiesce`]); their memory must stay
+    /// allocated either way. If not, the lane is void: callers get their
+    /// operations back, but its buffers are empty and never lent again. The
+    /// store is not driven after this.
+    pub fn abandon(&mut self, quiet: bool) {
+        if !quiet {
+            self.lane.void.store(true, Ordering::Release);
+        }
         self.report();
         self.close();
         for op in 0..self.running.len() {

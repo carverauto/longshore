@@ -16,6 +16,10 @@ use std::task::{Context, Poll};
 ///
 /// While an operation holds a buffer the caller cannot reach it: the
 /// operation takes the buffer and gives it back with its result.
+///
+/// If its I/O thread failed and the kernel could not be shown to have
+/// stopped using that thread's buffers, the buffer is void: it is empty,
+/// so its memory cannot be reached, and dropping it does not return it.
 pub struct Buffer {
     pub(super) lane: Arc<Lane>,
     pub(super) index: u32,
@@ -30,7 +34,7 @@ impl Buffer {
         unsafe {
             core::slice::from_raw_parts_mut(
                 self.lane.base.add(self.index as usize * self.lane.buf_size),
-                self.lane.buf_size,
+                self.len(),
             )
         }
     }
@@ -39,17 +43,22 @@ impl Buffer {
         unsafe {
             core::slice::from_raw_parts(
                 self.lane.base.add(self.index as usize * self.lane.buf_size),
-                self.lane.buf_size,
+                self.len(),
             )
         }
     }
 
+    /// The buffer's size, or zero if it is void.
     pub fn len(&self) -> usize {
-        self.lane.buf_size
+        if self.lane.is_void() {
+            0
+        } else {
+            self.lane.buf_size
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.lane.buf_size == 0
+        self.len() == 0
     }
 
     /// Give the index to an operation without returning it to the pool.
@@ -68,7 +77,7 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.lane.bufs.give(self.index);
+        self.lane.give_buffer(self.index);
     }
 }
 

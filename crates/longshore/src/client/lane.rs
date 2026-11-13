@@ -192,6 +192,9 @@ pub struct Lane {
     /// Operations sent and not yet ended, for choosing the least busy lane.
     pub(super) in_flight: AtomicU32,
     pub(super) closed: AtomicBool,
+    /// The kernel may still use this lane's buffers: none is lent again or
+    /// read or written through a [`super::Buffer`].
+    pub(super) void: AtomicBool,
 }
 
 // The raw pointer is to memory the I/O thread owns for as long as the lane
@@ -212,7 +215,7 @@ impl Lane {
             *s = CellState::default();
             drop(s);
             if let Some(buf) = buf {
-                self.bufs.give(buf);
+                self.give_buffer(buf);
             }
             self.ops.give(op);
             return;
@@ -224,6 +227,17 @@ impl Lane {
         if let Some(w) = waker {
             w.wake();
         }
+    }
+
+    /// Return a lent buffer to the pool, unless the lane is void.
+    pub(super) fn give_buffer(&self, index: u32) {
+        if !self.is_void() {
+            self.bufs.give(index);
+        }
+    }
+
+    pub(super) fn is_void(&self) -> bool {
+        self.void.load(Ordering::Acquire)
     }
 
     /// Take no more requests, and wake everyone waiting on this lane.
