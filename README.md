@@ -30,8 +30,8 @@ is meant to become part of a larger project.
 
 ## How it works
 
-Everything runs on one thread, driven by `io_uring` completions. There are no
-locks and no async runtime. Sockets and buffers are registered with the
+A store runs on one thread, driven by `io_uring` completions. There are no
+locks and no async runtime on that thread. Sockets and buffers are registered with the
 kernel once.
 
 Buffers, connection slots and operation slots are sized from the
@@ -67,6 +67,7 @@ The library is one crate, `longshore`, in `crates/longshore`.
 | `checksum` | CRC-64/NVME, CRC-32C, base64 |
 | `crypto` | SHA-256 and HMAC-SHA256 |
 | `store` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials |
+| `client` | A handle any thread can share, over one or more I/O threads that each run a store, with lent buffers |
 
 `crates/longshore-bench` has the benchmarks and the programs that check the
 real kernel path. It is not published.
