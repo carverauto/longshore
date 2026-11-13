@@ -41,7 +41,8 @@ at the socket level only, on any kernel. Reading it needs a descriptor.
 - The setting can be changed while the store runs.
 - A refresh keeps the size of an address that is still in the answer and
   forgets the others.
-- Off by default. `s3_uring` turns it on with `S3_PREFER_LARGE_SEGMENTS=1`.
+- Off by default. `s3_uring` turns it on with `S3_PREFER_LARGE_SEGMENTS=N`, where N is the
+  minimum number of addresses to keep in use.
 
 ## Risks / Trade-offs
 - Fewer addresses carry the load. A store may rate-limit or shed load per
