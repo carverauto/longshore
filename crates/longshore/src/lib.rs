@@ -16,6 +16,8 @@
 //! - [`checksum`], [`crypto`]: checksums and request-signing primitives.
 //! - [`store`]: the object store API: operations, signing, retries, listing
 //!   and credentials.
+//! - [`client`]: a handle any thread can share, over one or more I/O
+//!   threads that each run a store.
 //! - `sim` (feature `sim`): a deterministic simulator that stands in for the
 //!   kernel in tests.
 
