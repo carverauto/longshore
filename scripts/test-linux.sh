@@ -48,8 +48,11 @@ while read -r target dest <&3; do
         timeout 60 ./echo_uring
         timeout 60 ./echo_uring --zc
         timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc
+        timeout 60 ./echo_uring --v6
+        timeout 60 ./echo_uring --v6 --zc
         timeout 60 ./http_uring selftest
-        timeout 30 ./dns_uring example.com"; then
+        timeout 30 ./dns_uring example.com
+        DNS_FAMILY=prefer6 timeout 30 ./dns_uring example.com"; then
         echo "== $target on $dest: ok"
     else
         echo "== $target on $dest: FAILED" >&2

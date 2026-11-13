@@ -17,13 +17,13 @@ mod throughput;
 use throughput::*;
 
 use longshore::dns::codec::parse_resolv_conf;
-use longshore::dns::Resolver;
+use longshore::dns::{Family, Resolver};
 use longshore::http::client;
 use longshore::io::alloc_guard::sealed;
 use longshore::io::uring::UringIo;
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use longshore::store::s3::{Checksum, Config, Done, Endpoint, Outcome, S3};
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 
 const HEARTBEAT: u64 = 1 << 50;
 const MS: u64 = 1_000_000;
@@ -60,14 +60,24 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
     let host = format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT"));
     let conf = std::fs::read_to_string("/etc/resolv.conf")
         .unwrap_or_else(|e| die(&format!("/etc/resolv.conf: {e}")));
-    let servers: Vec<SocketAddrV4> = parse_resolv_conf(&conf)
+    let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
         .into_iter()
         .take(2)
-        .map(|ip| SocketAddrV4::new(ip, 53))
+        .map(|ip| SocketAddr::new(ip, 53))
         .collect();
     if servers.is_empty() {
-        die("no IPv4 nameserver in /etc/resolv.conf");
+        die("no nameserver in /etc/resolv.conf");
     }
+    // S3_FAMILY: 4 (the default), 6, prefer6 or prefer4.
+    let family = match std::env::var("S3_FAMILY").as_deref() {
+        Err(_) | Ok("4") => Family::V4,
+        Ok("6") => Family::V6,
+        Ok("prefer6") => Family::PreferV6,
+        Ok("prefer4") => Family::PreferV4,
+        Ok(other) => die(&format!(
+            "S3_FAMILY={other}: expected 4, 6, prefer6 or prefer4"
+        )),
+    };
     let tls = std::env::var("S3_TLS").is_ok_and(|v| v == "1");
     // S3_VENDOR=gcs: Google Cloud Storage's XML API with S3_BEARER_TOKEN
     // in place of the access and secret keys.
@@ -87,6 +97,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
     let resolver = Resolver::new(longshore::dns::Config {
         servers,
         hosts: vec![host.clone()],
+        family,
         refresh_ns: 30_000 * MS,
         timeout_ns: 2_000 * MS,
         socks: [Sock(conns), Sock(conns + 1)],

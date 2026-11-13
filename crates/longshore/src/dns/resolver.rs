@@ -11,10 +11,18 @@
 //! Pace is set by the resolver, not by the network: one timer ticks at a fixed
 //! period, query deadlines and the refresh interval are checked on that tick,
 //! and record TTLs are ignored.
+//!
+//! A host has one address set per family. [`Family`] says which record
+//! types are asked for and which family lookups hand out first.
 
-use crate::dns::codec::{encode_query, parse_response, DnsError, ADDRS_MAX, MESSAGE_MAX};
+use crate::dns::codec::{encode_query_for, parse_response_for, DnsError, ADDRS_MAX, MESSAGE_MAX};
 use crate::io::{BufId, Completion, Io, Op, Sock, Token};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+mod family;
+mod lookup;
+pub use family::Family;
+use family::{set_of, Host, Set};
 
 pub const SERVERS_MAX: usize = 2;
 
@@ -24,8 +32,9 @@ pub const OPS_IN_FLIGHT_MAX: u32 = SERVERS_MAX as u32 + 2;
 
 pub struct Config {
     /// One or two nameservers. On a timeout the next one is tried.
-    pub servers: Vec<SocketAddrV4>,
+    pub servers: Vec<SocketAddr>,
     pub hosts: Vec<String>,
+    pub family: Family,
     /// Every host is re-resolved this often, whatever its TTL says.
     pub refresh_ns: u64,
     /// How long to wait for one answer.
@@ -38,21 +47,16 @@ pub struct Config {
     pub token_base: u64,
 }
 
-struct Host {
-    name: String,
-    addrs: [Ipv4Addr; ADDRS_MAX],
-    len: usize,
-    next: usize,
-}
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Phase {
     Connecting {
         remaining: usize,
     },
-    /// Waiting for the answer for `host`; `attempt` counts servers tried.
+    /// Waiting for the answer to question `q` of `host` (an index into the
+    /// family's records); `attempt` counts servers tried.
     Querying {
         host: usize,
+        q: usize,
         attempt: usize,
         deadline: u64,
     },
@@ -77,12 +81,17 @@ pub struct Resolver {
     send_in_flight: bool,
     /// A query is waiting for the previous send to release the transmit buffer.
     send_wanted: bool,
+    /// Families that answered with no addresses for the host being asked.
+    empty: [bool; 2],
     /// Lookups that failed or timed out, and receive errors.
     pub failures: u64,
     /// Queries sent.
     pub queries: u64,
     /// Completed passes over all hosts.
     pub cycles: u64,
+    /// Times a host's lookups moved to the other family after a failed
+    /// connection.
+    pub family_switches: u64,
 }
 
 impl Resolver {
@@ -94,16 +103,22 @@ impl Resolver {
         assert!(!cfg.hosts.is_empty(), "at least one hostname");
         assert!(cfg.timeout_ns > 0 && cfg.refresh_ns > 0);
         let mut probe = [0u8; MESSAGE_MAX];
+        let preferred = cfg.family.records()[0];
+        let empty = Set {
+            addrs: [IpAddr::V4(Ipv4Addr::UNSPECIFIED); ADDRS_MAX],
+            len: 0,
+            next: 0,
+        };
         let hosts = cfg
             .hosts
             .iter()
             .map(|h| {
-                encode_query(h, 0, &mut probe).unwrap_or_else(|_| panic!("invalid hostname {h:?}"));
+                encode_query_for(h, 0, preferred, &mut probe)
+                    .unwrap_or_else(|_| panic!("invalid hostname {h:?}"));
                 Host {
                     name: h.clone(),
-                    addrs: [Ipv4Addr::UNSPECIFIED; ADDRS_MAX],
-                    len: 0,
-                    next: 0,
+                    sets: [empty; 2],
+                    active: set_of(preferred),
                 }
             })
             .collect();
@@ -116,9 +131,11 @@ impl Resolver {
             rng: 0,
             send_in_flight: false,
             send_wanted: false,
+            empty: [false; 2],
             failures: 0,
             queries: 0,
             cycles: 0,
+            family_switches: 0,
         }
     }
 
@@ -138,36 +155,6 @@ impl Resolver {
                 },
             );
         }
-    }
-
-    /// True once every hostname has resolved at least once.
-    pub fn ready(&self) -> bool {
-        self.hosts.iter().all(|h| h.len > 0)
-    }
-
-    pub fn host_index(&self, name: &str) -> Option<usize> {
-        fn bare(n: &str) -> &[u8] {
-            n.strip_suffix('.').unwrap_or(n).as_bytes()
-        }
-        let name = bare(name);
-        self.hosts
-            .iter()
-            .position(|h| bare(&h.name).eq_ignore_ascii_case(name))
-    }
-
-    /// Next address for a host, rotating through its records. No I/O.
-    pub fn lookup(&mut self, host: usize) -> Option<Ipv4Addr> {
-        let h = &mut self.hosts[host];
-        if h.len == 0 {
-            return None;
-        }
-        h.next = (h.next + 1) % h.len;
-        Some(h.addrs[h.next])
-    }
-
-    /// All cached addresses for a host.
-    pub fn addrs(&self, host: usize) -> &[Ipv4Addr] {
-        &self.hosts[host].addrs[..self.hosts[host].len]
     }
 
     fn submit<IO: Io>(io: &mut IO, token: u64, op: Op) {
@@ -192,9 +179,10 @@ impl Resolver {
         );
     }
 
-    fn query<IO: Io>(&mut self, io: &mut IO, host: usize, attempt: usize) {
+    fn query<IO: Io>(&mut self, io: &mut IO, host: usize, q: usize, attempt: usize) {
         self.phase = Phase::Querying {
             host,
+            q,
             attempt,
             deadline: io.now_ns() + self.cfg.timeout_ns,
         };
@@ -207,8 +195,14 @@ impl Resolver {
         self.rng ^= self.rng >> 7;
         self.rng ^= self.rng << 17;
         self.id = (self.rng >> 24) as u16;
-        let len = encode_query(&self.hosts[host].name, self.id, io.buf(self.cfg.tx_buf))
-            .expect("hostnames were validated in new()");
+        let record = self.cfg.family.records()[q];
+        let len = encode_query_for(
+            &self.hosts[host].name,
+            self.id,
+            record,
+            io.buf(self.cfg.tx_buf),
+        )
+        .expect("hostnames were validated in new()");
         self.send_in_flight = true;
         self.queries += 1;
         Self::submit(
@@ -224,10 +218,17 @@ impl Resolver {
         );
     }
 
-    /// Move to the next host, or finish the cycle.
-    fn advance<IO: Io>(&mut self, io: &mut IO, host: usize) {
+    /// Move to the host's next question, the next host, or finish the cycle.
+    /// After a host's last question, its empty answers are applied.
+    fn advance<IO: Io>(&mut self, io: &mut IO, host: usize, q: usize) {
+        if q + 1 < self.cfg.family.records().len() {
+            return self.query(io, host, q + 1, 0);
+        }
+        if self.hosts[host].drop_empty(std::mem::take(&mut self.empty)) {
+            self.failures += 1;
+        }
         if host + 1 < self.hosts.len() {
-            self.query(io, host + 1, 0);
+            self.query(io, host + 1, 0, 0);
         } else {
             self.cycles += 1;
             self.phase = Phase::Idle {
@@ -263,7 +264,7 @@ impl Resolver {
                                 nanos: self.tick_period(),
                             },
                         );
-                        self.query(io, 0, 0);
+                        self.query(io, 0, 0, 0);
                     } else {
                         self.phase = Phase::Connecting {
                             remaining: remaining - 1,
@@ -275,15 +276,24 @@ impl Resolver {
                 let server = (k - K_RECV) as usize;
                 if c.result < 0 {
                     self.failures += 1;
-                } else if let Phase::Querying { host, .. } = self.phase {
+                } else if let Phase::Querying { host, q, .. } = self.phase {
+                    let records = self.cfg.family.records();
+                    let record = records[q];
                     let msg = &io.buf(self.cfg.rx_bufs[server])[..c.result as usize];
-                    match parse_response(msg, self.id, &self.hosts[host].name) {
+                    match parse_response_for(msg, self.id, &self.hosts[host].name, record) {
                         Ok(a) => {
-                            let h = &mut self.hosts[host];
-                            h.addrs = a.addrs;
-                            h.len = a.len;
-                            h.next %= a.len;
-                            self.advance(io, host);
+                            let set = &mut self.hosts[host].sets[set_of(record)];
+                            set.addrs = a.addrs;
+                            set.len = a.len;
+                            set.next %= a.len;
+                            self.advance(io, host, q);
+                        }
+                        // The name has no records of this family. With two
+                        // families that is an answer, not a failure; it is
+                        // applied once the host's last question is answered.
+                        Err(DnsError::NoAddresses) if records.len() > 1 => {
+                            self.empty[set_of(record)] = true;
+                            self.advance(io, host, q);
                         }
                         // Not an answer to the outstanding query: ignore it.
                         Err(
@@ -296,7 +306,7 @@ impl Resolver {
                         // A definite answer we cannot use. Keep the previous addresses.
                         Err(_) => {
                             self.failures += 1;
-                            self.advance(io, host);
+                            self.advance(io, host, q);
                         }
                     }
                 }
@@ -309,8 +319,11 @@ impl Resolver {
                 }
                 if self.send_wanted {
                     self.send_wanted = false;
-                    if let Phase::Querying { host, attempt, .. } = self.phase {
-                        self.query(io, host, attempt);
+                    if let Phase::Querying {
+                        host, q, attempt, ..
+                    } = self.phase
+                    {
+                        self.query(io, host, q, attempt);
                     }
                 }
             }
@@ -319,18 +332,19 @@ impl Resolver {
                 match self.phase {
                     Phase::Querying {
                         host,
+                        q,
                         attempt,
                         deadline,
                     } if now >= deadline => {
                         self.failures += 1;
                         self.server = (self.server + 1) % self.cfg.servers.len();
                         if attempt + 1 < self.cfg.servers.len() {
-                            self.query(io, host, attempt + 1);
+                            self.query(io, host, q, attempt + 1);
                         } else {
-                            self.advance(io, host);
+                            self.advance(io, host, q);
                         }
                     }
-                    Phase::Idle { at } if now >= at => self.query(io, 0, 0),
+                    Phase::Idle { at } if now >= at => self.query(io, 0, 0, 0),
                     _ => {}
                 }
                 Self::submit(

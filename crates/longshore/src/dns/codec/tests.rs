@@ -227,9 +227,82 @@ fn random_mutations_never_panic_or_read_out_of_bounds() {
 
 #[test]
 fn reads_resolv_conf() {
-    let text = "# comment\nsearch lan\nnameserver 192.0.2.53\nnameserver fe80::1\n  nameserver   1.1.1.1  \noptions edns0\n";
+    let text = "# comment\nsearch lan\nnameserver 192.0.2.53\nnameserver fe80::1\nnameserver fe80::1%eth0\n  nameserver   1.1.1.1  \nnameserver 2001:db8::53\noptions edns0\n";
     assert_eq!(
         parse_resolv_conf(text),
-        [Ipv4Addr::new(192, 0, 2, 53), Ipv4Addr::new(1, 1, 1, 1)]
+        [
+            IpAddr::from([192, 0, 2, 53]),
+            IpAddr::from([1, 1, 1, 1]),
+            "2001:db8::53".parse::<IpAddr>().unwrap(),
+        ]
     );
+}
+
+fn query_aaaa(name: &str, id: u16) -> Vec<u8> {
+    let mut b = [0u8; MESSAGE_MAX];
+    let n = encode_query_for(name, id, Record::Aaaa, &mut b).unwrap();
+    b[..n].to_vec()
+}
+
+const V6: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+#[test]
+fn an_aaaa_query_differs_from_an_a_query_only_in_its_type() {
+    let (a, aaaa) = (query("a.example.com", 7), query_aaaa("a.example.com", 7));
+    let n = a.len();
+    assert_eq!(a[..n - 4], aaaa[..n - 4]);
+    assert_eq!(
+        (&a[n - 4..], &aaaa[n - 4..]),
+        (&[0, 1, 0, 1][..], &[0, 28, 0, 1][..])
+    );
+}
+
+#[test]
+fn parses_aaaa_records_and_follows_a_cname_to_them() {
+    let q = query_aaaa("s3.example.com", 7);
+    let mut r = response(&q, 0x8180, &[(5, &[3, b'f', b'o', b'o', 0xc0, 12])]);
+    let target = (q.len() + 12) as u16;
+    record(&mut r, target, 28, &V6);
+    r[7] = 2;
+    let a = parse_response_for(&r, 7, "s3.example.com", Record::Aaaa).unwrap();
+    assert_eq!(a.as_slice(), [IpAddr::V6(Ipv6Addr::from(V6))]);
+}
+
+#[test]
+fn each_query_keeps_only_addresses_of_its_own_family() {
+    // A server that answers with both record types whatever was asked.
+    let both: [(u16, &[u8]); 2] = [(1, &[192, 0, 2, 1]), (28, &V6)];
+    let r = response(&query_aaaa("x.io", 7), 0x8180, &both);
+    assert_eq!(
+        parse_response_for(&r, 7, "x.io", Record::Aaaa)
+            .unwrap()
+            .as_slice(),
+        [IpAddr::V6(Ipv6Addr::from(V6))]
+    );
+    let r = response(&query("x.io", 7), 0x8180, &both);
+    assert_eq!(
+        parse_response(&r, 7, "x.io").unwrap().as_slice(),
+        [Ipv4Addr::new(192, 0, 2, 1)]
+    );
+}
+
+#[test]
+fn an_answer_to_the_other_familys_question_is_not_ours() {
+    let r = response(&query("x.io", 7), 0x8180, &[(1, &[192, 0, 2, 1])]);
+    assert_eq!(
+        parse_response_for(&r, 7, "x.io", Record::Aaaa),
+        Err(DnsError::QuestionMismatch)
+    );
+}
+
+#[test]
+fn address_records_of_the_wrong_length_are_skipped() {
+    let q = query_aaaa("x.io", 7);
+    let r = response(&q, 0x8180, &[(28, &V6[..4]), (28, &V6[..15])]);
+    assert_eq!(
+        parse_response_for(&r, 7, "x.io", Record::Aaaa),
+        Err(DnsError::NoAddresses)
+    );
+    let r = response(&query("x.io", 7), 0x8180, &[(1, &V6)]);
+    assert_eq!(parse_response(&r, 7, "x.io"), Err(DnsError::NoAddresses));
 }

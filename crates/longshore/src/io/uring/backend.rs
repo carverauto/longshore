@@ -35,11 +35,9 @@ impl Io for UringIo {
         Ok(FileId(self.files.len() as u32 - 1))
     }
 
-    fn listen(&mut self, sock: Sock, addr: SocketAddrV4) -> io::Result<SocketAddrV4> {
+    fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
         let l = TcpListener::bind(addr)?;
-        let SocketAddr::V4(bound) = l.local_addr()? else {
-            unreachable!("bound to an IPv4 address")
-        };
+        let bound = l.local_addr()?;
         let fd = l.into_raw_fd();
         let r = self.ring.update_file(sock.0, fd);
         // The registered table holds its own reference.
@@ -60,12 +58,8 @@ impl Io for UringIo {
                 s.state = State::Connecting;
                 s.phase = PHASE_SOCKET;
                 s.sock = sock.0;
-                s.addr = sockaddr_in {
-                    family: AF_INET,
-                    port: addr.port().to_be_bytes(),
-                    addr: addr.ip().octets(),
-                    zero: [0; 8],
-                };
+                (s.addr, s.addr_len) = sockaddr_any::from(addr);
+                let family = s.addr.family;
                 // Create the socket directly in the fixed slot; connect follows.
                 let kind = if matches!(op, Op::ConnectUdp { .. }) {
                     SOCK_DGRAM
@@ -74,7 +68,7 @@ impl Io for UringIo {
                 };
                 io_uring_sqe {
                     opcode: IORING_OP_SOCKET,
-                    fd: AF_INET as i32,
+                    fd: family as i32,
                     off: kind,
                     file_index: sock.0 + 1,
                     user_data: PHASE_SOCKET,

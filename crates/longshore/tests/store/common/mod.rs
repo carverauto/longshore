@@ -14,7 +14,7 @@ pub use longshore::sim::{Faults, SimIo};
 pub use longshore::store::creds::Credentials;
 pub use longshore::store::list::{unescape, Listing};
 pub use longshore::store::s3::{Checksum, Config, Done, Endpoint, Fatal, Outcome, SubmitError, S3};
-pub use std::net::{Ipv4Addr, SocketAddrV4};
+pub use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -25,7 +25,7 @@ pub const BUF: u32 = 16 * 1024;
 
 pub const MS: u64 = 1_000_000;
 
-pub const ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 80), 80);
+pub const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 80)), 80);
 
 pub const HEARTBEAT: u64 = 1 << 50;
 

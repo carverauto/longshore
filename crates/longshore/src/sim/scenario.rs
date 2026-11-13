@@ -6,7 +6,7 @@
 //! Scenarios that run unchanged on any `Io`.
 
 use crate::io::{BufId, Completions, Io, Op, Sock, Token};
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EchoError {
@@ -50,7 +50,7 @@ fn pattern(i: u64) -> u8 {
 /// least `chunk` bytes, and 4 operation slots. Performs no allocation.
 pub fn echo<IO: Io>(
     io: &mut IO,
-    addr: SocketAddrV4,
+    addr: SocketAddr,
     total: u64,
     chunk: u32,
     zero_copy: bool,

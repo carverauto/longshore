@@ -12,7 +12,7 @@ use crate::io::{
 };
 use std::ffi::CString;
 use std::io;
-use std::net::{SocketAddr, SocketAddrV4, TcpListener};
+use std::net::{SocketAddr, TcpListener};
 use std::os::fd::IntoRawFd;
 
 mod backend;
@@ -56,7 +56,8 @@ struct Slot {
     /// A cancel has been submitted for this operation. See `Op::Cancel`.
     cancel_requested: bool,
     // Kernel reads these while the operation is in flight, so they live here.
-    addr: sockaddr_in,
+    addr: sockaddr_any,
+    addr_len: u32,
     ts: timespec,
 }
 
@@ -110,7 +111,8 @@ impl UringIo {
             file_addr: 0,
             file_len: 0,
             phase: 0,
-            addr: sockaddr_in::default(),
+            addr: sockaddr_any::default(),
+            addr_len: 0,
             ts: timespec::default(),
         };
         Ok(UringIo {

@@ -13,7 +13,7 @@
 //! delivered; for zero-copy sends that is after the kernel has released it.
 
 use std::io;
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 
 pub mod alloc_guard;
 #[cfg(target_os = "linux")]
@@ -45,13 +45,13 @@ pub enum Op {
     /// leaves the slot free; the caller need not close it.
     Connect {
         sock: Sock,
-        addr: SocketAddrV4,
+        addr: SocketAddr,
     },
     /// Open a UDP socket in slot `sock` connected to `addr`. `Send` and `Recv`
     /// then carry whole datagrams.
     ConnectUdp {
         sock: Sock,
-        addr: SocketAddrV4,
+        addr: SocketAddr,
     },
     /// Accept one connection from `listener` into slot `sock`.
     Accept {
@@ -263,7 +263,7 @@ pub trait Io {
     fn register_file(&mut self, path: &str) -> io::Result<FileId>;
     /// Bind and listen in slot `sock`. Initialization-time only; may block.
     /// Returns the bound address (useful with port 0).
-    fn listen(&mut self, sock: Sock, addr: SocketAddrV4) -> io::Result<SocketAddrV4>;
+    fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
     /// Queue an operation. Performs no system call.
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy>;
     /// Hand queued operations to the kernel and collect completions, in one

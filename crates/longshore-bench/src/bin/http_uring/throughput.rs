@@ -17,7 +17,7 @@ pub(super) fn bench(a: &Args, put: bool) {
     }
     // Several addresses, separated by commas, spread the connections over
     // several links: connection i uses address i mod the number given.
-    let addrs: Vec<SocketAddrV4> = a
+    let addrs: Vec<SocketAddr> = a
         .addr
         .split(',')
         .map(|s| {

@@ -21,7 +21,7 @@ use longshore::io::alloc_guard::sealed;
 use longshore::io::uring::UringIo;
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::os::fd::AsRawFd;
 
 extern "C" {

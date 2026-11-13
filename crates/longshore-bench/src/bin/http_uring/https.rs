@@ -10,7 +10,7 @@ use super::*;
 /// Buffers: client head 0, TLS records 1 and 2, response 3.
 pub(super) fn https(host: &str, ip: &str, path: &str) {
     const SIZE: u32 = 1 << 20;
-    let addr = SocketAddrV4::new(
+    let addr = SocketAddr::new(
         ip.parse()
             .unwrap_or_else(|_| die("IPV4 must be an address")),
         443,

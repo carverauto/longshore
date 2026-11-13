@@ -11,7 +11,7 @@ use crate::io::{BufId, FileId};
 use crate::store::creds::Credentials;
 use crate::store::multipart::{PartTag, UploadId};
 use crate::store::stat::Stat;
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 
 /// Integrity checking for a store.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -81,7 +81,7 @@ pub struct CredentialsFile {
 }
 
 pub enum Endpoint {
-    Fixed(SocketAddrV4),
+    Fixed(SocketAddr),
     Resolved(Resolver),
 }
 

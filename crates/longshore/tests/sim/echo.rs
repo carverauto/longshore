@@ -7,7 +7,7 @@ use longshore::io::alloc_guard::{sealed, Guard};
 use longshore::io::{Completions, Limits};
 use longshore::sim::scenario::{echo, EchoError, EchoStats};
 use longshore::sim::{Faults, SimIo};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -20,7 +20,7 @@ const LIMITS: Limits = Limits {
     small_buffer_size: 0,
     ops_max: 4,
 };
-const ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 443);
+const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
 const TOTAL: u64 = 300_000;
 
 /// Runs one echo with allocation forbidden once setup is done.

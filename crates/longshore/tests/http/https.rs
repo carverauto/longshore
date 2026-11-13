@@ -14,7 +14,7 @@ use longshore::io::alloc_guard::{sealed, Guard};
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use longshore::sim::{Faults, SimIo};
 use longshore::tls::handshake::{ClientSetup, ServerSetup, TlsError};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -24,7 +24,7 @@ const CONNS: u32 = 2;
 const BUF: u32 = 64 * 1024;
 const HEAD_MAX: u32 = 2048;
 const MS: u64 = 1_000_000;
-const ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 80), 443);
+const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 80)), 443);
 const HEARTBEAT: u64 = 1 << 50;
 const NAME: &str = "objects.test";
 
