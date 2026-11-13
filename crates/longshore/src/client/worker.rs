@@ -35,6 +35,8 @@ pub struct Worker {
     lane: Arc<Lane>,
     requests: Receiver<Request>,
     layout: Layout,
+    /// Operation slots the store is running.
+    running: Box<[bool]>,
     stopping: bool,
 }
 
@@ -73,6 +75,7 @@ impl Worker {
             lane: lane.clone(),
             requests: rx,
             layout,
+            running: vec![false; layout.operations as usize].into_boxed_slice(),
             stopping: false,
         };
         (worker, lane)
@@ -125,7 +128,12 @@ impl Worker {
                 }
             }
         }
+        self.report();
+    }
+
+    fn report(&mut self) {
         while let Some(d) = self.s3.poll() {
+            self.running[d.token as usize] = false;
             self.lane
                 .finish(d.token as u32, Finished::Outcome(d.outcome));
         }
@@ -154,8 +162,9 @@ impl Worker {
             Kind::Fetch { range } => self.s3.fetch(io, token, key, range, buf),
             Kind::Erase => self.s3.erase(io, token, key),
         };
-        if let Err(e) = sent {
-            self.lane.finish(r.op, Finished::Rejected(e));
+        match sent {
+            Ok(()) => self.running[r.op as usize] = true,
+            Err(e) => self.lane.finish(r.op, Finished::Rejected(e)),
         }
     }
 
@@ -169,8 +178,38 @@ impl Worker {
     pub fn close(&mut self) {
         self.lane.closed.store(true, Ordering::Release);
         while let Ok(r) = self.requests.try_recv() {
-            if !matches!(r.kind, Kind::Shutdown) {
-                self.lane.finish(r.op, Finished::Closed);
+            match r.kind {
+                Kind::Shutdown => self.stopping = true,
+                _ => self.lane.finish(r.op, Finished::Closed),
+            }
+        }
+    }
+
+    /// The I/O under the store has failed. Call once the `Io` can no longer
+    /// touch the lent buffers, though their memory must stay: this marks the
+    /// lane closed and ends every operation running or queued, and callers
+    /// then hold the buffers again. The store is not driven after this.
+    pub fn abandon(&mut self) {
+        self.report();
+        self.close();
+        for op in 0..self.running.len() {
+            if core::mem::take(&mut self.running[op]) {
+                self.lane.finish(op as u32, Finished::Closed);
+            }
+        }
+    }
+
+    /// After [`Worker::abandon`]: block the calling thread, ending every
+    /// request that arrives as closed, until a shutdown is asked for.
+    #[cfg(target_os = "linux")]
+    pub(super) fn refuse_until_shutdown(&mut self) {
+        if self.stopping {
+            return;
+        }
+        while let Ok(r) = self.requests.recv() {
+            match r.kind {
+                Kind::Shutdown => return,
+                _ => self.lane.finish(r.op, Finished::Closed),
             }
         }
     }

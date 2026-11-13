@@ -12,7 +12,10 @@ use common::*;
 use longshore::client::{Client, Error, Layout, Output, Pending, Worker};
 use std::future::Future;
 use std::pin::pin;
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
+use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
 
 const WIDE: Limits = Limits {
     ops_max: LIMITS.ops_max + 2,
@@ -272,4 +275,113 @@ fn work_spreads_over_the_lanes_and_a_buffer_stays_on_its_own() {
             .count()
     };
     assert_eq!((held(&r.lanes[0]), held(&r.lanes[1])), (2, 2));
+}
+
+/// A waker that counts how often it was woken.
+fn counted() -> (Arc<Count>, Waker) {
+    let count = Arc::new(Count(AtomicUsize::new(0)));
+    (count.clone(), Waker::from(count))
+}
+
+struct Count(AtomicUsize);
+
+impl Count {
+    fn get(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Count {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn a_waiter_polled_twice_leaves_the_next_buffer_to_the_other_waiter() {
+    let mut r = rig(1);
+    let (held0, held1) = (r.buffer(), r.buffer());
+    let (b, wb) = counted();
+    let (_a, wa) = counted();
+    let (mut cb, mut ca) = (Context::from_waker(&wb), Context::from_waker(&wa));
+    let client = r.client.clone();
+    let mut first = pin!(client.buffer());
+    let mut second = pin!(client.buffer());
+    assert!(first.as_mut().poll(&mut cb).is_pending());
+    // The second waiter is polled again while it waits, as under `select!`.
+    assert!(second.as_mut().poll(&mut ca).is_pending());
+    assert!(second.as_mut().poll(&mut ca).is_pending());
+    drop(held0);
+    let _taken = match second.as_mut().poll(&mut ca) {
+        Poll::Ready(buffer) => buffer,
+        Poll::Pending => panic!("a buffer was free"),
+    };
+    // The first waiter is polled whenever it is woken, as an executor would.
+    if b.get() > 0 {
+        assert!(first.as_mut().poll(&mut cb).is_pending());
+    }
+    let before = b.get();
+    drop(held1);
+    assert!(b.get() > before, "a buffer came back and its waiter slept on");
+    assert!(first.as_mut().poll(&mut cb).is_ready());
+}
+
+#[test]
+fn a_buffer_returned_on_another_lane_wakes_a_waiter() {
+    let mut r = rig(2);
+    // Two buffers per lane, taken from lane 0 first.
+    let mut bufs: Vec<Buffer> = (0..4).map(|_| r.buffer()).collect();
+    let (woken, waker) = counted();
+    let mut cx = Context::from_waker(&waker);
+    let client = r.client.clone();
+    let mut waiting = pin!(client.buffer());
+    assert!(waiting.as_mut().poll(&mut cx).is_pending());
+    drop(bufs.pop());
+    assert_eq!(woken.get(), 1, "a buffer came back on lane 1 and woke nobody");
+    assert!(waiting.as_mut().poll(&mut cx).is_ready());
+}
+
+#[test]
+fn a_blocking_borrow_takes_a_buffer_returned_on_another_lane() {
+    let mut r = rig(2);
+    let mut bufs: Vec<Buffer> = (0..4).map(|_| r.buffer()).collect();
+    let client = r.client.clone();
+    let (got, arrived) = mpsc::channel();
+    let borrower = std::thread::spawn(move || {
+        let buffer = client.buffer_blocking();
+        got.send(()).unwrap();
+        drop(buffer);
+    });
+    // Let the borrower find every buffer out and block.
+    std::thread::sleep(Duration::from_millis(100));
+    drop(bufs.pop());
+    let took = arrived.recv_timeout(Duration::from_secs(5));
+    // Unblock the borrower before failing, so the rig outlives it.
+    drop(bufs);
+    borrower.join().unwrap();
+    assert!(took.is_ok(), "a buffer came back on lane 1 and the borrower slept on");
+}
+
+#[test]
+fn an_operation_in_flight_when_the_io_fails_ends_closed_with_its_buffer() {
+    let mut r = rig(1);
+    let mut body = r.buffer();
+    fill(&mut body, 3);
+    let sent = body.as_slice()[..LEN].to_vec();
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut storing = pin!(r.client.store("k", body, LEN));
+    assert!(storing.as_mut().poll(&mut cx).is_pending());
+    // The worker hands the store to the I/O, and the I/O then fails.
+    let l = &mut r.lanes[0];
+    l.worker.turn(&mut l.io);
+    assert!(storing.as_mut().poll(&mut cx).is_pending());
+    l.worker.abandon();
+    let (result, body) = match storing.as_mut().poll(&mut cx) {
+        Poll::Ready(v) => v,
+        Poll::Pending => panic!("an abandoned operation is still pending"),
+    };
+    assert_eq!(result, Err(Error::Closed));
+    assert_eq!(&body.as_slice()[..LEN], &sent[..]);
+    // Nothing more is sent to the failed I/O.
+    assert_eq!(r.run(r.client.erase("k")), Err(Error::Closed));
 }

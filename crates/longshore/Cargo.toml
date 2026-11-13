@@ -49,6 +49,10 @@ name = "client_driven"
 path = "tests/client/driven.rs"
 
 [[test]]
+name = "client_builder"
+path = "tests/client/builder.rs"
+
+[[test]]
 name = "dns_codec_props"
 path = "tests/dns/codec_props.rs"
 

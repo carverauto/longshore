@@ -7,12 +7,15 @@
 //! pools of operation slots and lent buffers, and the request queue. All of
 //! it is allocated when the lane is built.
 
-use crate::io::Wake;
 use crate::store::s3::{Checksum, Outcome, SubmitError};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Condvar, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll, Wake, Waker};
+use std::thread::Thread;
 
 /// The longest key a request message carries.
 pub const KEY_MAX: usize = 1024;
@@ -56,59 +59,99 @@ pub(super) enum Kind {
 }
 
 /// Indices that callers take and give back, waiting when none is free.
+///
+/// A waiter is named by an id from [`waiter_id`] and holds at most one
+/// place in the queue, which it leaves when it takes an index or gives up.
 pub(super) struct Pool {
-    free: Mutex<Vec<u32>>,
-    returned: Condvar,
-    /// Async callers waiting for an index.
-    waiters: Mutex<Vec<Waker>>,
+    state: Mutex<PoolState>,
+}
+
+struct PoolState {
+    free: Vec<u32>,
+    waiters: VecDeque<(u64, Waker)>,
+}
+
+impl PoolState {
+    /// Wake the longest waiting caller if an index is free for it.
+    fn pass_on(&mut self) {
+        if !self.free.is_empty() {
+            if let Some((_, w)) = self.waiters.pop_front() {
+                w.wake();
+            }
+        }
+    }
+}
+
+/// A fresh name for a caller that may wait on a [`Pool`].
+pub(super) fn waiter_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Pool {
     pub fn new(count: u32) -> Pool {
         Pool {
-            free: Mutex::new((0..count).rev().collect()),
-            returned: Condvar::new(),
-            waiters: Mutex::new(Vec::with_capacity(count as usize)),
+            state: Mutex::new(PoolState {
+                free: (0..count).rev().collect(),
+                waiters: VecDeque::with_capacity(count as usize),
+            }),
         }
     }
 
-    pub fn take_blocking(&self) -> u32 {
-        let mut free = self.free.lock().expect("pool lock");
-        loop {
-            if let Some(i) = free.pop() {
-                return i;
-            }
-            free = self.returned.wait(free).expect("pool lock");
-        }
-    }
-
-    pub fn poll_take(&self, cx: &mut Context<'_>) -> Poll<u32> {
-        if let Some(i) = self.free.lock().expect("pool lock").pop() {
+    /// Take an index, or queue waiter `id` to be woken when one comes back.
+    /// Polling again replaces the waker the waiter left before.
+    pub fn poll_take(&self, id: u64, cx: &mut Context<'_>) -> Poll<u32> {
+        let mut s = self.state.lock().expect("pool lock");
+        if let Some(i) = s.free.pop() {
+            s.waiters.retain(|(w, _)| *w != id);
             return Poll::Ready(i);
         }
-        self.waiters
-            .lock()
-            .expect("pool lock")
-            .push(cx.waker().clone());
-        // An index may have come back between the two locks.
-        match self.free.lock().expect("pool lock").pop() {
-            Some(i) => Poll::Ready(i),
-            None => Poll::Pending,
+        match s.waiters.iter_mut().find(|(w, _)| *w == id) {
+            Some((_, waker)) => waker.clone_from(cx.waker()),
+            None => s.waiters.push_back((id, cx.waker().clone())),
         }
+        Poll::Pending
     }
 
-    pub fn try_take(&self) -> Option<u32> {
-        self.free.lock().expect("pool lock").pop()
+    /// Waiter `id` no longer waits here. If it was woken for an index it
+    /// did not take, the wake passes to the next waiter.
+    pub fn forget(&self, id: u64) {
+        let mut s = self.state.lock().expect("pool lock");
+        s.waiters.retain(|(w, _)| *w != id);
+        s.pass_on();
     }
 
     pub fn give(&self, i: u32) {
-        self.free.lock().expect("pool lock").push(i);
-        self.returned.notify_one();
-        let waiter = self.waiters.lock().expect("pool lock").pop();
-        if let Some(w) = waiter {
-            w.wake();
+        let mut s = self.state.lock().expect("pool lock");
+        s.free.push(i);
+        s.pass_on();
+    }
+}
+
+/// Run `f` to its end on the calling thread, parking between polls.
+pub(super) fn block_on<F: Future>(f: F) -> F::Output {
+    struct Parker(Thread);
+    impl Wake for Parker {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
         }
     }
+    thread_local! {
+        static PARKER: Waker = Waker::from(Arc::new(Parker(std::thread::current())));
+    }
+    let mut f = pin!(f);
+    PARKER.with(|waker| {
+        let mut cx = Context::from_waker(waker);
+        loop {
+            if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+                return v;
+            }
+            std::thread::park();
+        }
+    })
 }
 
 #[derive(Default)]
@@ -131,7 +174,7 @@ pub(super) struct CellState {
 /// One I/O thread as its callers see it.
 pub struct Lane {
     pub(super) requests: SyncSender<Request>,
-    pub(super) wake: Arc<dyn Wake>,
+    pub(super) wake: Arc<dyn crate::io::Wake>,
     pub(super) cells: Box<[Cell]>,
     pub(super) ops: Pool,
     pub(super) bufs: Pool,
