@@ -13,7 +13,9 @@ impl Client {
     pub fn start<IO: Io>(&mut self, io: &mut IO, token: u64, req: &Request) -> Result<(), Error> {
         let now = io.now_ns();
         let fresh = |c: &Conn| {
-            now.saturating_sub(c.opened_at) < self.cfg.max_age_ns && c.uses < self.cfg.max_requests
+            now.saturating_sub(c.opened_at) < self.cfg.max_age_ns
+                && c.uses < self.cfg.max_requests
+                && !c.retired
         };
         // Prefer a live connection to this host. Failing that, replace an
         // expired connection to this host before opening another, so an aged
@@ -117,6 +119,8 @@ impl Client {
         self.connects += 1;
         self.conns[i].state = State::Connecting;
         self.conns[i].uses = 0;
+        self.conns[i].segment = 0;
+        self.conns[i].retired = false;
         self.submit(
             io,
             i,

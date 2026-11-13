@@ -73,6 +73,13 @@ pub const AF_INET: u16 = 2;
 pub const AF_INET6: u16 = 10;
 pub const SOCK_STREAM: u64 = 1;
 pub const SOCK_DGRAM: u64 = 2;
+pub const SOCK_CLOEXEC: u64 = 0o2000000;
+pub const IPPROTO_TCP: c_int = 6;
+pub const TCP_MAXSEG: c_int = 2;
+pub const IPPROTO_IP: c_int = 0;
+pub const IP_MTU: c_int = 14;
+pub const IPPROTO_IPV6: c_int = 41;
+pub const IPV6_MTU: c_int = 24;
 pub const CLOCK_MONOTONIC: c_int = 1;
 pub const CLOCK_REALTIME: c_int = 0;
 
@@ -234,5 +241,13 @@ extern "C" {
     ) -> *mut c_void;
     pub fn munmap(addr: *mut c_void, len: usize) -> c_int;
     pub fn close(fd: c_int) -> c_int;
+    pub fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
+    pub fn getsockopt(
+        fd: c_int,
+        level: c_int,
+        name: c_int,
+        value: *mut c_void,
+        len: *mut u32,
+    ) -> c_int;
     pub fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
 }

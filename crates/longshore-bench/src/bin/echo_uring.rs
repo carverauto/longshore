@@ -7,9 +7,10 @@
 //! forbidden after setup. This is the real-kernel counterpart of the
 //! simulator's echo test.
 //!
-//!   echo_uring [--total BYTES] [--chunk BYTES] [--zc] [--v6]
+//!   echo_uring [--total BYTES] [--chunk BYTES] [--zc] [--v6] [--measure]
 //!
 //! `--v6` runs the echo and the refused connect over the IPv6 loopback.
+//! `--measure` runs the echo with segment sizes measured on connect.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -31,11 +32,13 @@ fn main() {
 
     let (mut total, mut chunk, mut zc) = (64u64 << 20, 1u32 << 20, false);
     let mut v6 = false;
+    let mut measure = false;
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
             "--zc" => zc = true,
             "--v6" => v6 = true,
+            "--measure" => measure = true,
             "--total" => {
                 total = it
                     .next()
@@ -283,6 +286,55 @@ fn main() {
             "two refused connects on one socket slot"
         );
         println!("ok failed connect releases its socket slot");
+    }
+    // With measuring on, a connect reports the connection's maximum segment
+    // size, and neither a connect that works nor one that is refused leaves
+    // the process holding a descriptor.
+    {
+        use longshore::io::{Io, Op, Sock, Token};
+        let open_fds = || std::fs::read_dir("/proc/self/fd").unwrap().count();
+        let mut run = |io: &mut UringIo, op: Op| {
+            io.submit(Token(1), op).unwrap();
+            loop {
+                io.tick(true, &mut out).unwrap();
+                if let Some(c) = out.pop() {
+                    break c.result;
+                }
+            }
+        };
+        let before = open_fds();
+        io.measure_segment_sizes(true);
+        let listening = io.listen(Sock(0), SocketAddr::new(loopback, 0)).unwrap();
+        let size = run(
+            &mut io,
+            Op::Connect {
+                sock: Sock(3),
+                addr: listening,
+            },
+        );
+        let segment = longshore::io::Segment::decode(size)
+            .unwrap_or_else(|| panic!("measured connect returned {size}"));
+        // Loopback's MTU is 65536, so its segments are far above Ethernet's.
+        assert!(
+            segment.size > 16_000 && segment.path_limit > 60_000,
+            "{segment:?}"
+        );
+        assert_eq!(run(&mut io, Op::Close { sock: Sock(3) }), 0);
+        let refused = run(
+            &mut io,
+            Op::Connect {
+                sock: Sock(3),
+                addr: SocketAddr::new(loopback, 1),
+            },
+        );
+        assert_eq!(refused, -111, "refused connect with measuring on");
+        assert_eq!(run(&mut io, Op::Close { sock: Sock(0) }), 0);
+        io.measure_segment_sizes(measure);
+        assert_eq!(open_fds(), before, "a measured connect leaked a descriptor");
+        println!(
+            "ok measured connect: segment size {}, path limit {}, no descriptor left open",
+            segment.size, segment.path_limit
+        );
     }
     let addr = SocketAddr::new(loopback, 0);
     let start = std::time::Instant::now();

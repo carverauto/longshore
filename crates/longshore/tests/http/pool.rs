@@ -259,3 +259,43 @@ fn a_connection_closed_while_idle_is_replaced_before_it_is_used() {
         "without the check the request goes into the closed connection"
     );
 }
+
+#[test]
+fn a_connection_measured_below_the_floor_is_replaced_not_reused() {
+    let mut w = world(12, Faults::default());
+    // Connections to the server's address report a small segment size.
+    w.io.route(ADDR, ADDR, 1432);
+    ok(404, 0)(w.request("GET", "/k", None));
+    assert_eq!(w.client.connected.take(), Some((ADDR, seg(1432))));
+    assert_eq!(w.client.retire_below(0, 1000), 0, "above the floor");
+    ok(404, 0)(w.request("GET", "/k", None));
+    assert_eq!(w.client.connects, 1, "still reused");
+
+    assert_eq!(w.client.retire_below(0, 4000), 1);
+    assert_eq!(w.client.retire_below(0, 4000), 0, "retired once");
+    // The path now gives large segments.
+    w.io.route(ADDR, ADDR, 8228);
+    ok(404, 0)(w.request("GET", "/k", None));
+    assert_eq!(w.client.connects, 2, "the retired connection was replaced");
+    assert_eq!(w.client.connected.take(), Some((ADDR, seg(8228))));
+    assert_eq!(w.client.retire_below(0, 4000), 0);
+    ok(404, 0)(w.request("GET", "/k", None));
+    assert_eq!(w.client.connects, 2, "and its replacement is reused");
+}
+
+#[test]
+fn connections_that_were_not_measured_are_never_retired() {
+    let mut w = world(13, Faults::default());
+    ok(404, 0)(w.request("GET", "/k", None));
+    assert_eq!(w.client.connected, None);
+    assert_eq!(w.client.retire_below(0, u32::MAX), 0);
+    ok(404, 0)(w.request("GET", "/k", None));
+    assert_eq!(w.client.connects, 1);
+}
+
+fn seg(size: u32) -> longshore::io::Segment {
+    longshore::io::Segment {
+        size,
+        path_limit: 0,
+    }
+}

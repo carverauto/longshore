@@ -57,6 +57,10 @@ name = "dns_resolver_families"
 path = "tests/dns/resolver_families.rs"
 
 [[test]]
+name = "dns_resolver_segments"
+path = "tests/dns/resolver_segments.rs"
+
+[[test]]
 name = "http_failures"
 path = "tests/http/failures.rs"
 
@@ -111,6 +115,10 @@ path = "tests/store/no_address_sim.rs"
 [[test]]
 name = "store_ipv6_sim"
 path = "tests/store/ipv6_sim.rs"
+
+[[test]]
+name = "store_segments_sim"
+path = "tests/store/segments_sim.rs"
 
 [[test]]
 name = "store_s3_checksums"

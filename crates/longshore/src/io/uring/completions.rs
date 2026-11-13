@@ -6,6 +6,7 @@
 //! Turning kernel completions into results, including operations of several steps.
 
 use super::*;
+use crate::io::Segment;
 
 impl UringIo {
     pub(super) fn connect_sqe(&self, i: u32) -> io_uring_sqe {
@@ -16,6 +17,70 @@ impl UringIo {
         sqe.off = s.addr_len as u64;
         sqe.user_data = i as u64;
         sqe
+    }
+
+    /// Open the socket of a connect with a descriptor of our own, so its
+    /// segment size can be read later, and register it in the slot. Returns
+    /// the connect to submit, or None if the socket could not be opened or
+    /// registered: the caller then creates it through the ring.
+    pub(super) fn connect_measured(
+        &mut self,
+        i: u32,
+        sock: Sock,
+        family: u16,
+    ) -> Option<io_uring_sqe> {
+        let kind = (SOCK_STREAM | SOCK_CLOEXEC) as i32;
+        let fd = unsafe { socket(family as i32, kind, 0) };
+        if fd < 0 {
+            return None;
+        }
+        if self.ring.update_file(sock.0, fd).is_err() {
+            unsafe { close(fd) };
+            return None;
+        }
+        let s = &mut self.slots[i as usize];
+        s.probe_fd = fd;
+        s.state = State::ConnectStep;
+        s.phase = 0;
+        Some(self.connect_sqe(i))
+    }
+
+    /// The connect of a measured socket has ended. Read the segment sizes if
+    /// it succeeded, and close our descriptor either way: the registered
+    /// table keeps the socket. Returns the connect's result, with the
+    /// encoded sizes in place of 0.
+    fn end_measure(&mut self, i: u32, result: i32) -> i32 {
+        let s = &mut self.slots[i as usize];
+        let fd = core::mem::replace(&mut s.probe_fd, -1);
+        if fd < 0 {
+            return result;
+        }
+        let option = |level, name| {
+            let mut value: i32 = 0;
+            let mut len = core::mem::size_of::<i32>() as u32;
+            let r =
+                unsafe { getsockopt(fd, level, name, (&mut value as *mut i32).cast(), &mut len) };
+            if r == 0 && value > 0 {
+                value as u32
+            } else {
+                0
+            }
+        };
+        let mut measured = result;
+        if result == 0 {
+            let size = option(IPPROTO_TCP, TCP_MAXSEG);
+            // The path's MTU less the IP and TCP headers.
+            let path_limit = if s.addr.family == AF_INET6 {
+                option(IPPROTO_IPV6, IPV6_MTU).saturating_sub(60)
+            } else {
+                option(IPPROTO_IP, IP_MTU).saturating_sub(40)
+            };
+            if size > 0 {
+                measured = Segment { size, path_limit }.encode();
+            }
+        }
+        unsafe { close(fd) };
+        measured
     }
 
     /// A connect failed after its socket was created. Close the socket, then
@@ -133,8 +198,12 @@ impl UringIo {
             s.state = State::AwaitNotif;
             return;
         }
-        if state == State::ConnectStep && c.res < 0 {
-            return self.release_socket(i, c.res);
+        if state == State::ConnectStep {
+            let r = self.end_measure(i, c.res);
+            if r < 0 {
+                return self.release_socket(i, r);
+            }
+            return self.finish(i, r, out);
         }
         // Only a timer's expiry is a success. The same code from any other
         // operation is a failure and is reported as one.

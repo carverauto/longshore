@@ -15,9 +15,9 @@
 //! A host has one address set per family. [`Family`] says which record
 //! types are asked for and which family lookups hand out first.
 
-use crate::dns::codec::{encode_query_for, parse_response_for, DnsError, ADDRS_MAX, MESSAGE_MAX};
+use crate::dns::codec::{encode_query_for, parse_response_for, DnsError, MESSAGE_MAX};
 use crate::io::{BufId, Completion, Io, Op, Sock, Token};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 mod family;
 mod lookup;
@@ -35,6 +35,16 @@ pub struct Config {
     pub servers: Vec<SocketAddr>,
     pub hosts: Vec<String>,
     pub family: Family,
+    /// Prefer addresses whose connections have large TCP segments. `None`
+    /// turns this off and every address is handed out in rotation.
+    /// `Some(n)` hands out the addresses whose measured segment size is at
+    /// least half the largest seen and a quarter of the path's limit, and
+    /// keeps at least `n` addresses in use by admitting the next largest. Sizes come from
+    /// [`Resolver::connected`]. An address not yet measured is handed out
+    /// like the large ones, so that it gets measured.
+    ///
+    /// This puts a host's connections on fewer of its addresses.
+    pub prefer_large_segments: Option<usize>,
     /// Every host is re-resolved this often, whatever its TTL says.
     pub refresh_ns: u64,
     /// How long to wait for one answer.
@@ -92,6 +102,9 @@ pub struct Resolver {
     /// Times a host's lookups moved to the other family after a failed
     /// connection.
     pub family_switches: u64,
+    /// Refreshes started early because a host had only small-segment
+    /// addresses.
+    pub early_refreshes: u64,
 }
 
 impl Resolver {
@@ -104,11 +117,6 @@ impl Resolver {
         assert!(cfg.timeout_ns > 0 && cfg.refresh_ns > 0);
         let mut probe = [0u8; MESSAGE_MAX];
         let preferred = cfg.family.records()[0];
-        let empty = Set {
-            addrs: [IpAddr::V4(Ipv4Addr::UNSPECIFIED); ADDRS_MAX],
-            len: 0,
-            next: 0,
-        };
         let hosts = cfg
             .hosts
             .iter()
@@ -117,8 +125,9 @@ impl Resolver {
                     .unwrap_or_else(|_| panic!("invalid hostname {h:?}"));
                 Host {
                     name: h.clone(),
-                    sets: [empty; 2],
+                    sets: [Set::EMPTY; 2],
                     active: set_of(preferred),
+                    path_limit: 0,
                 }
             })
             .collect();
@@ -136,6 +145,7 @@ impl Resolver {
             queries: 0,
             cycles: 0,
             family_switches: 0,
+            early_refreshes: 0,
         }
     }
 
@@ -282,10 +292,7 @@ impl Resolver {
                     let msg = &io.buf(self.cfg.rx_bufs[server])[..c.result as usize];
                     match parse_response_for(msg, self.id, &self.hosts[host].name, record) {
                         Ok(a) => {
-                            let set = &mut self.hosts[host].sets[set_of(record)];
-                            set.addrs = a.addrs;
-                            set.len = a.len;
-                            set.next %= a.len;
+                            self.hosts[host].sets[set_of(record)].replace(a.as_slice());
                             self.advance(io, host, q);
                         }
                         // The name has no records of this family. With two
@@ -345,6 +352,16 @@ impl Resolver {
                         }
                     }
                     Phase::Idle { at } if now >= at => self.query(io, 0, 0, 0),
+                    // Every address of some host has small segments for its
+                    // path: ask again sooner, one answer timeout after the
+                    // last cycle, in case the name now has better ones.
+                    Phase::Idle { at }
+                        if self.starved()
+                            && now + self.cfg.refresh_ns >= at + self.cfg.timeout_ns =>
+                    {
+                        self.early_refreshes += 1;
+                        self.query(io, 0, 0, 0)
+                    }
                     _ => {}
                 }
                 Self::submit(

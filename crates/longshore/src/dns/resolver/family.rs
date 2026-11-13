@@ -47,8 +47,97 @@ pub(super) const fn set_of(record: Record) -> usize {
 #[derive(Clone, Copy)]
 pub(super) struct Set {
     pub(super) addrs: [IpAddr; ADDRS_MAX],
+    /// The maximum segment size last seen on a connection to each address,
+    /// or 0 if none has been measured.
+    pub(super) sizes: [u32; ADDRS_MAX],
     pub(super) len: usize,
     pub(super) next: usize,
+}
+
+impl Set {
+    pub(super) const EMPTY: Set = Set {
+        addrs: [IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED); ADDRS_MAX],
+        sizes: [0; ADDRS_MAX],
+        len: 0,
+        next: 0,
+    };
+
+    /// Replace the addresses with a new answer. An address that is still
+    /// there keeps its measured size, and the others are forgotten.
+    pub(super) fn replace(&mut self, addrs: &[IpAddr]) {
+        let old = *self;
+        self.len = addrs.len();
+        self.next %= self.len.max(1);
+        for (i, a) in addrs.iter().enumerate() {
+            self.addrs[i] = *a;
+            self.sizes[i] = old.addrs[..old.len]
+                .iter()
+                .position(|o| o == a)
+                .map_or(0, |k| old.sizes[k]);
+        }
+    }
+
+    /// The size an address needs to count as having large segments: half
+    /// the largest seen, or a quarter of what the path could carry if that
+    /// is more. 0 when nothing is known.
+    fn target(&self, path_limit: u32) -> u32 {
+        let largest = self.sizes[..self.len].iter().copied().max().unwrap_or(0);
+        largest.div_ceil(2).max(path_limit / 4)
+    }
+
+    fn unmeasured(&self) -> usize {
+        self.sizes[..self.len].iter().filter(|s| **s == 0).count()
+    }
+
+    /// The smallest segment size a connection should have, keeping at least
+    /// `keep` addresses in use: connections measured below it are worth
+    /// replacing. 0 when no address is known to have large segments, since
+    /// there is then nowhere better to go.
+    pub(super) fn floor(&self, keep: usize, path_limit: u32) -> u32 {
+        let target = self.target(path_limit);
+        let sizes = &self.sizes[..self.len];
+        if target == 0 || !sizes.iter().any(|s| *s >= target) {
+            return 0;
+        }
+        // Unmeasured addresses are handed out whatever the floor is, so
+        // they count as kept.
+        let mut order = [u32::MAX; ADDRS_MAX];
+        for (o, s) in order.iter_mut().zip(sizes) {
+            *o = if *s == 0 { u32::MAX } else { *s };
+        }
+        order[..self.len].sort_unstable_by(|a, b| b.cmp(a));
+        target.min(order[keep.clamp(1, self.len) - 1])
+    }
+
+    /// The floor lookups apply. It is the same as [`Set::floor`], except
+    /// that when every measured address is small for the path and others
+    /// are unmeasured, the unmeasured ones are tried first.
+    pub(super) fn lookup_floor(&self, keep: usize, path_limit: u32) -> u32 {
+        match self.floor(keep, path_limit) {
+            0 if self.unmeasured() > 0 => self.target(path_limit),
+            floor => floor,
+        }
+    }
+
+    /// Every address has been measured and all are small for the path: a
+    /// new answer is the only way to find a better one.
+    pub(super) fn starved(&self, path_limit: u32) -> bool {
+        self.len > 0
+            && path_limit > 0
+            && self.unmeasured() == 0
+            && self.sizes[..self.len].iter().all(|s| *s < path_limit / 4)
+    }
+
+    /// Addresses worth one new connection each: unmeasured ones, while no
+    /// address is known to have large segments but some are known small.
+    pub(super) fn probes(&self, keep: usize, path_limit: u32) -> usize {
+        let measured = self.len - self.unmeasured();
+        if measured > 0 && self.floor(keep, path_limit) == 0 && path_limit > 0 {
+            self.unmeasured()
+        } else {
+            0
+        }
+    }
 }
 
 pub(super) struct Host {
@@ -57,6 +146,9 @@ pub(super) struct Host {
     pub(super) sets: [Set; 2],
     /// The set lookups read while it has addresses.
     pub(super) active: usize,
+    /// The largest segment a path to this host could carry, as reported
+    /// with connections to it, or 0.
+    pub(super) path_limit: u32,
 }
 
 impl Host {

@@ -58,6 +58,9 @@ struct Slot {
     // Kernel reads these while the operation is in flight, so they live here.
     addr: sockaddr_any,
     addr_len: u32,
+    /// The process's own descriptor for a socket whose segment size is to
+    /// be read once it connects, or -1. See `measure_segment_sizes`.
+    probe_fd: i32,
     ts: timespec,
 }
 
@@ -69,6 +72,7 @@ pub struct UringIo {
     free: Vec<u32>,
     /// Paths registered for `Op::ReadFile`, NUL-terminated for the kernel.
     files: Vec<CString>,
+    measure_segments: bool,
 }
 
 /// Marks the CQE of the socket-creation half of a connect.
@@ -113,6 +117,7 @@ impl UringIo {
             phase: 0,
             addr: sockaddr_any::default(),
             addr_len: 0,
+            probe_fd: -1,
             ts: timespec::default(),
         };
         Ok(UringIo {
@@ -122,6 +127,7 @@ impl UringIo {
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
             free: (0..limits.ops_max).rev().collect(),
             files: Vec::new(),
+            measure_segments: false,
         })
     }
 

@@ -80,6 +80,9 @@ pub struct CredentialsFile {
     pub token: u64,
 }
 
+// One per store, built once and never moved while it runs, so the size
+// difference between the variants costs nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Endpoint {
     Fixed(SocketAddr),
     Resolved(Resolver),

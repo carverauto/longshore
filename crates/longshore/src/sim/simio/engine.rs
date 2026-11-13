@@ -56,11 +56,22 @@ impl SimIo {
             Op::Connect { sock, addr } => {
                 let s = sock.0 as usize;
                 if self.socks[s].state == SockState::Open {
-                    return Some(0); // accepted
+                    // Accepted. A routed address reports its segment sizes.
+                    return Some(
+                        crate::io::Segment {
+                            size: self.socks[s].segment,
+                            path_limit: self.path_limit,
+                        }
+                        .encode(),
+                    );
                 }
                 if self.socks[s].state == SockState::Connecting {
                     return None;
                 }
+                let route = self.routes.iter().position(|r| r.addr == addr);
+                let (addr, segment) = route.map_or((addr, 0), |k| {
+                    (self.routes[k].listener, self.routes[k].segment)
+                });
                 let listening = self
                     .socks
                     .iter()
@@ -70,6 +81,10 @@ impl SimIo {
                 }
                 self.socks[s].state = SockState::Connecting;
                 self.socks[s].addr = Some(addr);
+                self.socks[s].segment = segment;
+                if let Some(k) = route {
+                    self.routes[k].connects += 1;
+                }
                 None
             }
             Op::ReadFile {

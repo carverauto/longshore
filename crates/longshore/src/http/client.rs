@@ -18,7 +18,7 @@
 use crate::http::chunked::Chunked;
 use crate::http::head::{parse_response, Fields, HeadWriter, HttpError};
 use crate::http::stream::{IdleCheck, Step, Stream};
-use crate::io::{BufId, Completion, Io, Op, Sock, Token, ECANCELED};
+use crate::io::{BufId, Completion, Io, Op, Segment, Sock, Token, ECANCELED};
 use crate::tls::handshake::{ClientSetup, Handshake, TlsError};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -178,6 +178,10 @@ struct Conn {
     addr: SocketAddr,
     opened_at: u64,
     uses: u32,
+    /// Maximum segment size measured when the connection opened, or 0.
+    segment: u32,
+    /// Not to be reused: replaced the next time it would be picked.
+    retired: bool,
     // Current request.
     token: u64,
     started_at: u64,
@@ -221,12 +225,16 @@ pub struct Client {
     /// The address of the last connection that failed or timed out before it
     /// opened. The owner takes it to learn that an address is unreachable.
     pub connect_failure: Option<SocketAddr>,
+    /// The address and segment sizes of the last connection opened, when
+    /// the I/O backend measured them. The owner takes it.
+    pub connected: Option<(SocketAddr, Segment)>,
 }
 
 mod chunked_body;
 mod events;
 mod request;
 mod response;
+mod retire;
 
 impl Client {
     /// A client that speaks plain HTTP.
@@ -256,6 +264,8 @@ impl Client {
             addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             opened_at: 0,
             uses: 0,
+            segment: 0,
+            retired: false,
             token: 0,
             started_at: 0,
             head_len: 0,
@@ -297,6 +307,7 @@ impl Client {
             idle_closed: 0,
             idle_dirty: 0,
             connect_failure: None,
+            connected: None,
         }
     }
 

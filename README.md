@@ -22,6 +22,7 @@ is meant to become part of a larger project.
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | IPv4 and IPv6 | The resolver asks for A records, AAAA records or both, and prefers the family the configuration names. When connections to that family fail and the name has addresses in the other, it uses the other. Run over IPv6 against Linode Object Storage |
+| Large-segment addresses | Optional, off by default. A store's name can resolve to addresses whose connections get different TCP segment sizes, and on a network card that does not segment in hardware the small ones cost several times more CPU per byte. With the setting on, the client measures each new connection, keeps its connections on the addresses with large segments, and asks DNS again sooner when every address is small. It can be switched while the store runs. Works on Linux 6.1 and later |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
 | Checksums | CRC-64/NVME for S3, CRC-32C for Google. A fetch is verified when the store returns a checksum, and both stores do |
 | Credentials | Long-lived keys, temporary keys with a session token, or a bearer token. Read from a file and replaced when the file changes, once the store has accepted the new ones |
@@ -110,6 +111,7 @@ export S3_ACCESS_KEY=... S3_SECRET_KEY=...
 export S3_SESSION_TOKEN=...               # only with temporary keys
 export S3_TLS=1                           # HTTPS; omit for plain HTTP
 export S3_FAMILY=prefer6                  # 4 (the default), 6, prefer6 or prefer4
+export S3_PREFER_LARGE_SEGMENTS=2         # prefer large-segment addresses, using at least 2
 
 s3_uring selftest                         # store, conditional store, fetch, range, erase
 s3_uring put --conns 64 --secs 10         # throughput, 8 MiB objects by default
@@ -261,6 +263,11 @@ the client is mostly idle.
 - Azure Blob Storage cannot be used through the store yet, and its signing
   has not been tried against a real account.
 - HTTP/1.1 only.
+- Preferring large-segment addresses puts a store's connections on fewer
+  of its addresses. The setting keeps a minimum number in use, and a store
+  may still limit or shed load per address.
+- Measuring a connection's segment size costs four system calls when the
+  connection opens, and none after that.
 - After connections to the preferred address family fail, the client stays
   on the other family until a connection to that one fails too. It does not
   try the preferred family again on its own.
