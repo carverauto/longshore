@@ -265,7 +265,7 @@ impl Io for UringIo {
             self.ring
                 .enter(if wait && out.is_empty() { 1 } else { 0 })?;
             while !out.is_full() {
-                let Some(c) = self.ring.pop() else { break };
+                let Some(c) = self.reap() else { break };
                 self.on_cqe(c, out);
             }
             if !wait || !out.is_empty() {

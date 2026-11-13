@@ -352,8 +352,9 @@ mod linux {
                 // callers their operations back. The pool stays allocated
                 // until they shut the thread down, or for good if the kernel
                 // could not be stopped.
-                io.quiesce();
-                worker.abandon();
+                worker.close();
+                let quiet = io.quiesce();
+                worker.abandon(quiet);
                 worker.refuse_until_shutdown();
                 return;
             }

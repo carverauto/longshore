@@ -77,7 +77,9 @@ pub enum Error {
     /// thread it was given to failed. An operation without a buffer goes to
     /// an I/O thread still running when it is sent, but one can fail just
     /// after that, and an operation with a buffer stays on the buffer's
-    /// thread. Asking again may succeed on another thread.
+    /// thread. Asking again may succeed on another thread. If the failed
+    /// thread's kernel work could not be stopped, a buffer that comes back
+    /// with this error is void: see [`Buffer`].
     Closed,
     /// The store answered with something this operation does not expect.
     Unexpected,
@@ -171,7 +173,7 @@ impl Client {
         no_clobber: bool,
         map: fn(Finished) -> Result<T, Error>,
     ) -> Pending<(Result<T, Error>, Buffer)> {
-        let too_long = len > body.len();
+        let too_long = len > body.lane.buf_size;
         let (lane, buf, alive) = body.into_parts();
         let kind = Kind::Store {
             no_clobber,
