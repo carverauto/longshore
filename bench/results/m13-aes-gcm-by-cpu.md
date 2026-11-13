@@ -1,6 +1,6 @@
 # Milestone 13 — AES-GCM sealing speed by CPU
 
-Measured 2026-11-13 with `cargo bench -p osc-bench --bench aead` (criterion), the `aws-lc scatter, no copy` case: sealing 8 MiB as TLS 1.3 records with AES-128-GCM through the same AWS-LC calls the client uses. One core, GiB/s (2^30 bytes), 3 s of measurement. The AWS figures are from the smallest instance of each family, launched for the test and terminated.
+Measured 2026-11-13 with `cargo bench -p longshore-bench --bench aead` (criterion), the `aws-lc scatter, no copy` case: sealing 8 MiB as TLS 1.3 records with AES-128-GCM through the same AWS-LC calls the client uses. One core, GiB/s (2^30 bytes), 3 s of measurement. The AWS figures are from the smallest instance of each family, launched for the test and terminated.
 
 HTTPS upload is bound by this: in the profile of milestone 11 two thirds of the client's core is inside the cipher.
 

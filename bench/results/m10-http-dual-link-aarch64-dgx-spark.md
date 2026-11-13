@@ -38,7 +38,7 @@ The peer is `http_uring sink`: a thread per connection that reads each request a
 
 ## HTTPS over both links
 
-Same setup, with TLS 1.3 (AES-128-GCM): handshake by rustls, every record sealed and opened by `osc-tls`. The peer is `http_uring sink --tls-cert`, a rustls server with a thread per connection. Raw output: `m10-https-dual-link-aarch64-dgx-spark.jsonl`. PUT was run two or three times per connection count.
+Same setup, with TLS 1.3 (AES-128-GCM): handshake by rustls, every record sealed and opened by `longshore::tls`. The peer is `http_uring sink --tls-cert`, a rustls server with a thread per connection. Raw output: `m10-https-dual-link-aarch64-dgx-spark.jsonl`. PUT was run two or three times per connection count.
 
 | Request | Checksum | Conns | GB/s | Client thread | GB per thread-CPU-second |
 |---|---|---|---|---|---|

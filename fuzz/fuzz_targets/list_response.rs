@@ -10,10 +10,10 @@
 use libfuzzer_sys::fuzz_target;
 
 // The parser is compiled straight from its source file. Depending on the
-// whole osc-store crate would pull in the checksum library, whose C-ABI
+// whole crate would pull in the checksum library, whose C-ABI
 // library target does not link under the fuzzer's instrumentation.
 #[allow(dead_code)]
-#[path = "../../crates/osc-store/src/list.rs"]
+#[path = "../../crates/longshore/src/store/list.rs"]
 mod list;
 use list::{unescape, Listing};
 

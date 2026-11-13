@@ -1,0 +1,6 @@
+# Read by the no-mistakes gate from the default branch.
+commands:
+  # Unit, simulation and property tests here, then the real io_uring checks
+  # on Linux hosts over SSH (see scripts/test-linux.sh for host configuration).
+  test: "./scripts/test.sh"
+  lint: "cargo clippy --workspace --all-targets -- -D warnings"

@@ -1,6 +1,6 @@
 # Milestone 5 — checksum library comparison
 
-Measured 2026-11-12 with `cargo bench -p osc-bench --bench checksums` (criterion), one core, GiB/s (2^30 bytes). Every candidate first had to reproduce the published check value for its algorithm.
+Measured 2026-11-12 with `cargo bench -p longshore-bench --bench checksums` (criterion), one core, GiB/s (2^30 bytes). Every candidate first had to reproduce the published check value for its algorithm.
 
 Reference from the talk: 4.3 GB/s for their optimized CRC64, 0.5 GB/s for the Zig standard library.
 
@@ -24,7 +24,7 @@ All figures are for 8 MiB inputs; 64 KiB results are within about 40% of these a
 
 ## Decision
 
-`crc-fast` is adopted for both algorithms, behind `osc-checksum`.
+`crc-fast` is adopted for both algorithms, behind `longshore::checksum`.
 
 - It exceeds the 4.3 GB/s reference on all three machines: by about 2.8x on the slowest (EPYC 7713) and about 20x on the fastest.
 - It works on slices in place, so it adds no payload copy, and a test runs it with heap allocation sealed.

@@ -4,7 +4,7 @@
 # On macOS add `-s none`: the nightly AddressSanitizer runtime hangs at startup there.
 # The parsers contain no unsafe code, so bounds errors still surface as panics.
 [package]
-name = "osc-fuzz"
+name = "longshore-fuzz"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -17,9 +17,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-osc-dns = { path = "../crates/osc-dns" }
-osc-http = { path = "../crates/osc-http" }
-osc-tls = { path = "../crates/osc-tls" }
+longshore = { path = "../crates/longshore" }
 
 [[bin]]
 name = "dns_response"

@@ -8,7 +8,7 @@
 //! verdict on a prefix must not change when more bytes arrive.
 
 use libfuzzer_sys::fuzz_target;
-use osc_http::head::{parse_request, parse_response};
+use longshore::http::head::{parse_request, parse_response};
 
 fuzz_target!(|data: &[u8]| {
     let limit = 4096;

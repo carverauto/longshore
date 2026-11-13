@@ -1,0 +1,129 @@
+[package]
+name = "longshore"
+description = "Object storage client for Linux io_uring: one thread, memory allocated at start-up, object bodies sent without copying"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+readme = "../../README.md"
+keywords = ["s3", "object-storage", "io-uring", "gcs"]
+categories = ["network-programming", "web-programming::http-client"]
+autotests = false
+
+[features]
+# The deterministic simulator: an `Io` with virtual sockets, files and time.
+# Meant for tests, in this crate and in crates that use it.
+sim = []
+
+[dependencies]
+# AES-GCM through AWS-LC's scatter/gather interface, chosen by benchmark:
+# see bench/results/m6-aead.md. The safe aws-lc-rs wrapper does not expose
+# that interface, so the record layer calls aws-lc-sys directly.
+aws-lc-sys = "0.47"
+# Adopted by benchmark: see bench/results/m5-checksums.md. `std` is the
+# smallest feature set that builds outside no_std; the C FFI and CLI features
+# stay off.
+crc-fast = { version = "1.10", default-features = false, features = ["std"] }
+# SHA-256 and HMAC-SHA256 for request signing.
+ring = { version = "0.17", default-features = false }
+# The handshake, and only the handshake: certificate validation and key
+# agreement come from rustls. Once it completes, its traffic keys move to
+# `tls::record` and rustls is dropped. TLS 1.3 only (the `tls12` feature is off).
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+webpki-roots = "1"
+
+[dev-dependencies]
+# Turns the simulator on for this crate's own tests.
+longshore = { path = ".", features = ["sim"] }
+hegeltest = "0.52.2"
+# Test certificates.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }
+
+[[test]]
+name = "sim_echo"
+path = "tests/sim/echo.rs"
+
+[[test]]
+name = "dns_codec_props"
+path = "tests/dns/codec_props.rs"
+
+[[test]]
+name = "dns_resolver"
+path = "tests/dns/resolver.rs"
+
+[[test]]
+name = "http_failures"
+path = "tests/http/failures.rs"
+
+[[test]]
+name = "http_framing"
+path = "tests/http/framing.rs"
+
+[[test]]
+name = "http_head_props"
+path = "tests/http/head_props.rs"
+
+[[test]]
+name = "http_https"
+path = "tests/http/https.rs"
+
+[[test]]
+name = "http_pool"
+path = "tests/http/pool.rs"
+
+[[test]]
+name = "http_requests"
+path = "tests/http/requests.rs"
+
+[[test]]
+name = "tls_handshake"
+path = "tests/tls/handshake.rs"
+
+[[test]]
+name = "tls_record"
+path = "tests/tls/record.rs"
+
+[[test]]
+name = "checksum_props"
+path = "tests/checksum/props.rs"
+
+[[test]]
+name = "store_creds_sim"
+path = "tests/store/creds_sim.rs"
+
+[[test]]
+name = "store_gcs_sim"
+path = "tests/store/gcs_sim.rs"
+
+[[test]]
+name = "store_list_props"
+path = "tests/store/list_props.rs"
+
+[[test]]
+name = "store_no_address_sim"
+path = "tests/store/no_address_sim.rs"
+
+[[test]]
+name = "store_s3_checksums"
+path = "tests/store/s3_checksums.rs"
+
+[[test]]
+name = "store_s3_conditional"
+path = "tests/store/s3_conditional.rs"
+
+[[test]]
+name = "store_s3_listing"
+path = "tests/store/s3_listing.rs"
+
+[[test]]
+name = "store_s3_operations"
+path = "tests/store/s3_operations.rs"
+
+[[test]]
+name = "store_s3_retries"
+path = "tests/store/s3_retries.rs"
+
+[[test]]
+name = "store_sigv4_suite"
+path = "tests/store/sigv4_suite.rs"

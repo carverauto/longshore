@@ -9,7 +9,7 @@
 //! from a prefix does not change when more bytes arrive.
 
 use libfuzzer_sys::fuzz_target;
-use osc_tls::record::{record_len, Direction, Suite, CONTENT_APPLICATION_DATA, OVERHEAD};
+use longshore::tls::record::{record_len, Direction, Suite, CONTENT_APPLICATION_DATA, OVERHEAD};
 
 fuzz_target!(|data: &[u8]| {
     let whole = record_len(data);

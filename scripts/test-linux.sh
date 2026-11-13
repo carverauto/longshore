@@ -10,7 +10,7 @@
 # executes it. This script cross-compiles the check binaries, copies them to
 # each configured host and runs them there.
 #
-# Hosts come from $OSC_TEST_HOSTS_FILE (default ~/.config/s3-next/test-hosts),
+# Hosts come from $LONGSHORE_TEST_HOSTS_FILE (default ~/.config/longshore/test-hosts),
 # one "<rust-target> <ssh-destination>" per line, for example:
 #
 #   aarch64-unknown-linux-musl user@arm-host
@@ -21,7 +21,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-HOSTS="${OSC_TEST_HOSTS_FILE:-$HOME/.config/s3-next/test-hosts}"
+HOSTS="${LONGSHORE_TEST_HOSTS_FILE:-$HOME/.config/longshore/test-hosts}"
 if [ ! -f "$HOSTS" ]; then
     echo "WARNING: $HOSTS not found; SKIPPING real io_uring checks." >&2
     echo "WARNING: nothing in this run exercised the Linux I/O path." >&2
@@ -39,12 +39,12 @@ failed=0
 while read -r target dest <&3; do
     case "$target" in ''|\#*) continue ;; esac
     echo "== $target on $dest"
-    cargo build --release --quiet --target "$target" -p osc-bench --bin echo_uring --bin http_uring --bin dns_uring
+    cargo build --release --quiet --target "$target" -p longshore-bench --bin echo_uring --bin http_uring --bin dns_uring
     bin="target/$target/release"
-    $SSH "$dest" "mkdir -p osc-bench/$ID"
-    scp -q -o BatchMode=yes "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$dest:osc-bench/$ID/" </dev/null
+    $SSH "$dest" "mkdir -p longshore-bench/$ID"
+    scp -q -o BatchMode=yes "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$dest:longshore-bench/$ID/" </dev/null
     # Each check seals the heap after setup and exits non-zero on any failure.
-    if $SSH "$dest" "cd osc-bench/$ID && set -e
+    if $SSH "$dest" "cd longshore-bench/$ID && set -e
         timeout 60 ./echo_uring
         timeout 60 ./echo_uring --zc
         timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc
@@ -56,7 +56,7 @@ while read -r target dest <&3; do
         failed=$((failed + 1))
     fi
     ran=$((ran + 1))
-    $SSH "$dest" "rm -rf osc-bench/$ID" || true
+    $SSH "$dest" "rm -rf longshore-bench/$ID" || true
 done 3<"$HOSTS"
 
 if [ "$failed" -ne 0 ] || [ "$ran" -ne "$expected" ] || [ "$ran" -eq 0 ]; then

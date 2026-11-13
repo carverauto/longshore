@@ -2,7 +2,7 @@
 
 Measured 2026-11-12 with `http_uring` between host A and host B (DGX Spark, Linux 6.14, 200 GbE), one client io_uring thread pinned to CPU 19 (Cortex-X925), 8 MiB objects, 5 s per run, one run per cell. GB = 10^9 bytes.
 
-Client: handshake by rustls, then every record sealed and opened by `osc-tls` (AES-128-GCM through AWS-LC's scatter/gather calls). Peer: `http_uring sink --tls-cert`, a thread-per-connection rustls server.
+Client: handshake by rustls, then every record sealed and opened by `longshore::tls` (AES-128-GCM through AWS-LC's scatter/gather calls). Peer: `http_uring sink --tls-cert`, a thread-per-connection rustls server.
 
 | Request | TLS | Seal batch | Conns | GB/s | Thread CPU | GB per thread-CPU-second |
 |---|---|---|---|---|---|---|
