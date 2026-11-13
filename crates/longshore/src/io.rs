@@ -5,7 +5,7 @@
 
 //! I/O layer for the object storage client.
 //!
-//! Every component above this crate is generic over [`Io`]. Production uses
+//! Every module above this one is generic over [`Io`]. Production uses
 //! `uring::UringIo`; tests use the deterministic simulator in `crate::sim`.
 //!
 //! Buffers live in a pool owned by the `Io` implementation and are named by
