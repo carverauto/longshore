@@ -69,12 +69,13 @@ struct Slot {
     wake_count: u64,
 }
 
-/// The kernel holds pointers into `bufs`, `slots` and `quiet_ts` while
-/// operations are in flight, and closing the ring does not wait for them to
-/// end. The rule: that memory is freed only when `in_flight` is zero, and
-/// otherwise leaked, which is always safe. Dropping calls
-/// [`UringIo::quiesce`], closes the ring and then the eventfd, and frees the
-/// three if it returned true or leaks them if it returned false.
+/// The kernel holds pointers into memory this owns while operations are in
+/// flight (the fields `UringIo::leak` lists), and closing the ring does not
+/// wait for them to end. The rule: that memory is freed only when
+/// `in_flight` is zero, and otherwise leaked, which is always safe.
+/// Dropping calls [`UringIo::quiesce`], closes the ring and then the
+/// eventfd, and frees that memory if it returned true or leaks it if it
+/// returned false. A field the kernel can reach belongs in `leak`.
 pub struct UringIo {
     ring: ManuallyDrop<Ring>,
     limits: Limits,
@@ -130,9 +131,7 @@ impl Drop for UringIo {
             unsafe { close(self.wake_fd) };
         }
         if !quiet {
-            Box::leak(core::mem::take(&mut self.slots));
-            Box::leak(core::mem::take(&mut self.bufs));
-            Box::leak(core::mem::take(&mut self.quiet_ts));
+            self.leak();
         }
     }
 }
@@ -140,7 +139,8 @@ impl Drop for UringIo {
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
     pub fn new(limits: Limits) -> io::Result<UringIo> {
-        let entries = limits.ops_max.next_power_of_two().max(8);
+        // Room for one SQE per operation, and for `quiesce`'s cancel and timer.
+        let entries = (limits.ops_max + 2).next_power_of_two().max(8);
         let mut ring = Ring::new(
             entries,
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN,
@@ -205,13 +205,15 @@ impl UringIo {
         for s in self.slots.iter_mut() {
             s.cancel_requested = true;
         }
-        self.push(io_uring_sqe {
+        if !self.try_push(io_uring_sqe {
             opcode: IORING_OP_ASYNC_CANCEL,
             fd: -1,
             op_flags: IORING_ASYNC_CANCEL_ANY,
             user_data: QUIESCE,
             ..Default::default()
-        });
+        }) {
+            return false;
+        }
         let mut timing = false;
         let mut out = Completions::new(8);
         while self.in_flight > 0 {
@@ -222,13 +224,16 @@ impl UringIo {
                 if self.ring.pending() > 0 && self.ring.enter(0).is_err() {
                     return false;
                 }
-                self.push(io_uring_sqe {
+                let timer = io_uring_sqe {
                     opcode: IORING_OP_TIMEOUT,
                     addr: &*self.quiet_ts as *const timespec as u64,
                     len: 1,
                     user_data: QUIESCE | 1,
                     ..Default::default()
-                });
+                };
+                if !self.try_push(timer) {
+                    return false;
+                }
                 timing = true;
             }
             if self.ring.enter(1).is_err() {
@@ -246,6 +251,22 @@ impl UringIo {
             }
         }
         true
+    }
+
+    /// Everything the kernel may still read or write, given up for good
+    /// because it may still be in use.
+    fn leak(&mut self) {
+        Box::leak(core::mem::take(&mut self.slots));
+        Box::leak(core::mem::take(&mut self.bufs));
+        Box::leak(core::mem::take(&mut self.quiet_ts));
+        core::mem::forget(core::mem::take(&mut self.files));
+    }
+
+    /// Push for `quiesce`, which must not panic: false if the queue is full.
+    fn try_push(&mut self, sqe: io_uring_sqe) -> bool {
+        let pushed = self.ring.push(sqe).is_ok();
+        self.in_flight += pushed as u32;
+        pushed
     }
 
     /// Take one completion, keeping `in_flight` exact.

@@ -148,10 +148,10 @@ fn with_one_lane_failed_work_goes_to_the_lane_still_open() {
 }
 
 #[test]
-fn once_every_lane_is_closed_a_waiter_takes_a_closed_lanes_buffer() {
+fn once_every_lane_is_closed_a_waiter_ends_with_a_void_buffer() {
     let mut r = rig(2);
-    // Two buffers per lane, taken from lane 0 first.
-    let mut bufs: Vec<Buffer> = (0..4).map(|_| r.buffer()).collect();
+    // Two buffers per lane, all of them out.
+    let bufs: Vec<Buffer> = (0..4).map(|_| r.buffer()).collect();
     r.lanes[0].worker.abandon(true);
     let (woken, waker) = counted();
     let mut cx = Context::from_waker(&waker);
@@ -160,13 +160,17 @@ fn once_every_lane_is_closed_a_waiter_takes_a_closed_lanes_buffer() {
     let mut waiting = pin!(client.buffer());
     assert!(waiting.as_mut().poll(&mut cx).is_pending());
     r.lanes[1].worker.abandon(true);
-    if woken.get() > 0 {
-        assert!(waiting.as_mut().poll(&mut cx).is_pending());
-    }
-    let before = woken.get();
-    drop(bufs.remove(0));
-    assert!(woken.get() > before, "a buffer came back on lane 0 and woke nobody");
-    assert!(waiting.as_mut().poll(&mut cx).is_ready());
+    assert!(woken.get() > 0, "the last lane closed and the waiter slept on");
+    // Every operation would end closed, so the wait ends rather than
+    // waiting for a closed lane's buffer to come back.
+    let void = match waiting.as_mut().poll(&mut cx) {
+        Poll::Ready(b) => b,
+        Poll::Pending => panic!("a buffer wait with every lane closed did not end"),
+    };
+    assert!(void.as_slice().is_empty());
+    let (stored, _void) = r.run(r.client.store("k", void, 0));
+    assert_eq!(stored, Err(Error::Closed));
+    drop(bufs);
 }
 
 #[test]
@@ -234,8 +238,39 @@ fn when_the_failed_io_cannot_be_stopped_its_buffers_are_void_and_never_lent_agai
     assert!(a.as_slice().is_empty());
     assert_eq!(a.len(), 0);
     drop(a);
-    // Neither buffer went back to the pool.
+    // Neither buffer went back to the pool, and with no lane open none ever
+    // will: a wait for one ends at once with a void buffer, in both forms.
     let client = r.client.clone();
     let mut borrowing = pin!(client.buffer());
-    assert!(borrowing.as_mut().poll(&mut cx).is_pending());
+    let waited = match borrowing.as_mut().poll(&mut cx) {
+        Poll::Ready(b) => b,
+        Poll::Pending => panic!("a buffer wait with no lane open did not end"),
+    };
+    let blocked = r.client.buffer_blocking();
+    for void in [waited, blocked] {
+        assert!(void.as_slice().is_empty());
+        // An operation given it does not run.
+        let (stored, void) = r.run(r.client.store("c", void, 0));
+        assert_eq!(stored, Err(Error::Closed));
+        let (fetched, _void) = r.run(r.client.fetch("c", void));
+        assert_eq!(fetched, Err(Error::Closed));
+    }
+}
+
+#[test]
+fn a_waiter_parked_when_the_last_lane_goes_void_is_given_a_void_buffer() {
+    let mut r = rig(1);
+    let held = (r.buffer(), r.buffer());
+    let (woken, waker) = counted();
+    let mut cx = Context::from_waker(&waker);
+    let client = r.client.clone();
+    let mut waiting = pin!(client.buffer());
+    assert!(waiting.as_mut().poll(&mut cx).is_pending());
+    r.lanes[0].worker.abandon(false);
+    assert!(woken.get() > 0, "the lane failed and the waiter slept on");
+    match waiting.as_mut().poll(&mut cx) {
+        Poll::Ready(b) => assert!(b.as_slice().is_empty()),
+        Poll::Pending => panic!("the waiter would wait for ever"),
+    }
+    drop(held);
 }
