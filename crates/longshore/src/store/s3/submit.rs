@@ -25,15 +25,19 @@ impl S3 {
             .iter()
             .position(|s| s.state == State::Free)
             .ok_or(SubmitError::Busy)?;
+        let root = self.root.as_bytes();
         let s = &mut self.slots[i];
         s.candidate = false;
         s.comparing = false;
         if key.is_empty() {
             return Err(SubmitError::BadKey);
         }
-        s.path[0] = b'/';
+        let at = root.len();
+        s.path[..at].copy_from_slice(root);
+        s.path[at] = b'/';
+        let key_room = &mut s.path[at + 1..at + 1 + KEY_ENCODED_MAX - 1];
         s.path_len =
-            1 + uri_encode(key.as_bytes(), false, &mut s.path[1..]).ok_or(SubmitError::BadKey)?;
+            at + 1 + uri_encode(key.as_bytes(), false, key_room).ok_or(SubmitError::BadKey)?;
         s.query[..query.len()].copy_from_slice(query);
         s.query_len = query.len();
         s.options = Options::new();
@@ -177,6 +181,7 @@ impl S3 {
     ) -> Result<(), SubmitError> {
         // The query is stored already encoded and in the sorted order
         // signing requires: delimiter, list-type, max-keys, prefix, start-after.
+        let root = self.root.as_bytes();
         let s = &mut self.slots[i];
         let mut n = 0;
         let mut put = |path: &mut [u8], bytes: &[u8]| -> Option<()> {
@@ -193,6 +198,7 @@ impl S3 {
             v /= 10;
         }
         let built = (|| {
+            put(&mut s.path, root)?;
             put(&mut s.path, b"/?")?;
             if let Some(delimiter) = delimiter.filter(|d| !d.is_empty()) {
                 put(&mut s.path, b"delimiter=")?;

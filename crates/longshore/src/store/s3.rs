@@ -25,6 +25,10 @@ use crate::store::time::{amz_date, parse_http_date};
 use std::net::SocketAddr;
 
 pub const KEY_ENCODED_MAX: usize = 512;
+/// A bucket name's longest length.
+pub const BUCKET_MAX: usize = 63;
+/// A request path: the bucket when it is addressed there, then the key.
+const PATH_MAX: usize = 1 + BUCKET_MAX + KEY_ENCODED_MAX;
 /// Room for a multipart query: `partNumber=10000&uploadId=` and an upload
 /// id with every byte percent-encoded.
 const QUERY_MAX: usize = 32 + 3 * UPLOAD_ID_MAX;
@@ -97,7 +101,7 @@ struct Slot {
     outcome: Outcome,
     token: u64,
     kind: Kind,
-    path: [u8; KEY_ENCODED_MAX],
+    path: [u8; PATH_MAX],
     path_len: usize,
     /// Encoded query of a multipart request, in the sorted order signing
     /// requires. For a copy, the source as its header carries it. Empty
@@ -123,6 +127,9 @@ struct Slot {
 }
 
 pub struct S3 {
+    /// What every request path starts with: empty, or `/bucket` when the
+    /// bucket is addressed in the path.
+    root: String,
     cfg: Config,
     client: Client,
     /// `requests_max` slots for callers, plus one for credential validation.
@@ -170,6 +177,18 @@ impl S3 {
         assert!(cfg.attempts_max >= 1 && cfg.requests_max >= 1);
         // The signature's fixed buffers hold a region of this length with room to spare.
         assert!(cfg.region.len() <= 64, "region is longer than 64 bytes");
+        // What every request path starts with: nothing, or "/bucket".
+        let root = match &cfg.bucket_in_path {
+            Some(bucket) => {
+                let valid = (3..=BUCKET_MAX).contains(&bucket.len())
+                    && bucket.bytes().all(|b| {
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'
+                    });
+                assert!(valid, "bucket_in_path is not a bucket name: {bucket:?}");
+                format!("/{bucket}")
+            }
+            None => String::new(),
+        };
         let secure = cfg.tls.is_some();
         let client = match cfg.tls.take() {
             Some((setup, first_buf)) => Client::with_tls(cfg.http, setup, first_buf),
@@ -180,7 +199,7 @@ impl S3 {
             outcome: Outcome::Erased,
             token: 0,
             kind: Kind::Erase,
-            path: [0; KEY_ENCODED_MAX],
+            path: [0; PATH_MAX],
             path_len: 0,
             query: [0; QUERY_MAX],
             query_len: 0,
@@ -196,6 +215,7 @@ impl S3 {
         };
         let creds = [cfg.credentials; 2];
         S3 {
+            root,
             client,
             slots: vec![slot; cfg.requests_max as usize + 1].into_boxed_slice(),
             creds,

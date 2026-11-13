@@ -22,9 +22,16 @@ impl Server {
         let body_len = head.fields.content_length.unwrap_or(0);
         let extra = have - head_len;
         let (allowed_keys, allowed_count) = (self.allowed_keys, self.allowed_count);
+        let bucket = self.bucket.as_bytes();
         let too_long = {
             let buf = io.buf(self.head_buf(i));
             let (method, target) = (head.method(buf), head.target(buf));
+            // With the bucket in the path, "/bucket/rest" is served as "/rest".
+            let target = target
+                .strip_prefix(b"/")
+                .and_then(|t| t.strip_prefix(bucket))
+                .filter(|rest| !bucket.is_empty() && rest.first() == Some(&b'/'))
+                .unwrap_or(target);
             let c = &mut self.conns[i];
             let too_long = target.len() > TARGET_MAX || method.len() > c.method.len();
             if !too_long {

@@ -21,6 +21,7 @@ is meant to become part of a larger project.
 | `stat`, stores with a content type and metadata, `copy`, `erase_many`, listing with a delimiter, presigned URLs | Work against Amazon S3, Linode Object Storage and Google Cloud Storage. `erase_many` and presigned URLs need signing keys, so they are not available with Google's bearer token |
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
+| Bucket addressing | The bucket goes in the host name by default, or in the path when configured, as self-hosted S3-compatible stores commonly expect. Both forms run against Linode Object Storage. Not yet run against MinIO or Ceph |
 | IPv4 and IPv6 | The resolver asks for A records, AAAA records or both, and prefers the family the configuration names. When connections to that family fail and the name has addresses in the other, it uses the other. Run over IPv6 against Linode Object Storage |
 | Large-segment addresses | Optional, off by default. A store's name can resolve to addresses whose connections get different TCP segment sizes, and on a network card that does not segment in hardware the small ones cost several times more CPU per byte. With the setting on, the client measures each new connection, keeps its connections on the addresses with large segments, and asks DNS again sooner when every address is small. It can be switched while the store runs. Works on Linux 6.1 and later |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
@@ -110,6 +111,7 @@ export S3_ENDPOINT=s3.us-east-1.amazonaws.com S3_REGION=us-east-1 S3_BUCKET=my-b
 export S3_ACCESS_KEY=... S3_SECRET_KEY=...
 export S3_SESSION_TOKEN=...               # only with temporary keys
 export S3_TLS=1                           # HTTPS; omit for plain HTTP
+export S3_PATH_STYLE=1                     # bucket in the path: /bucket/key on the endpoint
 export S3_FAMILY=prefer6                  # 4 (the default), 6, prefer6 or prefer4
 export S3_PREFER_LARGE_SEGMENTS=2         # prefer large-segment addresses, using at least 2
 

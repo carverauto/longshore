@@ -310,6 +310,7 @@ fn a_presigned_url_carries_a_port_that_is_not_the_default() {
     let target = presign::Target {
         scheme: "http",
         host: "bucket.objects.test:9000",
+        root: "",
         region: "us-test-1",
         credentials: &creds,
     };

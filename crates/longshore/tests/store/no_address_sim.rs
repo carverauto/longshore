@@ -66,6 +66,7 @@ fn operations_end_when_the_name_never_resolves() {
     let mut s3 = S3::new(Config {
         vendor: Vendor::S3,
         host: "bucket.objects.test".into(),
+        bucket_in_path: None,
         port: 80,
         region: "us-test-1".into(),
         credentials: Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
