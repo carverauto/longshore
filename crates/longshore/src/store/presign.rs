@@ -42,8 +42,9 @@ pub enum PresignError {
 pub struct Target<'a> {
     /// `https` or `http`.
     pub scheme: &'a str,
-    /// The bucket's host, as in the `Host` header: `bucket.endpoint`, with
-    /// `:port` if the port is not the scheme's default.
+    /// The host, as in the `Host` header: `bucket.endpoint`, or the endpoint
+    /// alone when the bucket is in `root`, with `:port` if the port is not
+    /// the scheme's default.
     pub host: &'a str,
     /// What the path starts with: empty when the bucket is in the host
     /// name, `/bucket` when it is addressed in the path.
