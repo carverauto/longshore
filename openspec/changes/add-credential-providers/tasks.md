@@ -1,5 +1,5 @@
 ## 1. Foundations
-- [ ] 1.1 Expiry on `Credentials`; operations refuse to send with expired credentials
+- [ ] 1.1 Expiry on `Credentials`; operations refuse to send with expired credentials, and a presigned URL is refused when it would outlive them
 - [ ] 1.2 Field reader for JSON and XML responses in a fixed buffer; property tests and a fuzz target
 - [ ] 1.3 Generalise rotation from the file provider to a provider interface with a dedicated connection slot and buffer
 

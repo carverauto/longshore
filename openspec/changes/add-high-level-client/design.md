@@ -34,6 +34,12 @@ Most callers are on other threads, often inside an async runtime.
   may still write to it.
 - Errors are one public enum. Low-level outcomes that are not errors, such as
   `NotFound`, are mapped to `Option` or a dedicated variant per method.
+- An upload stream sends each part as exactly one registered buffer, so
+  each part is one zero-copy send. Opening an upload stream fails with a
+  clear error when the client's buffer size is below the store's 5 MiB
+  minimum part size, and the stream fails with a clear error before it
+  would exceed 10,000 parts. A streamed object is therefore capped at
+  10,000 times the buffer size.
 
 ## Risks / Trade-offs
 - A queue hop between threads costs time on small requests. The overhead
@@ -47,11 +53,3 @@ Most callers are on other threads, often inside an async runtime.
   `AsyncRead`/`AsyncWrite` from a specific ecosystem crate behind a feature.
   Proposed: start with the crate's own lending types and add adapters behind
   features once a user asks for one.
-- How an upload stream meets the store's multipart limits (every part but
-  the last at least 5 MiB, at most 10,000 parts) when the buffer size is
-  chosen by the caller. Proposed, pending an owner decision: a part stays
-  exactly one registered buffer, so each part is one zero-copy send.
-  Opening an upload stream fails with a clear error when the client's buffer
-  size is below the store's 5 MiB minimum part size, and the stream fails
-  with a clear error before it would exceed 10,000 parts. A streamed object
-  is therefore capped at 10,000 times the buffer size.
