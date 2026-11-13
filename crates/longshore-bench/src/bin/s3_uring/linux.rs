@@ -57,7 +57,15 @@ fn thread_cpu_secs() -> f64 {
 /// then `user` caller buffers. Small buffers: `conns` HTTP heads, 3 for DNS.
 /// Sockets: `conns` for HTTP, 2 for DNS.
 fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) {
-    let host = format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT"));
+    // S3_PATH_STYLE=1 addresses the bucket in the path, as self-hosted
+    // stores commonly expect: requests go to /bucket/key on the endpoint.
+    let bucket_in_path = std::env::var("S3_PATH_STYLE")
+        .is_ok_and(|v| v == "1")
+        .then(|| env("S3_BUCKET"));
+    let host = match &bucket_in_path {
+        Some(_) => env("S3_ENDPOINT"),
+        None => format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT")),
+    };
     let conf = std::fs::read_to_string("/etc/resolv.conf")
         .unwrap_or_else(|e| die(&format!("/etc/resolv.conf: {e}")));
     let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
@@ -142,6 +150,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
             longshore::store::s3::Vendor::S3
         },
         host,
+        bucket_in_path,
         port: if tls { 443 } else { 80 },
         region: if gcs { String::new() } else { env("S3_REGION") },
         credentials: if gcs {

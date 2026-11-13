@@ -39,8 +39,14 @@ pub enum Vendor {
 
 pub struct Config {
     pub vendor: Vendor,
-    /// Host header and DNS name: `bucket.endpoint` (virtual-hosted style).
+    /// Host header and DNS name. With the bucket in the host name, which is
+    /// the default, this is `bucket.endpoint`. With [`Config::bucket_in_path`]
+    /// it is the endpoint's own name.
     pub host: String,
+    /// `Some(bucket)` addresses the bucket in the path: every request goes
+    /// to `/bucket/key` on `host`. Self-hosted S3-compatible stores commonly
+    /// expect this. `None` addresses it in the host name.
+    pub bucket_in_path: Option<String>,
     pub port: u16,
     /// Region used in the signature scope.
     pub region: String,

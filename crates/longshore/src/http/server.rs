@@ -175,6 +175,9 @@ pub struct Server {
     uploads_begun: u32,
     /// A batch erase refuses keys that start with this, if it is not empty.
     erase_denied: &'static str,
+    /// The bucket requests name in their path, if the store is addressed
+    /// that way. See `serve_bucket_in_path`.
+    bucket: &'static str,
     script: [Behavior; SCRIPT_MAX],
     script_head: usize,
     script_len: usize,
@@ -275,6 +278,7 @@ impl Server {
             uploads: [0; multipart::UPLOADS_MAX],
             uploads_begun: 0,
             erase_denied: "",
+            bucket: "",
             script: [Behavior::Normal; SCRIPT_MAX],
             script_head: 0,
             script_len: 0,
@@ -298,6 +302,14 @@ impl Server {
         let bound = io.listen(self.cfg.listener, addr)?;
         self.accept(io);
         Ok(bound)
+    }
+
+    /// Act as a store whose bucket is addressed in the path: a request for
+    /// `/bucket/key` is served as `/key`, and one for `/bucket/?query` as
+    /// `/?query`. A request that does not name the bucket is left as it is,
+    /// so it finds nothing.
+    pub fn serve_bucket_in_path(&mut self, bucket: &'static str) {
+        self.bucket = bucket;
     }
 
     /// Queue a behavior for an upcoming request; unscripted requests are `Normal`.

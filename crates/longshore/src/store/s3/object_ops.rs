@@ -146,10 +146,13 @@ impl S3 {
         if from_key.is_empty() {
             return Err(SubmitError::BadKey);
         }
-        // The source is named as "/bucket/key". The bucket is the first
-        // label of the host, which is how the store is addressed.
+        // The source is named as "/bucket/key". The bucket is the one in
+        // the path, or else the first label of the host.
         let mut source = [0u8; QUERY_MAX];
-        let bucket = self.cfg.host.split('.').next().unwrap_or("").as_bytes();
+        let bucket = match &self.cfg.bucket_in_path {
+            Some(bucket) => bucket.as_bytes(),
+            None => self.cfg.host.split('.').next().unwrap_or("").as_bytes(),
+        };
         let key_at = bucket.len() + 2;
         if key_at >= source.len() {
             return Err(SubmitError::BadKey);
@@ -196,9 +199,11 @@ impl S3 {
         // The store requires an integrity header on this request.
         let crc = crate::checksum::crc64_nvme(&io.buf(manifest)[..len as usize]);
         let target = b"/?delete=";
+        let at = self.root.len();
         let s = &mut self.slots[i];
-        s.path[..target.len()].copy_from_slice(target);
-        s.path_len = target.len();
+        s.path[..at].copy_from_slice(self.root.as_bytes());
+        s.path[at..at + target.len()].copy_from_slice(target);
+        s.path_len = at + target.len();
         s.query_len = 0;
         s.options = Options::new();
         s.token = token;
@@ -285,6 +290,7 @@ impl S3 {
         let target = presign::Target {
             scheme: if self.secure { "https" } else { "http" },
             host: core::str::from_utf8(&authority[..n]).expect("a host and digits"),
+            root: &self.root,
             region: &self.cfg.region,
             credentials: &self.creds[self.active],
         };

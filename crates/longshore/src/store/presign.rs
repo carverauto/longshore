@@ -42,9 +42,13 @@ pub enum PresignError {
 pub struct Target<'a> {
     /// `https` or `http`.
     pub scheme: &'a str,
-    /// The bucket's host, as in the `Host` header: `bucket.endpoint`, with
-    /// `:port` if the port is not the scheme's default.
+    /// The host, as in the `Host` header: `bucket.endpoint`, or the endpoint
+    /// alone when the bucket is in `root`, with `:port` if the port is not
+    /// the scheme's default.
     pub host: &'a str,
+    /// What the path starts with: empty when the bucket is in the host
+    /// name, `/bucket` when it is addressed in the path.
+    pub root: &'a str,
     pub region: &'a str,
     pub credentials: &'a Credentials,
 }
@@ -73,10 +77,15 @@ pub fn presign(
     let date_str = core::str::from_utf8(&date).expect("timestamps are ASCII");
 
     // Pieces that are signed and also appear in the URL, each encoded once.
-    let mut path = [0u8; 1 + 3 * 1024];
-    path[0] = b'/';
-    let path_len =
-        1 + uri_encode(key.as_bytes(), false, &mut path[1..]).ok_or(PresignError::BadKey)?;
+    let mut path = [0u8; 64 + 1 + 3 * 1024];
+    let at = target.root.len();
+    path.get_mut(..at)
+        .ok_or(PresignError::BadKey)?
+        .copy_from_slice(target.root.as_bytes());
+    path[at] = b'/';
+    let path_len = at
+        + 1
+        + uri_encode(key.as_bytes(), false, &mut path[at + 1..]).ok_or(PresignError::BadKey)?;
     let path = core::str::from_utf8(&path[..path_len]).expect("encoded keys are ASCII");
 
     let mut credential = [0u8; 256];
