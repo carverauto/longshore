@@ -111,9 +111,10 @@ impl Client {
                     return self.fail(io, i, io_error(c.result));
                 }
                 self.conns[i].opened_at = io.now_ns();
-                self.conns[i].segment = c.result as u32;
-                if c.result > 0 {
-                    self.connected = Some((self.conns[i].addr, c.result as u32));
+                let segment = crate::io::Segment::decode(c.result);
+                self.conns[i].segment = segment.map_or(0, |s| s.size);
+                if let Some(segment) = segment {
+                    self.connected = Some((self.conns[i].addr, segment));
                 }
                 let Some(setup) = &self.tls else {
                     self.send_head(io, i, 0);

@@ -102,6 +102,9 @@ pub struct Resolver {
     /// Times a host's lookups moved to the other family after a failed
     /// connection.
     pub family_switches: u64,
+    /// Refreshes started early because a host had only small-segment
+    /// addresses.
+    pub early_refreshes: u64,
 }
 
 impl Resolver {
@@ -124,6 +127,7 @@ impl Resolver {
                     name: h.clone(),
                     sets: [Set::EMPTY; 2],
                     active: set_of(preferred),
+                    path_limit: 0,
                 }
             })
             .collect();
@@ -141,6 +145,7 @@ impl Resolver {
             queries: 0,
             cycles: 0,
             family_switches: 0,
+            early_refreshes: 0,
         }
     }
 
@@ -347,6 +352,16 @@ impl Resolver {
                         }
                     }
                     Phase::Idle { at } if now >= at => self.query(io, 0, 0, 0),
+                    // Every address of some host has small segments for its
+                    // path: ask again sooner, one answer timeout after the
+                    // last cycle, in case the name now has better ones.
+                    Phase::Idle { at }
+                        if self.starved()
+                            && now + self.cfg.refresh_ns >= at + self.cfg.timeout_ns =>
+                    {
+                        self.early_refreshes += 1;
+                        self.query(io, 0, 0, 0)
+                    }
                     _ => {}
                 }
                 Self::submit(

@@ -56,7 +56,14 @@ impl SimIo {
             Op::Connect { sock, addr } => {
                 let s = sock.0 as usize;
                 if self.socks[s].state == SockState::Open {
-                    return Some(self.socks[s].segment as i32); // accepted
+                    // Accepted. A routed address reports its segment sizes.
+                    return Some(
+                        crate::io::Segment {
+                            size: self.socks[s].segment,
+                            path_limit: self.path_limit,
+                        }
+                        .encode(),
+                    );
                 }
                 if self.socks[s].state == SockState::Connecting {
                     return None;

@@ -77,15 +77,26 @@ impl Set {
         }
     }
 
-    /// The smallest segment size an address may have and still be handed
-    /// out, keeping at least `keep` addresses. Addresses with at least half
-    /// the largest size seen pass. If those and the unmeasured ones are
-    /// fewer than `keep`, the floor drops to admit the next largest.
-    /// 0 when nothing has been measured.
-    pub(super) fn floor(&self, keep: usize) -> u32 {
+    /// The size an address needs to count as having large segments: half
+    /// the largest seen, or a quarter of what the path could carry if that
+    /// is more. 0 when nothing is known.
+    fn target(&self, path_limit: u32) -> u32 {
+        let largest = self.sizes[..self.len].iter().copied().max().unwrap_or(0);
+        largest.div_ceil(2).max(path_limit / 4)
+    }
+
+    fn unmeasured(&self) -> usize {
+        self.sizes[..self.len].iter().filter(|s| **s == 0).count()
+    }
+
+    /// The smallest segment size a connection should have, keeping at least
+    /// `keep` addresses in use: connections measured below it are worth
+    /// replacing. 0 when no address is known to have large segments, since
+    /// there is then nowhere better to go.
+    pub(super) fn floor(&self, keep: usize, path_limit: u32) -> u32 {
+        let target = self.target(path_limit);
         let sizes = &self.sizes[..self.len];
-        let largest = sizes.iter().copied().max().unwrap_or(0);
-        if largest == 0 {
+        if target == 0 || !sizes.iter().any(|s| *s >= target) {
             return 0;
         }
         // Unmeasured addresses are handed out whatever the floor is, so
@@ -95,8 +106,37 @@ impl Set {
             *o = if *s == 0 { u32::MAX } else { *s };
         }
         order[..self.len].sort_unstable_by(|a, b| b.cmp(a));
-        let kept = order[keep.clamp(1, self.len) - 1];
-        largest.div_ceil(2).min(kept)
+        target.min(order[keep.clamp(1, self.len) - 1])
+    }
+
+    /// The floor lookups apply. It is the same as [`Set::floor`], except
+    /// that when every measured address is small for the path and others
+    /// are unmeasured, the unmeasured ones are tried first.
+    pub(super) fn lookup_floor(&self, keep: usize, path_limit: u32) -> u32 {
+        match self.floor(keep, path_limit) {
+            0 if self.unmeasured() > 0 => self.target(path_limit),
+            floor => floor,
+        }
+    }
+
+    /// Every address has been measured and all are small for the path: a
+    /// new answer is the only way to find a better one.
+    pub(super) fn starved(&self, path_limit: u32) -> bool {
+        self.len > 0
+            && path_limit > 0
+            && self.unmeasured() == 0
+            && self.sizes[..self.len].iter().all(|s| *s < path_limit / 4)
+    }
+
+    /// Addresses worth one new connection each: unmeasured ones, while no
+    /// address is known to have large segments but some are known small.
+    pub(super) fn probes(&self, keep: usize, path_limit: u32) -> usize {
+        let measured = self.len - self.unmeasured();
+        if measured > 0 && self.floor(keep, path_limit) == 0 && path_limit > 0 {
+            self.unmeasured()
+        } else {
+            0
+        }
     }
 }
 
@@ -106,6 +146,9 @@ pub(super) struct Host {
     pub(super) sets: [Set; 2],
     /// The set lookups read while it has addresses.
     pub(super) active: usize,
+    /// The largest segment a path to this host could carry, as reported
+    /// with connections to it, or 0.
+    pub(super) path_limit: u32,
 }
 
 impl Host {

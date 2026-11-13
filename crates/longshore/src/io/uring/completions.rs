@@ -6,6 +6,7 @@
 //! Turning kernel completions into results, including operations of several steps.
 
 use super::*;
+use crate::io::Segment;
 
 impl UringIo {
     pub(super) fn connect_sqe(&self, i: u32) -> io_uring_sqe {
@@ -44,34 +45,42 @@ impl UringIo {
         Some(self.connect_sqe(i))
     }
 
-    /// The connect of a measured socket has ended. Read the segment size if
+    /// The connect of a measured socket has ended. Read the segment sizes if
     /// it succeeded, and close our descriptor either way: the registered
-    /// table keeps the socket. Returns the connect's result, with the size
-    /// in place of 0.
+    /// table keeps the socket. Returns the connect's result, with the
+    /// encoded sizes in place of 0.
     fn end_measure(&mut self, i: u32, result: i32) -> i32 {
         let s = &mut self.slots[i as usize];
         let fd = core::mem::replace(&mut s.probe_fd, -1);
         if fd < 0 {
             return result;
         }
-        let mut size: i32 = 0;
-        let mut len = core::mem::size_of::<i32>() as u32;
-        let read = result == 0
-            && unsafe {
-                getsockopt(
-                    fd,
-                    IPPROTO_TCP,
-                    TCP_MAXSEG,
-                    (&mut size as *mut i32).cast(),
-                    &mut len,
-                )
-            } == 0;
-        unsafe { close(fd) };
-        if read && size > 0 {
-            size
-        } else {
-            result
+        let option = |level, name| {
+            let mut value: i32 = 0;
+            let mut len = core::mem::size_of::<i32>() as u32;
+            let r =
+                unsafe { getsockopt(fd, level, name, (&mut value as *mut i32).cast(), &mut len) };
+            if r == 0 && value > 0 {
+                value as u32
+            } else {
+                0
+            }
+        };
+        let mut measured = result;
+        if result == 0 {
+            let size = option(IPPROTO_TCP, TCP_MAXSEG);
+            // The path's MTU less the IP and TCP headers.
+            let path_limit = if s.addr.family == AF_INET6 {
+                option(IPPROTO_IPV6, IPV6_MTU).saturating_sub(60)
+            } else {
+                option(IPPROTO_IP, IP_MTU).saturating_sub(40)
+            };
+            if size > 0 {
+                measured = Segment { size, path_limit }.encode();
+            }
         }
+        unsafe { close(fd) };
+        measured
     }
 
     /// A connect failed after its socket was created. Close the socket, then

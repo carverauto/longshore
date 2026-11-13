@@ -76,6 +76,10 @@ pub const SOCK_DGRAM: u64 = 2;
 pub const SOCK_CLOEXEC: u64 = 0o2000000;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_MAXSEG: c_int = 2;
+pub const IPPROTO_IP: c_int = 0;
+pub const IP_MTU: c_int = 14;
+pub const IPPROTO_IPV6: c_int = 41;
+pub const IPV6_MTU: c_int = 24;
 pub const CLOCK_MONOTONIC: c_int = 1;
 pub const CLOCK_REALTIME: c_int = 0;
 

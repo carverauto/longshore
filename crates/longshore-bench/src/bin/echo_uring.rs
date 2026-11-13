@@ -312,8 +312,13 @@ fn main() {
                 addr: listening,
             },
         );
+        let segment = longshore::io::Segment::decode(size)
+            .unwrap_or_else(|| panic!("measured connect returned {size}"));
         // Loopback's MTU is 65536, so its segments are far above Ethernet's.
-        assert!(size > 16_000, "measured connect returned {size}");
+        assert!(
+            segment.size > 16_000 && segment.path_limit > 60_000,
+            "{segment:?}"
+        );
         assert_eq!(run(&mut io, Op::Close { sock: Sock(3) }), 0);
         let refused = run(
             &mut io,
@@ -326,7 +331,10 @@ fn main() {
         assert_eq!(run(&mut io, Op::Close { sock: Sock(0) }), 0);
         io.measure_segment_sizes(measure);
         assert_eq!(open_fds(), before, "a measured connect leaked a descriptor");
-        println!("ok measured connect: segment size {size}, no descriptor left open");
+        println!(
+            "ok measured connect: segment size {}, path limit {}, no descriptor left open",
+            segment.size, segment.path_limit
+        );
     }
     let addr = SocketAddr::new(loopback, 0);
     let start = std::time::Instant::now();

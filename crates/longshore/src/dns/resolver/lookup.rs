@@ -7,6 +7,7 @@
 //! block on name resolution.
 
 use super::Resolver;
+use crate::io::Segment;
 use std::net::IpAddr;
 
 impl Resolver {
@@ -29,9 +30,11 @@ impl Resolver {
     /// in use. With a preference for large segments, addresses measured
     /// below the floor are passed over. No I/O.
     pub fn lookup(&mut self, host: usize) -> Option<IpAddr> {
-        let floor = self.segment_floor(host);
+        let keep = self.cfg.prefer_large_segments;
         let h = &mut self.hosts[host];
+        let limit = h.path_limit;
         let set = &mut h.sets[h.current()];
+        let floor = keep.map_or(0, |k| set.lookup_floor(k, limit));
         // The floor always admits at least one address, so this ends.
         for _ in 0..set.len {
             set.next = (set.next + 1) % set.len;
@@ -43,13 +46,15 @@ impl Resolver {
         None
     }
 
-    /// A connection to `ip`, an address of `host`, opened with this maximum
-    /// segment size. Returns the host's floor afterwards, as
+    /// A connection to `ip`, an address of `host`, opened with these
+    /// segment sizes. Returns the host's floor afterwards, as
     /// [`Resolver::segment_floor`] does.
-    pub fn connected(&mut self, host: usize, ip: IpAddr, segment_size: u32) -> u32 {
-        let set = &mut self.hosts[host].sets[usize::from(ip.is_ipv6())];
+    pub fn connected(&mut self, host: usize, ip: IpAddr, segment: Segment) -> u32 {
+        let h = &mut self.hosts[host];
+        h.path_limit = h.path_limit.max(segment.path_limit);
+        let set = &mut h.sets[usize::from(ip.is_ipv6())];
         if let Some(k) = set.addrs[..set.len].iter().position(|a| *a == ip) {
-            set.sizes[k] = segment_size;
+            set.sizes[k] = segment.size;
         }
         self.segment_floor(host)
     }
@@ -62,15 +67,36 @@ impl Resolver {
         self.cfg.prefer_large_segments = keep;
     }
 
-    /// The smallest segment size a connection to `host` should have: lookups
-    /// pass over addresses measured below it. 0 when there is no preference
-    /// for large segments or nothing has been measured.
+    /// The smallest segment size a connection to `host` should have:
+    /// connections measured below it are worth replacing, and lookups pass
+    /// over addresses measured below it. 0 when there is no preference for
+    /// large segments or no address is known to have them.
     pub fn segment_floor(&self, host: usize) -> u32 {
         let h = &self.hosts[host];
         match self.cfg.prefer_large_segments {
-            Some(keep) => h.sets[h.current()].floor(keep),
+            Some(keep) => h.sets[h.current()].floor(keep, h.path_limit),
             None => 0,
         }
+    }
+
+    /// How many of `host`'s addresses are worth one new connection each to
+    /// measure them: the unmeasured ones, while every measured address has
+    /// small segments. 0 without the preference.
+    pub fn probes_wanted(&self, host: usize) -> usize {
+        let h = &self.hosts[host];
+        match self.cfg.prefer_large_segments {
+            Some(keep) => h.sets[h.current()].probes(keep, h.path_limit),
+            None => 0,
+        }
+    }
+
+    /// Some host has only addresses with small segments for its path.
+    pub(super) fn starved(&self) -> bool {
+        self.cfg.prefer_large_segments.is_some()
+            && self
+                .hosts
+                .iter()
+                .any(|h| h.sets[h.current()].starved(h.path_limit))
     }
 
     /// The cached addresses lookups are handing out for a host: those of

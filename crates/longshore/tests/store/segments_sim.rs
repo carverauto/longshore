@@ -161,3 +161,34 @@ fn turning_it_on_replaces_connections_that_were_never_measured() {
     assert_eq!(w.io.route_connects(front(2)), on_large, "settled");
     assert!(w.s3.small_segment_retired >= 1);
 }
+
+#[test]
+fn a_name_with_only_small_addresses_is_asked_again_until_a_large_one_appears() {
+    // The path could carry 8,960-byte segments, and both addresses the
+    // name has at first give 1,432.
+    let ns = Nameserver {
+        a: &FRONTS[..2],
+        aaaa: &[],
+    };
+    let (mut w, mut ns) = resolved_world(Family::V4, Some(1), ADDR, ns);
+    w.io.set_path_limit(8960);
+    for (i, size) in [SMALL, SMALL, LARGE].into_iter().enumerate() {
+        w.io.route(front(i), ADDR, size);
+    }
+    store_three_at_once(&mut w, &ns);
+    assert_eq!(w.s3.small_segment_retired, 0, "nowhere better to go yet");
+    // The store's own traffic keeps time moving. The resolver's refresh
+    // interval is 30 s, so only an early refresh can pick up the change.
+    ns.a = &FRONTS;
+    let until = w.io.now_ns() + 2_000 * MS;
+    while w.io.now_ns() < until {
+        store_three_at_once(&mut w, &ns);
+    }
+    assert!(w.io.route_connects(front(2)) >= 3);
+    assert!(w.s3.small_segment_retired >= 2);
+    // Settled: every connection is on the large-segment address.
+    let connects = w.s3.connects();
+    store_three_at_once(&mut w, &ns);
+    store_three_at_once(&mut w, &ns);
+    assert_eq!(w.s3.connects(), connects);
+}

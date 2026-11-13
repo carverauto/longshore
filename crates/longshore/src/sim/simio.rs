@@ -106,6 +106,8 @@ pub struct SimIo {
     /// Extra addresses of listeners: (address, the listener's address, the
     /// segment size connections to the address report).
     routes: Vec<Route>,
+    /// The path limit connects to routed addresses report with their size.
+    path_limit: u32,
 }
 
 /// Virtual time added per tick.
@@ -143,6 +145,7 @@ impl SimIo {
             trace: 0xcbf2_9ce4_8422_2325,
             files: Vec::new(),
             routes: Vec::new(),
+            path_limit: 0,
         }
     }
 
@@ -174,6 +177,12 @@ impl SimIo {
             segment: segment_size,
             connects: 0,
         });
+    }
+
+    /// The largest segment the simulated path could carry, which connects
+    /// to routed addresses report next to their own size. 0 is unknown.
+    pub fn set_path_limit(&mut self, path_limit: u32) {
+        self.path_limit = path_limit;
     }
 
     /// Connects to the routed address `addr` that reached its listener.

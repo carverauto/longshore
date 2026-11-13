@@ -18,7 +18,7 @@
 use crate::http::chunked::Chunked;
 use crate::http::head::{parse_response, Fields, HeadWriter, HttpError};
 use crate::http::stream::{IdleCheck, Step, Stream};
-use crate::io::{BufId, Completion, Io, Op, Sock, Token, ECANCELED};
+use crate::io::{BufId, Completion, Io, Op, Segment, Sock, Token, ECANCELED};
 use crate::tls::handshake::{ClientSetup, Handshake, TlsError};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -225,50 +225,21 @@ pub struct Client {
     /// The address of the last connection that failed or timed out before it
     /// opened. The owner takes it to learn that an address is unreachable.
     pub connect_failure: Option<SocketAddr>,
-    /// The address and maximum segment size of the last connection opened,
-    /// when the I/O backend measured it. The owner takes it.
-    pub connected: Option<(SocketAddr, u32)>,
+    /// The address and segment sizes of the last connection opened, when
+    /// the I/O backend measured them. The owner takes it.
+    pub connected: Option<(SocketAddr, Segment)>,
 }
 
 mod chunked_body;
 mod events;
 mod request;
 mod response;
+mod retire;
 
 impl Client {
     /// A client that speaks plain HTTP.
     pub fn new(cfg: Config) -> Client {
         Self::build(cfg, None)
-    }
-
-    /// Stop reusing the connections to `host_id` whose measured segment
-    /// size is below `floor`. Each finishes the request it is serving and
-    /// is replaced the next time it would be picked. Connections that were
-    /// not measured are kept. Returns how many were retired by this call.
-    pub fn retire_below(&mut self, host_id: u16, floor: u32) -> u32 {
-        let mut retired = 0;
-        for c in self.conns.iter_mut() {
-            let small = c.segment > 0 && c.segment < floor;
-            if c.host_id == host_id && c.state != State::Closed && small && !c.retired {
-                c.retired = true;
-                retired += 1;
-            }
-        }
-        retired
-    }
-
-    /// Stop reusing the connections to `host_id` that were opened without
-    /// their segment size being measured, so that their replacements are
-    /// measured. Returns how many were retired by this call.
-    pub fn retire_unmeasured(&mut self, host_id: u16) -> u32 {
-        let mut retired = 0;
-        for c in self.conns.iter_mut() {
-            if c.host_id == host_id && c.state != State::Closed && c.segment == 0 && !c.retired {
-                c.retired = true;
-                retired += 1;
-            }
-        }
-        retired
     }
 
     /// A client that speaks HTTPS. Each connection additionally uses two

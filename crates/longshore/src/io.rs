@@ -16,6 +16,8 @@ use std::io;
 use std::net::SocketAddr;
 
 pub mod alloc_guard;
+pub mod segment;
+pub use segment::Segment;
 #[cfg(target_os = "linux")]
 pub mod ring;
 #[cfg(target_os = "linux")]
@@ -43,8 +45,8 @@ pub struct Sock(pub u32);
 pub enum Op {
     /// Open a TCP socket in slot `sock` and connect it. A connect that fails
     /// leaves the slot free; the caller need not close it. A connect that
-    /// succeeds completes with 0, or with the connection's maximum segment
-    /// size in bytes when the backend was asked to measure it.
+    /// succeeds completes with 0, or with what [`Segment::decode`] reads
+    /// when the backend was asked to measure segment sizes.
     Connect {
         sock: Sock,
         addr: SocketAddr,
@@ -266,9 +268,9 @@ pub trait Io {
     /// Bind and listen in slot `sock`. Initialization-time only; may block.
     /// Returns the bound address (useful with port 0).
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
-    /// Ask for the maximum segment size of each TCP connection opened from
-    /// now on: a connect that succeeds then completes with it in place
-    /// of 0. May be changed at any time. A backend that cannot measure
+    /// Ask for the segment sizes of each TCP connection opened from now on:
+    /// a connect that succeeds then completes with an encoded [`Segment`]
+    /// in place of 0. May be changed at any time. A backend that cannot measure
     /// ignores this, and its connects complete with 0.
     fn measure_segment_sizes(&mut self, _on: bool) {}
     /// Queue an operation. Performs no system call.

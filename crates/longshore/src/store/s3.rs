@@ -144,6 +144,8 @@ pub struct S3 {
     /// Connections retired because their address's segment size ranked too
     /// small, when the resolver prefers large segments.
     pub small_segment_retired: u64,
+    /// The resolver's cycle count when its answer was last acted on.
+    resolver_cycles: u64,
 }
 
 impl S3 {
@@ -204,6 +206,7 @@ impl S3 {
             credential_failures: 0,
             store_comparisons: 0,
             small_segment_retired: 0,
+            resolver_cycles: 0,
             cfg,
         }
     }
@@ -297,6 +300,14 @@ impl S3 {
         }
         if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
             if r.on_completion(io, c) {
+                // A new answer: replace connections it ranks too small, and
+                // open one to each address worth measuring.
+                if r.cycles != self.resolver_cycles {
+                    self.resolver_cycles = r.cycles;
+                    let floor = r.segment_floor(0);
+                    self.small_segment_retired += self.client.retire_below(0, floor) as u64;
+                    self.client.retire_some(0, r.probes_wanted(0) as u32);
+                }
                 return true;
             }
         }
@@ -310,9 +321,9 @@ impl S3 {
         }
         // A measured connection: tell the resolver its address's segment
         // size, and stop reusing connections it now ranks too small.
-        if let Some((addr, size)) = self.client.connected.take() {
+        if let Some((addr, segment)) = self.client.connected.take() {
             if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
-                let floor = r.connected(0, addr.ip(), size);
+                let floor = r.connected(0, addr.ip(), segment);
                 self.small_segment_retired += self.client.retire_below(0, floor) as u64;
             }
         }
