@@ -1,6 +1,6 @@
 # Milestone 0 baseline — raw io_uring TCP, AArch64
 
-Measured 2026-11-12 with `crates/osc-bench/src/bin/tcp_raw.rs` (no protocol code).
+Measured 2026-11-12 with `crates/longshore-bench/src/bin/tcp_raw.rs` (no protocol code).
 
 - Hosts: two NVIDIA DGX Spark (host A -> host B), Linux 6.14.0-1015-nvidia, AArch64.
 - Link: Mellanox mlx5 200 GbE, direct, MTU 9000 (192.0.2.1 -> 192.0.2.2).

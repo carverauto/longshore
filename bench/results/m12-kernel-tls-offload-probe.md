@@ -2,7 +2,7 @@
 
 A feasibility probe, run 2026-11-13 on the DGX Spark pair (host A to host B, Linux 6.14, Mellanox ConnectX-7, one link). The question: if the kernel is given the TLS keys and the card encrypts (`tls-hw-tx-offload`), how much cheaper is an HTTPS upload for the client than encrypting in our own record layer?
 
-The probe is `crates/osc-bench/examples/ktls_probe.rs`. It does the handshake with rustls, hands the sending keys to the kernel with `TLS_TX`, and sends 8 MiB HTTP PUT bodies as plaintext on one blocking connection pinned to CPU 19, for 5 s. It is not the client: one connection, blocking sockets, no io_uring. It measures what the kernel path costs.
+The probe is `crates/longshore-bench/examples/ktls_probe.rs`. It does the handshake with rustls, hands the sending keys to the kernel with `TLS_TX`, and sends 8 MiB HTTP PUT bodies as plaintext on one blocking connection pinned to CPU 19, for 5 s. It is not the client: one connection, blocking sockets, no io_uring. It measures what the kernel path costs.
 
 ## Results
 

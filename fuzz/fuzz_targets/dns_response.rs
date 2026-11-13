@@ -9,7 +9,7 @@
 //! fuzzer can get past the id check.
 
 use libfuzzer_sys::fuzz_target;
-use osc_dns::codec::parse_response;
+use longshore::dns::codec::parse_response;
 
 fuzz_target!(|data: &[u8]| {
     let id = if data.len() >= 2 { u16::from_be_bytes([data[0], data[1]]) } else { 0 };

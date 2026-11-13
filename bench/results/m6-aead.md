@@ -1,6 +1,6 @@
 # Milestone 6 — AES-GCM candidates for the TLS 1.3 record layer
 
-Measured 2026-11-12 with `cargo bench -p osc-bench --bench aead` (criterion), one core.
+Measured 2026-11-12 with `cargo bench -p longshore-bench --bench aead` (criterion), one core.
 
 Each candidate seals 512 records of 16,384 bytes (8 MiB of application data): AES-128-GCM over the data plus the one-byte content type TLS 1.3 appends, reading from a source buffer and leaving ciphertext and tag in a destination buffer. Libraries that can only encrypt in place are charged for the copy from source to destination, because the record layer would have to make it. Before timing, all four candidates had to produce byte-identical records for the same key, nonce and input.
 

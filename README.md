@@ -1,6 +1,6 @@
-# s3-next
+# longshore
 
-s3-next is an object storage client written in Rust. It is built to move a
+longshore is an object storage client written in Rust. It is built to move a
 lot of data with little CPU: one thread on Linux `io_uring`, all memory
 allocated at start-up, and object bodies sent to the network without being
 copied. It talks to Amazon S3, to S3-compatible stores, and to Google Cloud
@@ -40,7 +40,7 @@ run through a cryptographic hash.
 
 DNS, HTTP, the TLS record layer and the store's retry logic are written
 against an `Io` trait and do no I/O themselves. The same code runs on the
-real kernel and in `osc-sim`, a simulator with virtual sockets, files and
+real kernel and in `longshore::sim`, a simulator with virtual sockets, files and
 time. The simulator is seeded, so a failing run replays exactly, and it can
 inject resets, short writes, partial reads, flipped bits and delays.
 
@@ -50,17 +50,21 @@ suggests.
 
 ## Layout
 
-| Crate | Contents |
+The library is one crate, `longshore`, in `crates/longshore`.
+
+| Module | Contents |
 |---|---|
-| `osc-io` | The `Io` trait, the `io_uring` backend on raw system calls, and the allocation guard |
-| `osc-sim` | The simulator |
-| `osc-dns` | A-record resolver over UDP |
-| `osc-http` | HTTP/1.1 client with a connection pool and chunked decoding, a stream that is plain or TLS, and a server used by the tests |
-| `osc-tls` | TLS 1.3 record layer and the `rustls` handshake wrapper |
-| `osc-checksum` | CRC-64/NVME, CRC-32C, base64 |
-| `osc-crypto` | SHA-256 and HMAC-SHA256 |
-| `osc-store` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials |
-| `osc-bench` | Benchmarks and the programs that check the real kernel path |
+| `io` | The `Io` trait, the `io_uring` backend on raw system calls, and the allocation guard |
+| `sim` | The simulator, behind the `sim` feature |
+| `dns` | A-record resolver over UDP |
+| `http` | HTTP/1.1 client with a connection pool and chunked decoding, a stream that is plain or TLS, and a server used by the tests |
+| `tls` | TLS 1.3 record layer and the `rustls` handshake wrapper |
+| `checksum` | CRC-64/NVME, CRC-32C, base64 |
+| `crypto` | SHA-256 and HMAC-SHA256 |
+| `store` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials |
+
+`crates/longshore-bench` has the benchmarks and the programs that check the
+real kernel path. It is not published.
 
 `fuzz/` has fuzz targets for the parsers. `bench/results/` has every
 measurement with the conditions it was taken under, and `bench/README.md`
@@ -84,7 +88,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 `scripts/test-linux.sh` cross-compiles the check programs for
 `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`, copies them to
-the hosts listed in `~/.config/s3-next/test-hosts`, and runs them. That file
+the hosts listed in `~/.config/longshore/test-hosts`, and runs them. That file
 has one `<rust-target> <ssh-destination>` per line. If it is missing, the
 real-kernel checks are skipped with a warning.
 
@@ -94,7 +98,7 @@ Property tests use [Hegel](https://hegel.dev). The fuzz targets run with
 ## Trying it against a store
 
 `s3_uring` shows how to drive the library, and it is also the self-test and
-the benchmark. Its source is in `crates/osc-bench/src/bin/s3_uring/`. On a
+the benchmark. Its source is in `crates/longshore-bench/src/bin/s3_uring/`. On a
 Linux host:
 
 ```sh
@@ -115,7 +119,7 @@ the keys.
 
 The API is low level. The caller owns the event loop, gives the store
 registered buffers, submits each operation with a token, and collects
-outcomes with `poll`. The simulation tests in `crates/osc-store/tests/` are
+outcomes with `poll`. The simulation tests in `crates/longshore/tests/store/` are
 the shortest complete examples.
 
 ## Measurements

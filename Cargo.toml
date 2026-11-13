@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/osc-io", "crates/osc-sim", "crates/osc-dns", "crates/osc-http", "crates/osc-crypto", "crates/osc-checksum", "crates/osc-tls", "crates/osc-store", "crates/osc-bench"]
+members = ["crates/longshore", "crates/longshore-bench"]
 
 [workspace.package]
 edition = "2021"

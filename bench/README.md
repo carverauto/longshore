@@ -8,17 +8,17 @@ In-process, CPU-bound code: parsers (`dns_codec`, `http_head`), checksums
 (`checksums`) and AEAD (`aead`). Substitute the bench name below.
 
 ```sh
-cargo bench -p osc-bench --bench dns_codec
-cargo bench -p osc-bench --bench dns_codec -- --save-baseline main   # record
-cargo bench -p osc-bench --bench dns_codec -- --baseline main        # compare
+cargo bench -p longshore-bench --bench dns_codec
+cargo bench -p longshore-bench --bench dns_codec -- --save-baseline main   # record
+cargo bench -p longshore-bench --bench dns_codec -- --baseline main        # compare
 ```
 
 To run on a Linux host that has no Rust toolchain, cross-compile and copy the
 bench executable (cargo prints its path):
 
 ```sh
-cargo bench -p osc-bench --bench dns_codec --no-run --target aarch64-unknown-linux-musl
-cargo bench -p osc-bench --bench dns_codec --no-run --target x86_64-unknown-linux-musl
+cargo bench -p longshore-bench --bench dns_codec --no-run --target aarch64-unknown-linux-musl
+cargo bench -p longshore-bench --bench dns_codec --no-run --target x86_64-unknown-linux-musl
 scp target/aarch64-unknown-linux-musl/release/deps/dns_codec-<hash> HOST:dns_codec_bench
 ssh HOST 'taskset -c <fast-core> ./dns_codec_bench --bench'
 ```
@@ -40,14 +40,14 @@ remove it.
 ## Network throughput (`tcp_raw`)
 
 Raw io_uring TCP send and receive between two hosts, one pinned thread under
-test. See the header of `crates/osc-bench/src/bin/tcp_raw.rs` for usage and
+test. See the header of `crates/longshore-bench/src/bin/tcp_raw.rs` for usage and
 `results/` for recorded runs. This is not a criterion benchmark: it needs a
 peer on another machine and reports CPU cost per byte, not just time.
 
 HTTP PUT and GET throughput uses `http_uring` the same way, against its own
-`sink` peer; see the header of `crates/osc-bench/src/bin/http_uring.rs`.
+`sink` peer; see the header of `crates/longshore-bench/src/bin/http_uring.rs`.
 S3 against a real bucket uses `s3_uring`; see the header of
-`crates/osc-bench/src/bin/s3_uring.rs`.
+`crates/longshore-bench/src/bin/s3_uring.rs`.
 
 ## Repeating runs
 
@@ -67,7 +67,7 @@ Apple M). On another core with the same instructions, for example the
 Cortex-X925, build with the capabilities fixed at compile time:
 
 ```sh
-scripts/build-fast-aes-aarch64.sh --release -p osc-bench --bin http_uring
+scripts/build-fast-aes-aarch64.sh --release -p longshore-bench --bin http_uring
 # -> target/fast-aes/aarch64-unknown-linux-musl/release/http_uring
 ```
 

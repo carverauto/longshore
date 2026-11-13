@@ -1,6 +1,6 @@
 # Milestone 3 — HTTP PUT and GET throughput, AArch64
 
-Measured 2026-11-12 with `crates/osc-bench/src/bin/http_uring.rs`.
+Measured 2026-11-12 with `crates/longshore-bench/src/bin/http_uring.rs`.
 
 - Same hosts and link as milestone 0: host A -> host B, DGX Spark, Linux 6.14, 200 GbE, MTU 9000.
 - Client: one io_uring thread pinned to CPU 19 (Cortex-X925), plain HTTP, no checksums, no TLS. Request bodies of 64 KiB or more are sent zero-copy from registered buffers.

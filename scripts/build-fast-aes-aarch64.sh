@@ -18,11 +18,11 @@
 # known. It is not needed on x86-64, on Graviton, or on Apple silicon.
 #
 # Usage: scripts/build-fast-aes-aarch64.sh [cargo build arguments]
-#   e.g. scripts/build-fast-aes-aarch64.sh --release -p osc-bench --bin http_uring
+#   e.g. scripts/build-fast-aes-aarch64.sh --release -p longshore-bench --bin http_uring
 # Output goes to target/fast-aes/, so it never mixes with a normal build.
 set -eu
 cd "$(dirname "$0")/.."
-TARGET="${OSC_FAST_AES_TARGET:-aarch64-unknown-linux-musl}"
+TARGET="${LONGSHORE_FAST_AES_TARGET:-aarch64-unknown-linux-musl}"
 VAR="CFLAGS_$(echo "$TARGET" | tr '-' '_')"
 FLAGS="-DOPENSSL_STATIC_ARMCAP -DOPENSSL_STATIC_ARMCAP_NEON -DOPENSSL_STATIC_ARMCAP_AES \
 -DOPENSSL_STATIC_ARMCAP_PMULL -DOPENSSL_STATIC_ARMCAP_SHA1 -DOPENSSL_STATIC_ARMCAP_SHA256 \
