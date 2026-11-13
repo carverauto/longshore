@@ -73,7 +73,11 @@ pub enum Error {
     TooLong,
     /// The store refused or could not be reached. Retries have been made.
     Store(Fatal),
-    /// The client was shut down before the operation ran.
+    /// The operation did not run: the client was shut down, or the I/O
+    /// thread it was given to failed. An operation without a buffer goes to
+    /// an I/O thread still running when it is sent, but one can fail just
+    /// after that, and an operation with a buffer stays on the buffer's
+    /// thread. Asking again may succeed on another thread.
     Closed,
     /// The store answered with something this operation does not expect.
     Unexpected,
