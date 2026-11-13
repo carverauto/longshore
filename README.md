@@ -177,9 +177,9 @@ need it.
 
 ### AES-GCM by processor
 
-HTTPS speed follows the processor's AES speed: in a profile of an HTTPS
-upload, two thirds of the client's core is inside the cipher. Sealing TLS
-records, one core, in GiB/s (`m13-aes-gcm-by-cpu.md`):
+HTTPS speed can follow the processor's AES speed: in a profile of an HTTPS
+upload on the DGX Spark, two thirds of the client's core is inside the
+cipher. Sealing TLS records, one core, in GiB/s (`m13-aes-gcm-by-cpu.md`):
 
 | Processor | GiB/s |
 |---|---|
@@ -191,8 +191,10 @@ records, one core, in GiB/s (`m13-aes-gcm-by-cpu.md`):
 | Arm Cortex-X925, default build | 7.8 |
 | AWS Graviton4 (AWS `c8g`) | 6.1 |
 
-HTTPS upload has not been measured end to end on the AMD or Intel
-processors.
+On the AMD `m8azn` instance HTTPS upload to S3 reached 3.1 GB/s, limited
+by the kernel's transmit path rather than the cipher
+(`m18-s3-aws-large-instances.md`). HTTPS upload has not been measured end
+to end on the Intel processor.
 
 ### Compared with the talk
 
@@ -223,7 +225,7 @@ the client is mostly idle.
 
 - Plain PUT fills a 200 Gbit/s link between our own machines and a
   100 Gbit/s card to S3. On a 300 Gbit/s card to S3 the client's core is
-  usually the limit, at a median of 29 GB/s, and runs differ by up to 70%
+  usually the limit, at a median of 29 GB/s, and runs differ by up to 73%
   for a reason we have not found (`m18-s3-aws-large-instances.md`).
 - On x86-64 the only real-store measurement is one AMD instance type,
   where the kernel's transmit path limits uploads to about 11 GB/s plain
