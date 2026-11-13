@@ -118,11 +118,12 @@ impl Client {
         self.lanes[0].buf_size
     }
 
-    /// The lane with the fewest operations in progress.
+    /// The open lane with the fewest operations in progress, or a closed
+    /// one if none is open.
     fn least_busy(&self) -> &Arc<Lane> {
         self.lanes
             .iter()
-            .min_by_key(|l| l.in_flight())
+            .min_by_key(|l| (!open(l), l.in_flight()))
             .expect("at least one lane")
     }
 

@@ -53,6 +53,10 @@ name = "client_builder"
 path = "tests/client/builder.rs"
 
 [[test]]
+name = "client_waits"
+path = "tests/client/waits.rs"
+
+[[test]]
 name = "dns_codec_props"
 path = "tests/dns/codec_props.rs"
 
