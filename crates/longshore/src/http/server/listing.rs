@@ -50,7 +50,12 @@ impl Server {
             loop {
                 // The smallest key greater than the last one emitted.
                 let mut best: Option<([u8; TARGET_MAX], usize, u32)> = None;
-                for o in self.objects.iter().filter(|o| o.used) {
+                // Parts of uploads in progress are not objects yet.
+                for o in self
+                    .objects
+                    .iter()
+                    .filter(|o| o.used && !o.target[..o.target_len].contains(&b'?'))
+                {
                     let mut key = [0u8; TARGET_MAX];
                     let len = percent_decode(&o.target[1..o.target_len], &mut key);
                     let k = &key[..len];

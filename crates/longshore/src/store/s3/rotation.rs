@@ -60,11 +60,11 @@ impl S3 {
     /// Finish a validation if its request has completed.
     pub(super) fn check_validation<IO: Io>(&mut self, io: &mut IO) {
         let slot = self.cfg.requests_max as usize;
-        let (Provider::Validating, State::Finished(outcome)) =
-            (self.provider, self.slots[slot].state)
+        let (Provider::Validating, State::Finished) = (self.provider, self.slots[slot].state)
         else {
             return;
         };
+        let outcome = self.slots[slot].outcome;
         self.slots[slot].state = State::Free;
         if matches!(outcome, Outcome::Listed { .. }) {
             self.active = 1 - self.active;

@@ -50,6 +50,7 @@ impl Server {
                     Some(sum)
                 });
             c.reply_checksum = None;
+            c.reply_tag = None;
             c.checksum_mode = head.fields.header(buf, "x-amz-checksum-mode") == Some(b"ENABLED");
             c.bearer = head
                 .fields

@@ -17,6 +17,7 @@ is meant to become part of a larger project.
 | Area | State |
 |---|---|
 | S3: `store`, `store_no_clobber`, `fetch`, ranged `fetch`, `list`, `erase` | Works against Amazon S3 and Linode Object Storage, over HTTP and HTTPS |
+| Multipart upload: begin, store part, complete, abort | Works against Amazon S3, Linode Object Storage, Google Cloud Storage and versitygw. Each part is one registered buffer |
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
@@ -110,6 +111,7 @@ export S3_TLS=1                           # HTTPS; omit for plain HTTP
 s3_uring selftest                         # store, conditional store, fetch, range, erase
 s3_uring put --conns 64 --secs 10         # throughput, 8 MiB objects by default
 s3_uring get --conns 64 --secs 10
+s3_uring multipart                        # three 8 MiB parts in parallel, then an abort
 s3_uring list some/prefix/
 ```
 
@@ -226,6 +228,11 @@ the client is mostly idle.
 - If a server sends extra bytes after a complete response and they arrive
   in a later read, the client does not notice. It does catch them when they
   arrive in the same read.
+- One `store` or `fetch` moves at most one buffer. A larger object goes up
+  as a multipart upload and comes down as ranged fetches, and the caller
+  drives both.
+- A multipart upload that is neither completed nor aborted keeps its parts
+  in the store. A bucket rule that expires incomplete uploads is the backstop.
 - Azure Blob Storage cannot be used through the store yet, and its signing
   has not been tried against a real account.
 - HTTP/1.1, IPv4 and A records only.

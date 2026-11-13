@@ -117,6 +117,10 @@ name = "store_s3_listing"
 path = "tests/store/s3_listing.rs"
 
 [[test]]
+name = "store_s3_multipart"
+path = "tests/store/s3_multipart.rs"
+
+[[test]]
 name = "store_s3_operations"
 path = "tests/store/s3_operations.rs"
 

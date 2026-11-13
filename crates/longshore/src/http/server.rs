@@ -70,6 +70,9 @@ pub enum Behavior {
     EndlessHead,
     /// Send exactly these bytes as the whole response, then close.
     Raw(&'static [u8]),
+    /// Respond with this status and an error document naming this code.
+    /// Real stores can do this with status 200.
+    ErrorDocument(u16, &'static str),
     /// Respond with chunked transfer encoding and an empty body.
     Chunked,
     /// Serve a GET of a stored object with chunked transfer encoding, in
@@ -129,6 +132,8 @@ struct Conn {
     authorized: bool,
     /// The request carried a bearer token: answer in Google Cloud Storage's dialect.
     bearer: bool,
+    /// `ETag` to send with the response: a stored part's tag.
+    reply_tag: Option<[u8; multipart::TAG_LEN]>,
 }
 
 struct Object {
@@ -152,6 +157,9 @@ pub struct Server {
     /// Present when the server speaks TLS.
     tls: Option<ServerSetup>,
     objects: Vec<Object>,
+    /// Ids of the multipart uploads in progress; zero is a free entry.
+    uploads: [u32; multipart::UPLOADS_MAX],
+    uploads_begun: u32,
     script: [Behavior; SCRIPT_MAX],
     script_head: usize,
     script_len: usize,
@@ -171,6 +179,7 @@ pub struct Server {
 
 mod events;
 mod listing;
+mod multipart;
 mod objects;
 mod transport;
 
@@ -205,6 +214,7 @@ impl Server {
             checksum_mode: false,
             authorized: true,
             bearer: false,
+            reply_tag: None,
         };
         let objects = (0..cfg.objects_max)
             .map(|_| Object {
@@ -239,6 +249,8 @@ impl Server {
             streams,
             tls: tls.map(|t| t.0),
             objects,
+            uploads: [0; multipart::UPLOADS_MAX],
+            uploads_begun: 0,
             script: [Behavior::Normal; SCRIPT_MAX],
             script_head: 0,
             script_len: 0,

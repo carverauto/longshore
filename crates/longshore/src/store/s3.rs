@@ -17,12 +17,16 @@ use crate::dns::Resolver;
 use crate::http::client::{self, Client, Error, Handled, Request};
 use crate::io::{BufId, Completion, FileId, Io, Op, Token};
 use crate::store::creds::{Credentials, TOKEN_MAX};
+use crate::store::multipart::{self, PartTag, UploadId, PART_NUMBER_MAX, UPLOAD_ID_MAX};
 use crate::store::retry::{classify, Class, STATUS_PRECONDITION_FAILED};
 use crate::store::sigv4::{self, authorization, uri_encode, EMPTY_SHA256, UNSIGNED_PAYLOAD};
 use crate::store::time::amz_date;
 use std::net::SocketAddrV4;
 
 pub const KEY_ENCODED_MAX: usize = 512;
+/// Room for a multipart query: `partNumber=10000&uploadId=` and an upload
+/// id with every byte percent-encoded.
+const QUERY_MAX: usize = 32 + 3 * UPLOAD_ID_MAX;
 /// A credentials file must be smaller than this and than the HTTP buffer
 /// size; a larger one is refused rather than read in part.
 pub const CREDENTIALS_FILE_MAX: u32 = 8192;
@@ -134,6 +138,19 @@ pub enum Outcome {
     },
     NotFound,
     Erased,
+    /// A multipart upload has begun. Keep the id: every later call needs it.
+    Begun {
+        upload: UploadId,
+    },
+    /// A part is stored. Keep the tag and checksum: completion sends them
+    /// back. `checksum` is the CRC-64/NVME the part was sent with on S3;
+    /// `None` without one, and always on Google Cloud Storage.
+    PartStored {
+        tag: PartTag,
+        checksum: Option<u64>,
+    },
+    /// The upload is gone, by this call or already.
+    Aborted,
     Fatal(Fatal),
 }
 
@@ -152,6 +169,12 @@ pub enum Fatal {
     /// A ranged fetch was answered with the whole object instead of the
     /// range. The bytes received are not the bytes asked for.
     RangeIgnored,
+    /// A success response lacked what it must carry: an upload id, or a
+    /// part's tag, or one longer than its fixed-size type holds.
+    BadResponse,
+    /// The store answered with status 200 and an error document that is not
+    /// worth retrying.
+    ErrorDocument,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -169,14 +192,35 @@ pub enum SubmitError {
     BadKey,
     /// The byte range ends before it starts.
     BadRange,
+    /// A part number outside 1 to 10000.
+    BadPart,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
-    Store { no_clobber: bool },
-    Fetch { range: Option<(u64, u64)> },
+    Store {
+        no_clobber: bool,
+    },
+    Fetch {
+        range: Option<(u64, u64)>,
+    },
     Erase,
     List,
+    /// Begin a multipart upload, asking for whole-object checksums if set.
+    Begin {
+        checksums: bool,
+    },
+    /// Store one part; its number is in the slot's query.
+    Part,
+    Complete,
+    Abort,
+}
+
+impl Kind {
+    /// The request carries the caller's bytes as an object or part of one.
+    fn stores_bytes(self) -> bool {
+        matches!(self, Kind::Store { .. } | Kind::Part)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -187,17 +231,23 @@ enum State {
     Waiting {
         until: u64,
     },
-    /// Finished; the result is waiting to be collected.
-    Finished(Outcome),
+    /// Finished; the slot's `outcome` is waiting to be collected.
+    Finished,
 }
 
 #[derive(Clone, Copy)]
 struct Slot {
     state: State,
+    /// The result, once `state` is `Finished`.
+    outcome: Outcome,
     token: u64,
     kind: Kind,
     path: [u8; KEY_ENCODED_MAX],
     path_len: usize,
+    /// Encoded query of a multipart request, in the sorted order signing
+    /// requires. Empty for every other kind.
+    query: [u8; QUERY_MAX],
+    query_len: usize,
     body: Option<(BufId, u32)>,
     response_buf: Option<BufId>,
     attempts: u32,
@@ -233,7 +283,16 @@ pub struct S3 {
     pub store_comparisons: u64,
 }
 
+impl S3 {
+    /// End the operation in slot `i` with `outcome`.
+    fn finish(&mut self, i: usize, outcome: Outcome) {
+        self.slots[i].outcome = outcome;
+        self.slots[i].state = State::Finished;
+    }
+}
+
 mod attempt;
+mod multipart_ops;
 mod outcome;
 mod rotation;
 mod submit;
@@ -249,10 +308,13 @@ impl S3 {
         };
         let slot = Slot {
             state: State::Free,
+            outcome: Outcome::Erased,
             token: 0,
             kind: Kind::Erase,
             path: [0; KEY_ENCODED_MAX],
             path_len: 0,
+            query: [0; QUERY_MAX],
+            query_len: 0,
             body: None,
             response_buf: None,
             attempts: 0,
@@ -318,14 +380,11 @@ impl S3 {
     pub fn poll(&mut self) -> Option<Done> {
         let s = self.slots[..self.cfg.requests_max as usize]
             .iter_mut()
-            .find(|s| matches!(s.state, State::Finished(_)))?;
-        let State::Finished(outcome) = s.state else {
-            unreachable!()
-        };
+            .find(|s| s.state == State::Finished)?;
         s.state = State::Free;
         Some(Done {
             token: s.token,
-            outcome,
+            outcome: s.outcome,
             attempts: s.attempts,
         })
     }

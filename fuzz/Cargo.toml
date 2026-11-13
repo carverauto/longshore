@@ -17,7 +17,11 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-longshore = { path = "../crates/longshore" }
+# The record layer under test calls AWS-LC directly. The parsers are compiled
+# from their source files, not through the longshore crate: its checksum
+# dependency has a C-ABI library target that does not link under the
+# fuzzer's instrumentation.
+aws-lc-sys = "0.47"
 
 [[bin]]
 name = "dns_response"
@@ -43,6 +47,13 @@ bench = false
 [[bin]]
 name = "list_response"
 path = "fuzz_targets/list_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multipart_response"
+path = "fuzz_targets/multipart_response.rs"
 test = false
 doc = false
 bench = false

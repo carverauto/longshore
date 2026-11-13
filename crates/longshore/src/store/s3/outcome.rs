@@ -15,10 +15,51 @@ impl S3 {
         result: Result<client::Response, Error>,
     ) {
         let s = self.slots[i];
-        let finish = |me: &mut S3, o: Outcome| me.slots[i].state = State::Finished(o);
+        let finish = |me: &mut S3, o: Outcome| me.finish(i, o);
+        // A completion's response was lost and the retry found the upload
+        // gone. The object at the key decides: ours if its checksum is.
+        if s.kind == Kind::Complete && s.comparing {
+            let ours =
+                self.checksum_value(s.crc.expect("only completions with a checksum compare"));
+            let class = classify(&result);
+            if matches!(class, Class::Retry | Class::RetryDelayed)
+                && s.attempts < self.cfg.attempts_max
+            {
+                return self.attempt(io, i);
+            }
+            let same = matches!(result, Ok(r) if r.status == 200
+                && self.stored_checksum(io, r.conn) == Some(ours));
+            return finish(
+                self,
+                if same {
+                    Outcome::Stored
+                } else {
+                    Outcome::Fatal(Fatal::Status(404))
+                },
+            );
+        }
+        let mut decided = None;
         // Statuses with a meaning specific to the operation.
         if let Ok(r) = result {
+            if r.status == 200 {
+                match self.multipart_outcome(io, s.kind, r, s.crc) {
+                    Some(Ok(outcome)) => return finish(self, outcome),
+                    Some(Err(class)) => decided = Some(class),
+                    None => {}
+                }
+            }
             match (s.kind, r.status) {
+                // The upload is gone after an earlier attempt was sent: that
+                // attempt may have completed it.
+                (Kind::Complete, 404)
+                    if s.attempts > 1 && s.crc.is_some() && s.attempts < self.cfg.attempts_max =>
+                {
+                    self.slots[i].comparing = true;
+                    self.store_comparisons += 1;
+                    return self.attempt(io, i);
+                }
+                // Nothing left to abort.
+                (Kind::Abort, 404) => return finish(self, Outcome::Aborted),
                 // The comparison's answer: the object at the key, and its checksum.
                 (Kind::Store { .. }, 200) if s.comparing => {
                     let ours =
@@ -77,7 +118,7 @@ impl S3 {
                 _ => {}
             }
         }
-        let mut class = classify(&result);
+        let mut class = decided.unwrap_or_else(|| classify(&result));
         // Answers that are transient although their status alone says otherwise.
         if let Ok(r) = result {
             match (s.kind, r.status) {
@@ -87,8 +128,9 @@ impl S3 {
                     class = Class::RetryDelayed
                 }
                 // The store gave up waiting for the body.
-                (Kind::Store { .. }, 400)
-                    if !s.comparing
+                (kind, 400)
+                    if kind.stores_bytes()
+                        && !s.comparing
                         && self
                             .client
                             .discarded_body(io, r.conn)
@@ -125,7 +167,9 @@ impl S3 {
                 }
             }
             // The store rejected our checksum: the body was damaged on the way.
-            (Ok(r), Kind::Store { .. }) if r.status == 400 && s.crc.is_some() && !s.comparing => {
+            (Ok(r), kind)
+                if kind.stores_bytes() && r.status == 400 && s.crc.is_some() && !s.comparing =>
+            {
                 let doc = self.client.discarded_body(io, r.conn);
                 // S3 names it BadDigest (assumed; no enforcing S3 store has been
                 // tried). Google Cloud Storage names it CrcMismatch (observed).
@@ -157,7 +201,10 @@ impl S3 {
                     Kind::Store { .. } if s.comparing => {
                         Outcome::AlreadyExists { after_retry: true }
                     }
-                    Kind::Store { .. } => Outcome::Stored,
+                    Kind::Store { .. } | Kind::Complete => Outcome::Stored,
+                    Kind::Abort => Outcome::Aborted,
+                    // Their success is decided above, from a 200 response.
+                    Kind::Begin { .. } | Kind::Part => Outcome::Fatal(Fatal::BadResponse),
                     Kind::Fetch { .. } => Outcome::Fetched {
                         len: result.map_or(0, |r| r.body_len),
                         verified,

@@ -383,3 +383,55 @@ fn corruption_in_transit_never_reaches_the_store_or_the_caller() {
         "the faults leave too little to check: {stored} stored, {fetched} fetched"
     );
 }
+
+#[test]
+fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
+    use longshore::store::multipart::{write_manifest, Part};
+    let mut w = world(7, Faults::default(), 3);
+    // Asking for whole-object checksums changes nothing here: this store
+    // takes a CRC-32C with each part without being asked.
+    w.s3.multipart_begin(&mut w.io, 1, "big", true).unwrap();
+    let Outcome::Begun { upload } = w.last().outcome else {
+        panic!("expected an upload")
+    };
+    let mut parts = Vec::new();
+    let mut object = Vec::new();
+    for number in 1..=2u32 {
+        w.fill_tx(3000, number as u8);
+        object.extend_from_slice(&w.io.buf(TX)[..3000]);
+        w.s3.multipart_store_part(
+            &mut w.io,
+            10 + number as u64,
+            "big",
+            &upload,
+            number,
+            TX,
+            3000,
+            Checksum::Compute,
+        )
+        .unwrap();
+        let Outcome::PartStored { tag, checksum } = w.last().outcome else {
+            panic!("expected a stored part")
+        };
+        // The part went with a CRC-32C, which completion does not list.
+        assert_eq!(checksum, None);
+        parts.push(Part {
+            number,
+            tag,
+            checksum: None,
+        });
+    }
+    let len = write_manifest(w.io.buf(TX), &parts).unwrap() as u32;
+    w.s3.multipart_complete(&mut w.io, 20, "big", &upload, TX, len, None)
+        .unwrap();
+    assert_eq!(w.last().outcome, Outcome::Stored);
+    w.s3.fetch(&mut w.io, 21, "big", None, RX).unwrap();
+    assert_eq!(
+        w.last().outcome,
+        Outcome::Fetched {
+            len: 6000,
+            verified: true
+        }
+    );
+    assert!(w.io.buf(RX)[..6000] == object[..]);
+}
