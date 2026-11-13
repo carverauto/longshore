@@ -7,14 +7,48 @@
 
 use super::*;
 
-pub(super) fn bench(
+/// What one client thread did in its measured window.
+struct Run {
+    bytes: u64,
+    requests: u64,
+    attempts: u64,
+    wall: f64,
+    cpu_s: f64,
+    enters: u64,
+    connects: u64,
+    retired: u64,
+}
+
+/// What every client thread does.
+#[derive(Clone, Copy)]
+struct Job {
     put: bool,
     conns: u32,
     size: u32,
     secs: u64,
-    cpu: Option<usize>,
     checksum: Checksum,
-) {
+}
+
+/// Where the client threads go: how many, the first one's CPU if they are
+/// pinned, and how far apart the CPUs of consecutive threads are.
+#[derive(Clone, Copy)]
+pub(super) struct Placement {
+    pub threads: u32,
+    pub cpu: Option<usize>,
+    pub cpu_step: usize,
+}
+
+/// One complete client on the calling thread: its own ring, connections,
+/// buffers and resolver. `start` is passed once the client is ready, so
+/// every thread measures the same window.
+fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) -> Run {
+    let Job {
+        put,
+        conns,
+        size,
+        secs,
+        checksum,
+    } = job;
     if let Some(cpu) = cpu {
         let mut mask = [0u64; 16];
         mask[cpu / 64] |= 1 << (cpu % 64);
@@ -23,7 +57,7 @@ pub(super) fn bench(
     let (mut io, mut s3, first) = setup(conns, conns, size, conns);
     let mut out = Completions::new(64);
     let keys: Vec<String> = (0..conns)
-        .map(|i| format!("bench/{}-{i}.bin", std::process::id()))
+        .map(|i| format!("bench/{}-{thread}-{i}.bin", std::process::id()))
         .collect();
     // For GET, the objects must exist first.
     if !put {
@@ -64,6 +98,7 @@ pub(super) fn bench(
             std::process::exit(4);
         }
     };
+    start.wait();
     for i in 0..conns {
         start_one(&mut s3, &mut io, i);
     }
@@ -87,20 +122,70 @@ pub(super) fn bench(
         }
         (bytes, requests, attempts)
     });
-    let wall = (io.now_ns() - t0) as f64 / 1e9;
-    let cpu_s = thread_cpu_secs() - cpu0;
-    let gb = bytes as f64 / 1e9;
+    Run {
+        bytes,
+        requests,
+        attempts,
+        wall: (io.now_ns() - t0) as f64 / 1e9,
+        cpu_s: thread_cpu_secs() - cpu0,
+        enters: io.enters() - enters0,
+        connects: s3.connects(),
+        retired: s3.small_segment_retired,
+    }
+}
+
+/// Run the benchmark on `place.threads` independent client threads and
+/// print one line: the totals, and each thread's rate when there are several.
+pub(super) fn bench(
+    put: bool,
+    conns: u32,
+    size: u32,
+    secs: u64,
+    place: Placement,
+    checksum: Checksum,
+) {
+    let job = Job {
+        put,
+        conns,
+        size,
+        secs,
+        checksum,
+    };
+    let start = std::sync::Arc::new(std::sync::Barrier::new(place.threads as usize));
+    let workers: Vec<_> = (0..place.threads)
+        .map(|t| {
+            let start = start.clone();
+            let cpu = place.cpu.map(|c| c + t as usize * place.cpu_step);
+            std::thread::spawn(move || run(job, cpu, t, &start))
+        })
+        .collect();
+    let runs: Vec<Run> = workers
+        .into_iter()
+        .map(|w| w.join().unwrap_or_else(|_| die("a client thread failed")))
+        .collect();
+    let gb_per_s = |r: &Run| r.bytes as f64 / 1e9 / r.wall;
+    let total: f64 = runs.iter().map(gb_per_s).sum();
+    let wall = runs.iter().map(|r| r.wall).fold(0.0, f64::max);
+    let (requests, attempts): (u64, u64) = runs
+        .iter()
+        .fold((0, 0), |a, r| (a.0 + r.requests, a.1 + r.attempts));
+    let cpu_s: f64 = runs.iter().map(|r| r.cpu_s).sum();
+    let gb: f64 = runs.iter().map(|r| r.bytes as f64 / 1e9).sum();
+    let per_thread: Vec<String> = runs.iter().map(|r| format!("{:.3}", gb_per_s(r))).collect();
+    // `thread_cpu` is the busy share of one thread, averaged over the threads.
     println!(
-        "{{\"cmd\":\"{}\",\"arch\":\"{}\",\"conns\":{conns},\"size\":{size},\"secs\":{wall:.2},\"requests\":{requests},\"attempts\":{attempts},\"gb_per_s\":{:.3},\"mb_per_s\":{:.1},\"thread_cpu\":{:.3},\"gb_per_cpu_s\":{:.2},\"enters_per_request\":{:.1},\"connects\":{},\"small_segment_retired\":{}}}",
+        "{{\"cmd\":\"{}\",\"arch\":\"{}\",\"threads\":{},\"conns\":{conns},\"size\":{size},\"secs\":{wall:.2},\"requests\":{requests},\"attempts\":{attempts},\"gb_per_s\":{:.3},\"mb_per_s\":{:.1},\"thread_cpu\":{:.3},\"gb_per_cpu_s\":{:.2},\"enters_per_request\":{:.1},\"connects\":{},\"small_segment_retired\":{},\"gb_per_s_per_thread\":[{}]}}",
         match (put, checksum) { (true, Checksum::None) => "put", (true, _) => "put-crc", _ => "get" },
         std::env::consts::ARCH,
-        gb / wall,
-        gb * 1000.0 / wall,
-        cpu_s / wall,
+        place.threads,
+        total,
+        total * 1000.0,
+        cpu_s / wall / place.threads as f64,
         gb / cpu_s.max(1e-9),
-        (io.enters() - enters0) as f64 / requests.max(1) as f64,
-        s3.connects(),
-        s3.small_segment_retired
+        runs.iter().map(|r| r.enters).sum::<u64>() as f64 / requests.max(1) as f64,
+        runs.iter().map(|r| r.connects).sum::<u64>(),
+        runs.iter().map(|r| r.retired).sum::<u64>(),
+        per_thread.join(",")
     );
     std::process::exit(0);
 }

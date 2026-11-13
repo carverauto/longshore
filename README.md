@@ -116,6 +116,7 @@ export S3_PREFER_LARGE_SEGMENTS=2         # prefer large-segment addresses, usin
 s3_uring selftest                         # store, conditional store, fetch, range, erase
 s3_uring put --conns 64 --secs 10         # throughput, 8 MiB objects by default
 s3_uring get --conns 64 --secs 10
+s3_uring put --conns 128 --threads 4 --cpu 2 --cpu-step 2   # four independent clients, pinned to CPUs 2, 4, 6, 8
 s3_uring multipart                        # three 8 MiB parts in parallel, then an abort
 s3_uring objects                          # stat, metadata, copy, delimiter listing, batch erase
 s3_uring list some/prefix/
