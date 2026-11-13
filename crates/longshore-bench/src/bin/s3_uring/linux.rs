@@ -131,7 +131,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         tls_batch: std::env::var("S3_TLS_BATCH")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(1 << 20),
+            .unwrap_or(4 << 20),
         tls_records_max: client::TLS_RECORDS_MAX,
         check_idle: true,
     };

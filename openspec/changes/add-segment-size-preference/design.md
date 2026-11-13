@@ -17,15 +17,28 @@ at the socket level only, on any kernel. Reading it needs a descriptor.
   the connect completes it reads `TCP_MAXSEG` with `getsockopt(2)` and
   closes its descriptor. The registered table keeps the socket. That is
   four system calls per new connection in place of one submission.
-- A successful `Op::Connect` completes with the segment size when it was
-  measured, and with 0 when it was not. No new operation is added.
+- A successful `Op::Connect` completes with the connection's segment size
+  and the largest segment its path could carry (the path's MTU less the
+  headers), packed into the result, and with 0 when it was not measured.
+  No new operation is added.
 - The HTTP client reports the address and size of each opened connection to
   its owner, the way it reports a failed connect.
 - The resolver keeps the last size seen per address. An address with no
   measurement is handed out like any other, so every address gets measured.
-  Once sizes are known, lookups skip addresses whose size is less than half
-  the largest in the family's set. If that would leave fewer addresses than
-  a configured minimum, the largest of the skipped ones are kept.
+  An address counts as large when its size is at least half the largest
+  seen and at least a quarter of what the path could carry. Lookups skip
+  the others once a large one is known. If that would leave fewer
+  addresses than a configured minimum, the largest of the skipped ones are
+  kept.
+- The store stops reusing connections that measured below that floor. Each
+  finishes its request and is replaced the next time it would be picked.
+- When every address of a host is measured and all are small for the path,
+  the resolver asks again one answer timeout after its last cycle, and
+  keeps doing so until an answer has a large one. The store then opens one
+  connection to each new address to measure it. On a path that carries no
+  more than the addresses give, such as plain Ethernet to a store outside
+  the network, nothing is small and none of this happens.
+- The setting can be changed while the store runs.
 - A refresh keeps the size of an address that is still in the answer and
   forgets the others.
 - Off by default. `s3_uring` turns it on with `S3_PREFER_LARGE_SEGMENTS=1`.
@@ -35,8 +48,10 @@ at the socket level only, on any kernel. Reading it needs a descriptor.
   address, which the minimum number of addresses limits and does not remove.
 - An address's size can change between measurements. Each new connection
   measures again, so a stale value lasts until the next connection to it.
-- Kernels from 6.1 to 6.6 get the same route as newer ones. It still has to
-  be run on a 6.1 kernel before the README says so.
+- A name that only ever answers with small-segment addresses costs one
+  DNS query per answer timeout for as long as that lasts.
+- A client that keeps a single connection learns one address at a time.
+  With the path limit known it still moves off a small one.
 
 ## Open Questions
 - Whether an S3 gateway endpoint makes every address take large segments.
