@@ -157,6 +157,7 @@ pub fn config(servers: &[SocketAddr], refresh_ns: u64, family: Family) -> Config
         servers: servers.to_vec(),
         hosts: ZONE.iter().map(|z| z.0.to_string()).collect(),
         family,
+        prefer_large_segments: None,
         refresh_ns,
         timeout_ns: 50 * MS,
         socks: [Sock(0), Sock(1)],

@@ -58,6 +58,19 @@ struct SimSock {
     reset: bool,
     /// For UDP: whether `peer` is valid.
     has_peer: bool,
+    /// What a connect on this socket completes with once accepted: the
+    /// segment size of the route it took, or 0.
+    segment: u32,
+}
+
+/// Another address of a listener.
+struct Route {
+    addr: SocketAddr,
+    listener: SocketAddr,
+    /// What connections to `addr` report as their segment size.
+    segment: u32,
+    /// Connects to `addr` that reached the listener.
+    connects: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -90,6 +103,9 @@ pub struct SimIo {
     trace: u64,
     /// Registered files and their current contents; `None` means absent.
     files: Vec<Option<Vec<u8>>>,
+    /// Extra addresses of listeners: (address, the listener's address, the
+    /// segment size connections to the address report).
+    routes: Vec<Route>,
 }
 
 /// Virtual time added per tick.
@@ -113,6 +129,7 @@ impl SimIo {
             peer_closed: false,
             reset: false,
             has_peer: false,
+            segment: 0,
         };
         SimIo {
             limits,
@@ -125,6 +142,7 @@ impl SimIo {
             next_op_id: 0,
             trace: 0xcbf2_9ce4_8422_2325,
             files: Vec::new(),
+            routes: Vec::new(),
         }
     }
 
@@ -142,6 +160,28 @@ impl SimIo {
     /// replacing a credentials file would. Test setup, so it may allocate.
     pub fn set_file(&mut self, file: FileId, contents: Option<&[u8]>) {
         self.files[file.0 as usize] = contents.map(|c| c.to_vec());
+    }
+
+    /// Give the listener at `listener` another address, `addr`, as a store
+    /// with several front ends has. A connect to `addr` completes with
+    /// `segment_size`, the way a backend that measures segment sizes
+    /// reports them; 0 means not measured. Test setup, so it may allocate.
+    pub fn route(&mut self, addr: SocketAddr, listener: SocketAddr, segment_size: u32) {
+        self.routes.retain(|r| r.addr != addr);
+        self.routes.push(Route {
+            addr,
+            listener,
+            segment: segment_size,
+            connects: 0,
+        });
+    }
+
+    /// Connects to the routed address `addr` that reached its listener.
+    pub fn route_connects(&self, addr: SocketAddr) -> u64 {
+        self.routes
+            .iter()
+            .find(|r| r.addr == addr)
+            .map_or(0, |r| r.connects)
     }
 
     /// Bind a UDP socket for a simulated server. Not part of `Io`: production

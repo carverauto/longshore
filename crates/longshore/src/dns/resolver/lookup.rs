@@ -26,15 +26,43 @@ impl Resolver {
     }
 
     /// Next address for a host, rotating through the records of the family
-    /// in use. No I/O.
+    /// in use. With a preference for large segments, addresses measured
+    /// below the floor are passed over. No I/O.
     pub fn lookup(&mut self, host: usize) -> Option<IpAddr> {
+        let floor = self.segment_floor(host);
         let h = &mut self.hosts[host];
         let set = &mut h.sets[h.current()];
-        if set.len == 0 {
-            return None;
+        // The floor always admits at least one address, so this ends.
+        for _ in 0..set.len {
+            set.next = (set.next + 1) % set.len;
+            let size = set.sizes[set.next];
+            if size == 0 || size >= floor {
+                return Some(set.addrs[set.next]);
+            }
         }
-        set.next = (set.next + 1) % set.len;
-        Some(set.addrs[set.next])
+        None
+    }
+
+    /// A connection to `ip`, an address of `host`, opened with this maximum
+    /// segment size. Returns the host's floor afterwards, as
+    /// [`Resolver::segment_floor`] does.
+    pub fn connected(&mut self, host: usize, ip: IpAddr, segment_size: u32) -> u32 {
+        let set = &mut self.hosts[host].sets[usize::from(ip.is_ipv6())];
+        if let Some(k) = set.addrs[..set.len].iter().position(|a| *a == ip) {
+            set.sizes[k] = segment_size;
+        }
+        self.segment_floor(host)
+    }
+
+    /// The smallest segment size a connection to `host` should have: lookups
+    /// pass over addresses measured below it. 0 when there is no preference
+    /// for large segments or nothing has been measured.
+    pub fn segment_floor(&self, host: usize) -> u32 {
+        let h = &self.hosts[host];
+        match self.cfg.prefer_large_segments {
+            Some(keep) => h.sets[h.current()].floor(keep),
+            None => 0,
+        }
     }
 
     /// The cached addresses lookups are handing out for a host: those of

@@ -94,10 +94,22 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         ops_max: conns * 3 + 4 + 1,
     };
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(&e.to_string()));
+    // S3_PREFER_LARGE_SEGMENTS=N: measure each connection's segment size and
+    // keep connections on the addresses with large segments, using at least
+    // N addresses. Unset or 0 turns it off.
+    let prefer_large_segments = std::env::var("S3_PREFER_LARGE_SEGMENTS")
+        .ok()
+        .map(|v| {
+            v.parse::<usize>()
+                .unwrap_or_else(|_| die("S3_PREFER_LARGE_SEGMENTS: expected a number of addresses"))
+        })
+        .filter(|n| *n > 0);
+    io.measure_segment_sizes(prefer_large_segments.is_some());
     let resolver = Resolver::new(longshore::dns::Config {
         servers,
         hosts: vec![host.clone()],
         family,
+        prefer_large_segments,
         refresh_ns: 30_000 * MS,
         timeout_ns: 2_000 * MS,
         socks: [Sock(conns), Sock(conns + 1)],

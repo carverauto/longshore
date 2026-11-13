@@ -40,6 +40,7 @@ fn operations_end_when_the_name_never_resolves() {
         )],
         hosts: vec!["bucket.objects.test".into()],
         family: longshore::dns::Family::V4,
+        prefer_large_segments: None,
         refresh_ns: 30_000 * MS,
         timeout_ns: 200 * MS,
         socks: [Sock(1), Sock(2)],

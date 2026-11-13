@@ -141,6 +141,9 @@ pub struct S3 {
     /// Times a retried conditional store was refused and the stored object's
     /// checksum was fetched to decide whose object it is.
     pub store_comparisons: u64,
+    /// Connections retired because their address's segment size ranked too
+    /// small, when the resolver prefers large segments.
+    pub small_segment_retired: u64,
 }
 
 impl S3 {
@@ -200,6 +203,7 @@ impl S3 {
             credential_rotations: 0,
             credential_failures: 0,
             store_comparisons: 0,
+            small_segment_retired: 0,
             cfg,
         }
     }
@@ -281,6 +285,14 @@ impl S3 {
         if let Some(addr) = self.client.connect_failure.take() {
             if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
                 r.connect_failed(0, addr.ip());
+            }
+        }
+        // A measured connection: tell the resolver its address's segment
+        // size, and stop reusing connections it now ranks too small.
+        if let Some((addr, size)) = self.client.connected.take() {
+            if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
+                let floor = r.connected(0, addr.ip(), size);
+                self.small_segment_retired += self.client.retire_below(0, floor) as u64;
             }
         }
         match handled {

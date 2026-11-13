@@ -58,8 +58,15 @@ impl Io for UringIo {
                 s.state = State::Connecting;
                 s.phase = PHASE_SOCKET;
                 s.sock = sock.0;
+                s.probe_fd = -1;
                 (s.addr, s.addr_len) = sockaddr_any::from(addr);
                 let family = s.addr.family;
+                if self.measure_segments && matches!(op, Op::Connect { .. }) {
+                    if let Some(sqe) = self.connect_measured(i, sock, family) {
+                        self.push(sqe);
+                        return Ok(());
+                    }
+                }
                 // Create the socket directly in the fixed slot; connect follows.
                 let kind = if matches!(op, Op::ConnectUdp { .. }) {
                     SOCK_DGRAM

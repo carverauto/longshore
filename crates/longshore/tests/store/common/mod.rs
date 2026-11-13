@@ -16,6 +16,8 @@ pub use longshore::store::list::{unescape, Listing};
 pub use longshore::store::s3::{Checksum, Config, Done, Endpoint, Fatal, Outcome, SubmitError, S3};
 pub use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+pub mod names;
+
 #[global_allocator]
 static ALLOC: Guard = Guard;
 

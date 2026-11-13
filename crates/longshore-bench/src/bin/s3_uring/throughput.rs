@@ -91,7 +91,7 @@ pub(super) fn bench(
     let cpu_s = thread_cpu_secs() - cpu0;
     let gb = bytes as f64 / 1e9;
     println!(
-        "{{\"cmd\":\"{}\",\"arch\":\"{}\",\"conns\":{conns},\"size\":{size},\"secs\":{wall:.2},\"requests\":{requests},\"attempts\":{attempts},\"gb_per_s\":{:.3},\"mb_per_s\":{:.1},\"thread_cpu\":{:.3},\"gb_per_cpu_s\":{:.2},\"enters_per_request\":{:.1},\"connects\":{}}}",
+        "{{\"cmd\":\"{}\",\"arch\":\"{}\",\"conns\":{conns},\"size\":{size},\"secs\":{wall:.2},\"requests\":{requests},\"attempts\":{attempts},\"gb_per_s\":{:.3},\"mb_per_s\":{:.1},\"thread_cpu\":{:.3},\"gb_per_cpu_s\":{:.2},\"enters_per_request\":{:.1},\"connects\":{},\"small_segment_retired\":{}}}",
         match (put, checksum) { (true, Checksum::None) => "put", (true, _) => "put-crc", _ => "get" },
         std::env::consts::ARCH,
         gb / wall,
@@ -99,7 +99,8 @@ pub(super) fn bench(
         cpu_s / wall,
         gb / cpu_s.max(1e-9),
         (io.enters() - enters0) as f64 / requests.max(1) as f64,
-        s3.connects()
+        s3.connects(),
+        s3.small_segment_retired
     );
     std::process::exit(0);
 }

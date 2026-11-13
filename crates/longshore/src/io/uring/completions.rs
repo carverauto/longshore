@@ -18,6 +18,62 @@ impl UringIo {
         sqe
     }
 
+    /// Open the socket of a connect with a descriptor of our own, so its
+    /// segment size can be read later, and register it in the slot. Returns
+    /// the connect to submit, or None if the socket could not be opened or
+    /// registered: the caller then creates it through the ring.
+    pub(super) fn connect_measured(
+        &mut self,
+        i: u32,
+        sock: Sock,
+        family: u16,
+    ) -> Option<io_uring_sqe> {
+        let kind = (SOCK_STREAM | SOCK_CLOEXEC) as i32;
+        let fd = unsafe { socket(family as i32, kind, 0) };
+        if fd < 0 {
+            return None;
+        }
+        if self.ring.update_file(sock.0, fd).is_err() {
+            unsafe { close(fd) };
+            return None;
+        }
+        let s = &mut self.slots[i as usize];
+        s.probe_fd = fd;
+        s.state = State::ConnectStep;
+        s.phase = 0;
+        Some(self.connect_sqe(i))
+    }
+
+    /// The connect of a measured socket has ended. Read the segment size if
+    /// it succeeded, and close our descriptor either way: the registered
+    /// table keeps the socket. Returns the connect's result, with the size
+    /// in place of 0.
+    fn end_measure(&mut self, i: u32, result: i32) -> i32 {
+        let s = &mut self.slots[i as usize];
+        let fd = core::mem::replace(&mut s.probe_fd, -1);
+        if fd < 0 {
+            return result;
+        }
+        let mut size: i32 = 0;
+        let mut len = core::mem::size_of::<i32>() as u32;
+        let read = result == 0
+            && unsafe {
+                getsockopt(
+                    fd,
+                    IPPROTO_TCP,
+                    TCP_MAXSEG,
+                    (&mut size as *mut i32).cast(),
+                    &mut len,
+                )
+            } == 0;
+        unsafe { close(fd) };
+        if read && size > 0 {
+            size
+        } else {
+            result
+        }
+    }
+
     /// A connect failed after its socket was created. Close the socket, then
     /// report `result`: no caller has to remember to release the slot.
     pub(super) fn release_socket(&mut self, i: u32, result: i32) {
@@ -133,8 +189,12 @@ impl UringIo {
             s.state = State::AwaitNotif;
             return;
         }
-        if state == State::ConnectStep && c.res < 0 {
-            return self.release_socket(i, c.res);
+        if state == State::ConnectStep {
+            let r = self.end_measure(i, c.res);
+            if r < 0 {
+                return self.release_socket(i, r);
+            }
+            return self.finish(i, r, out);
         }
         // Only a timer's expiry is a success. The same code from any other
         // operation is a failure and is reported as one.

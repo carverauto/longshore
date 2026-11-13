@@ -66,6 +66,7 @@ fn main() {
         servers,
         hosts,
         family,
+        prefer_large_segments: None,
         refresh_ns: 30_000_000_000,
         timeout_ns: 1_000_000_000,
         socks: [Sock(0), Sock(1)],

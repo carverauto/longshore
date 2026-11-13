@@ -42,7 +42,9 @@ pub struct Sock(pub u32);
 #[derive(Clone, Copy, Debug)]
 pub enum Op {
     /// Open a TCP socket in slot `sock` and connect it. A connect that fails
-    /// leaves the slot free; the caller need not close it.
+    /// leaves the slot free; the caller need not close it. A connect that
+    /// succeeds completes with 0, or with the connection's maximum segment
+    /// size in bytes when the backend was asked to measure it.
     Connect {
         sock: Sock,
         addr: SocketAddr,
