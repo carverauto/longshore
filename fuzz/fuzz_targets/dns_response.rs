@@ -9,7 +9,11 @@
 //! fuzzer can get past the id check.
 
 use libfuzzer_sys::fuzz_target;
-use longshore::dns::codec::parse_response;
+// Compiled straight from its source file; see fuzz/Cargo.toml.
+#[allow(dead_code)]
+#[path = "../../crates/longshore/src/dns/codec.rs"]
+mod codec;
+use codec::parse_response;
 
 fuzz_target!(|data: &[u8]| {
     let id = if data.len() >= 2 { u16::from_be_bytes([data[0], data[1]]) } else { 0 };

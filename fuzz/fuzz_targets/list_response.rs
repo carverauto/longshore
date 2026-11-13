@@ -9,9 +9,7 @@
 
 use libfuzzer_sys::fuzz_target;
 
-// The parser is compiled straight from its source file. Depending on the
-// whole crate would pull in the checksum library, whose C-ABI
-// library target does not link under the fuzzer's instrumentation.
+// Compiled straight from its source file; see fuzz/Cargo.toml.
 #[allow(dead_code)]
 #[path = "../../crates/longshore/src/store/list.rs"]
 mod list;

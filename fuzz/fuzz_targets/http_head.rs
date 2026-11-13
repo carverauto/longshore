@@ -8,7 +8,11 @@
 //! verdict on a prefix must not change when more bytes arrive.
 
 use libfuzzer_sys::fuzz_target;
-use longshore::http::head::{parse_request, parse_response};
+// Compiled straight from its source file; see fuzz/Cargo.toml.
+#[allow(dead_code)]
+#[path = "../../crates/longshore/src/http/head.rs"]
+mod head;
+use head::{parse_request, parse_response};
 
 fuzz_target!(|data: &[u8]| {
     let limit = 4096;
