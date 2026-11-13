@@ -238,10 +238,12 @@ cipher. Sealing TLS records, one core, in GiB/s (`m13-aes-gcm-by-cpu.md`):
 | AWS Graviton4 (AWS `c8g`) | 6.1 |
 
 On the AMD `m8azn` instance HTTPS upload to S3 is 7.3 GB/s with large
-segments and a 3 MiB send batch, bound by the cipher, and 3.5 GB/s through
-every address S3 returns with a 1 MiB batch, bound by the kernel's
-transmit path
-(`m20-preference-and-comparison.md`). HTTPS upload has not been measured
+segments and a 3 MiB send batch, and 3.5 GB/s through every address S3
+returns with a 1 MiB batch, both with the client's thread full
+(`m20-preference-and-comparison.md`). The profiles in
+`m18-s3-aws-large-instances.md` show where the core goes in each case:
+about half in AES-GCM with large segments, and mostly in the kernel's
+transmit path with mixed addresses. HTTPS upload has not been measured
 end to end on the Intel processor.
 
 ### Compared with the talk
@@ -256,7 +258,7 @@ placement.
 | PUT with CRC-64 checksums | 4.3 GB/s, the speed of its checksum | 16.4 GB/s to S3 |
 | HTTPS PUT | No end-to-end figure. 7.4 GB/s for the cipher alone | 5.2 to 7.3 GB/s to S3, 7.6 GB/s between our machines |
 | GET | 4.7 GB/s | 4.4 to 7.9 GB/s from S3, 6.4 GB/s between our machines |
-| CRC-64 alone | 4.3 GB/s | 88 GB/s, and about 30 GB/s inside a PUT |
+| CRC-64 alone | 4.3 GB/s | 88 GB/s, and about 30 GB/s inside a PUT (`m5-checksums.md`) |
 | AES-GCM alone | 7.4 GB/s | 6.5 to 27 GB/s, depending on the processor |
 
 The talk reports "per core". Between our own machines plain PUT fills the

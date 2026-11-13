@@ -11,7 +11,7 @@ Milestone 18 found that S3's name resolves to addresses whose connections get ei
 
 ## One client thread, preference off and on
 
-Five runs of 8 s per row, one instance at a time. The batch is how many bytes of TLS records the client seals before each send.
+Five runs of 8 s per row, one instance at a time. Every column is the median of that column over the runs, so the three figures on a row are not from one run. The batch is how many bytes of TLS records the client seals before each send.
 
 ### Graviton4, 300 Gbit/s card
 
