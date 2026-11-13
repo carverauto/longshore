@@ -26,8 +26,9 @@ client they can build and call.
   `store` gains the addressing setting. No other change to the low-level API
 - Depends on: `add-multipart-upload` for streaming upload, and
   `add-object-operations` for `stat`
-- First principles: the I/O thread is unchanged. The caller's thread and the
-  I/O thread exchange fixed-size messages through bounded queues that are
-  allocated when the client is built. The lending path adds no copy. The
+- First principles: each I/O thread is unchanged, one ring driven by one
+  thread with nothing shared. The caller's thread and an I/O thread exchange
+  fixed-size messages through bounded queues that are allocated when the
+  client is built; a client driven by the caller's event loop has no queue. The lending path adds no copy. The
   copying path adds exactly one, into or out of a registered buffer, and is
   documented as the convenience path.
