@@ -58,6 +58,9 @@ impl Server {
                 io.buf(self.body_buf(i))[..n as usize].fill(b'e');
                 return self.status(io, i, s, "Scripted", n as u64, n, false);
             }
+            Behavior::ErrorDocument(s, code) => {
+                return self.error_document(io, i, s, code);
+            }
             Behavior::Chunked => {
                 // The server closes after this response, and says so.
                 let head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n";
@@ -121,6 +124,9 @@ impl Server {
         if method == b"GET" && target.starts_with(b"/?list-type=2") {
             return self.list(io, i);
         }
+        if self.multipart(io, i, behavior == Behavior::ApplyThenClose) {
+            return;
+        }
         let truncate = behavior == Behavior::TruncateBody;
         let found = self
             .objects
@@ -166,6 +172,10 @@ impl Server {
                 o.used = true;
                 if behavior == Behavior::ApplyThenClose {
                     return self.close(io, i);
+                }
+                // A stored part is answered with its tag.
+                if target.windows(12).any(|w| w == b"?partNumber=") {
+                    self.conns[i].reply_tag = Some(multipart::tag(&self.objects[slot].data[..len]));
                 }
                 self.status(io, i, 200, "OK", 0, 0, false)
             }

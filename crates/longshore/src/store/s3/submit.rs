@@ -18,6 +18,7 @@ impl S3 {
         body: Option<(BufId, u32)>,
         response_buf: Option<BufId>,
         checksum: Checksum,
+        query: &[u8],
     ) -> Result<(), SubmitError> {
         let i = self.slots[..self.cfg.requests_max as usize]
             .iter()
@@ -32,6 +33,8 @@ impl S3 {
         s.path[0] = b'/';
         s.path_len =
             1 + uri_encode(key.as_bytes(), false, &mut s.path[1..]).ok_or(SubmitError::BadKey)?;
+        s.query[..query.len()].copy_from_slice(query);
+        s.query_len = query.len();
         s.token = token;
         s.kind = kind;
         s.body = body;
@@ -41,10 +44,12 @@ impl S3 {
         s.delays = 0;
         s.crc = match (checksum, body) {
             (Checksum::Provided(crc), _) => Some(crc),
-            (Checksum::Compute, Some((buf, len))) => Some(match self.cfg.vendor {
-                Vendor::S3 => crate::checksum::crc64_nvme(&io.buf(buf)[..len as usize]),
-                Vendor::Gcs => crate::checksum::crc32c(&io.buf(buf)[..len as usize]) as u64,
-            }),
+            (Checksum::Compute, Some((buf, len))) if kind.stores_bytes() => {
+                Some(match self.cfg.vendor {
+                    Vendor::S3 => crate::checksum::crc64_nvme(&io.buf(buf)[..len as usize]),
+                    Vendor::Gcs => crate::checksum::crc32c(&io.buf(buf)[..len as usize]) as u64,
+                })
+            }
             _ => None,
         };
         self.attempt(io, i);
@@ -69,6 +74,7 @@ impl S3 {
             Some((body, len)),
             None,
             checksum,
+            b"",
         )
     }
 
@@ -90,6 +96,7 @@ impl S3 {
             Some((body, len)),
             None,
             checksum,
+            b"",
         )
     }
 
@@ -113,6 +120,7 @@ impl S3 {
             None,
             Some(into),
             Checksum::None,
+            b"",
         )
     }
 
@@ -185,6 +193,7 @@ impl S3 {
             return Err(SubmitError::BadKey);
         }
         s.path_len = n;
+        s.query_len = 0;
         s.token = token;
         s.kind = Kind::List;
         s.body = None;
@@ -195,6 +204,6 @@ impl S3 {
     }
 
     pub fn erase<IO: Io>(&mut self, io: &mut IO, token: u64, key: &str) -> Result<(), SubmitError> {
-        self.submit(io, token, key, Kind::Erase, None, None, Checksum::None)
+        self.submit(io, token, key, Kind::Erase, None, None, Checksum::None, b"")
     }
 }

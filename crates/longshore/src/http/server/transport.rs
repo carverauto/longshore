@@ -109,6 +109,9 @@ impl Server {
                 w.header("x-amz-checksum-crc64nvme", &sum);
             }
         }
+        if let Some(tag) = self.conns[i].reply_tag.take() {
+            w.header("ETag", &tag);
+        }
         let n = w.finish().expect("server heads are small and well-formed");
         self.respond(io, i, n, body_len, close);
     }

@@ -27,8 +27,7 @@ impl S3 {
                 / self.cfg.backoff_ns.max(1))
             .max(1);
             if self.slots[i].address_waits as u64 >= waits_max {
-                self.slots[i].state = State::Finished(Outcome::Fatal(Fatal::NoAddress));
-                return;
+                return self.finish(i, Outcome::Fatal(Fatal::NoAddress));
             }
             self.slots[i].address_waits += 1;
             return self.wait(io, i, self.cfg.backoff_ns);
@@ -42,7 +41,27 @@ impl S3 {
             Kind::Store { .. } if s.comparing => ("HEAD", EMPTY_SHA256),
             Kind::Store { .. } => ("PUT", UNSIGNED_PAYLOAD),
             Kind::Fetch { .. } | Kind::List => ("GET", EMPTY_SHA256),
-            Kind::Erase => ("DELETE", EMPTY_SHA256),
+            Kind::Erase | Kind::Abort => ("DELETE", EMPTY_SHA256),
+            Kind::Begin { .. } => ("POST", EMPTY_SHA256),
+            Kind::Part => ("PUT", UNSIGNED_PAYLOAD),
+            // The comparison after a lost completion asks about the object itself.
+            Kind::Complete if s.comparing => ("HEAD", EMPTY_SHA256),
+            Kind::Complete => ("POST", UNSIGNED_PAYLOAD),
+        };
+        // A multipart request's target is the key and its query.
+        let mut target_buf = [0u8; KEY_ENCODED_MAX + 1 + QUERY_MAX];
+        let multipart_query = core::str::from_utf8(&s.query[..s.query_len])
+            .ok()
+            .filter(|q| !q.is_empty() && !s.comparing);
+        let target = match multipart_query {
+            Some(q) => {
+                let n = path.len() + 1 + q.len();
+                target_buf[..path.len()].copy_from_slice(path.as_bytes());
+                target_buf[path.len()] = b'?';
+                target_buf[path.len() + 1..n].copy_from_slice(q.as_bytes());
+                core::str::from_utf8(&target_buf[..n]).expect("ASCII")
+            }
+            None => path,
         };
 
         // "bytes=a-b" without allocating.
@@ -105,7 +124,7 @@ impl S3 {
             // No signature: the token is the whole proof, so nothing depends
             // on the other headers or on the clock.
             let mut k = 0;
-            if let (Kind::Store { .. }, Some(crc), false) = (s.kind, s.crc, s.comparing) {
+            if let (true, Some(crc), false) = (s.kind.stores_bytes(), s.crc, s.comparing) {
                 let mut v = *b"crc32c=AAAAAAAA";
                 v[7..].copy_from_slice(&crate::checksum::crc32c_header_value(crc as u32));
                 goog_hash = v;
@@ -127,9 +146,17 @@ impl S3 {
             k + 1
         } else {
             let mut m = 3;
-            if let (Kind::Store { .. }, Some(v), false) = (s.kind, crc_str, s.comparing) {
+            // A part carries its own checksum; a completion carries the whole object's.
+            let checksummed = s.kind.stores_bytes() || s.kind == Kind::Complete;
+            if let (true, Some(v), false) = (checksummed, crc_str, s.comparing) {
                 signed[m] = (CHECKSUM_HEADER, v);
                 m += 1;
+            }
+            // Whole-object checksums have to be asked for when the upload begins.
+            if s.kind == (Kind::Begin { checksums: true }) {
+                signed[m] = ("x-amz-checksum-algorithm", "CRC64NVME");
+                signed[m + 1] = ("x-amz-checksum-type", "FULL_OBJECT");
+                m += 2;
             }
             // Ask the store to return the object's checksum with a whole-object
             // fetch, and when comparing a stored object with ours.
@@ -161,7 +188,7 @@ impl S3 {
             // A listing's target carries a query; it is signed as sorted pairs.
             let (uri, query) = match path.split_once('?') {
                 Some((uri, query)) if s.kind == Kind::List => (uri, query),
-                _ => (path, ""),
+                _ => (path, multipart_query.unwrap_or("")),
             };
             let mut pairs = [("", ""); 4];
             let mut pair_count = 0;
@@ -188,7 +215,7 @@ impl S3 {
         };
         let req = Request {
             method,
-            target: path,
+            target,
             host: &self.cfg.host,
             host_id: 0,
             addr,
@@ -204,7 +231,7 @@ impl S3 {
             }
             // Every connection is busy: try again shortly, without spending an attempt.
             Err(Error::Busy) => self.wait(io, i, self.cfg.backoff_ns),
-            Err(e) => self.slots[i].state = State::Finished(Outcome::Fatal(Fatal::Transport(e))),
+            Err(e) => self.finish(i, Outcome::Fatal(Fatal::Transport(e))),
         }
     }
 }
