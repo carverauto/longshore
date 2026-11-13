@@ -87,7 +87,7 @@ impl Server {
                 .copy_from_slice(&self.objects[from].data[..len as usize]);
             let o = &mut self.objects[to];
             o.data[..len as usize].copy_from_slice(&io.buf(scratch)[..len as usize]);
-            o.target = c.target;
+            o.target[..c.target_len].copy_from_slice(&c.target[..c.target_len]);
             o.target_len = c.target_len;
             (o.len, o.checksum, o.used) = (len, checksum, true);
             (o.describing, o.describing_len) = (describing, describing_len);

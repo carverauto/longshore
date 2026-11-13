@@ -221,3 +221,32 @@ fn a_continuation_token_is_not_a_key_and_an_empty_one_is_refused() {
         Err(SubmitError::BadKey)
     );
 }
+
+#[test]
+fn a_page_that_ends_on_a_long_common_prefix_resumes_by_its_token() {
+    let mut w = world(33, Faults::default(), 3);
+    let long = "a".repeat(120);
+    let keys = [format!("{long}/x"), format!("{long}/y"), "b".to_string()];
+    for (i, key) in keys.iter().enumerate() {
+        w.fill_tx(10, 0);
+        w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
+            .unwrap();
+        assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+    }
+    let (_, prefixes, token) = delimited_page(&mut w, None, 1);
+    assert_eq!(prefixes, [format!("{long}/")]);
+    let (resumed, _, next) = delimited_page(&mut w, token.as_deref(), 1);
+    assert_eq!(resumed, ["b"]);
+    assert_eq!(next, None);
+}
+
+#[test]
+fn a_token_at_the_limit_fits_beside_the_longest_prefix() {
+    let mut w = world(34, Faults::default(), 3);
+    let prefix = "a".repeat(longshore::store::s3::KEY_ENCODED_MAX);
+    let token = "b".repeat(longshore::store::s3::LIST_TOKEN_ENCODED_MAX);
+    assert_ne!(
+        w.s3.list_continue(&mut w.io, 905, &prefix, &token, 1000, Some("/"), RX),
+        Err(SubmitError::BadKey)
+    );
+}

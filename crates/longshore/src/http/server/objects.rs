@@ -176,7 +176,7 @@ impl Server {
                 o.checksum = c.claimed.filter(|_| self.cfg.checksum.is_some());
                 o.data[..len]
                     .copy_from_slice(&io.buf(BufId(self.cfg.first_buf + i as u32 * 2 + 1))[..len]); // body buffer
-                o.target = c.target;
+                o.target[..c.target_len].copy_from_slice(&c.target[..c.target_len]);
                 o.target_len = c.target_len;
                 o.len = len as u32;
                 o.used = true;

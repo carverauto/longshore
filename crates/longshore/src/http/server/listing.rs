@@ -35,10 +35,14 @@ impl Server {
         // A continuation token is "t" and the hex of where the last page
         // stopped: opaque to the client, and not a key it could pass back
         // as start-after.
-        let (token, token_len) = param(b"continuation-token");
+        let token = query
+            .split(|b| *b == b'&')
+            .rev()
+            .find_map(|kv| kv.strip_prefix(b"continuation-token="))
+            .unwrap_or(b"");
         let mut resumed = ([0u8; TARGET_MAX], 0usize);
-        if let Some(hex) = token[..token_len].strip_prefix(b"t") {
-            for pair in hex.as_chunks::<2>().0 {
+        if let Some(hex) = token.strip_prefix(b"t") {
+            for pair in hex.as_chunks::<2>().0.iter().take(TARGET_MAX) {
                 let nibble = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
                 resumed.0[resumed.1] = nibble(pair[0]) << 4 | nibble(pair[1]);
                 resumed.1 += 1;

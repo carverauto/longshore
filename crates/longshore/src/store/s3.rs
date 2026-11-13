@@ -33,7 +33,7 @@ const PATH_MAX: usize = 1 + BUCKET_MAX + KEY_ENCODED_MAX;
 /// percent-encoded.
 pub const LIST_TOKEN_ENCODED_MAX: usize = 1024;
 /// A slot's request target: a path, or a listing's query with a token.
-const TARGET_MAX: usize = PATH_MAX + LIST_TOKEN_ENCODED_MAX;
+const TARGET_MAX: usize = PATH_MAX + b"continuation-token=&".len() + LIST_TOKEN_ENCODED_MAX;
 /// Room for a multipart query: `partNumber=10000&uploadId=` and an upload
 /// id with every byte percent-encoded.
 const QUERY_MAX: usize = 32 + 3 * UPLOAD_ID_MAX;

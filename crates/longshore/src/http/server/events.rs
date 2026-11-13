@@ -33,7 +33,12 @@ impl Server {
                 .filter(|rest| !bucket.is_empty() && rest.first() == Some(&b'/'))
                 .unwrap_or(target);
             let c = &mut self.conns[i];
-            let too_long = target.len() > TARGET_MAX || method.len() > c.method.len();
+            let target_max = if method == b"GET" && target.starts_with(b"/?") {
+                LIST_TARGET_MAX
+            } else {
+                TARGET_MAX
+            };
+            let too_long = target.len() > target_max || method.len() > c.method.len();
             if !too_long {
                 c.target[..target.len()].copy_from_slice(target);
                 c.target_len = target.len();
