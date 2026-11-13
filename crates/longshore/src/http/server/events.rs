@@ -51,6 +51,16 @@ impl Server {
                 });
             c.reply_checksum = None;
             c.reply_tag = None;
+            c.reply_object = None;
+            c.note_describing(&buf[..head_len as usize]);
+            let source = head
+                .fields
+                .header(buf, "x-amz-copy-source")
+                .or_else(|| head.fields.header(buf, "x-goog-copy-source"))
+                .filter(|v| v.len() <= TARGET_MAX)
+                .unwrap_or(b"");
+            c.copy_source[..source.len()].copy_from_slice(source);
+            c.copy_source_len = source.len();
             c.checksum_mode = head.fields.header(buf, "x-amz-checksum-mode") == Some(b"ENABLED");
             c.bearer = head
                 .fields

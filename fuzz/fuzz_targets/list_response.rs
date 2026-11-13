@@ -24,6 +24,13 @@ fuzz_target!(|data: &[u8]| {
                 assert!(n <= e.key_raw.len());
             }
         }
+        for p in listing.common_prefixes().flatten() {
+            assert!(!p.is_empty());
+            let mut out = vec![0u8; p.len()];
+            if let Some(n) = unescape(p, &mut out) {
+                assert!(n <= p.len());
+            }
+        }
     }
     let mut out = vec![0u8; data.len()];
     let _ = unescape(data, &mut out);

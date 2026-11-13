@@ -435,3 +435,53 @@ fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
     );
     assert!(w.io.buf(RX)[..6000] == object[..]);
 }
+
+#[test]
+fn stat_options_and_copy_use_this_stores_header_names() {
+    use longshore::store::options::Options;
+    use longshore::store::stat::header_in;
+    let mut w = world(8, Faults::default(), 3);
+    w.fill_tx(3000, 4);
+    let sent = w.io.buf(TX)[..3000].to_vec();
+    let options = Options::new()
+        .content_type("application/json")
+        .and_then(|o| o.metadata("owner", "team a"))
+        .unwrap();
+    w.s3.store_with(&mut w.io, 1, "doc", TX, 3000, Checksum::Compute, &options)
+        .unwrap();
+    assert_eq!(w.last().outcome, Outcome::Stored);
+
+    w.s3.copy(&mut w.io, 2, "doc", "copy").unwrap();
+    assert_eq!(w.last().outcome, Outcome::Copied);
+    w.s3.stat(&mut w.io, 3, "copy", Some(RX)).unwrap();
+    let Outcome::Stat(stat) = w.last().outcome else {
+        panic!("expected a stat")
+    };
+    assert_eq!(stat.size, 3000);
+    // Eight base64 characters of CRC-32C, padded with zeros.
+    assert_eq!(stat.checksum, Some(crc32c_form(&sent)));
+    let head = &w.io.buf(RX)[..stat.head_len as usize];
+    assert_eq!(header_in(head, "x-goog-meta-owner"), Some(&b"team a"[..]));
+    assert_eq!(header_in(head, "x-amz-meta-owner"), None);
+    assert_eq!(
+        header_in(head, "content-type"),
+        Some(&b"application/json"[..])
+    );
+
+    // This store has no batch erase, and a bearer token cannot sign a URL.
+    assert_eq!(
+        w.s3.erase_many(&mut w.io, 4, TX, 10, RX),
+        Err(longshore::store::s3::SubmitError::Unsupported)
+    );
+    let mut out = [0u8; 512];
+    assert!(w
+        .s3
+        .presign(
+            &mut w.io,
+            &mut out,
+            longshore::store::presign::Access::Fetch,
+            "doc",
+            60
+        )
+        .is_err());
+}

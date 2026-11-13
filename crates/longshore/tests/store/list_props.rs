@@ -45,11 +45,29 @@ fn listings_round_trip(tc: TestCase) {
         "<Name>bucket</Name><IsTruncated>{truncated}</IsTruncated><KeyCount>{}</KeyCount>",
         entries.len()
     );
+    // Common prefixes, as a listing with a delimiter reports them.
+    let prefixes: Vec<String> = (0..tc.draw(gs::integers::<usize>().min_value(0).max_value(4)))
+        .map(|_| {
+            let mut prefix = tc.draw(gs::text().min_size(1).max_size(20));
+            prefix.retain(|c| !c.is_control());
+            prefix.push('/');
+            prefix
+        })
+        .collect();
+    let groups: String = prefixes
+        .iter()
+        .map(|p| {
+            format!(
+                "<CommonPrefixes><Prefix>{}</Prefix></CommonPrefixes>",
+                escape(p)
+            )
+        })
+        .collect();
     let contents: String = entries.iter().map(|(k, size)| format!("<Contents><Key>{}</Key><LastModified>2026-11-12T00:00:00.000Z</LastModified><ETag>&#34;abc&#34;</ETag><Size>{size}</Size><StorageClass>STANDARD</StorageClass></Contents>", escape(k))).collect();
     let xml = if summary_first {
-        format!("<?xml version=\"1.0\"?><ListBucketResult xmlns=\"x\">{summary}{contents}</ListBucketResult>")
+        format!("<?xml version=\"1.0\"?><ListBucketResult xmlns=\"x\"><Prefix></Prefix>{summary}{contents}{groups}</ListBucketResult>")
     } else {
-        format!("<ListBucketResult>{contents}{summary}</ListBucketResult>")
+        format!("<ListBucketResult>{groups}{contents}{summary}</ListBucketResult>")
     };
 
     let listing = Listing::parse(xml.as_bytes()).expect("a well-formed listing must parse");
@@ -64,6 +82,16 @@ fn listings_round_trip(tc: TestCase) {
         })
         .collect();
     assert_eq!(got, entries);
+    let got: Vec<String> = listing
+        .common_prefixes()
+        .map(|p| {
+            let p = p.expect("well-formed prefix");
+            let mut out = vec![0u8; p.len()];
+            let n = unescape(p, &mut out).expect("valid references");
+            String::from_utf8(out[..n].to_vec()).unwrap()
+        })
+        .collect();
+    assert_eq!(got, prefixes);
 }
 
 /// Arbitrary bytes never panic the parser, and whatever it yields points
@@ -82,6 +110,9 @@ fn arbitrary_documents_are_safe(tc: TestCase) {
             assert!(!e.key_raw.is_empty());
             let mut out = vec![0u8; e.key_raw.len()];
             let _ = unescape(e.key_raw, &mut out);
+        }
+        for p in listing.common_prefixes().flatten() {
+            assert!(!p.is_empty());
         }
     }
     let mut out = vec![0u8; data.len()];

@@ -121,6 +121,10 @@ name = "store_s3_multipart"
 path = "tests/store/s3_multipart.rs"
 
 [[test]]
+name = "store_s3_object_ops"
+path = "tests/store/s3_object_ops.rs"
+
+[[test]]
 name = "store_s3_operations"
 path = "tests/store/s3_operations.rs"
 
