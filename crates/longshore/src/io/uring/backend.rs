@@ -49,6 +49,15 @@ impl Io for UringIo {
         self.measure_segments = on;
     }
 
+    fn waker(&mut self) -> Option<std::sync::Arc<dyn crate::io::Wake>> {
+        if self.wake_fd < 0 {
+            self.wake_fd = unsafe { eventfd(0, EFD_CLOEXEC) };
+        }
+        // Each handle owns a descriptor of its own for the same eventfd.
+        let fd = unsafe { dup(self.wake_fd) };
+        (self.wake_fd >= 0 && fd >= 0).then(|| std::sync::Arc::new(EventFd(fd)) as _)
+    }
+
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
         let l = TcpListener::bind(addr)?;
         let bound = l.local_addr()?;
@@ -214,6 +223,18 @@ impl Io for UringIo {
                     addr: path,
                     op_flags: O_RDONLY_CLOEXEC,
                     user_data: PHASE_FILE_OPEN,
+                    ..Default::default()
+                }
+            }
+            Op::AwaitWake => {
+                assert!(self.wake_fd >= 0, "Op::AwaitWake before Io::waker");
+                let s = &mut self.slots[i as usize];
+                s.state = State::Wake;
+                io_uring_sqe {
+                    opcode: IORING_OP_READ,
+                    fd: self.wake_fd,
+                    addr: &s.wake_count as *const u64 as u64,
+                    len: 8,
                     ..Default::default()
                 }
             }

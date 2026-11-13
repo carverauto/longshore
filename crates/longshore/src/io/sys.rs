@@ -73,6 +73,7 @@ pub const AF_INET: u16 = 2;
 pub const AF_INET6: u16 = 10;
 pub const SOCK_STREAM: u64 = 1;
 pub const SOCK_DGRAM: u64 = 2;
+pub const EFD_CLOEXEC: c_int = 0o2000000;
 pub const SOCK_CLOEXEC: u64 = 0o2000000;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_MAXSEG: c_int = 2;
@@ -241,6 +242,9 @@ extern "C" {
     ) -> *mut c_void;
     pub fn munmap(addr: *mut c_void, len: usize) -> c_int;
     pub fn close(fd: c_int) -> c_int;
+    pub fn eventfd(initval: c_uint, flags: c_int) -> c_int;
+    pub fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
+    pub fn dup(fd: c_int) -> c_int;
     pub fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
     pub fn getsockopt(
         fd: c_int,

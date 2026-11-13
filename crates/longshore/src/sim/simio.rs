@@ -106,6 +106,8 @@ pub struct SimIo {
     /// Extra addresses of listeners: (address, the listener's address, the
     /// segment size connections to the address report).
     routes: Vec<Route>,
+    /// Set by the waker from any thread, cleared when an `AwaitWake` completes.
+    woken: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The path limit connects to routed addresses report with their size.
     path_limit: u32,
 }
@@ -118,6 +120,14 @@ const SOCK_BUF: usize = 64 * 1024;
 const STALL_TICKS: u32 = 100_000;
 
 mod engine;
+
+struct SimWaker(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl crate::io::Wake for SimWaker {
+    fn wake(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
 
 impl SimIo {
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
@@ -145,6 +155,7 @@ impl SimIo {
             trace: 0xcbf2_9ce4_8422_2325,
             files: Vec::new(),
             routes: Vec::new(),
+            woken: Default::default(),
             path_limit: 0,
         }
     }

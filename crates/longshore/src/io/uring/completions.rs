@@ -207,11 +207,12 @@ impl UringIo {
         }
         // Only a timer's expiry is a success. The same code from any other
         // operation is a failure and is reported as one.
-        let r = if state == State::Timer && c.res == -ETIME {
-            0
-        } else {
-            c.res
-        };
+        let r =
+            if (state == State::Timer && c.res == -ETIME) || (state == State::Wake && c.res == 8) {
+                0
+            } else {
+                c.res
+            };
         self.finish(i, r, out)
     }
 }

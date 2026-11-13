@@ -41,6 +41,10 @@ impl SimIo {
     pub(super) fn attempt(&mut self, p: &Pending) -> Option<i32> {
         match p.op {
             Op::Timeout { .. } => (self.now >= p.deadline).then_some(0),
+            Op::AwaitWake => self
+                .woken
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+                .then_some(0),
             Op::Cancel { .. } => {
                 // Mark the operation named at submission, if it is still
                 // there; it completes with -ECANCELED on its next visit.
