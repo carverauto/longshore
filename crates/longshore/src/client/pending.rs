@@ -10,6 +10,7 @@ use super::{least_busy, open, request, Alive, Buffer, Error};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::TrySendError;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -115,8 +116,9 @@ impl<T: Output> Pending<T> {
         })
     }
 
-    /// Hand the request to the I/O thread under slot `op`.
-    fn send(&mut self, op: u32) {
+    /// Hand the request to the I/O thread under slot `op`. False, with the
+    /// slot given back and the lane marked closed, if its thread is gone.
+    fn send(&mut self, op: u32) -> bool {
         let mut r = self.request.take().expect("sent once");
         r.op = op;
         self.lane.cells[op as usize]
@@ -126,7 +128,10 @@ impl<T: Output> Pending<T> {
             .buf = self.buf;
         self.lane.in_flight.fetch_add(1, Ordering::Relaxed);
         // The queue holds one request per slot, so it has room.
-        if self.lane.requests.try_send(r).is_err() {
+        if let Err(TrySendError::Full(r) | TrySendError::Disconnected(r)) =
+            self.lane.requests.try_send(r)
+        {
+            self.request = Some(r);
             self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
             self.lane.cells[op as usize]
                 .state
@@ -134,11 +139,12 @@ impl<T: Output> Pending<T> {
                 .expect("cell lock")
                 .buf = None;
             self.lane.ops.give(op);
-            self.stage = Stage::Early(Error::Closed);
-            return;
+            self.lane.close();
+            return false;
         }
         self.stage = Stage::Sent(op);
         self.lane.wake.wake();
+        true
     }
 
     /// Take the result of slot `op` and free the slot.
@@ -173,9 +179,11 @@ impl<T: Output> Pending<T> {
                 }
             }
             match self.lane.ops.poll_take(self.waiter, cx) {
+                Poll::Ready(op) if !open(&self.lane) => self.lane.ops.give(op),
                 Poll::Ready(op) => {
-                    self.send(op);
-                    return Poll::Ready(());
+                    if self.send(op) {
+                        return Poll::Ready(());
+                    }
                 }
                 Poll::Pending if open(&self.lane) => return Poll::Pending,
                 Poll::Pending => {}

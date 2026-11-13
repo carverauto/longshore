@@ -10,6 +10,7 @@ use crate::io::sys::*;
 use crate::io::{
     BufId, Busy, Completion, Completions, FileId, Io, Limits, Op, Sock, Token, ECANCELED, ETIME,
 };
+use core::mem::ManuallyDrop;
 use std::ffi::CString;
 use std::io;
 use std::net::{SocketAddr, TcpListener};
@@ -68,8 +69,14 @@ struct Slot {
     wake_count: u64,
 }
 
+/// The kernel holds pointers into `bufs` and `slots` (the eventfd counter,
+/// timer specs, addresses) while operations are in flight, and closing the
+/// ring does not wait for them to end. So dropping this cancels every
+/// operation and reaps it ([`UringIo::quiesce`]), then closes the ring, then
+/// the eventfd, and only then frees `bufs` and `slots`. If the operations
+/// cannot be shown to have ended, those two are leaked instead of freed.
 pub struct UringIo {
-    ring: Ring,
+    ring: ManuallyDrop<Ring>,
     limits: Limits,
     bufs: Box<[u8]>,
     slots: Box<[Slot]>,
@@ -87,6 +94,8 @@ const PHASE_FILE_OPEN: u64 = 2 << 32;
 const PHASE_FILE_READ: u64 = 3 << 32;
 const PHASE_FILE_CLOSE: u64 = 4 << 32;
 const PHASE_SOCK_RELEASE: u64 = 5 << 32;
+/// The cancel and timer `quiesce` submits, which belong to no slot.
+const QUIESCE: u64 = 6 << 32;
 
 mod completions;
 
@@ -110,8 +119,14 @@ impl Drop for EventFd {
 
 impl Drop for UringIo {
     fn drop(&mut self) {
+        let quiet = self.quiesce();
+        unsafe { ManuallyDrop::drop(&mut self.ring) };
         if self.wake_fd >= 0 {
             unsafe { close(self.wake_fd) };
+        }
+        if !quiet {
+            core::mem::forget(core::mem::take(&mut self.slots));
+            core::mem::forget(core::mem::take(&mut self.bufs));
         }
     }
 }
@@ -154,7 +169,7 @@ impl UringIo {
             wake_count: 0,
         };
         Ok(UringIo {
-            ring,
+            ring: ManuallyDrop::new(ring),
             limits,
             bufs,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
@@ -165,11 +180,66 @@ impl UringIo {
         })
     }
 
-    /// Close the ring and keep only the buffer pool. Once the ring is gone
-    /// nothing is submitted or reaped again, and memory lent out of the pool
-    /// stays valid for as long as the caller keeps what this returns.
-    pub fn into_pool(mut self) -> Box<[u8]> {
-        core::mem::take(&mut self.bufs)
+    /// Cancel every operation in flight and reap it, so the kernel touches
+    /// no buffer or slot afterwards. Completions are discarded. True once
+    /// nothing is in flight; false if the ring fails or something has not
+    /// ended within five seconds (a zero-copy send whose data the peer never
+    /// acknowledges can hold its buffer that long). Dropping calls this.
+    pub fn quiesce(&mut self) -> bool {
+        if self.slots.iter().all(|s| s.state == State::Free) {
+            return true;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Operations of several steps do not start their next step.
+        for s in self.slots.iter_mut() {
+            s.cancel_requested = true;
+        }
+        self.push(io_uring_sqe {
+            opcode: IORING_OP_ASYNC_CANCEL,
+            fd: -1,
+            op_flags: IORING_ASYNC_CANCEL_ANY,
+            user_data: QUIESCE,
+            ..Default::default()
+        });
+        // Bounds each wait. The kernel copies it when the timer is submitted.
+        let tick = timespec {
+            sec: 0,
+            nsec: 100_000_000,
+        };
+        let mut timing = false;
+        let mut out = Completions::new(8);
+        while self.slots.iter().any(|s| s.state != State::Free) {
+            if std::time::Instant::now() > deadline {
+                return false;
+            }
+            if !timing {
+                if self.ring.pending() > 0 && self.ring.enter(0).is_err() {
+                    return false;
+                }
+                self.push(io_uring_sqe {
+                    opcode: IORING_OP_TIMEOUT,
+                    addr: &tick as *const timespec as u64,
+                    len: 1,
+                    user_data: QUIESCE | 1,
+                    ..Default::default()
+                });
+                timing = true;
+            }
+            if self.ring.enter(1).is_err() {
+                return false;
+            }
+            while let Some(c) = self.ring.pop() {
+                match c.user_data {
+                    QUIESCE => {}
+                    t if t == QUIESCE | 1 => timing = false,
+                    _ => {
+                        self.on_cqe(c, &mut out);
+                        while out.pop().is_some() {}
+                    }
+                }
+            }
+        }
+        true
     }
 
     /// `io_uring_enter` calls made so far.

@@ -348,13 +348,13 @@ mod linux {
                 break;
             }
             if io.tick(true, &mut out).is_err() {
-                // A broken ring. Callers may hold the lent buffers until
-                // they shut the thread down, so their memory stays until then.
-                let pool = io.into_pool();
+                // A broken ring. Stop what the kernel still runs, then hand
+                // callers their operations back. The pool stays allocated
+                // until they shut the thread down, or for good if the kernel
+                // could not be stopped.
+                io.quiesce();
                 worker.abandon();
                 worker.refuse_until_shutdown();
-                drop(worker);
-                drop(pool);
                 return;
             }
             while let Some(c) = out.pop() {

@@ -205,8 +205,30 @@ fn main() {
         threads_before,
         "the I/O threads did not stop"
     );
+    // A ring dropped with operations in flight first stops them: a wake-up
+    // read and a timer far in the future both end, and promptly.
+    {
+        use longshore::io::{Op, Token};
+        let mut io = UringIo::new(Limits {
+            sockets_max: 1,
+            buffers: 1,
+            buffer_size: 8192,
+            small_buffers: 0,
+            small_buffer_size: 0,
+            ops_max: 2,
+        })
+        .expect("ring");
+        let _wake = io.waker().expect("waker");
+        io.submit(Token(1), Op::AwaitWake).unwrap();
+        io.submit(Token(2), Op::Timeout { nanos: 3_600 * 1_000_000_000 }).unwrap();
+        io.tick(false, &mut Completions::new(4)).expect("submit");
+        let started = std::time::Instant::now();
+        assert!(io.quiesce(), "operations still in flight after quiesce");
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        drop(io);
+    }
     println!(
-        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, threads stopped on drop",
+        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, threads stopped on drop, ring quiesced",
         CALLERS * ROUNDS
     );
 

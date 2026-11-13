@@ -120,6 +120,10 @@ impl Future for Borrow {
                     continue;
                 }
                 if let Poll::Ready(index) = lane.bufs.poll_take(me.waiter, cx) {
+                    if !all_closed && !open(lane) {
+                        lane.bufs.give(index);
+                        continue;
+                    }
                     let lane = lane.clone();
                     me.forget();
                     return Poll::Ready(Buffer {
