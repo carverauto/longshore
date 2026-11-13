@@ -61,7 +61,7 @@ scripts/bench-summary.py runs.jsonl      # median, lowest and highest per config
 
 ## AES-GCM on Arm cores AWS-LC does not recognise
 
-HTTPS throughput is bound by AES-GCM. AWS-LC has a faster 8-way routine for
+On Arm, HTTPS throughput is bound by AES-GCM. AWS-LC has a faster 8-way routine for
 AArch64 that it uses only on CPUs it recognises (Neoverse V1, V2, V3 and
 Apple M). On another core with the same instructions, for example the
 Cortex-X925, build with the capabilities fixed at compile time:
