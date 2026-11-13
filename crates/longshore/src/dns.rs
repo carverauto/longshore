@@ -6,10 +6,11 @@
 //! Non-blocking DNS for a fixed set of hostnames.
 //!
 //! `codec` is sans-I/O: it encodes queries and parses responses and never
-//! reads outside the bytes it is given. `resolver` drives it over `crate::io::Io`,
-//! resolves every configured hostname at startup, for A records, AAAA
-//! records or both, and refreshes on a fixed interval, ignoring record TTLs. Lookups on the request path read an
-//! in-memory cache and perform no I/O.
+//! reads outside the bytes it is given. `resolver` drives it over
+//! `crate::io::Io`, resolves every configured hostname at startup, for A
+//! records, AAAA records or both, and refreshes on a fixed interval,
+//! ignoring record TTLs. Lookups on the request path read an in-memory cache
+//! and perform no I/O.
 
 pub mod codec;
 pub mod resolver;
