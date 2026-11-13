@@ -69,4 +69,20 @@ impl Host {
             1 - self.active
         }
     }
+
+    /// Apply a cycle's empty answers: a family that answered with no
+    /// addresses is dropped if the other family has some. If every family
+    /// answered empty, both keep their addresses and this returns true.
+    pub(super) fn drop_empty(&mut self, empty: [bool; 2]) -> bool {
+        if empty == [true; 2] {
+            return true;
+        }
+        for set in 0..2 {
+            if empty[set] && self.sets[1 - set].len > 0 {
+                self.sets[set].len = 0;
+                self.sets[set].next = 0;
+            }
+        }
+        false
+    }
 }

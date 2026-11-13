@@ -81,6 +81,8 @@ pub struct Resolver {
     send_in_flight: bool,
     /// A query is waiting for the previous send to release the transmit buffer.
     send_wanted: bool,
+    /// Families that answered with no addresses for the host being asked.
+    empty: [bool; 2],
     /// Lookups that failed or timed out, and receive errors.
     pub failures: u64,
     /// Queries sent.
@@ -129,6 +131,7 @@ impl Resolver {
             rng: 0,
             send_in_flight: false,
             send_wanted: false,
+            empty: [false; 2],
             failures: 0,
             queries: 0,
             cycles: 0,
@@ -216,10 +219,15 @@ impl Resolver {
     }
 
     /// Move to the host's next question, the next host, or finish the cycle.
+    /// After a host's last question, its empty answers are applied.
     fn advance<IO: Io>(&mut self, io: &mut IO, host: usize, q: usize) {
         if q + 1 < self.cfg.family.records().len() {
-            self.query(io, host, q + 1, 0);
-        } else if host + 1 < self.hosts.len() {
+            return self.query(io, host, q + 1, 0);
+        }
+        if self.hosts[host].drop_empty(std::mem::take(&mut self.empty)) {
+            self.failures += 1;
+        }
+        if host + 1 < self.hosts.len() {
             self.query(io, host + 1, 0, 0);
         } else {
             self.cycles += 1;
@@ -270,7 +278,7 @@ impl Resolver {
                     self.failures += 1;
                 } else if let Phase::Querying { host, q, .. } = self.phase {
                     let records = self.cfg.family.records();
-                    let (record, last) = (records[q], q + 1 == records.len());
+                    let record = records[q];
                     let msg = &io.buf(self.cfg.rx_bufs[server])[..c.result as usize];
                     match parse_response_for(msg, self.id, &self.hosts[host].name, record) {
                         Ok(a) => {
@@ -281,20 +289,10 @@ impl Resolver {
                             self.advance(io, host, q);
                         }
                         // The name has no records of this family. With two
-                        // families that is an answer, not a failure: drop
-                        // this family's addresses if the other has some. If
-                        // the other has none either, keep what there is, and
-                        // count a failure once the host's last question
-                        // leaves it with nothing new.
+                        // families that is an answer, not a failure; it is
+                        // applied once the host's last question is answered.
                         Err(DnsError::NoAddresses) if records.len() > 1 => {
-                            let h = &mut self.hosts[host];
-                            let set = set_of(record);
-                            if h.sets[1 - set].len > 0 {
-                                h.sets[set].len = 0;
-                                h.sets[set].next = 0;
-                            } else if last {
-                                self.failures += 1;
-                            }
+                            self.empty[set_of(record)] = true;
                             self.advance(io, host, q);
                         }
                         // Not an answer to the outstanding query: ignore it.

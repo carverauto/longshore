@@ -79,15 +79,38 @@ fn a_family_that_disappears_from_the_zone_is_dropped_at_the_next_refresh() {
 }
 
 #[test]
+fn a_host_that_moves_from_ipv6_to_ipv4_is_handed_out_by_ipv4() {
+    let (mut io, mut r, mut s, mut out) =
+        world_for(3, Faults::default(), &[NS1], NS1, SEC, Family::PreferV6);
+    s.v4 = false;
+    pump(&mut io, &mut r, &mut s, &mut out, 100 * MS);
+    assert_eq!(r.addrs(0), &zone_addrs_v6(0)[..]);
+    // The empty AAAA answer comes before the A answer that makes it final.
+    (s.v4, s.v6) = (true, false);
+    pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC / 2);
+    assert_eq!(r.addrs(0), &zone_addrs(0)[..]);
+    assert!(r.lookup(0).unwrap().is_ipv4());
+    assert_eq!(r.failures, 0);
+}
+
+#[test]
 fn a_zone_that_loses_every_address_keeps_the_last_known_ones() {
     let (mut io, mut r, mut s, mut out) = resolved(Family::PreferV4);
+    let cycles = r.cycles;
     (s.v4, s.v6) = (false, false);
-    pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC);
-    assert!(r.ready() && r.lookup(0).is_some());
-    assert!(
-        r.failures >= 1,
-        "a name with no address at all is a failure"
+    pump(&mut io, &mut r, &mut s, &mut out, 5 * SEC / 2);
+    assert!(r.cycles > cycles);
+    assert_eq!(
+        r.failures,
+        (r.cycles - cycles) * ZONE.len() as u64,
+        "one failure per host and cycle"
     );
+    assert_eq!(r.addrs(0), &zone_addrs(0)[..], "IPv4 is kept");
+    let v4 = r.lookup(0).unwrap();
+    assert!(v4.is_ipv4());
+    r.connect_failed(0, v4);
+    assert_eq!(r.family_switches, 1);
+    assert_eq!(r.addrs(0), &zone_addrs_v6(0)[..], "and so is IPv6");
 }
 
 #[test]
