@@ -163,14 +163,14 @@ s5cmd 2.3.0 and the AWS CLI 2.40.2 with its CRT transfer client (`preferred_tran
 | AWS CLI, GET over HTTP | 2 | 4.7 to 4.7 | 5.1 to 5.5 | 14.2 to 14.3 |
 | AWS CLI, GET over HTTPS | 2 | 4.8 to 5.1 | 5.5 to 5.8 | 13.2 to 13.9 |
 
-Side by side, best figures on the Graviton4 instance:
+Side by side, best run of each on the Graviton4 instance:
 
 | Request | s5cmd | AWS CLI with CRT | One `s3_uring` client | Eight `s3_uring` clients |
 |---|---|---|---|---|
-| PUT over HTTP | 22.1 GB/s on 72 cores | 6.5 on 6 | 36.7 on 3.9 | not run: one fills the card |
-| PUT over HTTPS | 14.3 on 54 | 6.5 on 7 | 5.2 on 1.2 | 36.2 on 14 |
-| GET over HTTP | 11.0 on 42 | 4.0 on 6 | 4.4 on 1.2 | 26.4 on 11 |
-| GET over HTTPS | 11.5 on 43 | 4.0 on 6 | 2.8 on 1.1 | 17.9 on 11 |
+| PUT over HTTP | 22.1 GB/s on 72.0 cores | 6.5 on 5.3 | 36.9 on 3.9 | not run: one fills the card |
+| PUT over HTTPS | 14.3 on 54.0 | 6.6 on 7.5 | 5.3 on 1.3 | 36.2 on 13.5 |
+| GET over HTTP | 11.0 on 42.4 | 4.0 on 5.6 | 4.4 on 1.2 | 26.4 on 10.9 |
+| GET over HTTPS | 11.5 on 43.0 | 4.0 on 6.2 | 2.8 on 1.1 | 17.9 on 10.5 |
 
 - One client thread beats both for plain PUT, and uses far fewer cores per byte than either for every request.
 - For HTTPS and for GET, s5cmd on 42 to 54 cores in its best runs moves more in total than one client thread. Four clients side by side pass it for HTTPS PUT and plain GET on both machines and for HTTPS GET on the AMD machine. For HTTPS GET on the Graviton4 machine four clients give 9.8 to 10.0 GB/s against s5cmd's 11.2 to 11.5, and eight clients give 17.6 to 17.9.

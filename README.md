@@ -178,10 +178,10 @@ held in RAM. Best run of each, with the cores busy across the machine.
 
 | Request | s5cmd | AWS CLI with CRT | One client here | Eight clients here |
 |---|---|---|---|---|
-| PUT over HTTP | 22.1 GB/s on 72 cores | 6.5 on 6 | 36.7 on 3.9 | Not run: one fills the card |
-| PUT over HTTPS | 14.3 on 54 | 6.5 on 7 | 5.2 on 1.2 | 36.2 on 14 |
-| GET over HTTP | 11.0 on 42 | 4.0 on 6 | 4.4 on 1.2 | 26.4 on 11 |
-| GET over HTTPS | 11.5 on 43 | 4.0 on 6 | 2.8 on 1.1 | 17.9 on 11 |
+| PUT over HTTP | 22.1 GB/s on 72.0 cores | 6.5 on 5.3 | 36.9 on 3.9 | Not run: one fills the card |
+| PUT over HTTPS | 14.3 on 54.0 | 6.6 on 7.5 | 5.3 on 1.3 | 36.2 on 13.5 |
+| GET over HTTP | 11.0 on 42.4 | 4.0 on 5.6 | 4.4 on 1.2 | 26.4 on 10.9 |
+| GET over HTTPS | 11.5 on 43.0 | 4.0 on 6.2 | 2.8 on 1.1 | 17.9 on 10.5 |
 
 One client thread is the fastest of these for plain PUT and uses the fewest
 cores per byte for every request. For HTTPS and for GET, s5cmd on 42 to 54
@@ -278,8 +278,10 @@ the client is mostly idle.
   card on the AMD instance. Where one thread
   stops is unknown. The S3 figures need the preference for large-segment
   addresses, which is off by default.
-- Everything except plain PUT is bound by one core per client. More than
-  one client has only been run as separate processes.
+- With one client everything except plain PUT is bound by that client's
+  core. With several clients the network card becomes the limit: eight
+  Graviton4 HTTPS PUT clients, four AMD HTTPS PUT clients and eight AMD GET
+  clients. Several clients have only been run as separate processes.
 - On x86-64 the only real-store measurements are from one AMD instance
   type. Intel has not been measured against a store.
 - On Linux 6.1 the client was run for minutes, not hours. Connections it
@@ -315,8 +317,8 @@ the client is mostly idle.
   try the preferred family again on its own.
 - IPv6 has not been run against Amazon S3's dual-stack endpoints, only
   against Linode Object Storage and over loopback.
-- Most measurements were taken on a single afternoon each. The rows marked
-  as medians were run five times, and the others once.
+- Each table states how many runs are behind its figures. Figures in
+  tables that do not say are single runs taken on one afternoon.
 
 ## License
 
