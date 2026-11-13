@@ -228,8 +228,11 @@ pub fn main() {
             .unwrap_or_else(|| die("usage: s3_uring list|clean PREFIX"));
         return sweep(&prefix, first.as_deref() == Some("clean"));
     }
-    let cmd = args.next().unwrap_or_else(|| die("usage: s3_uring selftest | badcrc | put | put-crc | get | put-new | get-range | erase | list-keys [--conns N] [--size BYTES] [--secs S] [--cpu N]"));
+    let cmd = args.next().unwrap_or_else(|| die("usage: s3_uring selftest | badcrc | put | put-crc | get | put-new | get-range | erase | list-keys [--conns N] [--size BYTES] [--secs S] [--cpu N] [--threads N] [--cpu-step N]"));
     let (mut conns, mut size, mut secs, mut cpu) = (4u32, 8u32 << 20, 10u64, None);
+    // --threads N runs N independent clients, each with --conns connections.
+    // With --cpu they are pinned to CPUs --cpu-step apart, starting at --cpu.
+    let (mut threads, mut cpu_step) = (1u32, 1usize);
     while let Some(k) = args.next() {
         let v: u64 = args
             .next()
@@ -240,17 +243,24 @@ pub fn main() {
             "--size" => size = v as u32,
             "--secs" => secs = v,
             "--cpu" => cpu = Some(v as usize),
+            "--threads" => threads = (v as u32).max(1),
+            "--cpu-step" => cpu_step = v as usize,
             _ => die(&format!("unknown flag {k}")),
         }
     }
+    let place = Placement {
+        threads,
+        cpu,
+        cpu_step,
+    };
     match cmd.as_str() {
         "selftest" => selftest(size),
         "badcrc" => bad_checksum(size),
         "multipart" => multipart(size),
         "objects" => objects(size),
-        "put" => bench(true, conns, size, secs, cpu, Checksum::None),
-        "put-crc" => bench(true, conns, size, secs, cpu, Checksum::Compute),
-        "get" => bench(false, conns, size, secs, cpu, Checksum::None),
+        "put" => bench(true, conns, size, secs, place, Checksum::None),
+        "put-crc" => bench(true, conns, size, secs, place, Checksum::Compute),
+        "get" => bench(false, conns, size, secs, place, Checksum::None),
         "put-new" | "get-range" | "erase" | "list-keys" => ops(&cmd, conns, size, secs, cpu),
         other => die(&format!("unknown command {other}")),
     }
