@@ -17,8 +17,8 @@ is meant to become part of a larger project.
 | Area | State |
 |---|---|
 | S3: `store`, `store_no_clobber`, `fetch`, ranged `fetch`, `list`, `erase` | Works against Amazon S3 and Linode Object Storage, over HTTP and HTTPS |
-| Multipart upload: begin, store part, complete, abort | Works against Amazon S3, Linode Object Storage, Google Cloud Storage and versitygw. Each part is one registered buffer |
-| `stat`, stores with a content type and metadata, `copy`, `erase_many`, listing with a delimiter, presigned URLs | Pass in the simulator. Not yet run against a real store. `erase_many` and presigned URLs are for S3 only |
+| Multipart upload: begin, store part, complete, abort | Works against Amazon S3, Linode Object Storage and Google Cloud Storage. Each part is one registered buffer |
+| `stat`, stores with a content type and metadata, `copy`, `erase_many`, listing with a delimiter, presigned URLs | Work against Amazon S3, Linode Object Storage and Google Cloud Storage. `erase_many` and presigned URLs need signing keys, so they are not available with Google's bearer token |
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
