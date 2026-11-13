@@ -26,7 +26,7 @@ Five runs of 8 s per row, one instance at a time. Every column is the median of 
 | GET | 128 | Off | 4.2 (3.7 to 4.3) | 1.00 | 1.2 |
 | GET | 128 | On | 4.4 (4.3 to 4.4) | 0.99 | 1.2 |
 | HTTPS PUT | 128 | Off, 1 MiB batch | 3.0 (2.4 to 3.5) | 0.99 | 1.2 |
-| HTTPS PUT | 128 | On, 1 MiB batch | 4.0 (3.9 to 4.1) | 0.99 | 1.1 |
+| HTTPS PUT | 128 | On, 1 MiB batch | 4.0 (3.9 to 4.1) | 0.99 | 1.2 |
 | HTTPS PUT | 128 | On, 2 MiB batch | 4.6 (4.5 to 4.6) | 0.99 | 1.2 |
 | HTTPS PUT | 128 | On, 4 MiB batch | 5.0 (4.9 to 5.0) | 0.99 | 1.2 |
 | HTTPS PUT | 128 | On, 8 MiB batch | 4.0 (4.0 to 4.1) | 0.99 | 1.2 |
@@ -42,9 +42,9 @@ Five runs of 8 s per row, one instance at a time. Every column is the median of 
 | PUT | 384 | Off | 11.8 (7.1 to 24.6) | 1.00 | 3.2 |
 | PUT | 384 | On | 22.4 (21.1 to 24.1) | 0.80 | 3.4 |
 | PUT with CRC-64/NVME | 384 | Off | 8.2 (7.3 to 9.2) | 1.00 | 2.5 |
-| PUT with CRC-64/NVME | 384 | On | 13.3 (13.1 to 13.5) | 1.00 | 2.2 |
+| PUT with CRC-64/NVME | 384 | On | 13.3 (13.1 to 13.5) | 1.00 | 2.3 |
 | GET | 128 | Off | 7.2 (6.5 to 7.2) | 1.00 | 1.4 |
-| GET | 128 | On | 7.9 (7.8 to 7.9) | 1.00 | 1.2 |
+| GET | 128 | On | 7.9 (7.8 to 7.9) | 1.00 | 1.3 |
 | HTTPS PUT | 128 | Off, 1 MiB batch | 3.5 (3.5 to 4.2) | 0.99 | 1.2 |
 | HTTPS PUT | 128 | On, 1 MiB batch | 5.1 (5.0 to 5.1) | 0.99 | 1.2 |
 | HTTPS PUT | 128 | On, 2 MiB batch | 5.6 (5.5 to 5.8) | 0.99 | 1.3 |
@@ -103,9 +103,9 @@ Each process is a complete client pinned to its own CPU, sharing nothing with th
 | HTTPS PUT | 8 | 3 | 34.5 to 36.2 | 13.5 to 14.0 |
 | GET | 2 | 1 | 8.3 | 4.0 |
 | GET | 4 | 3 | 15.3 to 15.4 | 5.3 to 6.9 |
-| GET | 8 | 3 | 26.1 to 26.4 | 10.7 to 10.9 |
+| GET | 8 | 3 | 26.1 to 26.5 | 10.7 to 10.9 |
 | HTTPS GET | 2 | 1 | 5.2 | 3.1 |
-| HTTPS GET | 4 | 3 | 9.8 to 10.0 | 4.7 to 5.3 |
+| HTTPS GET | 4 | 3 | 9.9 to 10.0 | 4.7 to 5.3 |
 | HTTPS GET | 8 | 3 | 17.6 to 17.9 | 10.5 to 12.8 |
 
 ### AMD
@@ -117,16 +117,16 @@ Each process is a complete client pinned to its own CPU, sharing nothing with th
 | HTTPS PUT | 3 | 2 | 21.8 to 22.1 | 5.9 to 6.3 |
 | HTTPS PUT | 4 | 3 | 24.0 to 24.0 | 6.4 to 7.6 |
 | HTTPS PUT | 8 | 1 | 16.7 | 16.7 |
-| GET | 2 | 1 | 14.3 | 4.7 |
-| GET | 4 | 3 | 22.0 to 22.1 | 5.1 to 5.2 |
+| GET | 2 | 1 | 14.4 | 4.7 |
+| GET | 4 | 3 | 22.0 to 22.1 | 5.1 to 5.3 |
 | GET | 8 | 3 | 24.8 to 26.1 | 8.4 to 8.9 |
-| HTTPS GET | 2 | 1 | 9.2 | 2.7 |
+| HTTPS GET | 2 | 1 | 9.3 | 2.7 |
 | HTTPS GET | 4 | 3 | 14.7 to 14.8 | 4.8 to 5.2 |
 | HTTPS GET | 8 | 3 | 21.6 to 22.1 | 10.1 to 12.3 |
 
 - Throughput grows with the number of clients until the card is full. Eight clients upload over HTTPS at 34.5 to 36.2 GB/s on Graviton4, which is the card, against 5.0 for one.
 - Whole-machine cores divided by clients run from 1.05 to 2.35 across the rows, counting kernel network work on other cores, and 1.5 to 1.9 for the Graviton4 HTTPS PUT rows with four and eight clients.
-- On the AMD instance four clients fill the 200 Gbit/s card over HTTPS at 24.0 GB/s. Eight gave 16.7 GB/s in one run: more than the card can carry made it slower. Three give 21.8 to 22.1.
+- On the AMD instance four clients fill the 200 Gbit/s card over HTTPS at 24.0 GB/s. Eight gave 16.7 GB/s in one run, below the 24.0 GB/s of four, with very uneven rates per client: four at 3.7 to 3.8 GB/s and four at 0.2 to 0.5. The cause was not looked for. Three give 21.8 to 22.1.
 - These are separate processes. A client that runs several I/O threads itself is planned and not built.
 
 ## Other clients on the same machines
@@ -141,11 +141,11 @@ s5cmd 2.3.0 and the AWS CLI 2.40.2 with its CRT transfer client (`preferred_tran
 | s5cmd, 1,024 workers, PUT over HTTP | 3 | 20.4 to 22.1 | 69.4 to 72.0 | 3.0 to 3.3 |
 | s5cmd, 256 workers, PUT over HTTPS | 3 | 11.8 to 14.3 | 44.4 to 54.0 | 4.7 to 5.7 |
 | AWS CLI, PUT over HTTP | 3 | 6.4 to 6.5 | 5.3 to 5.9 | 10.3 to 10.5 |
-| AWS CLI, PUT over HTTPS | 3 | 6.1 to 6.6 | 7.1 to 8.8 | 10.2 to 11.1 |
+| AWS CLI, PUT over HTTPS | 3 | 6.1 to 6.6 | 7.1 to 8.8 | 10.3 to 11.1 |
 | AWS CLI, PUT over HTTP, checksums only when required | 3 | 6.3 to 6.5 | 4.7 to 5.1 | 10.4 to 10.6 |
 | s5cmd, 256 workers, GET over HTTP | 2 | 8.2 to 11.0 | 27.5 to 42.4 | 6.1 to 8.2 |
 | s5cmd, 256 workers, GET over HTTPS | 2 | 11.2 to 11.5 | 42.6 to 43.0 | 5.8 to 6.0 |
-| AWS CLI, GET over HTTP | 2 | 3.9 to 4.0 | 5.6 to 5.8 | 16.9 to 17.2 |
+| AWS CLI, GET over HTTP | 2 | 3.9 to 4.0 | 5.6 to 5.8 | 17.0 to 17.2 |
 | AWS CLI, GET over HTTPS | 2 | 4.0 to 4.0 | 6.2 to 6.5 | 16.7 to 16.9 |
 
 ### AMD
@@ -154,12 +154,12 @@ s5cmd 2.3.0 and the AWS CLI 2.40.2 with its CRT transfer client (`preferred_tran
 |---|---|---|---|---|
 | s5cmd, 256 workers, PUT over HTTP | 3 | 14.1 to 14.7 | 41.7 to 45.1 | 4.6 to 4.8 |
 | s5cmd, 1,024 workers, PUT over HTTP | 3 | 14.4 to 20.1 | 39.4 to 51.0 | 3.4 to 4.7 |
-| s5cmd, 256 workers, PUT over HTTPS | 3 | 13.3 to 14.3 | 42.7 to 47.5 | 4.7 to 5.0 |
+| s5cmd, 256 workers, PUT over HTTPS | 3 | 13.4 to 14.3 | 42.7 to 47.5 | 4.7 to 5.0 |
 | AWS CLI, PUT over HTTP | 3 | 6.2 to 6.4 | 5.3 to 6.2 | 10.5 to 10.9 |
-| AWS CLI, PUT over HTTPS | 3 | 5.6 to 6.6 | 6.7 to 7.6 | 10.2 to 11.9 |
+| AWS CLI, PUT over HTTPS | 3 | 5.6 to 6.6 | 6.7 to 7.6 | 10.2 to 12.0 |
 | AWS CLI, PUT over HTTP, checksums only when required | 3 | 6.0 to 6.3 | 5.3 to 6.2 | 10.7 to 11.2 |
-| s5cmd, 256 workers, GET over HTTP | 2 | 10.3 to 11.8 | 57.3 to 62.9 | 5.7 to 6.5 |
-| s5cmd, 256 workers, GET over HTTPS | 2 | 11.2 to 11.6 | 59.7 to 60.0 | 5.8 to 6.0 |
+| s5cmd, 256 workers, GET over HTTP | 2 | 10.3 to 11.9 | 57.3 to 62.9 | 5.7 to 6.5 |
+| s5cmd, 256 workers, GET over HTTPS | 2 | 11.3 to 11.6 | 59.7 to 60.0 | 5.8 to 6.0 |
 | AWS CLI, GET over HTTP | 2 | 4.7 to 4.7 | 5.1 to 5.5 | 14.2 to 14.3 |
 | AWS CLI, GET over HTTPS | 2 | 4.8 to 5.1 | 5.5 to 5.8 | 13.2 to 13.9 |
 
@@ -169,11 +169,11 @@ Side by side, best run of each on the Graviton4 instance:
 |---|---|---|---|---|
 | PUT over HTTP | 22.1 GB/s on 72.0 cores | 6.5 on 5.3 | 36.9 on 3.9 | not run: one fills the card |
 | PUT over HTTPS | 14.3 on 54.0 | 6.6 on 7.5 | 5.3 on 1.3 | 36.2 on 13.5 |
-| GET over HTTP | 11.0 on 42.4 | 4.0 on 5.6 | 4.4 on 1.2 | 26.4 on 10.9 |
+| GET over HTTP | 11.0 on 42.4 | 4.0 on 5.6 | 4.4 on 1.2 | 26.5 on 10.9 |
 | GET over HTTPS | 11.5 on 43.0 | 4.0 on 6.2 | 2.8 on 1.1 | 17.9 on 10.5 |
 
 - One client thread beats both for plain PUT, and uses far fewer cores per byte than either for every request.
-- For HTTPS and for GET, s5cmd on 42 to 54 cores in its best runs moves more in total than one client thread. Four clients side by side pass it for HTTPS PUT and plain GET on both machines and for HTTPS GET on the AMD machine. For HTTPS GET on the Graviton4 machine four clients give 9.8 to 10.0 GB/s against s5cmd's 11.2 to 11.5, and eight clients give 17.6 to 17.9.
+- For HTTPS and for GET, s5cmd on 42 to 54 cores in its best runs moves more in total than one client thread. Four clients side by side pass it for HTTPS PUT and plain GET on both machines and for HTTPS GET on the AMD machine. For HTTPS GET on the Graviton4 machine four clients give 9.9 to 10.0 GB/s against s5cmd's 11.2 to 11.5, and eight clients give 17.6 to 17.9.
 
 ## Linux 6.1
 

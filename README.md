@@ -163,7 +163,7 @@ client processes side by side, each on its own core and sharing nothing:
 | Request | Graviton4, 8 clients | AMD, 4 clients | AMD, 8 clients |
 |---|---|---|---|
 | HTTPS PUT | 34.5 to 36.2 GB/s | 24.0 GB/s | 16.7 GB/s, one run |
-| GET | 26.1 to 26.4 GB/s | 22.0 to 22.1 GB/s | 24.8 to 26.1 GB/s |
+| GET | 26.1 to 26.5 GB/s | 22.0 to 22.1 GB/s | 24.8 to 26.1 GB/s |
 | HTTPS GET | 17.6 to 17.9 GB/s | 14.7 to 14.8 GB/s | 21.6 to 22.1 GB/s |
 
 Four clients fill the AMD instance's card over HTTPS, and eight were slower
@@ -180,7 +180,7 @@ held in RAM. Best run of each, with the cores busy across the machine.
 |---|---|---|---|---|
 | PUT over HTTP | 22.1 GB/s on 72.0 cores | 6.5 on 5.3 | 36.9 on 3.9 | Not run: one fills the card |
 | PUT over HTTPS | 14.3 on 54.0 | 6.6 on 7.5 | 5.3 on 1.3 | 36.2 on 13.5 |
-| GET over HTTP | 11.0 on 42.4 | 4.0 on 5.6 | 4.4 on 1.2 | 26.4 on 10.9 |
+| GET over HTTP | 11.0 on 42.4 | 4.0 on 5.6 | 4.4 on 1.2 | 26.5 on 10.9 |
 | GET over HTTPS | 11.5 on 43.0 | 4.0 on 6.2 | 2.8 on 1.1 | 17.9 on 10.5 |
 
 One client thread is the fastest of these for plain PUT and uses the fewest
@@ -188,7 +188,7 @@ cores per byte for every request. For HTTPS and for GET, s5cmd on 42 to 54
 cores in its best runs moves more in total than one client thread does.
 Four clients side by side pass it for HTTPS PUT and plain GET on both
 machines and for HTTPS GET on the AMD machine. For HTTPS GET on the
-Graviton4 machine four clients give 9.8 to 10.0 GB/s against s5cmd's 11.2
+Graviton4 machine four clients give 9.9 to 10.0 GB/s against s5cmd's 11.2
 to 11.5, and eight clients give 17.6 to 17.9. Those tools read and write files, which costs them a copy
 that our benchmark does not make, and their runs lasted 3 to 17 seconds.
 The same file has the AMD figures and the conditions.
