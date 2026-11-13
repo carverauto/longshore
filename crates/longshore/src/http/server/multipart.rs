@@ -178,9 +178,8 @@ impl Server {
                         let mut t = [b'"'; TAG_LEN];
                         t[1..17].copy_from_slice(&tag_at[..16]);
                         let end = after(tag_at, b"</Part>").map_or(0, |e| tag_at.len() - e.len());
-                        let sum: Option<[u8; 12]> =
-                            after(&tag_at[..end], b"<ChecksumCRC64NVME>")
-                                .and_then(|v| v.get(..12)?.try_into().ok());
+                        let sum: Option<[u8; 12]> = after(&tag_at[..end], b"<ChecksumCRC64NVME>")
+                            .and_then(|v| v.get(..12)?.try_into().ok());
                         listed[count] = (n, t, sum);
                         count += 1;
                         rest = tag_at;

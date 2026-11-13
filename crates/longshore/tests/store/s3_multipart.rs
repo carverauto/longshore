@@ -79,7 +79,11 @@ impl World {
         self.send_part(11, key, upload, 1, TX);
         self.send_part(13, key, upload, 3, RX);
         self.run_until_done(self.done.len() + 2);
-        let parts = [self.part_of(1, 11), self.part_of(2, 12), self.part_of(3, 13)];
+        let parts = [
+            self.part_of(1, 11),
+            self.part_of(2, 12),
+            self.part_of(3, 13),
+        ];
         let len = write_manifest(self.io.buf(TX), &parts).unwrap() as u32;
         let object = [part_bytes(1), part_bytes(2), part_bytes(3)].concat();
         (len, object)
@@ -249,8 +253,9 @@ fn a_completion_whose_response_was_lost_is_confirmed_by_the_object_checksum() {
 fn a_damaged_part_is_refused_and_an_overlong_upload_id_is_an_error() {
     let mut w = world_with(6, Faults::default(), 2, true);
     let upload = w.begin(1, "k", true);
-    w.fill_tx(PART, 1);
-    let wrong = longshore::checksum::crc64_nvme(&w.io.buf(TX)[..PART as usize]) ^ 1;
+    let bytes = part_bytes(1);
+    w.io.buf(TX)[..bytes.len()].copy_from_slice(&bytes);
+    let wrong = longshore::checksum::crc64_nvme(&bytes) ^ 1;
     w.s3.multipart_store_part(
         &mut w.io,
         2,
@@ -258,7 +263,7 @@ fn a_damaged_part_is_refused_and_an_overlong_upload_id_is_an_error() {
         &upload,
         1,
         TX,
-        PART,
+        bytes.len() as u32,
         Checksum::Provided(wrong),
     )
     .unwrap();
