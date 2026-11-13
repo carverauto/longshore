@@ -146,3 +146,63 @@ fn with_one_lane_failed_work_goes_to_the_lane_still_open() {
         Some(LEN as u32)
     );
 }
+
+#[test]
+fn once_every_lane_is_closed_a_waiter_takes_a_closed_lanes_buffer() {
+    let mut r = rig(2);
+    // Two buffers per lane, taken from lane 0 first.
+    let mut bufs: Vec<Buffer> = (0..4).map(|_| r.buffer()).collect();
+    r.lanes[0].worker.abandon();
+    let (woken, waker) = counted();
+    let mut cx = Context::from_waker(&waker);
+    let client = r.client.clone();
+    // It waits on lane 1 alone, the only lane open.
+    let mut waiting = pin!(client.buffer());
+    assert!(waiting.as_mut().poll(&mut cx).is_pending());
+    r.lanes[1].worker.abandon();
+    if woken.get() > 0 {
+        assert!(waiting.as_mut().poll(&mut cx).is_pending());
+    }
+    let before = woken.get();
+    drop(bufs.remove(0));
+    assert!(woken.get() > before, "a buffer came back on lane 0 and woke nobody");
+    assert!(waiting.as_mut().poll(&mut cx).is_ready());
+}
+
+#[test]
+fn an_erase_asked_for_before_its_lane_failed_runs_on_another() {
+    let mut r = rig(2);
+    let erasing = r.client.erase("k");
+    // Both lanes are idle, so either could have been picked: close each in
+    // turn and the erase still finds the other.
+    r.lanes[0].worker.abandon();
+    assert_eq!(r.run(erasing), Ok(()));
+
+    let mut r = rig(2);
+    let erasing = r.client.erase("k");
+    r.lanes[1].worker.abandon();
+    assert_eq!(r.run(erasing), Ok(()));
+}
+
+#[test]
+fn a_lane_failing_wakes_the_erases_waiting_for_its_slots() {
+    // One slot per lane, each held by an operation nobody collects.
+    let mut r = rig_with(2, 1);
+    let client = r.client.clone();
+    let mut cx = Context::from_waker(Waker::noop());
+    // Each is sent before the next is asked for, so they take both lanes.
+    let mut held = Vec::new();
+    for i in 0..2 {
+        let mut h = Box::pin(client.erase(&format!("h{i}")));
+        assert!(h.as_mut().poll(&mut cx).is_pending());
+        held.push(h);
+    }
+    let (woken, waker) = counted();
+    let mut cw = Context::from_waker(&waker);
+    let mut waiting = pin!(client.erase("k"));
+    assert!(waiting.as_mut().poll(&mut cw).is_pending());
+    r.lanes[0].worker.abandon();
+    r.lanes[1].worker.abandon();
+    assert!(woken.get() > 0, "the lanes closed under a waiting erase and woke nobody");
+    assert_eq!(waiting.as_mut().poll(&mut cw), Poll::Ready(Err(Error::Closed)));
+}

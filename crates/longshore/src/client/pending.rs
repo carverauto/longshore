@@ -6,7 +6,7 @@
 //! An operation in progress: a future, with a blocking wait as well.
 
 use super::lane::{block_on, waiter_id, Finished, Kind, Lane, Request};
-use super::{open, request, Alive, Buffer, Error};
+use super::{least_busy, open, request, Alive, Buffer, Error};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
@@ -46,6 +46,9 @@ impl<R> Output for (Result<R, Error>, Buffer) {
 #[must_use = "an operation's result, and the buffer it borrowed, come back through this"]
 pub struct Pending<T: Output> {
     lane: Arc<Lane>,
+    /// For an operation with no lent buffer: every lane, so that it is sent
+    /// to one still open.
+    lanes: Option<Arc<[Arc<Lane>]>>,
     alive: Alive,
     stage: Stage,
     /// This operation's name while it waits for a slot.
@@ -88,6 +91,7 @@ impl<T: Output> Pending<T> {
         };
         Pending {
             lane,
+            lanes: None,
             alive,
             stage,
             waiter: waiter_id(),
@@ -95,6 +99,12 @@ impl<T: Output> Pending<T> {
             buf,
             map,
         }
+    }
+
+    /// Let the operation run on whichever of `lanes` is open when it is sent.
+    pub(super) fn on_any(mut self, lanes: Arc<[Arc<Lane>]>) -> Self {
+        self.lanes = Some(lanes);
+        self
     }
 
     fn buffer(&mut self) -> Option<Buffer> {
@@ -146,20 +156,31 @@ impl<T: Output> Pending<T> {
     }
 
     /// While waiting for a slot: take one and send the request, or end
-    /// closed if the lane has closed. Ready once the stage has moved on.
+    /// closed if no lane it may use is open. Ready once the stage has moved on.
     fn poll_slot(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        if self.stage == Stage::Slot {
+        if self.stage != Stage::Slot {
+            return Poll::Ready(());
+        }
+        loop {
             if !open(&self.lane) {
                 self.lane.ops.forget(self.waiter);
-                self.stage = Stage::Early(Error::Closed);
-            } else {
-                match self.lane.ops.poll_take(self.waiter, cx) {
-                    Poll::Ready(op) => self.send(op),
-                    Poll::Pending => return Poll::Pending,
+                match self.lanes.as_deref().map(least_busy).filter(|l| open(l)) {
+                    Some(lane) => self.lane = lane.clone(),
+                    None => {
+                        self.stage = Stage::Early(Error::Closed);
+                        return Poll::Ready(());
+                    }
                 }
             }
+            match self.lane.ops.poll_take(self.waiter, cx) {
+                Poll::Ready(op) => {
+                    self.send(op);
+                    return Poll::Ready(());
+                }
+                Poll::Pending if open(&self.lane) => return Poll::Pending,
+                Poll::Pending => {}
+            }
         }
-        Poll::Ready(())
     }
 
     /// Block the calling thread until the operation ends.

@@ -121,6 +121,14 @@ impl Pool {
         s.pass_on();
     }
 
+    /// Wake every waiter, so each looks again at what it may use.
+    pub fn wake_all(&self) {
+        let mut s = self.state.lock().expect("pool lock");
+        while let Some((_, w)) = s.waiters.pop_front() {
+            w.wake();
+        }
+    }
+
     pub fn give(&self, i: u32) {
         let mut s = self.state.lock().expect("pool lock");
         s.free.push(i);
@@ -216,6 +224,13 @@ impl Lane {
         if let Some(w) = waker {
             w.wake();
         }
+    }
+
+    /// Take no more requests, and wake everyone waiting on this lane.
+    pub(super) fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.ops.wake_all();
+        self.bufs.wake_all();
     }
 
     pub(super) fn in_flight(&self) -> u32 {
