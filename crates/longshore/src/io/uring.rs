@@ -205,20 +205,28 @@ impl UringIo {
         for s in self.slots.iter_mut() {
             s.cancel_requested = true;
         }
-        if !self.try_push(io_uring_sqe {
+        let cancel = io_uring_sqe {
             opcode: IORING_OP_ASYNC_CANCEL,
             fd: -1,
             op_flags: IORING_ASYNC_CANCEL_ANY,
             user_data: QUIESCE,
             ..Default::default()
-        }) {
-            return false;
-        }
+        };
+        // The cancel is issued again each time the timer below expires with
+        // something still in flight: Linux 6.8 can pass over a timer on a
+        // given cancel, so one cancel is not always enough.
+        let mut cancelling = true;
         let mut timing = false;
         let mut out = Completions::new(8);
         while self.in_flight > 0 {
             if std::time::Instant::now() > deadline {
                 return false;
+            }
+            if cancelling {
+                if !self.try_push(cancel) {
+                    return false;
+                }
+                cancelling = false;
             }
             if !timing {
                 if self.ring.pending() > 0 && self.ring.enter(0).is_err() {
@@ -242,7 +250,10 @@ impl UringIo {
             while let Some(c) = self.reap() {
                 match c.user_data {
                     QUIESCE => {}
-                    t if t == QUIESCE | 1 => timing = false,
+                    t if t == QUIESCE | 1 => {
+                        timing = false;
+                        cancelling = c.res == -ETIME;
+                    }
                     _ => {
                         self.on_cqe(c, &mut out);
                         while out.pop().is_some() {}

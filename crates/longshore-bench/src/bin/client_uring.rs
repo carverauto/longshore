@@ -183,8 +183,10 @@ fn main() {
                 }
                 assert_eq!(client.erase(&key).wait(), Ok(()));
                 let into = client.buffer_blocking();
-                let (gone, _into) = client.fetch(&key, into).wait();
+                let (gone, into) = client.fetch(&key, into).wait();
                 assert_eq!(gone, Ok(None), "caller {caller}: erased object still there");
+                // Give it back first: the pool may hold only one buffer per caller.
+                drop(into);
                 let (no_key, _b): (Result<(), Error>, _) =
                     client.store("", client.buffer_blocking(), 1).wait();
                 assert_eq!(no_key, Err(Error::BadKey));
