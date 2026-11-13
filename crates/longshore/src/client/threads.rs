@@ -301,6 +301,7 @@ mod linux {
         let s3 = S3::new(Config {
             vendor: Vendor::S3,
             host: b.host.clone(),
+            bucket_in_path: None,
             port: b.port,
             region: b.region.clone(),
             credentials: b.credentials,
