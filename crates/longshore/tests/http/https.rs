@@ -228,10 +228,15 @@ fn put_then_get_round_trips_over_tls_on_one_connection() {
             Some(&sent[..]),
             "{len} bytes: server stored something else"
         );
+        w.io.buf(RX).fill(0xA5);
         ok(200, len)(w.request("GET", "/k", None));
         assert!(
             w.io.buf(RX)[..len as usize] == sent[..],
             "{len} bytes: fetched bytes differ"
+        );
+        assert!(
+            w.io.buf(RX)[len as usize..].iter().all(|b| *b == 0xA5),
+            "{len} bytes: the buffer was changed past the body"
         );
     }
     ok(200, 0)(w.request("HEAD", "/k", None));
