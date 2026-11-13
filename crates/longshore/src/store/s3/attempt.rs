@@ -237,7 +237,7 @@ impl S3 {
                 }
                 _ => (path, multipart_query.unwrap_or("")),
             };
-            let mut pairs = [("", ""); 4];
+            let mut pairs = [("", ""); 5];
             let mut pair_count = 0;
             for kv in query.split('&').filter(|kv| !kv.is_empty()) {
                 pairs[pair_count] = kv.split_once('=').unwrap_or((kv, ""));

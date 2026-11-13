@@ -217,9 +217,11 @@ impl S3 {
     /// [`common prefixes`](crate::store::list::Listing::common_prefixes).
     /// With `/` this lists one level of a hierarchy.
     ///
-    /// To page, pass the last key or common prefix of the previous page as
-    /// `start_after`. After a common prefix, append the highest character
-    /// (`\u{10FFFF}`) to it, or the same prefix is reported again.
+    /// To page, pass the last key of the previous page as `start_after`. A
+    /// truncated listing whose page ends on a common prefix cannot yet be
+    /// resumed reliably: no `start_after` skips every key under a prefix, so
+    /// the same prefix can be reported again. Continuation tokens will fix
+    /// this.
     #[allow(clippy::too_many_arguments)]
     pub fn list_with<IO: Io>(
         &mut self,
@@ -255,9 +257,34 @@ impl S3 {
         if self.cfg.vendor != Vendor::S3 {
             return Err(PresignError::NotSigningCredentials);
         }
+        let default_port = if self.secure { 443 } else { 80 };
+        let mut authority = [0u8; 253 + 6];
+        let host = self.cfg.host.as_bytes();
+        let mut n = host.len();
+        if n > 253 {
+            return Err(PresignError::OutputTooSmall);
+        }
+        authority[..n].copy_from_slice(host);
+        if self.cfg.port != default_port {
+            authority[n] = b':';
+            n += 1;
+            let mut digits = [0u8; 5];
+            let mut port = self.cfg.port;
+            let mut d = digits.len();
+            loop {
+                d -= 1;
+                digits[d] = b'0' + (port % 10) as u8;
+                port /= 10;
+                if port == 0 {
+                    break;
+                }
+            }
+            authority[n..n + digits.len() - d].copy_from_slice(&digits[d..]);
+            n += digits.len() - d;
+        }
         let target = presign::Target {
             scheme: if self.secure { "https" } else { "http" },
-            host: &self.cfg.host,
+            host: core::str::from_utf8(&authority[..n]).expect("a host and digits"),
             region: &self.cfg.region,
             credentials: &self.creds[self.active],
         };

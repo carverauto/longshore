@@ -12,7 +12,7 @@ mod common;
 use common::*;
 use longshore::store::erase::{write_manifest, Failure, Failures};
 use longshore::store::options::Options;
-use longshore::store::presign::{Access, PresignError};
+use longshore::store::presign::{self, Access, PresignError};
 use longshore::store::stat::{header_in, Stat};
 
 const LEN: u32 = 5000;
@@ -252,14 +252,14 @@ fn a_delimiter_lists_one_level() {
     assert_eq!(keys, [b"a/1", b"a/2"]);
     assert!(prefixes.is_empty());
 
-    // Paging past a common prefix, as the documentation says to.
-    let (keys, prefixes, truncated) = list(&mut w, "", None, 1);
-    assert!(keys.is_empty() && truncated);
-    assert_eq!(prefixes, [b"a/"]);
-    let (keys, prefixes, truncated) = list(&mut w, "", Some("a/\u{10FFFF}"), 1);
-    assert!(keys.is_empty() && truncated);
-    assert_eq!(prefixes, [b"b/"]);
-    let (keys, prefixes, truncated) = list(&mut w, "", Some("b/\u{10FFFF}"), 1);
+    // Paging by the last key, with pages that end on plain keys.
+    let (keys, prefixes, truncated) = list(&mut w, "a/", None, 1);
+    assert_eq!(keys, [b"a/1"]);
+    assert!(prefixes.is_empty() && truncated);
+    let (keys, prefixes, truncated) = list(&mut w, "a/", Some("a/1"), 1);
+    assert_eq!(keys, [b"a/2"]);
+    assert!(prefixes.is_empty() && !truncated);
+    let (keys, prefixes, truncated) = list(&mut w, "", Some("b/1"), 1);
     assert_eq!(keys, [b"top"]);
     assert!(prefixes.is_empty() && !truncated);
 
@@ -288,4 +288,31 @@ fn a_presigned_url_names_the_bucket_host_and_the_key() {
         w.s3.presign(&mut w.io, &mut out, Access::Store, "k", 0),
         Err(PresignError::BadExpiry)
     );
+}
+
+#[test]
+fn a_presigned_url_carries_a_port_that_is_not_the_default() {
+    let mut w = world(8, Faults::default(), 3);
+    let mut cfg = s3_config(3, false);
+    cfg.port = 9000;
+    let s3 = S3::new(cfg);
+    let creds =
+        Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY").unwrap();
+    let now = w.io.unix_secs();
+    let mut out = [0u8; 1024];
+    let n = s3
+        .presign(&mut w.io, &mut out, Access::Fetch, "dir/a", 600)
+        .unwrap();
+    let url = core::str::from_utf8(&out[..n]).unwrap();
+    assert!(url.starts_with("http://bucket.objects.test:9000/dir/a?"));
+    // Signed for the Host header a client sends to that port.
+    let mut expected = [0u8; 1024];
+    let target = presign::Target {
+        scheme: "http",
+        host: "bucket.objects.test:9000",
+        region: "us-test-1",
+        credentials: &creds,
+    };
+    let m = presign::presign(&mut expected, &target, Access::Fetch, "dir/a", now, 600).unwrap();
+    assert_eq!(url.as_bytes(), &expected[..m]);
 }
