@@ -6,7 +6,7 @@
 //! Lent buffers, and waiting for one.
 
 use super::lane::{waiter_id, Lane};
-use super::Alive;
+use super::{open, Alive};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -72,8 +72,8 @@ impl Drop for Buffer {
     }
 }
 
-/// Waits for a buffer on every lane at once, and takes the first that is
-/// free.
+/// Waits for a buffer on every open lane at once, and takes the first that
+/// is free. Only when every lane is closed does it take a closed lane's.
 pub(super) struct Borrow {
     lanes: Arc<[Arc<Lane>]>,
     alive: Alive,
@@ -107,7 +107,11 @@ impl Future for Borrow {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Buffer> {
         let me = self.get_mut();
+        let any_open = me.lanes.iter().any(|l| open(l));
         for n in 0..me.lanes.len() {
+            if any_open && !open(&me.lanes[n]) {
+                continue;
+            }
             if let Poll::Ready(index) = me.lanes[n].bufs.poll_take(me.waiter, cx) {
                 me.forget();
                 return Poll::Ready(Buffer {

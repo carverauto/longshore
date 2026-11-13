@@ -145,17 +145,26 @@ impl<T: Output> Pending<T> {
         T::build(Err(e), buffer)
     }
 
-    /// Block the calling thread until the operation ends.
-    pub fn wait(mut self) -> T {
+    /// While waiting for a slot: take one and send the request, or end
+    /// closed if the lane has closed. Ready once the stage has moved on.
+    fn poll_slot(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         if self.stage == Stage::Slot {
-            if open(&self.lane) {
-                let (lane, waiter) = (&self.lane, self.waiter);
-                let op = block_on(core::future::poll_fn(|cx| lane.ops.poll_take(waiter, cx)));
-                self.send(op);
-            } else {
+            if !open(&self.lane) {
+                self.lane.ops.forget(self.waiter);
                 self.stage = Stage::Early(Error::Closed);
+            } else {
+                match self.lane.ops.poll_take(self.waiter, cx) {
+                    Poll::Ready(op) => self.send(op),
+                    Poll::Pending => return Poll::Pending,
+                }
             }
         }
+        Poll::Ready(())
+    }
+
+    /// Block the calling thread until the operation ends.
+    pub fn wait(mut self) -> T {
+        block_on(core::future::poll_fn(|cx| self.poll_slot(cx)));
         match self.stage {
             Stage::Early(e) => self.early(e),
             Stage::Sent(op) => {
@@ -183,15 +192,8 @@ impl<T: Output> Future for Pending<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
         // Nothing in a `Pending` is self-referential.
         let me = unsafe { self.get_unchecked_mut() };
-        if me.stage == Stage::Slot {
-            if !open(&me.lane) {
-                me.stage = Stage::Early(Error::Closed);
-            } else {
-                match me.lane.ops.poll_take(me.waiter, cx) {
-                    Poll::Ready(op) => me.send(op),
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
+        if me.poll_slot(cx).is_pending() {
+            return Poll::Pending;
         }
         match me.stage {
             Stage::Early(e) => Poll::Ready(me.early(e)),
@@ -211,7 +213,7 @@ impl<T: Output> Future for Pending<T> {
                     }
                 }
             }
-            Stage::Slot => Poll::Pending,
+            Stage::Slot => unreachable!("a slot was taken or the lane closed"),
             Stage::Taken => panic!("polled after it returned its result"),
         }
     }
