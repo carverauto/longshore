@@ -37,3 +37,10 @@ providers differ in where the candidate comes from and in carrying an expiry.
 - Whether to add an assume-role provider (signed STS call) in this change or
   a later one. Proposed: later, since web identity covers Kubernetes and the
   instance and container providers cover the rest.
+- Which instance metadata address the provider uses on an IPv6-only
+  instance, where 169.254.169.254 is not reachable and the service answers
+  at fd00:ec2::254 only when the instance owner enables it. Proposed,
+  pending an owner decision: follow the AWS SDK convention. The IPv4 address
+  is the default, and the IPv6 address fd00:ec2::254 is used only when the
+  endpoint mode is set to IPv6 in the environment or config file. There is
+  no automatic fallback from one to the other.

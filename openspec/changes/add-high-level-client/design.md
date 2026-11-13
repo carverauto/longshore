@@ -26,7 +26,10 @@ Most callers are on other threads, often inside an async runtime.
   without bound and nothing is allocated to hold the backlog.
 - Streaming upload fills lent buffers and sends each as a part, keeping a
   fixed number in flight. Streaming download issues ranged fetches ahead of
-  the reader by a fixed window. Both are bounded by the buffer pool.
+  the reader by a fixed window. Both are bounded by the buffer pool. An
+  upload stream is limited by the store's multipart rules: every part but
+  the last must be at least 5 MiB, and an upload has at most 10,000 parts.
+  How the stream meets those rules is an open question below.
 - A stream that is dropped before completion aborts its multipart upload.
 - Cancellation: dropping a future detaches the caller but lets the operation
   finish on the I/O thread, so a buffer is never returned while the kernel
@@ -46,3 +49,11 @@ Most callers are on other threads, often inside an async runtime.
   `AsyncRead`/`AsyncWrite` from a specific ecosystem crate behind a feature.
   Proposed: start with the crate's own lending types and add adapters behind
   features once a user asks for one.
+- How an upload stream meets the store's multipart limits (every part but
+  the last at least 5 MiB, at most 10,000 parts) when the buffer size is
+  chosen by the caller. Proposed, pending an owner decision: a part stays
+  exactly one registered buffer, so each part is one zero-copy send.
+  Opening an upload stream fails with a clear error when the client's buffer
+  size is below the store's 5 MiB minimum part size, and the stream fails
+  with a clear error before it would exceed 10,000 parts. A streamed object
+  is therefore capped at 10,000 times the buffer size.

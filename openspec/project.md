@@ -22,9 +22,12 @@ either redesigned or left out.
 2. Memory is allocated when the client is built. Nothing allocates after
    that. The tests run under an allocator that aborts if something does. The
    TLS handshake is the one exception, because `rustls` allocates.
-3. Object bodies are never copied by the client. They go from the caller's
-   registered buffer to the socket, and from the socket into the caller's
-   registered buffer.
+3. The low-level API and the high-level client's lending path never copy an
+   object body. It goes from the caller's registered buffer to the socket,
+   and from the socket into the caller's registered buffer. The high-level
+   client's convenience forms, which take and return byte slices, copy the
+   body once into or out of a registered buffer. That copy is by design and
+   is documented on those forms.
 4. Bodies are never run through a cryptographic hash. Requests are signed
    over the head only.
 5. Protocol code does no I/O itself. It is written against the `Io` trait so

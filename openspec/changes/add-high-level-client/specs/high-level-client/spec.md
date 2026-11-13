@@ -47,13 +47,17 @@ slices, at the cost of one copy into or out of a registered buffer.
 - **THEN** the fetched bytes equal the stored bytes
 
 ### Requirement: Streaming transfer
-The client SHALL upload a stream of unknown length through multipart upload
-and download an object of any size through ranged fetches, each using a
-bounded number of buffers.
+The client SHALL upload a stream of unknown length through multipart upload,
+up to the store's multipart limits, and download an object of any size
+through ranged fetches, each using a bounded number of buffers.
 
 #### Scenario: Upload larger than the buffer pool
 - **WHEN** a caller writes more bytes to an upload stream than all registered buffers hold together
 - **THEN** the upload completes and the object equals what was written
+
+#### Scenario: Buffer below the minimum part size
+- **WHEN** a caller opens an upload stream on a client whose buffer size is below the store's 5 MiB minimum part size
+- **THEN** opening the stream fails with an error that names the minimum part size (this scenario depends on the open part size decision in design.md)
 
 #### Scenario: Upload stream dropped
 - **WHEN** an upload stream is dropped before it is finished
