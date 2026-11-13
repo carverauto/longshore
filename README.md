@@ -193,10 +193,12 @@ cipher. Sealing TLS records, one core, in GiB/s (`m13-aes-gcm-by-cpu.md`):
 | Arm Cortex-X925, default build | 7.8 |
 | AWS Graviton4 (AWS `c8g`) | 6.1 |
 
-On the AMD `m8azn` instance HTTPS upload to S3 reached 3.1 GB/s, limited
-by the kernel's transmit path rather than the cipher
-(`m18-s3-aws-large-instances.md`). HTTPS upload has not been measured end
-to end on the Intel processor.
+On the AMD `m8azn` instance HTTPS upload to S3 reached 3.1 GB/s through
+the resolver, limited by the kernel's transmit path, and about 7 GB/s with
+every connection on an address that takes large segments and a 4 MiB send
+batch, limited by the cipher. The default 1 MiB batch gave 6.3 GB/s there
+in a single profiled run (`m18-s3-aws-large-instances.md`). HTTPS upload
+has not been measured end to end on the Intel processor.
 
 ### Compared with the talk
 
@@ -226,12 +228,19 @@ the client is mostly idle.
 ## Limits
 
 - Plain PUT fills a 200 Gbit/s link between our own machines and a
-  100 Gbit/s card to S3. On a 300 Gbit/s card to S3 the client's core is
-  usually the limit, at a median of 29 GB/s, and runs differ by up to 73%
-  for a reason we have not found (`m18-s3-aws-large-instances.md`).
+  100 Gbit/s card to S3. On a 300 Gbit/s card to S3 the median is 29 GB/s
+  and runs differ by up to 73%. S3 answers with several addresses, some of
+  which accept only small TCP segments, and connections to those cost the
+  client's core several times more per byte. With every connection on an
+  address that takes large segments, the same card is full at 36.9 GB/s.
+  The client does not yet pick addresses that way by itself
+  (`m18-s3-aws-large-instances.md`).
 - On x86-64 the only real-store measurement is one AMD instance type,
-  where the kernel's transmit path limits uploads to about 11 GB/s plain
-  and 3 GB/s over HTTPS. The same file has the details.
+  where uploads reach about 11 GB/s plain and 3 GB/s over HTTPS for the
+  same reason. With large segments they reach 23.5 GB/s plain (its
+  200 Gbit/s card) and 7 GB/s over HTTPS with a 4 MiB send batch
+  (6.3 GB/s with the default 1 MiB batch, in a single profiled run).
+  The same file has the details.
 - TLS keys are never updated in place. A connection is retired after 2^23
   records and the next request handshakes again. If a server updates its
   keys in the middle of a connection, the request is retried on a new one.
