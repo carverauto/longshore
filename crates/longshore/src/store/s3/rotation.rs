@@ -48,7 +48,7 @@ impl S3 {
         self.creds[1 - self.active] = candidate;
         let slot = self.cfg.requests_max as usize;
         self.slots[slot].candidate = true;
-        match self.list_in_slot(io, slot, 0, "", None, 1, None, f.buf) {
+        match self.list_in_slot(io, slot, 0, "", submit::ListFrom::Start, 1, None, f.buf) {
             Ok(()) => self.provider = Provider::Validating,
             Err(_) => {
                 self.credential_failures += 1;

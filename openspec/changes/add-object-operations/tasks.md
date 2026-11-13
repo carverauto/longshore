@@ -7,7 +7,7 @@
 - [x] 2.1 `copy`, including the error document returned with status 200
 - [x] 2.2 `erase_many` with a manifest helper and a per-key result parser
 - [x] 2.3 Delimiter listing and common prefixes; property tests and fuzz corpus update
-- [ ] 2.4 Continuation tokens for listing, so a truncated delimiter listing can be resumed
+- [x] 2.4 Continuation tokens for listing, so a truncated delimiter listing can be resumed (`S3::list_continue`; run against Amazon S3 and Linode Object Storage)
 
 ## 3. Presigned URLs
 - [x] 3.1 Query-string SigV4 for fetch and store, written into a caller buffer, checked against published examples

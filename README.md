@@ -16,7 +16,7 @@ is meant to become part of a larger project.
 
 | Area | State |
 |---|---|
-| S3: `store`, `store_no_clobber`, `fetch`, ranged `fetch`, `list`, `erase` | Works against Amazon S3 and Linode Object Storage, over HTTP and HTTPS |
+| S3: `store`, `store_no_clobber`, `fetch`, ranged `fetch`, `list`, `list_continue`, `erase` | Works against Amazon S3 and Linode Object Storage, over HTTP and HTTPS |
 | Multipart upload: begin, store part, complete, abort | Works against Amazon S3, Linode Object Storage, Google Cloud Storage and versitygw. Each part is one registered buffer |
 | `stat`, stores with a content type and metadata, `copy`, `erase_many`, listing with a delimiter, presigned URLs | Work against Amazon S3, Linode Object Storage and Google Cloud Storage. `erase_many` and presigned URLs need signing keys, so they are not available with Google's bearer token |
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
@@ -301,10 +301,6 @@ the client is mostly idle.
 - One `store` or `fetch` moves at most one buffer. A larger object goes up
   as a multipart upload and comes down as ranged fetches, and the caller
   drives both.
-- A listing with a delimiter pages by `start-after`, not by the store's
-  continuation token. A truncated delimiter listing cannot yet be resumed
-  reliably past a common prefix, because no `start-after` value skips every
-  key under a prefix. Continuation tokens will fix this.
 - A presigned URL does not check when temporary credentials expire. One
   signed with them stops working when they do, whatever its own expiry.
 - A multipart upload that is neither completed nor aborted keeps its parts

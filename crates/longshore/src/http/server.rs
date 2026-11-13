@@ -106,13 +106,16 @@ enum State {
 }
 
 const TARGET_MAX: usize = 256;
+/// A listing's request target: one that fitted before, and a continuation
+/// token for a cursor of up to `TARGET_MAX` bytes.
+const LIST_TARGET_MAX: usize = TARGET_MAX + b"continuation-token=t&".len() + 2 * TARGET_MAX;
 /// Room for the headers that describe an object: content type and metadata.
 const DESCRIBING_MAX: usize = 192;
 
 #[derive(Clone, Copy)]
 struct Conn {
     state: State,
-    target: [u8; TARGET_MAX],
+    target: [u8; LIST_TARGET_MAX],
     target_len: usize,
     method: [u8; 8],
     method_len: usize,
@@ -218,7 +221,7 @@ impl Server {
         assert!(cfg.head_max <= cfg.buffer_size && cfg.head_max <= u16::MAX as u32);
         let conn = Conn {
             state: State::Free,
-            target: [0; TARGET_MAX],
+            target: [0; LIST_TARGET_MAX],
             target_len: 0,
             method: [0; 8],
             method_len: 0,
