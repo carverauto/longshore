@@ -3,6 +3,9 @@
 - [ ] 1.2 `Client` builder: endpoint, region, credentials, limits, TLS; start-up and orderly shutdown
 - [ ] 1.3 Buffer lending with a guard type; waiting when the pool is empty
 - [ ] 1.4 Error type and outcome mapping
+- [ ] 1.5 More than one I/O thread: thread count and CPU pinning in the builder, placement of operations and lent buffers, shutdown of every thread
+- [ ] 1.6 A client driven by the caller's event loop: readable descriptor, non-blocking `turn`, tests under the simulator and on a real kernel with a caller that only polls
+- [ ] 1.7 Bucket in the path as a store setting; run against a self-hosted S3-compatible store that requires it
 
 ## 2. Operations
 - [ ] 2.1 Async and blocking forms of store, conditional store, fetch, ranged fetch, stat, list and erase on the lending path
@@ -15,6 +18,7 @@
 - [ ] 3.2 Tests under at least two async executors and from plain threads
 - [ ] 3.3 Overhead benchmark against the low-level API, recorded in `bench/results/`
 - [ ] 3.4 Runs against Amazon S3 and Google Cloud Storage
+- [ ] 3.5 Throughput by thread count for HTTPS upload, download and HTTPS download, recorded in `bench/results/`
 
 ## 4. Packaging
 - [ ] 4.1 Compile on non-Linux targets with an unsupported error at build of a client
