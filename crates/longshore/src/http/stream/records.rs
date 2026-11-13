@@ -90,12 +90,21 @@ impl Tls {
             // Opening writes the content and then its type byte, so the
             // destination needs room for both.
             let needed = len - HEADER_LEN - TAG_LEN;
-            let direct = needed <= space;
+            // The last record of a body usually fits except for its type
+            // byte. If the buffer has a byte past the range asked for, the
+            // type byte goes there and the byte is put back afterwards.
+            // One byte over means the content itself cannot overrun.
+            let borrow = needed == space + 1 && at + needed <= dst.len();
+            let direct = needed <= space || borrow;
+            let lent = borrow.then(|| dst[at + space]);
             let opened = if direct {
                 self.rx.open(&avail[..len], &mut dst[at..at + needed])
             } else {
                 self.rx.open_in_place(&mut avail[..len])
             };
+            if let Some(byte) = lent {
+                dst[at + space] = byte;
+            }
             let (ctype, n) = match opened {
                 Ok(v) => v,
                 Err(e) => return Step::Tls(TlsError::Record(e)),
