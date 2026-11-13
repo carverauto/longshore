@@ -240,7 +240,9 @@ impl Server {
                 o.target_len = path.len();
                 o.len = total as u32;
                 o.used = true;
-                o.checksum = c.claimed.filter(|_| self.cfg.checksum.is_some());
+                // A store that keeps checksums has one for the assembled object
+                // whether or not the request claimed it.
+                o.checksum = self.cfg.checksum.map(|sum| sum(&o.data[..total]));
                 if apply_then_close {
                     {
                         self.close(io, i);

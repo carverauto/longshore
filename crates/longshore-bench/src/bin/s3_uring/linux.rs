@@ -7,6 +7,8 @@
 
 mod checks;
 use checks::*;
+mod multipart;
+use multipart::*;
 mod ops;
 use ops::*;
 mod throughput;
@@ -23,6 +25,11 @@ use std::net::SocketAddrV4;
 
 const HEARTBEAT: u64 = 1 << 50;
 const MS: u64 = 1_000_000;
+
+/// A checksum to compare two buffers by without copying either.
+fn checksum_of(bytes: &[u8]) -> u64 {
+    longshore::checksum::crc64_nvme(bytes)
+}
 
 fn die(msg: &str) -> ! {
     eprintln!("s3_uring: {msg}");
@@ -205,6 +212,7 @@ pub fn main() {
     match cmd.as_str() {
         "selftest" => selftest(size),
         "badcrc" => bad_checksum(size),
+        "multipart" => multipart(size),
         "put" => bench(true, conns, size, secs, cpu, Checksum::None),
         "put-crc" => bench(true, conns, size, secs, cpu, Checksum::Compute),
         "get" => bench(false, conns, size, secs, cpu, Checksum::None),

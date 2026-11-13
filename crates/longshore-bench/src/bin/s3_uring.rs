@@ -15,6 +15,7 @@
 //!   s3_uring selftest [--size BYTES]
 //!       store, fetch (whole and ranged), store_no_clobber and erase one
 //!       object, checking every byte, with heap allocation sealed.
+//!   s3_uring multipart [--size BYTES]   three parts of BYTES each, in parallel
 //!   s3_uring badcrc [--size BYTES]
 //!       Store one object with a deliberately wrong checksum and report
 //!       whether the store refuses it.
