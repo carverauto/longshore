@@ -222,11 +222,10 @@ impl S3 {
     /// [`common prefixes`](crate::store::list::Listing::common_prefixes).
     /// With `/` this lists one level of a hierarchy.
     ///
-    /// To page, pass the last key of the previous page as `start_after`. A
-    /// truncated listing whose page ends on a common prefix cannot yet be
-    /// resumed reliably: no `start_after` skips every key under a prefix, so
-    /// the same prefix can be reported again. Continuation tokens will fix
-    /// this.
+    /// To page, use [`S3::list_continue`] with the token the truncated page
+    /// returned. Paging by `start_after` does not work with a delimiter when
+    /// a page ends on a common prefix: no key skips everything under a
+    /// prefix, so the prefix would be reported again.
     #[allow(clippy::too_many_arguments)]
     pub fn list_with<IO: Io>(
         &mut self,
@@ -244,7 +243,39 @@ impl S3 {
             .ok_or(SubmitError::Busy)?;
         self.slots[i].candidate = false;
         self.slots[i].comparing = false;
-        self.list_in_slot(io, i, token, prefix, start_after, max_keys, delimiter, into)
+        let from = start_after.map_or(submit::ListFrom::Start, submit::ListFrom::After);
+        self.list_in_slot(io, i, token, prefix, from, max_keys, delimiter, into)
+    }
+
+    /// The next page of a truncated listing. `continuation` is the token
+    /// that page returned
+    /// ([`Listing::next_token_raw`](crate::store::list::Listing::next_token_raw),
+    /// decoded with [`unescape`](crate::store::list::unescape)). `prefix`,
+    /// `max_keys` and `delimiter` must be what the listing was started with.
+    /// A token longer than [`LIST_TOKEN_ENCODED_MAX`] once encoded is
+    /// refused as [`SubmitError::BadKey`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_continue<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        token: u64,
+        prefix: &str,
+        continuation: &str,
+        max_keys: u16,
+        delimiter: Option<&str>,
+        into: BufId,
+    ) -> Result<(), SubmitError> {
+        if continuation.is_empty() {
+            return Err(SubmitError::BadKey);
+        }
+        let i = self.slots[..self.cfg.requests_max as usize]
+            .iter()
+            .position(|s| s.state == State::Free)
+            .ok_or(SubmitError::Busy)?;
+        self.slots[i].candidate = false;
+        self.slots[i].comparing = false;
+        let from = submit::ListFrom::Token(continuation);
+        self.list_in_slot(io, i, token, prefix, from, max_keys, delimiter, into)
     }
 
     /// Write a presigned URL for `key` into `out` and return its length:

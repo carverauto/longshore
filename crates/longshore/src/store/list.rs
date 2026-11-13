@@ -31,6 +31,10 @@ pub struct Listing<'a> {
     body: &'a [u8],
     /// More keys exist after the last one returned.
     pub is_truncated: bool,
+    /// The token that resumes a truncated listing, as it appears in the
+    /// XML, possibly with character references; decode it with [`unescape`].
+    /// Stores send it with a truncated listing.
+    pub next_token_raw: Option<&'a [u8]>,
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -70,6 +74,7 @@ impl<'a> Listing<'a> {
         let body = &xml[open_end..open_end + end];
         // IsTruncated is a child of the root; look for it outside Contents.
         let mut is_truncated = None;
+        let mut next_token_raw = None;
         let mut rest = body;
         loop {
             let next_contents = find(rest, b"<Contents>");
@@ -81,6 +86,9 @@ impl<'a> Listing<'a> {
                     _ => return Err(ListError::Malformed),
                 });
             }
+            if let Some((v, _)) = element(scope, "NextContinuationToken")? {
+                next_token_raw = Some(v).filter(|v| !v.is_empty());
+            }
             let Some(at) = next_contents else { break };
             let close = find(&rest[at..], b"</Contents>").ok_or(ListError::Malformed)?;
             rest = &rest[at + close + 11..];
@@ -88,6 +96,7 @@ impl<'a> Listing<'a> {
         Ok(Listing {
             body,
             is_truncated: is_truncated.ok_or(ListError::Malformed)?,
+            next_token_raw,
         })
     }
 

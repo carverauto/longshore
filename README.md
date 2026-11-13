@@ -254,10 +254,6 @@ the client is mostly idle.
 - One `store` or `fetch` moves at most one buffer. A larger object goes up
   as a multipart upload and comes down as ranged fetches, and the caller
   drives both.
-- A listing with a delimiter pages by `start-after`, not by the store's
-  continuation token. A truncated delimiter listing cannot yet be resumed
-  reliably past a common prefix, because no `start-after` value skips every
-  key under a prefix. Continuation tokens will fix this.
 - A presigned URL does not check when temporary credentials expire. One
   signed with them stops working when they do, whatever its own expiry.
 - A multipart upload that is neither completed nor aborted keeps its parts

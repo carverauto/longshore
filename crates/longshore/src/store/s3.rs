@@ -29,6 +29,11 @@ pub const KEY_ENCODED_MAX: usize = 512;
 pub const BUCKET_MAX: usize = 63;
 /// A request path: the bucket when it is addressed there, then the key.
 const PATH_MAX: usize = 1 + BUCKET_MAX + KEY_ENCODED_MAX;
+/// The longest continuation token a listing can be resumed with, once
+/// percent-encoded.
+pub const LIST_TOKEN_ENCODED_MAX: usize = 1024;
+/// A slot's request target: a path, or a listing's query with a token.
+const TARGET_MAX: usize = PATH_MAX + LIST_TOKEN_ENCODED_MAX;
 /// Room for a multipart query: `partNumber=10000&uploadId=` and an upload
 /// id with every byte percent-encoded.
 const QUERY_MAX: usize = 32 + 3 * UPLOAD_ID_MAX;
@@ -101,7 +106,7 @@ struct Slot {
     outcome: Outcome,
     token: u64,
     kind: Kind,
-    path: [u8; PATH_MAX],
+    path: [u8; TARGET_MAX],
     path_len: usize,
     /// Encoded query of a multipart request, in the sorted order signing
     /// requires. For a copy, the source as its header carries it. Empty
@@ -199,7 +204,7 @@ impl S3 {
             outcome: Outcome::Erased,
             token: 0,
             kind: Kind::Erase,
-            path: [0; PATH_MAX],
+            path: [0; TARGET_MAX],
             path_len: 0,
             query: [0; QUERY_MAX],
             query_len: 0,

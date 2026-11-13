@@ -114,3 +114,110 @@ fn list_is_retried_like_any_other_request() {
         "prefix too long once encoded"
     );
 }
+
+/// One page of a delimiter listing: its keys, its common prefixes, and the
+/// token to resume it with if it was cut short.
+fn delimited_page(
+    w: &mut World,
+    token: Option<&str>,
+    max: u16,
+) -> (Vec<String>, Vec<String>, Option<String>) {
+    match token {
+        None => w.s3.list_with(&mut w.io, 901, "", None, max, Some("/"), RX),
+        Some(t) => {
+            w.s3.list_continue(&mut w.io, 901, "", t, max, Some("/"), RX)
+        }
+    }
+    .unwrap();
+    let Outcome::Listed { len } = w.last().outcome else {
+        panic!("list failed: {:?}", w.done.last())
+    };
+    let xml = w.io.buf(RX)[..len as usize].to_vec();
+    let listing = Listing::parse(&xml).expect("the server's listing must parse");
+    let text = |raw: &[u8]| {
+        let mut out = [0u8; 256];
+        let n = unescape(raw, &mut out).unwrap();
+        String::from_utf8(out[..n].to_vec()).unwrap()
+    };
+    let keys = listing
+        .entries()
+        .map(|e| text(e.unwrap().key_raw))
+        .collect();
+    let prefixes = listing
+        .common_prefixes()
+        .map(|p| text(p.unwrap()))
+        .collect();
+    assert_eq!(
+        listing.is_truncated,
+        listing.next_token_raw.is_some(),
+        "a token comes with a truncated page and only then"
+    );
+    (keys, prefixes, listing.next_token_raw.map(text))
+}
+
+#[test]
+fn a_delimiter_listing_pages_by_continuation_token_past_common_prefixes() {
+    let mut w = world(31, Faults::default(), 3);
+    for (i, key) in KEYS.iter().enumerate() {
+        w.fill_tx(10, 0);
+        w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
+            .unwrap();
+        assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+    }
+    // One entry per page, so every page but the last ends on something,
+    // and the first two end on a common prefix.
+    let (mut keys, mut prefixes, mut pages) = (Vec::new(), Vec::new(), 0);
+    let mut token: Option<String> = None;
+    loop {
+        let (k, p, next) = delimited_page(&mut w, token.as_deref(), 1);
+        assert_eq!(k.len() + p.len(), 1, "one entry per page");
+        keys.extend(k);
+        prefixes.extend(p);
+        pages += 1;
+        match next {
+            Some(t) => token = Some(t),
+            None => break,
+        }
+        assert!(pages < 10, "the listing does not end");
+    }
+    // Each prefix once, though each stands for several keys.
+    assert_eq!(prefixes, ["logs/", "other/"]);
+    assert_eq!(keys, ["zz top"]);
+    assert_eq!(pages, 3);
+}
+
+#[test]
+fn a_continuation_token_is_not_a_key_and_an_empty_one_is_refused() {
+    let mut w = world(32, Faults::default(), 3);
+    for (i, key) in KEYS.iter().enumerate() {
+        w.fill_tx(10, 0);
+        w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
+            .unwrap();
+        assert_eq!(w.last().outcome, Outcome::Stored);
+    }
+    let (_, prefixes, token) = delimited_page(&mut w, None, 1);
+    assert_eq!(prefixes, ["logs/"]);
+    let token = token.expect("a truncated page has a token");
+    assert!(!KEYS.contains(&token.as_str()) && token != "logs/");
+    // Passed as a key to start after, it does not resume the listing:
+    // the token route gives the next prefix, and this does not.
+    w.s3.list_with(&mut w.io, 902, "", Some(&token), 1, Some("/"), RX)
+        .unwrap();
+    let Outcome::Listed { len } = w.last().outcome else {
+        panic!()
+    };
+    let xml = w.io.buf(RX)[..len as usize].to_vec();
+    let listing = Listing::parse(&xml).unwrap();
+    assert_eq!(listing.common_prefixes().count(), 0);
+    let (_, resumed, _) = delimited_page(&mut w, Some(&token), 1);
+    assert_eq!(resumed, ["other/"]);
+    assert_eq!(
+        w.s3.list_continue(&mut w.io, 903, "", "", 1, Some("/"), RX),
+        Err(SubmitError::BadKey)
+    );
+    let long = "x".repeat(longshore::store::s3::LIST_TOKEN_ENCODED_MAX + 1);
+    assert_eq!(
+        w.s3.list_continue(&mut w.io, 904, "", &long, 1, Some("/"), RX),
+        Err(SubmitError::BadKey)
+    );
+}
