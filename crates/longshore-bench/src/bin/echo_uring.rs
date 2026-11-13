@@ -7,7 +7,7 @@
 //! forbidden after setup. This is the real-kernel counterpart of the
 //! simulator's echo test.
 //!
-//!   echo_uring [--total BYTES] [--chunk BYTES] [--zc] [--v6]
+//!   echo_uring [--total BYTES] [--chunk BYTES] [--zc] [--v6] [--measure]
 //!
 //! `--v6` runs the echo and the refused connect over the IPv6 loopback.
 //! `--measure` runs the echo with segment sizes measured on connect.

@@ -38,8 +38,8 @@ pub struct Config {
     /// Prefer addresses whose connections have large TCP segments. `None`
     /// turns this off and every address is handed out in rotation.
     /// `Some(n)` hands out the addresses whose measured segment size is at
-    /// least half the largest seen, and keeps at least `n` addresses in
-    /// use by admitting the next largest. Sizes come from
+    /// least half the largest seen and a quarter of the path's limit, and
+    /// keeps at least `n` addresses in use by admitting the next largest. Sizes come from
     /// [`Resolver::connected`]. An address not yet measured is handed out
     /// like the large ones, so that it gets measured.
     ///
