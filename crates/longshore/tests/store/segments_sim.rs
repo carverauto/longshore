@@ -118,3 +118,46 @@ fn an_unmeasured_backend_changes_nothing() {
     assert_eq!(w.s3.small_segment_retired, 0);
     assert_eq!(w.s3.connects(), 3);
 }
+
+#[test]
+fn the_preference_can_be_turned_on_while_the_store_runs() {
+    let (mut w, ns) = world_of_fronts(None, [SMALL, SMALL, LARGE]);
+    store_three_at_once(&mut w, &ns);
+    store_three_at_once(&mut w, &ns);
+    assert_eq!((w.s3.connects(), w.s3.small_segment_retired), (3, 0));
+    w.s3.prefer_large_segments(&mut w.io, Some(1));
+    assert_eq!(w.s3.small_segment_retired, 2);
+    store_three_at_once(&mut w, &ns);
+    assert_eq!(
+        [0, 1, 2].map(|i| w.io.route_connects(front(i))),
+        [1, 1, 3],
+        "the two small-segment connections were replaced on the large address"
+    );
+    // Off again: nothing is closed, and every address is handed out again.
+    w.s3.prefer_large_segments(&mut w.io, None);
+    store_three_at_once(&mut w, &ns);
+    assert_eq!((w.s3.connects(), w.s3.small_segment_retired), (5, 2));
+}
+
+#[test]
+fn turning_it_on_replaces_connections_that_were_never_measured() {
+    // A backend that was not measuring: every size is unknown at first.
+    let (mut w, ns) = world_of_fronts(None, [0, 0, 0]);
+    store_three_at_once(&mut w, &ns);
+    for (i, size) in [SMALL, SMALL, LARGE].into_iter().enumerate() {
+        w.io.route(front(i), ADDR, size);
+    }
+    w.s3.prefer_large_segments(&mut w.io, Some(1));
+    store_three_at_once(&mut w, &ns);
+    assert_eq!(
+        w.s3.connects(),
+        6,
+        "each connection was replaced and measured"
+    );
+    store_three_at_once(&mut w, &ns);
+    store_three_at_once(&mut w, &ns);
+    let on_large = w.io.route_connects(front(2));
+    store_three_at_once(&mut w, &ns);
+    assert_eq!(w.io.route_connects(front(2)), on_large, "settled");
+    assert!(w.s3.small_segment_retired >= 1);
+}

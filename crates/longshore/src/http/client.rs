@@ -257,6 +257,20 @@ impl Client {
         retired
     }
 
+    /// Stop reusing the connections to `host_id` that were opened without
+    /// their segment size being measured, so that their replacements are
+    /// measured. Returns how many were retired by this call.
+    pub fn retire_unmeasured(&mut self, host_id: u16) -> u32 {
+        let mut retired = 0;
+        for c in self.conns.iter_mut() {
+            if c.host_id == host_id && c.state != State::Closed && c.segment == 0 && !c.retired {
+                c.retired = true;
+                retired += 1;
+            }
+        }
+        retired
+    }
+
     /// A client that speaks HTTPS. Each connection additionally uses two
     /// pool buffers, for sealed records going out and coming in, starting at
     /// `first_tls_buf`: `first_tls_buf..first_tls_buf + 2 * connections_max`.

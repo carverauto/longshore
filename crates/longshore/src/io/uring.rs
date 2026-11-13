@@ -131,20 +131,6 @@ impl UringIo {
         })
     }
 
-    /// When on, a TCP connect that succeeds completes with the connection's
-    /// maximum segment size in place of 0.
-    ///
-    /// The kernel reads TCP options only through a descriptor, and sockets
-    /// made by the ring have none. So a measured connect opens its socket
-    /// with `socket(2)`, registers it in its slot, reads the size with
-    /// `getsockopt(2)` once connected, and closes the descriptor: four
-    /// system calls per connection, and none while data moves. A connect
-    /// whose socket cannot be opened that way goes through the ring and
-    /// completes with 0.
-    pub fn measure_segment_sizes(&mut self, on: bool) {
-        self.measure_segments = on;
-    }
-
     /// `io_uring_enter` calls made so far.
     pub fn enters(&self) -> u64 {
         self.ring.enters

@@ -233,6 +233,27 @@ impl S3 {
         }
     }
 
+    /// Turn the preference for addresses with large TCP segments on or off
+    /// while the store runs. `Some(keep)` has the I/O backend measure each
+    /// new connection, and the resolver hand out the large-segment
+    /// addresses, keeping at least `keep` of them in use. `None` turns both
+    /// off. Turning it on replaces each open connection the next time it
+    /// would be reused, if it was never measured or measured small, so the
+    /// change takes hold within about one request per connection. With a
+    /// fixed endpoint there is nothing to choose between and this does
+    /// nothing.
+    pub fn prefer_large_segments<IO: Io>(&mut self, io: &mut IO, keep: Option<usize>) {
+        if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
+            io.measure_segment_sizes(keep.is_some());
+            r.set_prefer_large_segments(keep);
+            if keep.is_some() {
+                self.client.retire_unmeasured(0);
+                let floor = r.segment_floor(0);
+                self.small_segment_retired += self.client.retire_below(0, floor) as u64;
+            }
+        }
+    }
+
     /// HTTP connections opened so far.
     pub fn connects(&self) -> u64 {
         self.client.connects

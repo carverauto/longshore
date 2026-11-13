@@ -266,6 +266,11 @@ pub trait Io {
     /// Bind and listen in slot `sock`. Initialization-time only; may block.
     /// Returns the bound address (useful with port 0).
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// Ask for the maximum segment size of each TCP connection opened from
+    /// now on: a connect that succeeds then completes with it in place
+    /// of 0. May be changed at any time. A backend that cannot measure
+    /// ignores this, and its connects complete with 0.
+    fn measure_segment_sizes(&mut self, _on: bool) {}
     /// Queue an operation. Performs no system call.
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy>;
     /// Hand queued operations to the kernel and collect completions, in one

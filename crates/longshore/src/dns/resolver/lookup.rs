@@ -54,6 +54,14 @@ impl Resolver {
         self.segment_floor(host)
     }
 
+    /// Turn the preference for large segments on, keeping at least `keep`
+    /// addresses in use, or off with `None`. Takes effect at the next
+    /// lookup. Sizes already measured are kept either way. See
+    /// [`super::Config::prefer_large_segments`].
+    pub fn set_prefer_large_segments(&mut self, keep: Option<usize>) {
+        self.cfg.prefer_large_segments = keep;
+    }
+
     /// The smallest segment size a connection to `host` should have: lookups
     /// pass over addresses measured below it. 0 when there is no preference
     /// for large segments or nothing has been measured.
