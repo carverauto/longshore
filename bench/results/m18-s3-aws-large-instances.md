@@ -5,7 +5,7 @@ Measured 2026-11-13 with `s3_uring` against a general-purpose S3 bucket in us-ea
 - `c8gn.24xlarge`: Graviton4, 96 vCPUs, one NUMA node, 300 Gbit/s network card. Client thread pinned to CPU 2.
 - `m8azn.24xlarge`: AMD EPYC 9R05 (Zen 5), 96 vCPUs, two NUMA nodes, 200 Gbit/s network card. Client thread pinned to CPU 50, on the card's NUMA node and not one of the cores that take its interrupts.
 
-Both ran Ubuntu 24.04 with Linux 7.0 and the ENA driver. One client io_uring thread, 8 MiB objects, 8 s per run, five runs per cell. GB = 10^9 bytes. "Whole machine" is cores busy across the instance, from `/proc/stat`. Raw output: `m18-s3-aws-large-instances.jsonl`. Four runs printed no usable result line and are left out, so four cells have four runs.
+Both ran Ubuntu 24.04 with Linux 7.0 and the ENA driver. One client io_uring thread, 8 MiB objects. GB = 10^9 bytes. "Whole machine" is cores busy across the instance, from `/proc/stat`. The two median tables below are 8 s per run, five runs per cell, with raw output in `m18-s3-aws-large-instances.jsonl`. Four runs printed no usable result line and are left out, so four cells have four runs.
 
 The self-test passed over HTTP and HTTPS on both instances before the runs.
 
@@ -54,7 +54,7 @@ Three requests out of 1,015,470 across both instances needed a second attempt.
 
 ## The cause of the spread
 
-Taken later the same day, on instances of the same two types, with the client built from the same source plus a setting that fixes the address it connects to.
+Taken later the same day, on instances of the same two types, with the client built from the same source plus a setting that fixes the address it connects to. The figures in this section come from the profiling session's notes and are not in `m18-s3-aws-large-instances.jsonl`.
 
 The S3 endpoint's name resolved to eight addresses. Front ends at some of them advertised a maximum segment size of 8,228 bytes, and at the others 1,432 bytes. The instances' MTU is 9,001. The resolver hands addresses out in rotation, so a run's connections were spread evenly over the eight, and how many of the eight took large segments changed from one lookup to the next. Neither card segments in hardware (`tx-tcp-segmentation: off [fixed]`), so the kernel cuts every send into segments in software, on the client's thread. A connection with small segments costs that thread several times more per byte.
 
@@ -85,7 +85,7 @@ With every connection fixed to one address that takes large segments, runs of th
 | AMD | HTTPS PUT, 4 MiB send batch | 256 | 6.8 to 6.9 | 0.99 | The client's core |
 | AMD | HTTPS GET | 128 | 4.8 | 1.00 | The client's core |
 
-Rows with one figure are single runs of 12 s with `perf` attached. The others are two or three runs of 8 s.
+Rows with one figure are single runs of 12 s with `perf` attached. The others are two or three runs of 8 s, except the AMD HTTPS PUT row at 128 connections: two 8 s runs at 6.7 and 6.8 GB/s and one profiled 12 s run at 7.1 GB/s, which is where the 55% share comes from.
 
 What the profiles show:
 
@@ -97,7 +97,7 @@ The client does not yet choose addresses by segment size. Until it does, a run t
 
 ## Caveats
 
-- A first set of runs had both instances writing to the same bucket prefix at once. Requests were retried and several runs failed, so that set was discarded and everything above was run again one instance at a time.
+- A first set of runs had both instances writing to the same bucket prefix at once. Requests were retried and several runs failed, so that set was discarded and the runs in the two median tables were taken again one instance at a time.
 - The spread between runs means the medians in the two tables are a rough guide to what a client gets when it spreads connections over every address S3 returns. They are not what the client or the instance can do.
 - The runs in "The cause of the spread" are two or three per row, or a single run with a profiler attached, of 8 to 12 s each. They are enough to show the cause. They are not medians of five.
 - The AMD result describes this instance type and this driver. It does not say what the client does on x86-64 with a card that segments in hardware.
