@@ -18,6 +18,7 @@ is meant to become part of a larger project.
 |---|---|
 | S3: `store`, `store_no_clobber`, `fetch`, ranged `fetch`, `list`, `erase` | Works against Amazon S3 and Linode Object Storage, over HTTP and HTTPS |
 | Multipart upload: begin, store part, complete, abort | Works against Amazon S3, Linode Object Storage, Google Cloud Storage and versitygw. Each part is one registered buffer |
+| `stat`, stores with a content type and metadata, `copy`, `erase_many`, listing with a delimiter, presigned URLs | Pass in the simulator. Not yet run against a real store. `erase_many` and presigned URLs are for S3 only |
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
@@ -112,6 +113,7 @@ s3_uring selftest                         # store, conditional store, fetch, ran
 s3_uring put --conns 64 --secs 10         # throughput, 8 MiB objects by default
 s3_uring get --conns 64 --secs 10
 s3_uring multipart                        # three 8 MiB parts in parallel, then an abort
+s3_uring objects                          # stat, metadata, copy, delimiter listing, batch erase
 s3_uring list some/prefix/
 ```
 
@@ -231,6 +233,11 @@ the client is mostly idle.
 - One `store` or `fetch` moves at most one buffer. A larger object goes up
   as a multipart upload and comes down as ranged fetches, and the caller
   drives both.
+- A listing with a delimiter pages by `start-after`, not by the store's
+  continuation token. To continue after a common prefix the caller appends
+  the highest character to it.
+- A presigned URL does not check when temporary credentials expire. One
+  signed with them stops working when they do, whatever its own expiry.
 - A multipart upload that is neither completed nor aborted keeps its parts
   in the store. A bucket rule that expires incomplete uploads is the backstop.
 - Azure Blob Storage cannot be used through the store yet, and its signing
