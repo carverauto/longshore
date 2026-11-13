@@ -30,7 +30,10 @@
 //!   s3_uring clean PREFIX
 //!       Erase every object under PREFIX (which must not be empty).
 //!   s3_uring put|put-crc|get [--conns N] [--size BYTES] [--secs S] [--cpu N]
-//!       Throughput of repeated stores or fetches; JSON result.
+//!                            [--threads N] [--cpu-step N]
+//!       Throughput of repeated stores or fetches; JSON result. --threads runs
+//!       N independent clients of --conns connections each, measured over the
+//!       same window; with --cpu they are pinned to CPUs --cpu-step apart.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {

@@ -135,7 +135,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
 }
 
 /// Run the benchmark on `place.threads` independent client threads and
-/// print one line: the totals, and each thread's rate when there are several.
+/// print one line: the totals, and each thread's rate.
 pub(super) fn bench(
     put: bool,
     conns: u32,
