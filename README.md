@@ -236,7 +236,7 @@ the client is mostly idle.
 - On x86-64 the only real-store measurement is one AMD instance type,
   where uploads reach about 11 GB/s plain and 3 GB/s over HTTPS for the
   same reason, and 23.5 GB/s (its 200 Gbit/s card) and 7 GB/s with large
-  segments only and a 4 MiB send batch (6.3 GB/s with the default 1 MiB
+  segments and a 4 MiB send batch (6.3 GB/s with the default 1 MiB
   batch, in a single profiled run). The same file has the details.
 - TLS keys are never updated in place. A connection is retired after 2^23
   records and the next request handshakes again. If a server updates its
