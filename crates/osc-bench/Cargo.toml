@@ -1,0 +1,57 @@
+[package]
+name = "osc-bench"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+osc-io = { path = "../osc-io" }
+osc-sim = { path = "../osc-sim" }
+osc-dns = { path = "../osc-dns" }
+osc-http = { path = "../osc-http" }
+osc-store = { path = "../osc-store" }
+osc-checksum = { path = "../osc-checksum" }
+osc-tls = { path = "../osc-tls" }
+# For the benchmark sink's TLS mode. This is a tool crate; nothing ships from it.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }
+
+[dev-dependencies]
+aes-gcm = "0.11.1"
+aws-lc-rs = "1.19.0"
+aws-lc-sys = "0.47"
+crc = "3.4.0"
+crc-fast = "1.10.0"
+crc32c = "0.6.9"
+crc64fast-nvme = "1.2.1"
+# 0.8 pulls in `alloca` on Unix, which compiles a few lines of C. Cross builds
+# from macOS need the musl GCCs on PATH; see bench/README.md. Linking still
+# uses the bundled lld.
+criterion = { version = "0.8", default-features = false }
+ring = "0.17.14"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+webpki-roots = "1.0.12"
+
+# Criterion microbenchmarks (dev tooling). Network throughput between hosts is
+# measured by the `tcp_raw` binary instead: it needs two machines and reports
+# CPU cost, which does not fit timing a closure in-process.
+[[bench]]
+name = "dns_codec"
+harness = false
+
+[[bench]]
+name = "http_head"
+harness = false
+
+[[bench]]
+name = "checksums"
+harness = false
+
+[[bench]]
+name = "aead"
+harness = false
+
+# Feasibility probe for splitting TLS: handshake by rustls, records by osc-tls.
+[[example]]
+name = "tls_probe"

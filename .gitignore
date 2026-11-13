@@ -1,0 +1,7 @@
+/target
+*.webm
+
+# Local tooling, not part of the project
+CLAUDE.md
+AGENTS.md
+.no-mistakes.yaml

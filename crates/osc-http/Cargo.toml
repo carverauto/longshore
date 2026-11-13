@@ -1,0 +1,16 @@
+[package]
+name = "osc-http"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+osc-io = { path = "../osc-io" }
+osc-tls = { path = "../osc-tls" }
+
+[dev-dependencies]
+hegeltest = "0.52.2"
+osc-sim = { path = "../osc-sim" }
+# Test certificates.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }

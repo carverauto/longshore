@@ -1,0 +1,50 @@
+# Development tooling only: coverage-guided fuzzing with cargo-fuzz (libFuzzer).
+# Not a workspace member, so production crates never see these dependencies.
+#   cargo +nightly fuzz run dns_response -- -max_total_time=60
+# On macOS add `-s none`: the nightly AddressSanitizer runtime hangs at startup there.
+# The parsers contain no unsafe code, so bounds errors still surface as panics.
+[package]
+name = "osc-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+osc-dns = { path = "../crates/osc-dns" }
+osc-http = { path = "../crates/osc-http" }
+osc-tls = { path = "../crates/osc-tls" }
+
+[[bin]]
+name = "dns_response"
+path = "fuzz_targets/dns_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_head"
+path = "fuzz_targets/http_head.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls_record"
+path = "fuzz_targets/tls_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "list_response"
+path = "fuzz_targets/list_response.rs"
+test = false
+doc = false
+bench = false

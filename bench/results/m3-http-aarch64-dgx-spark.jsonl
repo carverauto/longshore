@@ -1,0 +1,8 @@
+{"cmd":"put","arch":"aarch64","conns":1,"size":8388608,"secs":5.00,"requests":4167,"gb_per_s":6.99,"thread_cpu":0.08,"core_util":0.22,"gb_per_cpu_s":90.82,"enters_per_request":8.0,"connects":1}
+{"cmd":"put","arch":"aarch64","conns":2,"size":8388608,"secs":5.00,"requests":5617,"gb_per_s":9.42,"thread_cpu":0.11,"core_util":0.29,"gb_per_cpu_s":89.34,"enters_per_request":7.7,"connects":2}
+{"cmd":"put","arch":"aarch64","conns":4,"size":8388608,"secs":5.00,"requests":7353,"gb_per_s":12.34,"thread_cpu":0.19,"core_util":0.43,"gb_per_cpu_s":66.53,"enters_per_request":7.3,"connects":4}
+{"cmd":"put","arch":"aarch64","conns":8,"size":8388608,"secs":5.00,"requests":7975,"gb_per_s":13.38,"thread_cpu":0.20,"core_util":0.48,"gb_per_cpu_s":68.25,"enters_per_request":7.1,"connects":8}
+{"cmd":"get","arch":"aarch64","conns":1,"size":8388608,"secs":5.00,"requests":3576,"gb_per_s":6.00,"thread_cpu":0.75,"core_util":0.76,"gb_per_cpu_s":8.05,"enters_per_request":31.4,"connects":1}
+{"cmd":"get","arch":"aarch64","conns":4,"size":8388608,"secs":5.00,"requests":3611,"gb_per_s":6.06,"thread_cpu":0.95,"core_util":0.98,"gb_per_cpu_s":6.35,"enters_per_request":2.1,"connects":4}
+{"cmd":"get","arch":"aarch64","conns":8,"size":8388608,"secs":5.00,"requests":3908,"gb_per_s":6.55,"thread_cpu":0.96,"core_util":0.98,"gb_per_cpu_s":6.81,"enters_per_request":1.4,"connects":8}
+{"cmd":"put","arch":"aarch64","conns":8,"size":65536,"secs":5.00,"requests":352934,"gb_per_s":4.63,"thread_cpu":0.50,"core_util":0.58,"gb_per_cpu_s":9.31,"enters_per_request":2.4,"connects":8}

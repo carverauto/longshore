@@ -1,0 +1,16 @@
+[package]
+name = "osc-checksum"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+# Adopted under the benchmark-gated sourcing rule: see
+# bench/results/m5-checksums.md. `std` is the smallest feature set that
+# builds outside no_std; the C FFI and CLI features stay off.
+crc-fast = { version = "1.10", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+osc-io = { path = "../osc-io" }
+hegeltest = "0.52.2"

@@ -1,0 +1,11 @@
+[package]
+name = "osc-crypto"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+# Primitive library adopted under the benchmark-gated sourcing rule. `ring`
+# is already in the dependency tree of the project this client will join.
+ring = { version = "0.17", default-features = false }

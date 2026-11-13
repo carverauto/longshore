@@ -1,0 +1,11 @@
+{"cmd":"put","arch":"x86_64","conns":1,"size":8388608,"secs":10.00,"requests":72,"attempts":72,"gb_per_s":0.060,"mb_per_s":60.4,"thread_cpu":0.004,"gb_per_cpu_s":14.21,"enters_per_request":11.2,"connects":1}
+{"cmd":"put","arch":"x86_64","conns":4,"size":8388608,"secs":10.01,"requests":302,"attempts":302,"gb_per_s":0.253,"mb_per_s":253.2,"thread_cpu":0.014,"gb_per_cpu_s":17.61,"enters_per_request":8.8,"connects":4}
+{"cmd":"put","arch":"x86_64","conns":8,"size":8388608,"secs":10.00,"requests":600,"attempts":600,"gb_per_s":0.503,"mb_per_s":503.3,"thread_cpu":0.024,"gb_per_cpu_s":21.33,"enters_per_request":8.4,"connects":8}
+{"cmd":"put","arch":"x86_64","conns":16,"size":8388608,"secs":10.00,"requests":973,"attempts":973,"gb_per_s":0.816,"mb_per_s":816.2,"thread_cpu":0.030,"gb_per_cpu_s":27.07,"enters_per_request":8.2,"connects":16}
+{"cmd":"put","arch":"x86_64","conns":32,"size":8388608,"secs":10.00,"requests":963,"attempts":963,"gb_per_s":0.808,"mb_per_s":807.7,"thread_cpu":0.036,"gb_per_cpu_s":22.19,"enters_per_request":8.0,"connects":32}
+{"cmd":"get","arch":"x86_64","conns":1,"size":8388608,"secs":10.00,"requests":187,"attempts":187,"gb_per_s":0.157,"mb_per_s":156.8,"thread_cpu":0.060,"gb_per_cpu_s":2.63,"enters_per_request":100.0,"connects":1}
+{"cmd":"get","arch":"x86_64","conns":4,"size":8388608,"secs":10.00,"requests":708,"attempts":708,"gb_per_s":0.594,"mb_per_s":593.9,"thread_cpu":0.216,"gb_per_cpu_s":2.75,"enters_per_request":81.5,"connects":4}
+{"cmd":"get","arch":"x86_64","conns":8,"size":8388608,"secs":10.00,"requests":1346,"attempts":1346,"gb_per_s":1.129,"mb_per_s":1129.1,"thread_cpu":0.385,"gb_per_cpu_s":2.94,"enters_per_request":63.5,"connects":8}
+{"cmd":"get","arch":"x86_64","conns":16,"size":8388608,"secs":10.00,"requests":1471,"attempts":1471,"gb_per_s":1.234,"mb_per_s":1234.0,"thread_cpu":0.428,"gb_per_cpu_s":2.88,"enters_per_request":53.4,"connects":16}
+{"cmd":"get","arch":"x86_64","conns":32,"size":8388608,"secs":10.00,"requests":1465,"attempts":1465,"gb_per_s":1.229,"mb_per_s":1228.9,"thread_cpu":0.438,"gb_per_cpu_s":2.81,"enters_per_request":50.5,"connects":32}
+{"cmd":"put","arch":"x86_64","conns":16,"size":1048576,"secs":10.00,"requests":3258,"attempts":3258,"gb_per_s":0.342,"mb_per_s":341.6,"thread_cpu":0.036,"gb_per_cpu_s":9.46,"enters_per_request":4.0,"connects":16}
