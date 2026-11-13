@@ -193,9 +193,10 @@ cipher. Sealing TLS records, one core, in GiB/s (`m13-aes-gcm-by-cpu.md`):
 
 On the AMD `m8azn` instance HTTPS upload to S3 reached 3.1 GB/s through
 the resolver, limited by the kernel's transmit path, and about 7 GB/s with
-every connection on an address that takes large segments, limited by the
-cipher (`m18-s3-aws-large-instances.md`). HTTPS upload has not been
-measured end to end on the Intel processor.
+every connection on an address that takes large segments and a 4 MiB send
+batch, limited by the cipher. The default 1 MiB batch gave 6.3 GB/s there
+in a single profiled run (`m18-s3-aws-large-instances.md`). HTTPS upload
+has not been measured end to end on the Intel processor.
 
 ### Compared with the talk
 
@@ -235,7 +236,8 @@ the client is mostly idle.
 - On x86-64 the only real-store measurement is one AMD instance type,
   where uploads reach about 11 GB/s plain and 3 GB/s over HTTPS for the
   same reason, and 23.5 GB/s (its 200 Gbit/s card) and 7 GB/s with large
-  segments only. The same file has the details.
+  segments only and a 4 MiB send batch (6.3 GB/s with the default 1 MiB
+  batch, in a single profiled run). The same file has the details.
 - TLS keys are never updated in place. A connection is retired after 2^23
   records and the next request handshakes again. If a server updates its
   keys in the middle of a connection, the request is retried on a new one.
