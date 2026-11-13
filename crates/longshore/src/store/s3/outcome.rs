@@ -60,6 +60,12 @@ impl S3 {
                 }
                 // Nothing left to abort.
                 (Kind::Abort, 404) => return finish(self, Outcome::Aborted),
+                (Kind::Stat, 200) => {
+                    let stat = self.stat_of(io, s.response_buf, r.conn);
+                    return finish(self, Outcome::Stat(stat));
+                }
+                // A copy of something that is not there.
+                (Kind::Stat | Kind::Copy, 404) => return finish(self, Outcome::NotFound),
                 // The comparison's answer: the object at the key, and its checksum.
                 (Kind::Store { .. }, 200) if s.comparing => {
                     let ours =
@@ -168,9 +174,16 @@ impl S3 {
             }
             // The store rejected our checksum: the body was damaged on the way.
             (Ok(r), kind)
-                if kind.stores_bytes() && r.status == 400 && s.crc.is_some() && !s.comparing =>
+                if (kind.stores_bytes() || kind == Kind::EraseMany)
+                    && r.status == 400
+                    && s.crc.is_some()
+                    && !s.comparing =>
             {
-                let doc = self.client.discarded_body(io, r.conn);
+                // A batch erase reads its response into the caller's buffer.
+                let doc = match s.response_buf.filter(|_| kind == Kind::EraseMany) {
+                    Some(buf) => &io.buf(buf)[..r.body_len as usize],
+                    None => self.client.discarded_body(io, r.conn),
+                };
                 // S3 names it BadDigest (assumed; no enforcing S3 store has been
                 // tried). Google Cloud Storage names it CrcMismatch (observed).
                 let code: &[u8] = match self.cfg.vendor {
@@ -203,8 +216,14 @@ impl S3 {
                     }
                     Kind::Store { .. } | Kind::Complete => Outcome::Stored,
                     Kind::Abort => Outcome::Aborted,
+                    Kind::Copy => Outcome::Copied,
+                    Kind::EraseMany => Outcome::ErasedMany {
+                        len: result.map_or(0, |r| r.body_len),
+                    },
                     // Their success is decided above, from a 200 response.
-                    Kind::Begin { .. } | Kind::Part => Outcome::Fatal(Fatal::BadResponse),
+                    Kind::Begin { .. } | Kind::Part | Kind::Stat => {
+                        Outcome::Fatal(Fatal::BadResponse)
+                    }
                     Kind::Fetch { .. } => Outcome::Fetched {
                         len: result.map_or(0, |r| r.body_len),
                         verified,

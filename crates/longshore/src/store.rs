@@ -7,11 +7,14 @@
 //! builders, retry classification.
 
 pub mod creds;
+pub mod erase;
 pub mod list;
 pub mod multipart;
+pub mod options;
 pub mod presign;
 pub mod retry;
 pub mod s3;
 pub mod sharedkey;
 pub mod sigv4;
+pub mod stat;
 pub mod time;

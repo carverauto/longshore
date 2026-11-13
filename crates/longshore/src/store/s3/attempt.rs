@@ -47,12 +47,44 @@ impl S3 {
             // The comparison after a lost completion asks about the object itself.
             Kind::Complete if s.comparing => ("HEAD", EMPTY_SHA256),
             Kind::Complete => ("POST", UNSIGNED_PAYLOAD),
+            Kind::Stat => ("HEAD", EMPTY_SHA256),
+            Kind::Copy => ("PUT", EMPTY_SHA256),
+            Kind::EraseMany => ("POST", UNSIGNED_PAYLOAD),
         };
         // A multipart request's target is the key and its query.
         let mut target_buf = [0u8; KEY_ENCODED_MAX + 1 + QUERY_MAX];
         let multipart_query = core::str::from_utf8(&s.query[..s.query_len])
             .ok()
-            .filter(|q| !q.is_empty() && !s.comparing);
+            .filter(|q| !q.is_empty() && !s.comparing && s.kind != Kind::Copy);
+        let copy_source = core::str::from_utf8(&s.query[..s.query_len])
+            .ok()
+            .filter(|_| s.kind == Kind::Copy);
+
+        // Optional headers, under the names this vendor gives them.
+        let vendor_prefix = match self.cfg.vendor {
+            Vendor::S3 => "x-amz-",
+            Vendor::Gcs => "x-goog-",
+        };
+        let mut names = [0u8; OPTIONS_MAX * NAME_MAX];
+        let mut name_ends = [0usize; OPTIONS_MAX];
+        let mut option_count = 0;
+        if matches!(s.kind, Kind::Store { .. } | Kind::Begin { .. }) && !s.comparing {
+            let mut at = 0;
+            for (prefix, name, _) in s.options.headers(vendor_prefix) {
+                for part in [prefix, name] {
+                    names[at..at + part.len()].copy_from_slice(part.as_bytes());
+                    at += part.len();
+                }
+                name_ends[option_count] = at;
+                option_count += 1;
+            }
+        }
+        let option = |k: usize| -> (&str, &str) {
+            let start = if k == 0 { 0 } else { name_ends[k - 1] };
+            let name = core::str::from_utf8(&names[start..name_ends[k]]).expect("ASCII");
+            let value = s.options.headers(vendor_prefix).nth(k).expect("counted").2;
+            (name, value)
+        };
         let target = match multipart_query {
             Some(q) => {
                 let n = path.len() + 1 + q.len();
@@ -104,22 +136,17 @@ impl S3 {
             self.active
         }];
         let mut auth = [0u8; 7 + TOKEN_MAX];
-        let mut headers: [(&str, &[u8]); 7] = [("", b""); 7];
+        let mut headers: [(&str, &[u8]); sigv4::HEADERS_MAX] = [("", b""); sigv4::HEADERS_MAX];
         let goog_hash;
         // S3: headers that are both sent and signed.
         let crc_value = s.crc.map(crate::checksum::crc64_header_value);
         let crc_str = crc_value
             .as_ref()
             .map(|v| core::str::from_utf8(v).expect("base64 is ASCII"));
-        let mut signed: [(&str, &str); 7] = [
-            ("host", &self.cfg.host),
-            ("x-amz-content-sha256", payload),
-            ("x-amz-date", date_str),
-            ("", ""),
-            ("", ""),
-            ("", ""),
-            ("", ""),
-        ];
+        let mut signed: [(&str, &str); sigv4::HEADERS_MAX] = [("", ""); sigv4::HEADERS_MAX];
+        signed[0] = ("host", &self.cfg.host);
+        signed[1] = ("x-amz-content-sha256", payload);
+        signed[2] = ("x-amz-date", date_str);
         let n = if self.cfg.vendor == Vendor::Gcs {
             // No signature: the token is the whole proof, so nothing depends
             // on the other headers or on the clock.
@@ -139,6 +166,15 @@ impl S3 {
                 headers[k] = ("x-goog-if-generation-match", b"0");
                 k += 1;
             }
+            if let Some(source) = copy_source {
+                headers[k] = ("x-goog-copy-source", source.as_bytes());
+                k += 1;
+            }
+            for o in 0..option_count {
+                let (name, value) = option(o);
+                headers[k] = (name, value.as_bytes());
+                k += 1;
+            }
             auth[..7].copy_from_slice(b"Bearer ");
             let token = creds.secret_key().as_bytes();
             auth[7..7 + token.len()].copy_from_slice(token);
@@ -147,7 +183,8 @@ impl S3 {
         } else {
             let mut m = 3;
             // A part carries its own checksum; a completion carries the whole object's.
-            let checksummed = s.kind.stores_bytes() || s.kind == Kind::Complete;
+            let checksummed =
+                s.kind.stores_bytes() || matches!(s.kind, Kind::Complete | Kind::EraseMany);
             if let (true, Some(v), false) = (checksummed, crc_str, s.comparing) {
                 signed[m] = (CHECKSUM_HEADER, v);
                 m += 1;
@@ -160,7 +197,7 @@ impl S3 {
             }
             // Ask the store to return the object's checksum with a whole-object
             // fetch, and when comparing a stored object with ours.
-            if s.kind == (Kind::Fetch { range: None }) || s.comparing {
+            if matches!(s.kind, Kind::Fetch { range: None } | Kind::Stat) || s.comparing {
                 signed[m] = ("x-amz-checksum-mode", "ENABLED");
                 m += 1;
             }
@@ -170,6 +207,14 @@ impl S3 {
             }
             if s.kind == (Kind::Store { no_clobber: true }) && !s.comparing {
                 signed[m] = ("if-none-match", "*");
+                m += 1;
+            }
+            if let Some(source) = copy_source {
+                signed[m] = ("x-amz-copy-source", source);
+                m += 1;
+            }
+            for o in 0..option_count {
+                signed[m] = option(o);
                 m += 1;
             }
             // Temporary keys are only valid together with their session
@@ -187,7 +232,9 @@ impl S3 {
             };
             // A listing's target carries a query; it is signed as sorted pairs.
             let (uri, query) = match path.split_once('?') {
-                Some((uri, query)) if s.kind == Kind::List => (uri, query),
+                Some((uri, query)) if matches!(s.kind, Kind::List | Kind::EraseMany) => {
+                    (uri, query)
+                }
                 _ => (path, multipart_query.unwrap_or("")),
             };
             let mut pairs = [("", ""); 4];
@@ -204,7 +251,7 @@ impl S3 {
                 payload_hash: payload,
             };
             let auth_len = authorization(&sreq, &scope, &mut auth)
-                .expect("seven headers and the Authorization buffer always fit");
+                .expect("at most sixteen headers, and the Authorization buffer always fits");
 
             // Host is added by the HTTP client; send the rest plus Authorization.
             for (k, (name, value)) in signed[1..m].iter().enumerate() {
@@ -221,7 +268,8 @@ impl S3 {
             addr,
             headers: &headers[..n],
             body: s.body.filter(|_| !s.comparing),
-            response_buf: s.response_buf,
+            // A stat's buffer is for a copy of the head, not for a body.
+            response_buf: s.response_buf.filter(|_| s.kind != Kind::Stat),
         };
 
         match self.client.start(io, i as u64, &req) {

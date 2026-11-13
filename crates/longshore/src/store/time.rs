@@ -59,5 +59,45 @@ pub fn http_date(unix_secs: u64) -> [u8; 29] {
     out
 }
 
+/// The Unix time of an HTTP date in the form [`http_date`] writes, which is
+/// the form `Last-Modified` uses. `None` for anything else.
+pub fn parse_http_date(text: &[u8]) -> Option<u64> {
+    if text.len() != 29 || &text[3..5] != b", " || &text[25..] != b" GMT" {
+        return None;
+    }
+    let number = |at: usize, width: usize| -> Option<u64> {
+        text[at..at + width].iter().try_fold(0u64, |n, d| {
+            d.is_ascii_digit().then(|| n * 10 + (d - b'0') as u64)
+        })
+    };
+    let separators = [(7, b' '), (11, b' '), (16, b' '), (19, b':'), (22, b':')];
+    if separators.iter().any(|(at, b)| text[*at] != *b) {
+        return None;
+    }
+    let month = b"JanFebMarAprMayJunJulAugSepOctNovDec"
+        .chunks(3)
+        .position(|m| m == &text[8..11])? as i64
+        + 1;
+    let (day, year) = (number(5, 2)? as i64, number(12, 4)? as i64);
+    let (hour, minute, second) = (number(17, 2)?, number(20, 2)?, number(23, 2)?);
+    if year < 1970 || day == 0 || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    // Days-from-civil, the inverse of `civil`.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    // A day that does not exist in that month does not survive the round trip.
+    let back = civil(days);
+    if (back.0, back.1, back.2) != (year, month, day) {
+        return None;
+    }
+    Some(days as u64 * 86_400 + hour * 3600 + minute * 60 + second.min(59))
+}
+
 #[cfg(test)]
 mod tests;
