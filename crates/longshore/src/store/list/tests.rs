@@ -152,3 +152,21 @@ fn a_damaged_group_of_prefixes_is_an_error_once() {
         assert_eq!(got, [Err(ListError::Malformed)]);
     }
 }
+
+#[test]
+fn a_truncated_listing_carries_the_token_that_resumes_it() {
+    let l = Listing::parse(LINODE.as_bytes()).unwrap();
+    assert!(l.is_truncated);
+    assert_eq!(l.next_token_raw, Some(&b"probe/new-20357.txt"[..]));
+    // A token inside an entry is not the listing's.
+    let inside = "<ListBucketResult><Contents><Key>a</Key><NextContinuationToken>no</NextContinuationToken><Size>1</Size></Contents><IsTruncated>false</IsTruncated></ListBucketResult>";
+    assert_eq!(
+        Listing::parse(inside.as_bytes()).unwrap().next_token_raw,
+        None
+    );
+    let empty = "<ListBucketResult><NextContinuationToken></NextContinuationToken><IsTruncated>false</IsTruncated></ListBucketResult>";
+    assert_eq!(
+        Listing::parse(empty.as_bytes()).unwrap().next_token_raw,
+        None
+    );
+}

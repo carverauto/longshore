@@ -96,6 +96,7 @@ fn world_with_buffers(seed: u64, faults: Faults, buf: u32) -> World {
     let mut s3 = S3::new(Config {
         vendor: longshore::store::s3::Vendor::S3,
         host: "bucket.objects.test".into(),
+        bucket_in_path: None,
         port: 80,
         region: "us-test-1".into(),
         credentials: Credentials::new(KEY_A, &format!("secret-for-{KEY_A}")).unwrap(),

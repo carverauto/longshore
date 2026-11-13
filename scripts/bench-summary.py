@@ -20,7 +20,9 @@ import statistics
 import sys
 
 # What makes two runs the same configuration, and what to report about them.
-KEY = ["cmd", "tls", "crc", "links", "conns", "size", "batch", "arch", "build"]
+KEY = ["cmd", "tls", "crc", "links", "conns", "threads", "size", "batch", "arch", "build"]
+# Runs recorded before a field existed group with runs that use its default.
+KEY_DEFAULTS = {"threads": 1}
 METRICS = [
     ("gb_per_s", "GB/s", "{:.2f}"),
     ("requests_per_s", "req/s", "{:.0f}"),
@@ -44,7 +46,7 @@ def main() -> int:
             except json.JSONDecodeError:
                 skipped += 1
                 continue
-            groups.setdefault(tuple(run.get(k) for k in KEY), []).append(run)
+            groups.setdefault(tuple(run.get(k, KEY_DEFAULTS.get(k)) for k in KEY), []).append(run)
     if not groups:
         print("no benchmark results found", file=sys.stderr)
         return 1

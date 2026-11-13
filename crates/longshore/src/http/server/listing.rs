@@ -32,7 +32,28 @@ impl Server {
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(1000);
-        let (prefix, after) = (&prefix[..prefix_len], &after[..after_len]);
+        // A continuation token is "t" and the hex of where the last page
+        // stopped: opaque to the client, and not a key it could pass back
+        // as start-after.
+        let token = query
+            .split(|b| *b == b'&')
+            .rev()
+            .find_map(|kv| kv.strip_prefix(b"continuation-token="))
+            .unwrap_or(b"");
+        let mut resumed = ([0u8; TARGET_MAX], 0usize);
+        if let Some(hex) = token.strip_prefix(b"t") {
+            for pair in hex.as_chunks::<2>().0.iter().take(TARGET_MAX) {
+                let nibble = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
+                resumed.0[resumed.1] = nibble(pair[0]) << 4 | nibble(pair[1]);
+                resumed.1 += 1;
+            }
+        }
+        let after = if resumed.1 > 0 {
+            &resumed.0[..resumed.1]
+        } else {
+            &after[..after_len]
+        };
+        let prefix = &prefix[..prefix_len];
 
         // Emit matching keys in order, smallest first, without sorting the table.
         let cap = self.cfg.buffer_size as usize - 256;
@@ -124,15 +145,17 @@ impl Server {
                 last = (key, len);
                 emitted += 1;
             }
-            put(
-                body,
-                &mut n,
-                if truncated {
-                    b"<IsTruncated>true</IsTruncated>"
-                } else {
-                    b"<IsTruncated>false</IsTruncated>"
-                },
-            );
+            if truncated {
+                put(body, &mut n, b"<NextContinuationToken>t");
+                for b in &last.0[..last.1] {
+                    put(body, &mut n, &[b"0123456789abcdef"[(b >> 4) as usize]]);
+                    put(body, &mut n, &[b"0123456789abcdef"[(b & 15) as usize]]);
+                }
+                put(body, &mut n, b"</NextContinuationToken>");
+                put(body, &mut n, b"<IsTruncated>true</IsTruncated>");
+            } else {
+                put(body, &mut n, b"<IsTruncated>false</IsTruncated>");
+            }
             put(body, &mut n, b"</ListBucketResult>");
         }
         self.status(io, i, 200, "OK", n as u64, n as u32, false)

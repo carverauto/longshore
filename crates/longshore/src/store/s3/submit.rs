@@ -7,6 +7,16 @@
 
 use super::*;
 
+/// Where a listing starts.
+#[derive(Clone, Copy)]
+pub(super) enum ListFrom<'a> {
+    Start,
+    /// After this key, in key order.
+    After(&'a str),
+    /// Where the listing that returned this continuation token stopped.
+    Token(&'a str),
+}
+
 impl S3 {
     /// Take a slot and fill it in, without sending anything yet.
     #[allow(clippy::too_many_arguments)]
@@ -25,15 +35,19 @@ impl S3 {
             .iter()
             .position(|s| s.state == State::Free)
             .ok_or(SubmitError::Busy)?;
+        let root = self.root.as_bytes();
         let s = &mut self.slots[i];
         s.candidate = false;
         s.comparing = false;
         if key.is_empty() {
             return Err(SubmitError::BadKey);
         }
-        s.path[0] = b'/';
+        let at = root.len();
+        s.path[..at].copy_from_slice(root);
+        s.path[at] = b'/';
+        let key_room = &mut s.path[at + 1..at + 1 + KEY_ENCODED_MAX - 1];
         s.path_len =
-            1 + uri_encode(key.as_bytes(), false, &mut s.path[1..]).ok_or(SubmitError::BadKey)?;
+            at + 1 + uri_encode(key.as_bytes(), false, key_room).ok_or(SubmitError::BadKey)?;
         s.query[..query.len()].copy_from_slice(query);
         s.query_len = query.len();
         s.options = Options::new();
@@ -160,7 +174,8 @@ impl S3 {
             .ok_or(SubmitError::Busy)?;
         self.slots[i].candidate = false;
         self.slots[i].comparing = false;
-        self.list_in_slot(io, i, token, prefix, start_after, max_keys, None, into)
+        let from = start_after.map_or(ListFrom::Start, ListFrom::After);
+        self.list_in_slot(io, i, token, prefix, from, max_keys, None, into)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -170,13 +185,15 @@ impl S3 {
         i: usize,
         token: u64,
         prefix: &str,
-        start_after: Option<&str>,
+        from: ListFrom,
         max_keys: u16,
         delimiter: Option<&str>,
         into: BufId,
     ) -> Result<(), SubmitError> {
         // The query is stored already encoded and in the sorted order
-        // signing requires: delimiter, list-type, max-keys, prefix, start-after.
+        // signing requires: continuation-token, delimiter, list-type,
+        // max-keys, prefix, start-after.
+        let root = self.root.as_bytes();
         let s = &mut self.slots[i];
         let mut n = 0;
         let mut put = |path: &mut [u8], bytes: &[u8]| -> Option<()> {
@@ -193,7 +210,15 @@ impl S3 {
             v /= 10;
         }
         let built = (|| {
+            put(&mut s.path, root)?;
             put(&mut s.path, b"/?")?;
+            if let ListFrom::Token(continuation) = from {
+                put(&mut s.path, b"continuation-token=")?;
+                let mut enc = [0u8; LIST_TOKEN_ENCODED_MAX];
+                let len = uri_encode(continuation.as_bytes(), true, &mut enc)?;
+                put(&mut s.path, &enc[..len])?;
+                put(&mut s.path, b"&")?;
+            }
             if let Some(delimiter) = delimiter.filter(|d| !d.is_empty()) {
                 put(&mut s.path, b"delimiter=")?;
                 let mut enc = [0u8; 64];
@@ -205,7 +230,13 @@ impl S3 {
             put(&mut s.path, &digits[d..])?;
             for (name, value) in [
                 ("&prefix=", Some(prefix).filter(|p| !p.is_empty())),
-                ("&start-after=", start_after),
+                (
+                    "&start-after=",
+                    match from {
+                        ListFrom::After(key) => Some(key),
+                        _ => None,
+                    },
+                ),
             ] {
                 if let Some(value) = value {
                     put(&mut s.path, name.as_bytes())?;

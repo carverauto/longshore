@@ -96,7 +96,49 @@ pub(super) fn objects(size: u32) {
             }
             _ => false,
         };
-        step(4, ok, d);
+        // The same level one entry at a time: the first page is cut short
+        // and returns a token, and the token brings the rest without
+        // repeating anything.
+        s3.list_with(&mut io, 4, &base, None, 1, Some("/"), rx)
+            .unwrap();
+        let first = wait(&mut io, &mut s3, &mut out);
+        let mut continuation = [0u8; 1100];
+        let mut continuation_len = 0;
+        let first_ok = match first.outcome {
+            Outcome::Listed { len } => {
+                Listing::parse(&io.buf(rx)[..len as usize]).is_ok_and(|listing| {
+                    continuation_len = listing
+                        .next_token_raw
+                        .and_then(|raw| longshore::store::list::unescape(raw, &mut continuation))
+                        .unwrap_or(0);
+                    let one_key = matches!(listing.entries().next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
+                    listing.is_truncated && one_key && listing.common_prefixes().next().is_none()
+                })
+            }
+            _ => false,
+        };
+        let paged_ok = first_ok
+            && core::str::from_utf8(&continuation[..continuation_len]).is_ok_and(|t| {
+                !t.is_empty()
+                    && s3
+                        .list_continue(&mut io, 4, &base, t, 1, Some("/"), rx)
+                        .is_ok()
+            })
+            && match wait(&mut io, &mut s3, &mut out).outcome {
+                Outcome::Listed { len } => {
+                    Listing::parse(&io.buf(rx)[..len as usize]).is_ok_and(|listing| {
+                        let mut prefixes = listing.common_prefixes();
+                        let prefix_ok = matches!(prefixes.next(), Some(Ok(p))
+                            if p.strip_prefix(base.as_bytes()) == Some(b"sub/"));
+                        prefix_ok
+                            && prefixes.next().is_none()
+                            && listing.entries().next().is_none()
+                            && !listing.is_truncated
+                    })
+                }
+                _ => false,
+            };
+        step(4, ok && paged_ok, d);
 
         if gcs {
             // No batch erase on this store: one request each.
@@ -131,7 +173,7 @@ pub(super) fn objects(size: u32) {
         "stat",
         "copy",
         "stat of the copy",
-        "list with delimiter",
+        "list with delimiter, then paged by token",
         if gcs { "erase" } else { "erase many" },
         "erase (second key)",
         "stat after erase",

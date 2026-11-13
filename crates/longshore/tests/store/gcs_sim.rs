@@ -96,6 +96,7 @@ fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
     let mut s3 = S3::new(Config {
         vendor: Vendor::Gcs,
         host: "bucket.storage.test".into(),
+        bucket_in_path: None,
         port: 80,
         region: "auto".into(),
         credentials: Credentials::bearer(TOKEN_A).unwrap(),

@@ -52,7 +52,7 @@ impl S3 {
             Kind::EraseMany => ("POST", UNSIGNED_PAYLOAD),
         };
         // A multipart request's target is the key and its query.
-        let mut target_buf = [0u8; KEY_ENCODED_MAX + 1 + QUERY_MAX];
+        let mut target_buf = [0u8; PATH_MAX + 1 + QUERY_MAX];
         let multipart_query = core::str::from_utf8(&s.query[..s.query_len])
             .ok()
             .filter(|q| !q.is_empty() && !s.comparing && s.kind != Kind::Copy);

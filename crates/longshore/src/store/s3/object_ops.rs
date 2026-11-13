@@ -146,10 +146,13 @@ impl S3 {
         if from_key.is_empty() {
             return Err(SubmitError::BadKey);
         }
-        // The source is named as "/bucket/key". The bucket is the first
-        // label of the host, which is how the store is addressed.
+        // The source is named as "/bucket/key". The bucket is the one in
+        // the path, or else the first label of the host.
         let mut source = [0u8; QUERY_MAX];
-        let bucket = self.cfg.host.split('.').next().unwrap_or("").as_bytes();
+        let bucket = match &self.cfg.bucket_in_path {
+            Some(bucket) => bucket.as_bytes(),
+            None => self.cfg.host.split('.').next().unwrap_or("").as_bytes(),
+        };
         let key_at = bucket.len() + 2;
         if key_at >= source.len() {
             return Err(SubmitError::BadKey);
@@ -196,9 +199,11 @@ impl S3 {
         // The store requires an integrity header on this request.
         let crc = crate::checksum::crc64_nvme(&io.buf(manifest)[..len as usize]);
         let target = b"/?delete=";
+        let at = self.root.len();
         let s = &mut self.slots[i];
-        s.path[..target.len()].copy_from_slice(target);
-        s.path_len = target.len();
+        s.path[..at].copy_from_slice(self.root.as_bytes());
+        s.path[at..at + target.len()].copy_from_slice(target);
+        s.path_len = at + target.len();
         s.query_len = 0;
         s.options = Options::new();
         s.token = token;
@@ -217,11 +222,10 @@ impl S3 {
     /// [`common prefixes`](crate::store::list::Listing::common_prefixes).
     /// With `/` this lists one level of a hierarchy.
     ///
-    /// To page, pass the last key of the previous page as `start_after`. A
-    /// truncated listing whose page ends on a common prefix cannot yet be
-    /// resumed reliably: no `start_after` skips every key under a prefix, so
-    /// the same prefix can be reported again. Continuation tokens will fix
-    /// this.
+    /// To page, use [`S3::list_continue`] with the token the truncated page
+    /// returned. Paging by `start_after` does not work with a delimiter when
+    /// a page ends on a common prefix: no key skips everything under a
+    /// prefix, so the prefix would be reported again.
     #[allow(clippy::too_many_arguments)]
     pub fn list_with<IO: Io>(
         &mut self,
@@ -239,7 +243,39 @@ impl S3 {
             .ok_or(SubmitError::Busy)?;
         self.slots[i].candidate = false;
         self.slots[i].comparing = false;
-        self.list_in_slot(io, i, token, prefix, start_after, max_keys, delimiter, into)
+        let from = start_after.map_or(submit::ListFrom::Start, submit::ListFrom::After);
+        self.list_in_slot(io, i, token, prefix, from, max_keys, delimiter, into)
+    }
+
+    /// The next page of a truncated listing. `continuation` is the token
+    /// that page returned
+    /// ([`Listing::next_token_raw`](crate::store::list::Listing::next_token_raw),
+    /// decoded with [`unescape`](crate::store::list::unescape)). `prefix`,
+    /// `max_keys` and `delimiter` must be what the listing was started with.
+    /// A token longer than [`LIST_TOKEN_ENCODED_MAX`] once encoded is
+    /// refused as [`SubmitError::BadKey`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_continue<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        token: u64,
+        prefix: &str,
+        continuation: &str,
+        max_keys: u16,
+        delimiter: Option<&str>,
+        into: BufId,
+    ) -> Result<(), SubmitError> {
+        if continuation.is_empty() {
+            return Err(SubmitError::BadKey);
+        }
+        let i = self.slots[..self.cfg.requests_max as usize]
+            .iter()
+            .position(|s| s.state == State::Free)
+            .ok_or(SubmitError::Busy)?;
+        self.slots[i].candidate = false;
+        self.slots[i].comparing = false;
+        let from = submit::ListFrom::Token(continuation);
+        self.list_in_slot(io, i, token, prefix, from, max_keys, delimiter, into)
     }
 
     /// Write a presigned URL for `key` into `out` and return its length:
@@ -285,6 +321,7 @@ impl S3 {
         let target = presign::Target {
             scheme: if self.secure { "https" } else { "http" },
             host: core::str::from_utf8(&authority[..n]).expect("a host and digits"),
+            root: &self.root,
             region: &self.cfg.region,
             credentials: &self.creds[self.active],
         };

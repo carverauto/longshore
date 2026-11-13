@@ -76,7 +76,12 @@ pub fn world_with(seed: u64, faults: Faults, attempts_max: u32, enforce: bool) -
         }),
     });
     server.start(&mut io, ADDR).unwrap();
-    let mut s3 = S3::new(s3_config(attempts_max, enforce));
+    finish_world(io, server, s3_config(attempts_max, enforce))
+}
+
+/// Start a store with `cfg` beside a server that is already listening.
+pub fn finish_world(mut io: SimIo, server: Server, cfg: Config) -> World {
+    let mut s3 = S3::new(cfg);
     s3.start(&mut io);
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
@@ -150,6 +155,7 @@ pub fn s3_config(attempts_max: u32, enforce: bool) -> Config {
     Config {
         vendor: longshore::store::s3::Vendor::S3,
         host: "bucket.objects.test".into(),
+        bucket_in_path: None,
         port: 80,
         region: "us-test-1".into(),
         credentials: Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")

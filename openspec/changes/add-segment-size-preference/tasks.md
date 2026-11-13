@@ -12,6 +12,6 @@
 
 ## 3. Real stores
 - [x] 3.1 Run on Linux 6.1 and on a current kernel (6.1, 6.8, 6.14 and 7.0)
-- [ ] 3.2 Five runs per cell against Amazon S3 from both instance types, with the setting on and off
-- [ ] 3.3 Sweep the TLS send batch size on both instance types and set the default from it
-- [ ] 3.4 README: measurement tables, the setting, and its trade-off
+- [x] 3.2 Five runs per cell against Amazon S3 from both instance types, with the setting on and off
+- [x] 3.3 Sweep the TLS send batch size on both instance types and set the default from it
+- [x] 3.4 README: measurement tables, the setting, and its trade-off

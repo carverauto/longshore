@@ -57,7 +57,15 @@ fn thread_cpu_secs() -> f64 {
 /// then `user` caller buffers. Small buffers: `conns` HTTP heads, 3 for DNS.
 /// Sockets: `conns` for HTTP, 2 for DNS.
 fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) {
-    let host = format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT"));
+    // S3_PATH_STYLE=1 addresses the bucket in the path, as self-hosted
+    // stores commonly expect: requests go to /bucket/key on the endpoint.
+    let bucket_in_path = std::env::var("S3_PATH_STYLE")
+        .is_ok_and(|v| v == "1")
+        .then(|| env("S3_BUCKET"));
+    let host = match &bucket_in_path {
+        Some(_) => env("S3_ENDPOINT"),
+        None => format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT")),
+    };
     let conf = std::fs::read_to_string("/etc/resolv.conf")
         .unwrap_or_else(|e| die(&format!("/etc/resolv.conf: {e}")));
     let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
@@ -131,7 +139,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         tls_batch: std::env::var("S3_TLS_BATCH")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(4 << 20),
+            .unwrap_or(3 << 20),
         tls_records_max: client::TLS_RECORDS_MAX,
         check_idle: true,
     };
@@ -142,6 +150,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
             longshore::store::s3::Vendor::S3
         },
         host,
+        bucket_in_path,
         port: if tls { 443 } else { 80 },
         region: if gcs { String::new() } else { env("S3_REGION") },
         credentials: if gcs {
@@ -219,8 +228,11 @@ pub fn main() {
             .unwrap_or_else(|| die("usage: s3_uring list|clean PREFIX"));
         return sweep(&prefix, first.as_deref() == Some("clean"));
     }
-    let cmd = args.next().unwrap_or_else(|| die("usage: s3_uring selftest | badcrc | put | put-crc | get | put-new | get-range | erase | list-keys [--conns N] [--size BYTES] [--secs S] [--cpu N]"));
+    let cmd = args.next().unwrap_or_else(|| die("usage: s3_uring selftest | badcrc | put | put-crc | get | put-new | get-range | erase | list-keys [--conns N] [--size BYTES] [--secs S] [--cpu N] [--threads N] [--cpu-step N]"));
     let (mut conns, mut size, mut secs, mut cpu) = (4u32, 8u32 << 20, 10u64, None);
+    // --threads N runs N independent clients, each with --conns connections.
+    // With --cpu they are pinned to CPUs --cpu-step apart, starting at --cpu.
+    let (mut threads, mut cpu_step) = (1u32, 1usize);
     while let Some(k) = args.next() {
         let v: u64 = args
             .next()
@@ -231,17 +243,24 @@ pub fn main() {
             "--size" => size = v as u32,
             "--secs" => secs = v,
             "--cpu" => cpu = Some(v as usize),
+            "--threads" => threads = (v as u32).max(1),
+            "--cpu-step" => cpu_step = v as usize,
             _ => die(&format!("unknown flag {k}")),
         }
     }
+    let place = Placement {
+        threads,
+        cpu,
+        cpu_step,
+    };
     match cmd.as_str() {
         "selftest" => selftest(size),
         "badcrc" => bad_checksum(size),
         "multipart" => multipart(size),
         "objects" => objects(size),
-        "put" => bench(true, conns, size, secs, cpu, Checksum::None),
-        "put-crc" => bench(true, conns, size, secs, cpu, Checksum::Compute),
-        "get" => bench(false, conns, size, secs, cpu, Checksum::None),
+        "put" => bench(true, conns, size, secs, place, Checksum::None),
+        "put-crc" => bench(true, conns, size, secs, place, Checksum::Compute),
+        "get" => bench(false, conns, size, secs, place, Checksum::None),
         "put-new" | "get-range" | "erase" | "list-keys" => ops(&cmd, conns, size, secs, cpu),
         other => die(&format!("unknown command {other}")),
     }

@@ -129,6 +129,10 @@ name = "store_ipv6_sim"
 path = "tests/store/ipv6_sim.rs"
 
 [[test]]
+name = "store_s3_path_addressing"
+path = "tests/store/s3_path_addressing.rs"
+
+[[test]]
 name = "store_segments_sim"
 path = "tests/store/segments_sim.rs"
 
