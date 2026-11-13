@@ -121,7 +121,17 @@ impl Server {
                 false,
             );
         }
-        if method == b"GET" && target.starts_with(b"/?list-type=2") {
+        let is_listing = target.starts_with(b"/?")
+            && target[2..]
+                .split(|b| *b == b'&')
+                .any(|pair| pair == b"list-type=2");
+        if method == b"POST" && target == b"/?delete=" {
+            return self.erase_many(io, i);
+        }
+        if method == b"PUT" && c.copy_source_len > 0 {
+            return self.copy(io, i, behavior == Behavior::ApplyThenClose);
+        }
+        if method == b"GET" && is_listing {
             return self.list(io, i);
         }
         if self.multipart(io, i, behavior == Behavior::ApplyThenClose) {
@@ -170,6 +180,8 @@ impl Server {
                 o.target_len = c.target_len;
                 o.len = len as u32;
                 o.used = true;
+                o.describing = c.describing;
+                o.describing_len = c.describing_len;
                 if behavior == Behavior::ApplyThenClose {
                     return self.close(io, i);
                 }
@@ -182,6 +194,7 @@ impl Server {
             b"GET" | b"HEAD" => {
                 let len = match found {
                     Some(slot) => {
+                        self.conns[i].reply_object = Some(slot as u32);
                         let o = &self.objects[slot];
                         // A satisfiable range is served as 206 with just those bytes.
                         if let Some((a, b)) = c

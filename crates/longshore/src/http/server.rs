@@ -106,6 +106,8 @@ enum State {
 }
 
 const TARGET_MAX: usize = 256;
+/// Room for the headers that describe an object: content type and metadata.
+const DESCRIBING_MAX: usize = 192;
 
 #[derive(Clone, Copy)]
 struct Conn {
@@ -134,6 +136,14 @@ struct Conn {
     bearer: bool,
     /// `ETag` to send with the response: a stored part's tag.
     reply_tag: Option<[u8; multipart::TAG_LEN]>,
+    /// The request's content type and metadata headers, as raw lines.
+    describing: [u8; DESCRIBING_MAX],
+    describing_len: usize,
+    /// The request's copy source, `/bucket/key`, if it is a copy.
+    copy_source: [u8; TARGET_MAX],
+    copy_source_len: usize,
+    /// The object whose tag, date and describing headers go on the response.
+    reply_object: Option<u32>,
 }
 
 struct Object {
@@ -143,6 +153,9 @@ struct Object {
     data: Box<[u8]>,
     used: bool,
     checksum: Option<[u8; 12]>,
+    /// Content type and metadata headers it was stored with, as raw lines.
+    describing: [u8; DESCRIBING_MAX],
+    describing_len: usize,
 }
 
 const K_RECV: u64 = 0;
@@ -160,6 +173,8 @@ pub struct Server {
     /// Ids of the multipart uploads in progress; zero is a free entry.
     uploads: [u32; multipart::UPLOADS_MAX],
     uploads_begun: u32,
+    /// A batch erase refuses keys that start with this, if it is not empty.
+    erase_denied: &'static str,
     script: [Behavior; SCRIPT_MAX],
     script_head: usize,
     script_len: usize,
@@ -177,6 +192,7 @@ pub struct Server {
     pub closed: u64,
 }
 
+mod describing;
 mod events;
 mod listing;
 mod multipart;
@@ -215,6 +231,11 @@ impl Server {
             authorized: true,
             bearer: false,
             reply_tag: None,
+            describing: [0; DESCRIBING_MAX],
+            describing_len: 0,
+            copy_source: [0; TARGET_MAX],
+            copy_source_len: 0,
+            reply_object: None,
         };
         let objects = (0..cfg.objects_max)
             .map(|_| Object {
@@ -224,6 +245,8 @@ impl Server {
                 data: vec![0u8; cfg.buffer_size as usize].into_boxed_slice(),
                 used: false,
                 checksum: None,
+                describing: [0; DESCRIBING_MAX],
+                describing_len: 0,
             })
             .collect();
         let first_tls_buf = tls.as_ref().map(|t| t.1);
@@ -251,6 +274,7 @@ impl Server {
             objects,
             uploads: [0; multipart::UPLOADS_MAX],
             uploads_begun: 0,
+            erase_denied: "",
             script: [Behavior::Normal; SCRIPT_MAX],
             script_head: 0,
             script_len: 0,
@@ -318,6 +342,11 @@ impl Server {
             .iter()
             .find(|o| o.used && &o.target[..o.target_len] == target.as_bytes())
             .map(|o| o.len)
+    }
+
+    /// Make a batch erase refuse every key that starts with `prefix`.
+    pub fn deny_erase(&mut self, prefix: &'static str) {
+        self.erase_denied = prefix;
     }
 
     /// Stored bytes of an object, for assertions.

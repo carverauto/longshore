@@ -9,6 +9,8 @@ mod checks;
 use checks::*;
 mod multipart;
 use multipart::*;
+mod objects;
+use objects::*;
 mod ops;
 use ops::*;
 mod throughput;
@@ -213,6 +215,7 @@ pub fn main() {
         "selftest" => selftest(size),
         "badcrc" => bad_checksum(size),
         "multipart" => multipart(size),
+        "objects" => objects(size),
         "put" => bench(true, conns, size, secs, cpu, Checksum::None),
         "put-crc" => bench(true, conns, size, secs, cpu, Checksum::Compute),
         "get" => bench(false, conns, size, secs, cpu, Checksum::None),

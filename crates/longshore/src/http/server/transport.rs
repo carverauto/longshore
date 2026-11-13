@@ -109,6 +109,14 @@ impl Server {
                 w.header("x-amz-checksum-crc64nvme", &sum);
             }
         }
+        if let Some(slot) = self.conns[i].reply_object.take() {
+            let o = &self.objects[slot as usize];
+            w.header("ETag", &multipart::tag(&o.data[..o.len as usize]));
+            w.header("Last-Modified", describing::LAST_MODIFIED);
+            for (name, value) in describing::lines(&o.describing[..o.describing_len]) {
+                w.header(name, value);
+            }
+        }
         if let Some(tag) = self.conns[i].reply_tag.take() {
             w.header("ETag", &tag);
         }

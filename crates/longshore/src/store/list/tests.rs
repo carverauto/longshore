@@ -129,3 +129,26 @@ fn unescapes_character_references() {
     }
     assert_eq!(unescape(b"abc", &mut [0u8; 2]), None, "output too small");
 }
+
+#[test]
+fn reads_common_prefixes_and_leaves_the_request_prefix_alone() {
+    // The shape Amazon S3 documents for a listing with a delimiter: the
+    // prefix asked for is an element of its own, before the groups.
+    let xml = b"<ListBucketResult><Name>bucket</Name><Prefix>photos/</Prefix><Delimiter>/</Delimiter><IsTruncated>false</IsTruncated><Contents><Key>photos/index</Key><Size>3</Size></Contents><CommonPrefixes><Prefix>photos/2025/</Prefix></CommonPrefixes><CommonPrefixes><Prefix>photos/a&amp;b/</Prefix></CommonPrefixes></ListBucketResult>";
+    let listing = Listing::parse(xml).unwrap();
+    let prefixes: Vec<_> = listing.common_prefixes().map(|p| p.unwrap()).collect();
+    assert_eq!(prefixes, [&b"photos/2025/"[..], b"photos/a&amp;b/"]);
+    assert_eq!(listing.entries().count(), 1);
+}
+
+#[test]
+fn a_damaged_group_of_prefixes_is_an_error_once() {
+    for xml in [
+        &b"<ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes></CommonPrefixes></ListBucketResult>"[..],
+        b"<ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix></Prefix></CommonPrefixes></ListBucketResult>",
+        b"<ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>a/</CommonPrefixes></ListBucketResult>",
+    ] {
+        let got: Vec<_> = Listing::parse(xml).unwrap().common_prefixes().collect();
+        assert_eq!(got, [Err(ListError::Malformed)]);
+    }
+}

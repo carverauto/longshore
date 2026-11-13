@@ -28,6 +28,11 @@ needs an upload id carried across requests and an ETag returned per part.
   HEAD of the key returns the expected whole-object checksum; otherwise it is
   an error. This mirrors the conditional-store comparison that already exists.
 - Abort is idempotent and retried freely. A missing upload counts as aborted.
+- Google Cloud Storage's XML multipart accepts CRC-32C per part in the same
+  header it uses for whole objects. A run against a real bucket settled this.
+- The completion document repeats each part's CRC-64/NVME beside its tag.
+  Amazon S3 does not need it for a full-object checksum, but some
+  S3-compatible servers reject a completion without it.
 
 ## Risks / Trade-offs
 - A caller that drops its `UploadId` leaves parts stored and billed. The
@@ -36,8 +41,3 @@ needs an upload id carried across requests and an ETag returned per part.
 - Stores differ in whether they accept a per-part CRC-64/NVME. The checksum
   mode stays a per-call choice, and the real-store runs record what each
   store accepts.
-
-## Open Questions
-- Whether Google Cloud Storage's XML multipart accepts CRC-32C per part in the
-  same header it uses for whole objects. To be settled by a run against a
-  real bucket.

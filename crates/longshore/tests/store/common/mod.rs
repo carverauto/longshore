@@ -74,38 +74,7 @@ pub fn world_with(seed: u64, faults: Faults, attempts_max: u32, enforce: bool) -
         }),
     });
     server.start(&mut io, ADDR).unwrap();
-    let http = client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: LIMITS.buffers,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 1_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    };
-    let mut s3 = S3::new(Config {
-        vendor: longshore::store::s3::Vendor::S3,
-        host: "bucket.objects.test".into(),
-        port: 80,
-        region: "us-test-1".into(),
-        credentials: Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-            .unwrap(),
-        credentials_file: None,
-        requests_max: 4,
-        attempts_max,
-        backoff_ns: 100 * MS,
-        backoff_max_ns: 800 * MS,
-        require_checksums: enforce,
-        http,
-        tls: None,
-        endpoint: Endpoint::Fixed(ADDR),
-    });
+    let mut s3 = S3::new(s3_config(attempts_max, enforce));
     s3.start(&mut io);
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
@@ -156,5 +125,41 @@ impl World {
         for (i, b) in self.io.buf(TX)[..len as usize].iter_mut().enumerate() {
             *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[1] ^ salt;
         }
+    }
+}
+
+/// The store configuration [`world_with`] uses.
+pub fn s3_config(attempts_max: u32, enforce: bool) -> Config {
+    let http = client::Config {
+        connections_max: CONNS,
+        first_sock: 1,
+        first_buf: LIMITS.buffers,
+        head_max: HEAD_MAX,
+        buffer_size: BUF,
+        max_age_ns: 60_000 * MS,
+        max_requests: 1000,
+        request_timeout_ns: 1_000 * MS,
+        zero_copy_min: 4096,
+        token_base: 1 << 40,
+        tls_batch: 256 * 1024,
+        tls_records_max: client::TLS_RECORDS_MAX,
+        check_idle: true,
+    };
+    Config {
+        vendor: longshore::store::s3::Vendor::S3,
+        host: "bucket.objects.test".into(),
+        port: 80,
+        region: "us-test-1".into(),
+        credentials: Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
+            .unwrap(),
+        credentials_file: None,
+        requests_max: 4,
+        attempts_max,
+        backoff_ns: 100 * MS,
+        backoff_max_ns: 800 * MS,
+        require_checksums: enforce,
+        http,
+        tls: None,
+        endpoint: Endpoint::Fixed(ADDR),
     }
 }

@@ -186,9 +186,9 @@ impl S3 {
                     }
                 })))
             }
-            Kind::Complete => {
-                // The store may take long enough to assemble the object that
-                // it has already sent 200 when it fails: the body says which.
+            Kind::Complete | Kind::Copy => {
+                // The store may take long enough to assemble or copy the object
+                // that it has already sent 200 when it fails: the body says which.
                 let doc = self.client.discarded_body(io, r.conn);
                 if doc.is_empty() && r.body_len > 0 {
                     return Some(Ok(Outcome::Fatal(Fatal::BadResponse)));

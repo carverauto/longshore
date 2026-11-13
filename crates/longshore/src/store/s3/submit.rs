@@ -8,8 +8,9 @@
 use super::*;
 
 impl S3 {
+    /// Take a slot and fill it in, without sending anything yet.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn submit<IO: Io>(
+    pub(super) fn prepare<IO: Io>(
         &mut self,
         io: &mut IO,
         token: u64,
@@ -19,7 +20,7 @@ impl S3 {
         response_buf: Option<BufId>,
         checksum: Checksum,
         query: &[u8],
-    ) -> Result<(), SubmitError> {
+    ) -> Result<usize, SubmitError> {
         let i = self.slots[..self.cfg.requests_max as usize]
             .iter()
             .position(|s| s.state == State::Free)
@@ -35,6 +36,7 @@ impl S3 {
             1 + uri_encode(key.as_bytes(), false, &mut s.path[1..]).ok_or(SubmitError::BadKey)?;
         s.query[..query.len()].copy_from_slice(query);
         s.query_len = query.len();
+        s.options = Options::new();
         s.token = token;
         s.kind = kind;
         s.body = body;
@@ -52,6 +54,22 @@ impl S3 {
             }
             _ => None,
         };
+        Ok(i)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn submit<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        token: u64,
+        key: &str,
+        kind: Kind,
+        body: Option<(BufId, u32)>,
+        response_buf: Option<BufId>,
+        checksum: Checksum,
+        query: &[u8],
+    ) -> Result<(), SubmitError> {
+        let i = self.prepare(io, token, key, kind, body, response_buf, checksum, query)?;
         self.attempt(io, i);
         Ok(())
     }
@@ -142,7 +160,7 @@ impl S3 {
             .ok_or(SubmitError::Busy)?;
         self.slots[i].candidate = false;
         self.slots[i].comparing = false;
-        self.list_in_slot(io, i, token, prefix, start_after, max_keys, into)
+        self.list_in_slot(io, i, token, prefix, start_after, max_keys, None, into)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -154,10 +172,11 @@ impl S3 {
         prefix: &str,
         start_after: Option<&str>,
         max_keys: u16,
+        delimiter: Option<&str>,
         into: BufId,
     ) -> Result<(), SubmitError> {
         // The query is stored already encoded and in the sorted order
-        // signing requires: list-type, max-keys, prefix, start-after.
+        // signing requires: delimiter, list-type, max-keys, prefix, start-after.
         let s = &mut self.slots[i];
         let mut n = 0;
         let mut put = |path: &mut [u8], bytes: &[u8]| -> Option<()> {
@@ -174,7 +193,15 @@ impl S3 {
             v /= 10;
         }
         let built = (|| {
-            put(&mut s.path, b"/?list-type=2&max-keys=")?;
+            put(&mut s.path, b"/?")?;
+            if let Some(delimiter) = delimiter.filter(|d| !d.is_empty()) {
+                put(&mut s.path, b"delimiter=")?;
+                let mut enc = [0u8; 64];
+                let len = uri_encode(delimiter.as_bytes(), true, &mut enc)?;
+                put(&mut s.path, &enc[..len])?;
+                put(&mut s.path, b"&")?;
+            }
+            put(&mut s.path, b"list-type=2&max-keys=")?;
             put(&mut s.path, &digits[d..])?;
             for (name, value) in [
                 ("&prefix=", Some(prefix).filter(|p| !p.is_empty())),
@@ -194,6 +221,7 @@ impl S3 {
         }
         s.path_len = n;
         s.query_len = 0;
+        s.options = Options::new();
         s.token = token;
         s.kind = Kind::List;
         s.body = None;

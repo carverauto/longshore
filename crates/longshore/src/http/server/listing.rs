@@ -25,6 +25,8 @@ impl Server {
         };
         let (prefix, prefix_len) = param(b"prefix");
         let (after, after_len) = param(b"start-after");
+        let (delimiter, delimiter_len) = param(b"delimiter");
+        let delimiter = &delimiter[..delimiter_len];
         let (max_raw, max_len) = param(b"max-keys");
         let max_keys = core::str::from_utf8(&max_raw[..max_len])
             .ok()
@@ -71,16 +73,40 @@ impl Server {
                     truncated = true;
                     break;
                 }
-                put(body, &mut n, b"<Contents><Key>");
-                for b in &key[..len] {
-                    match b {
-                        b'&' => put(body, &mut n, b"&amp;"),
-                        b'<' => put(body, &mut n, b"&lt;"),
-                        b'>' => put(body, &mut n, b"&gt;"),
-                        b'"' => put(body, &mut n, b"&#34;"),
-                        _ => put(body, &mut n, &[*b]),
+                fn put_escaped(body: &mut [u8], n: &mut usize, text: &[u8]) {
+                    for b in text {
+                        match b {
+                            b'&' => put(body, n, b"&amp;"),
+                            b'<' => put(body, n, b"&lt;"),
+                            b'>' => put(body, n, b"&gt;"),
+                            b'"' => put(body, n, b"&#34;"),
+                            _ => put(body, n, &[*b]),
+                        }
                     }
                 }
+                // A key with the delimiter after the prefix is reported once,
+                // as the prefix that ends at the delimiter, for all such keys.
+                let rolled = (!delimiter.is_empty())
+                    .then(|| {
+                        key[prefix.len()..len]
+                            .windows(delimiter.len())
+                            .position(|w| w == delimiter)
+                    })
+                    .flatten()
+                    .map(|at| prefix.len() + at + delimiter.len());
+                if let Some(common) = rolled.filter(|common| *common < TARGET_MAX) {
+                    put(body, &mut n, b"<CommonPrefixes><Prefix>");
+                    put_escaped(body, &mut n, &key[..common]);
+                    put(body, &mut n, b"</Prefix></CommonPrefixes>");
+                    // No key is a byte string that continues with 0xFF, so
+                    // this sorts after every key below the common prefix.
+                    last = (key, common + 1);
+                    last.0[common] = 0xFF;
+                    emitted += 1;
+                    continue;
+                }
+                put(body, &mut n, b"<Contents><Key>");
+                put_escaped(body, &mut n, &key[..len]);
                 put(body, &mut n, b"</Key><Size>");
                 let mut digits = [0u8; 10];
                 let mut d = digits.len();

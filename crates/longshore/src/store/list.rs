@@ -97,6 +97,43 @@ impl<'a> Listing<'a> {
             failed: false,
         }
     }
+
+    /// The prefixes that stand for the keys below them, when the listing
+    /// was asked for with a delimiter. Each is as it appears in the XML,
+    /// possibly with character references; decode it with [`unescape`].
+    pub fn common_prefixes(&self) -> CommonPrefixes<'a> {
+        CommonPrefixes {
+            rest: self.body,
+            failed: false,
+        }
+    }
+}
+
+pub struct CommonPrefixes<'a> {
+    rest: &'a [u8],
+    failed: bool,
+}
+
+impl<'a> Iterator for CommonPrefixes<'a> {
+    type Item = Result<&'a [u8], ListError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.failed {
+            return None;
+        }
+        let found = element(self.rest, "CommonPrefixes").and_then(|group| {
+            let Some((group, past)) = group else {
+                return Ok(None);
+            };
+            self.rest = &self.rest[past..];
+            match element(group, "Prefix")? {
+                Some((prefix, _)) if !prefix.is_empty() => Ok(Some(prefix)),
+                _ => Err(ListError::Malformed),
+            }
+        });
+        self.failed = found.is_err();
+        found.transpose()
+    }
 }
 
 pub struct Entries<'a> {

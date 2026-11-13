@@ -360,6 +360,25 @@ impl Client {
         fields.header(io.buf(self.head_buf(conn as usize)), name)
     }
 
+    /// The `Content-Length` of the last response served by `conn`. For a
+    /// HEAD this is the length of the body that was not sent.
+    pub fn content_length(&self, conn: u32) -> Option<u64> {
+        self.conns[conn as usize].fields?.content_length
+    }
+
+    /// Copy the head of the last response served by `conn` into `into`, as
+    /// much as fits, and return how many bytes that was.
+    pub fn copy_head<IO: Io>(&self, io: &mut IO, conn: u32, into: BufId) -> u32 {
+        let c = &self.conns[conn as usize];
+        if c.fields.is_none() {
+            return 0;
+        }
+        let (head, out) = io.buf_pair(self.head_buf(conn as usize), into);
+        let n = (c.head_len as usize).min(out.len());
+        out[..n].copy_from_slice(&head[..n]);
+        n as u32
+    }
+
     /// The body of the last response served by `conn`, if the caller gave no
     /// buffer and it was small enough to keep: error documents, typically.
     /// Empty if the body did not fit beside the head. Valid until that

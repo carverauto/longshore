@@ -19,6 +19,9 @@
 //!       Upload one object as three parts of BYTES each, in parallel,
 //!       complete it, read it back by range and erase it; then begin,
 //!       store one part of and abort a second upload.
+//!   s3_uring objects [--size BYTES]
+//!       Store with a content type and metadata, stat, copy, list one level
+//!       with a delimiter, erase in a batch and presign a URL.
 //!   s3_uring badcrc [--size BYTES]
 //!       Store one object with a deliberately wrong checksum and report
 //!       whether the store refuses it.

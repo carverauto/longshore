@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{amz_date, http_date};
+use super::{amz_date, http_date, parse_http_date};
 
 fn s(t: u64) -> String {
     String::from_utf8(amz_date(t).to_vec()).unwrap()
@@ -41,4 +41,35 @@ fn formats_http_dates() {
     assert_eq!(d(951_782_400), "Tue, 29 Feb 2000 00:00:00 GMT");
     assert_eq!(d(4_107_542_399), "Sun, 28 Feb 2100 23:59:59 GMT");
     assert_eq!(d(1_794_441_600), "Thu, 12 Nov 2026 00:00:00 GMT");
+}
+
+#[test]
+fn parses_the_dates_it_writes_and_nothing_else() {
+    for t in [0, 1_435_361_952, 951_782_400, 4_107_542_399, 1_794_441_600] {
+        assert_eq!(parse_http_date(&http_date(t)), Some(t));
+    }
+    assert_eq!(
+        parse_http_date(b"Wed, 21 Oct 2015 07:28:00 GMT"),
+        Some(1_445_412_480)
+    );
+    for bad in [
+        &b""[..],
+        b"Wed, 21 Oct 2015 07:28:00 UTC",
+        b"Wed, 21 Oct 2015 07:28:00",
+        b"Wed, 31 Feb 2015 07:28:00 GMT",
+        b"Wed, 00 Oct 2015 07:28:00 GMT",
+        b"Wed, 21 Okt 2015 07:28:00 GMT",
+        b"Wed, 21 Oct 2015 24:28:00 GMT",
+        b"Wed, 21 Oct 2015 07:60:00 GMT",
+        b"Wed, 21 Oct 1969 07:28:00 GMT",
+        b"Wed, 2x Oct 2015 07:28:00 GMT",
+        b"Wednesday, 21-Oct-15 07:28:00 GMT",
+    ] {
+        assert_eq!(
+            parse_http_date(bad),
+            None,
+            "{}",
+            String::from_utf8_lossy(bad)
+        );
+    }
 }
