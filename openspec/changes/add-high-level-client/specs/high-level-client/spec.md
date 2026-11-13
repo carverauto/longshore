@@ -13,6 +13,50 @@ registration or token bookkeeping from the caller.
 - **WHEN** the last clone of a client is dropped
 - **THEN** operations in progress finish or fail, the I/O thread exits and its resources are released
 
+### Requirement: Configurable number of I/O threads
+The client SHALL run on one I/O thread by default and SHALL run on a number
+of independent I/O threads chosen when it is built, each with its own
+connections and buffers and with no state shared between them on the data
+path.
+
+#### Scenario: Default
+- **WHEN** a client is built without a thread count
+- **THEN** it starts exactly one I/O thread
+
+#### Scenario: Several threads
+- **WHEN** a client is built with four threads and many operations are started at once
+- **THEN** operations run on all four threads and every one completes
+
+#### Scenario: Lent buffer stays on its thread
+- **WHEN** a caller takes a buffer from a client with several threads and stores it
+- **THEN** the operation runs on the thread that owns the buffer and the body is not copied
+
+#### Scenario: Shutdown with several threads
+- **WHEN** the last clone of a client with several threads is dropped
+- **THEN** every I/O thread exits and its resources are released
+
+### Requirement: Client driven by the caller's event loop
+The library SHALL provide a client that starts no thread, exposes a file
+descriptor that is readable when the client has work to do, and does that
+work in a call that never blocks, so that a caller with one event loop per
+core can run a client on each core.
+
+#### Scenario: Driven by polling
+- **WHEN** a caller builds such a client, starts a store and a fetch, and calls `turn` each time the descriptor is readable
+- **THEN** both operations complete and no thread was started by the library
+
+#### Scenario: Nothing to do
+- **WHEN** `turn` is called while the client has no completions to process
+- **THEN** it returns at once
+
+### Requirement: Bucket addressing
+The store SHALL address a bucket either in the host name or in the request
+path, as configured, and SHALL sign requests for the form it sends.
+
+#### Scenario: Bucket in the path
+- **WHEN** the store is configured for path addressing and stores then fetches an object against a store that accepts only that form
+- **THEN** both requests are accepted
+
 ### Requirement: Async and blocking calls
 Every operation SHALL be available as an async method that works under any
 executor and as a blocking method.
