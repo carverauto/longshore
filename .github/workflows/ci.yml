@@ -42,6 +42,8 @@ jobs:
         run: cargo test --workspace
       - name: Real io_uring checks
         run: |
+          # http_uring registers buffers, which are pinned and count against RLIMIT_MEMLOCK (small on hosted runners).
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
           cargo build --release -p longshore-bench --bin echo_uring --bin http_uring
           cd target/release
           timeout 60 ./echo_uring
