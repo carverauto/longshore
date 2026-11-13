@@ -192,7 +192,7 @@ fn bench(c: &mut Criterion) {
         let mut dst = vec![0u8; RECORD + 1 + TAG];
         g.bench_function(*name, |b| {
             b.iter(|| {
-                for (seq, rec) in src.chunks_exact(RECORD).enumerate() {
+                for (seq, rec) in src.as_chunks::<RECORD>().0.iter().enumerate() {
                     sealer.seal(seq as u64, black_box(rec), &mut dst);
                 }
                 black_box(&dst);

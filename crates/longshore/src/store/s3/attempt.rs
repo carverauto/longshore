@@ -87,7 +87,6 @@ impl S3 {
         let mut auth = [0u8; 7 + TOKEN_MAX];
         let mut headers: [(&str, &[u8]); 7] = [("", b""); 7];
         let goog_hash;
-        let n;
         // S3: headers that are both sent and signed.
         let crc_value = s.crc.map(crate::checksum::crc64_header_value);
         let crc_str = crc_value
@@ -102,7 +101,7 @@ impl S3 {
             ("", ""),
             ("", ""),
         ];
-        if self.cfg.vendor == Vendor::Gcs {
+        let n = if self.cfg.vendor == Vendor::Gcs {
             // No signature: the token is the whole proof, so nothing depends
             // on the other headers or on the clock.
             let mut k = 0;
@@ -125,7 +124,7 @@ impl S3 {
             let token = creds.secret_key().as_bytes();
             auth[7..7 + token.len()].copy_from_slice(token);
             headers[k] = ("authorization", &auth[..7 + token.len()]);
-            n = k + 1;
+            k + 1
         } else {
             let mut m = 3;
             if let (Kind::Store { .. }, Some(v), false) = (s.kind, crc_str, s.comparing) {
@@ -185,8 +184,8 @@ impl S3 {
                 headers[k] = (name, value.as_bytes());
             }
             headers[m - 1] = ("authorization", &auth[..auth_len]);
-            n = m;
-        }
+            m
+        };
         let req = Request {
             method,
             target: path,
