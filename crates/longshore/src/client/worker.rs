@@ -11,7 +11,7 @@
 use super::lane::{Cell, Finished, Kind, Lane, Pool, Request};
 use crate::io::{BufId, Completion, Io, Op, Token};
 use crate::store::s3::S3;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
@@ -176,7 +176,7 @@ impl Worker {
 
     /// Mark the lane closed and end every request still queued.
     pub fn close(&mut self) {
-        self.lane.closed.store(true, Ordering::Release);
+        self.lane.close();
         while let Ok(r) = self.requests.try_recv() {
             match r.kind {
                 Kind::Shutdown => self.stopping = true,

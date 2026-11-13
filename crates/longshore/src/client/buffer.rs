@@ -92,6 +92,10 @@ impl Borrow {
         }
     }
 
+    fn closed(&self) -> usize {
+        self.lanes.iter().filter(|l| !open(l)).count()
+    }
+
     fn forget(&mut self) {
         if self.queued {
             self.queued = false;
@@ -107,22 +111,29 @@ impl Future for Borrow {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Buffer> {
         let me = self.get_mut();
-        let any_open = me.lanes.iter().any(|l| open(l));
-        for n in 0..me.lanes.len() {
-            if any_open && !open(&me.lanes[n]) {
-                continue;
+        loop {
+            let closed = me.closed();
+            let all_closed = closed == me.lanes.len();
+            for n in 0..me.lanes.len() {
+                let lane = &me.lanes[n];
+                if !all_closed && !open(lane) {
+                    continue;
+                }
+                if let Poll::Ready(index) = lane.bufs.poll_take(me.waiter, cx) {
+                    let lane = lane.clone();
+                    me.forget();
+                    return Poll::Ready(Buffer {
+                        lane,
+                        index,
+                        alive: me.alive.clone(),
+                    });
+                }
+                me.queued = true;
             }
-            if let Poll::Ready(index) = me.lanes[n].bufs.poll_take(me.waiter, cx) {
-                me.forget();
-                return Poll::Ready(Buffer {
-                    lane: me.lanes[n].clone(),
-                    index,
-                    alive: me.alive.clone(),
-                });
+            if me.closed() == closed {
+                return Poll::Pending;
             }
-            me.queued = true;
         }
-        Poll::Pending
     }
 }
 
