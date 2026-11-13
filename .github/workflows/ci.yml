@@ -20,18 +20,30 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # Pinned so that a new compiler release cannot fail a pull request on its
+  # own. Raise it deliberately, with the lint fixes it asks for.
+  RUST_VERSION: "1.100.0"
 
 jobs:
   check:
     name: Format, lint, test
-    runs-on: ubuntu-latest
+    # Our own runners: the build is mostly compiling AWS-LC from C.
+    runs-on: arc-runner-set
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy,rustfmt
+          rustup default "${RUST_VERSION}"
+          rustc --version
       - name: License headers
         run: python3 scripts/license-headers.py --check
       - name: Format
@@ -40,7 +52,20 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
-      - name: Real io_uring checks
+
+  uring:
+    name: Real io_uring checks
+    # A hosted runner is a full virtual machine. Container runtimes commonly
+    # block the io_uring system calls, so this job does not run in a pod.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+      - name: Run
         run: |
           # http_uring registers buffers, which are pinned and count against RLIMIT_MEMLOCK (small on hosted runners).
           sudo prlimit --pid $$ --memlock=unlimited:unlimited
