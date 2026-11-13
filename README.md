@@ -135,28 +135,70 @@ the shortest complete examples.
 
 ## Measurements
 
-All of these use 8 MiB objects and one client thread. GB means 10^9 bytes.
+All of these use 8 MiB objects, and one client thread unless a row says
+otherwise. GB means 10^9 bytes.
 Each row names its file in `bench/results/`, which has the full conditions.
 
 ### Against Amazon S3
 
-Run from a 32-core Graviton4 instance with a 100 Gbit/s network card, in the
-same region as the bucket (`m14-s3-aws-us-east-1.md`).
+One client thread, from instances in the same region as the bucket, with
+the preference for large-segment addresses on. Medians of five runs, and
+of eight for HTTPS PUT (`m20-preference-and-comparison.md`).
 
-| Request | Result | Limit |
-|---|---|---|
-| PUT, plain HTTP, 192 connections | 12.2 GB/s, median of five runs | The instance's network card |
-| PUT with a CRC-64 checksum on every body | 12.2 GB/s, median of five runs | The network card |
-| GET, 64 connections | 4.0 GB/s | The client's core |
-| HTTPS PUT, 64 connections | 2.9 GB/s | The client's core |
-| HTTPS GET, 64 connections | 2.5 GB/s | The client's core |
+| Request | Graviton4, 300 Gbit/s card | AMD Zen 5, 200 Gbit/s card | Limit |
+|---|---|---|---|
+| PUT, plain HTTP | 36.7 GB/s | 22.4 GB/s | Graviton4: the network card. AMD: 22.4 GB/s is 179 Gbit/s on a 200 Gbit/s card with the client thread at 0.80, so neither the card nor the thread is clearly the limit |
+| PUT with a CRC-64 checksum on every body | 16.4 GB/s | 13.3 GB/s | The client's core |
+| GET | 4.4 GB/s | 7.9 GB/s | The client's core |
+| HTTPS PUT, 3 MiB send batch | 5.2 GB/s | 7.3 GB/s | The client's core |
+| HTTPS GET | 2.7 GB/s | 5.1 GB/s | The client's core |
 
-S3 gives each upload connection about 80 MB/s, so it takes around 150
-connections to fill the card. Filling it keeps about three of the machine's
-cores busy. Most of that is kernel network work on other cores. The
-client's thread uses about a fifth of a core for plain PUT and about
-0.6 of a core with checksums. Graviton4 is the slowest processor we measured
-at AES, so the HTTPS rows are a low point for TLS.
+Plain PUT fills the 300 Gbit/s card with half of the client's thread idle,
+and keeps about four of the machine's cores busy, most of it kernel network
+work on other cores. Without the preference the same instances give a
+median of 23.2 and 11.8 GB/s for plain PUT, and runs differ by 45% or more,
+because S3's name resolves to some addresses whose connections get small
+TCP segments (`m18-s3-aws-large-instances.md`).
+
+The rows bound by the client's core grow with more clients. Separate
+client processes side by side, each on its own core and sharing nothing:
+
+| Request | Graviton4, 8 clients | AMD, 4 clients | AMD, 8 clients |
+|---|---|---|---|
+| HTTPS PUT | 34.5 to 36.2 GB/s | 24.0 GB/s | 16.7 GB/s, one run |
+| GET | 26.1 to 26.5 GB/s | 22.0 to 22.1 GB/s | 24.8 to 26.1 GB/s |
+| HTTPS GET | 17.6 to 17.9 GB/s | 14.7 to 14.8 GB/s | 21.6 to 22.1 GB/s |
+
+Four clients fill the AMD instance's card over HTTPS, and eight were slower
+there than four. These are processes started by hand, three runs per cell
+unless marked. A client that runs several I/O threads itself is planned.
+
+### Compared with other clients
+
+s5cmd 2.3.0 and the AWS CLI 2.40.2 with its CRT transfer client, on the
+Graviton4 instance against the same bucket, moving 8,000 objects of 8 MiB
+held in RAM. Best run of each, with the cores busy across the machine.
+
+| Request | s5cmd | AWS CLI with CRT | One client here | Eight clients here |
+|---|---|---|---|---|
+| PUT over HTTP | 22.1 GB/s on 72.0 cores | 6.5 on 5.3 | 36.9 on 3.9 | Not run: one fills the card |
+| PUT over HTTPS | 14.3 on 54.0 | 6.6 on 7.5 | 5.3 on 1.3 | 36.2 on 13.5 |
+| GET over HTTP | 11.0 on 42.4 | 4.0 on 5.6 | 4.4 on 1.2 | 26.5 on 10.9 |
+| GET over HTTPS | 11.5 on 43.0 | 4.0 on 6.2 | 2.8 on 1.1 | 17.9 on 10.5 |
+
+One client thread is the fastest of these for plain PUT and uses the fewest
+cores per byte for every request. For HTTPS and for GET, s5cmd on 42 to 54
+cores in its best runs moves more in total than one client thread does.
+Four clients side by side pass it for HTTPS PUT and plain GET on both
+machines and for HTTPS GET on the AMD machine. For HTTPS GET on the
+Graviton4 machine four clients give 9.9 to 10.0 GB/s against s5cmd's 11.2
+to 11.5, and eight clients give 17.6 to 17.9. Those tools read and write files, which costs them a copy
+that our benchmark does not make, and their runs lasted 3 to 17 seconds.
+The same file has the AMD figures and the conditions.
+
+An earlier 32-core Graviton4 instance with a 100 Gbit/s card is in
+`m14-s3-aws-us-east-1.md`. Plain PUT and PUT with checksums both filled
+that card at 12.2 GB/s.
 
 ### Between two machines
 
@@ -198,12 +240,14 @@ cipher. Sealing TLS records, one core, in GiB/s (`m13-aes-gcm-by-cpu.md`):
 | Arm Cortex-X925, default build | 7.8 |
 | AWS Graviton4 (AWS `c8g`) | 6.1 |
 
-On the AMD `m8azn` instance HTTPS upload to S3 reached 3.1 GB/s through
-the resolver, limited by the kernel's transmit path, and about 7 GB/s with
-every connection on an address that takes large segments and a 4 MiB send
-batch, limited by the cipher. The default 1 MiB batch gave 6.3 GB/s there
-in a single profiled run (`m18-s3-aws-large-instances.md`). HTTPS upload
-has not been measured end to end on the Intel processor.
+On the AMD `m8azn` instance HTTPS upload to S3 is 7.3 GB/s with large
+segments and a 3 MiB send batch, and 3.5 GB/s through every address S3
+returns with a 1 MiB batch, both with the client's thread full
+(`m20-preference-and-comparison.md`). The profiles in
+`m18-s3-aws-large-instances.md` show where the core goes in each case:
+about half in AES-GCM with large segments, and mostly in the kernel's
+transmit path with mixed addresses. HTTPS upload has not been measured
+end to end on the Intel processor.
 
 ### Compared with the talk
 
@@ -213,16 +257,18 @@ placement.
 
 | Measurement | Talk | Here |
 |---|---|---|
-| PUT, plain HTTP | 25.2 GB/s per core | 24.5 GB/s, with our 200 Gbit/s link full |
-| PUT with CRC-64 checksums | 4.3 GB/s, the speed of its checksum | 14.7 GB/s |
-| HTTPS PUT | No end-to-end figure. 7.4 GB/s for the cipher alone | 7.6 GB/s end to end |
-| GET | 4.7 GB/s | 6.4 GB/s |
-| CRC-64 alone | 4.3 GB/s | 88 GB/s, and about 30 GB/s inside a PUT |
+| PUT, plain HTTP | 25.2 GB/s per core | 36.7 GB/s to S3, with a 300 Gbit/s card full |
+| PUT with CRC-64 checksums | 4.3 GB/s, the speed of its checksum | 16.4 GB/s to S3 |
+| HTTPS PUT | No end-to-end figure. 7.4 GB/s for the cipher alone | 5.2 to 7.3 GB/s to S3, 7.6 GB/s between our machines |
+| GET | 4.7 GB/s | 4.4 to 7.9 GB/s from S3, 6.4 GB/s between our machines |
+| CRC-64 alone | 4.3 GB/s | 88 GB/s, and about 30 GB/s inside a PUT (`m5-checksums.md`) |
 | AES-GCM alone | 7.4 GB/s | 6.5 to 27 GB/s, depending on the processor |
 
-The talk reports "per core". Our plain PUT fills the core the client runs
-on, and about 1.3 cores of work at 16 connections and 1.6 at 32 run on
-other cores, most of it in the kernel. The slides do not say whether the
+The talk reports "per core". Between our own machines plain PUT fills the
+core the client runs on, and about 1.3 cores of work at 16 connections and
+1.6 at 32 run on other cores, most of it in the kernel. To S3 at
+36.7 GB/s the client's thread is half idle and about 3.4 more cores are
+busy elsewhere on the machine. The slides do not say whether the
 talk counts that work, so we cannot tell which of our numbers matches
 theirs.
 
@@ -232,20 +278,20 @@ the client is mostly idle.
 
 ## Limits
 
-- Plain PUT fills a 200 Gbit/s link between our own machines and a
-  100 Gbit/s card to S3. On a 300 Gbit/s card to S3 the median is 29 GB/s
-  and runs differ by up to 73%. S3 answers with several addresses, some of
-  which accept only small TCP segments, and connections to those cost the
-  client's core several times more per byte. With every connection on an
-  address that takes large segments, the same card is full at 36.9 GB/s.
-  The client does not yet pick addresses that way by itself
-  (`m18-s3-aws-large-instances.md`).
-- On x86-64 the only real-store measurement is one AMD instance type,
-  where uploads reach about 11 GB/s plain and 3 GB/s over HTTPS for the
-  same reason. With large segments they reach 23.5 GB/s plain (its
-  200 Gbit/s card) and 7 GB/s over HTTPS with a 4 MiB send batch
-  (6.3 GB/s with the default 1 MiB batch, in a single profiled run).
-  The same file has the details.
+- Plain PUT fills a 200 Gbit/s link between our own machines and 100 and
+  300 Gbit/s cards to S3, and reaches about 90 percent of the 200 Gbit/s
+  card on the AMD instance. Where one thread
+  stops is unknown. The S3 figures need the preference for large-segment
+  addresses, which is off by default.
+- With one client everything except plain PUT is bound by that client's
+  core. With several clients the network card becomes the limit: eight
+  Graviton4 HTTPS PUT clients, four AMD HTTPS PUT clients and eight AMD GET
+  clients. Several clients have only been run as separate processes.
+- On x86-64 the only real-store measurements are from one AMD instance
+  type. Intel has not been measured against a store.
+- On Linux 6.1 the client was run for minutes, not hours. Connections it
+  had closed and replaced were still listed as established some seconds
+  later there, and not on Linux 7.0. The cause was not looked for.
 - TLS keys are never updated in place. A connection is retired after 2^23
   records and the next request handshakes again. If a server updates its
   keys in the middle of a connection, the request is retried on a new one.
@@ -276,8 +322,9 @@ the client is mostly idle.
   try the preferred family again on its own.
 - IPv6 has not been run against Amazon S3's dual-stack endpoints, only
   against Linode Object Storage and over loopback.
-- Most measurements were taken on a single afternoon each. The rows marked
-  as medians were run five times, and the others once.
+- Each measurement table states how many runs are behind its figures. The
+  comparison with the talk takes its figures from those tables and from the
+  files it names. Anything stated with no count is a single run.
 
 ## License
 
