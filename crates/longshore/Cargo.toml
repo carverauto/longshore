@@ -45,6 +45,10 @@ name = "sim_echo"
 path = "tests/sim/echo.rs"
 
 [[test]]
+name = "client_driven"
+path = "tests/client/driven.rs"
+
+[[test]]
 name = "dns_codec_props"
 path = "tests/dns/codec_props.rs"
 

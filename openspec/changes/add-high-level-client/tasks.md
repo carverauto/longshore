@@ -1,14 +1,15 @@
 ## 1. Core
-- [ ] 1.1 Request and completion queues allocated at build time; eventfd wake-up of the I/O thread; simulation and real-kernel tests
-- [ ] 1.2 `Client` builder: endpoint, region, credentials, limits, TLS; start-up and orderly shutdown
-- [ ] 1.3 Buffer lending with a guard type; waiting when the pool is empty
-- [ ] 1.4 Error type and outcome mapping
-- [ ] 1.5 More than one I/O thread: thread count and CPU pinning in the builder, placement of operations and lent buffers, shutdown of every thread
+- [x] 1.1 Request and completion queues allocated at build time; eventfd wake-up of the I/O thread; simulation and real-kernel tests
+- [x] 1.2 `Client` builder: endpoint, region, credentials, limits, TLS; start-up and orderly shutdown
+- [x] 1.3 Buffer lending with a guard type; waiting when the pool is empty
+- [x] 1.4 Error type and outcome mapping
+- [x] 1.5 More than one I/O thread: thread count and CPU pinning in the builder, placement of operations and lent buffers, shutdown of every thread
 - [ ] 1.6 A client driven by the caller's event loop: readable descriptor, non-blocking `turn`, tests under the simulator and on a real kernel with a caller that only polls
 - [ ] 1.7 Bucket in the path as a store setting; run against a self-hosted S3-compatible store that requires it
 
 ## 2. Operations
-- [ ] 2.1 Async and blocking forms of store, conditional store, fetch, ranged fetch, stat, list and erase on the lending path
+- [x] 2.1 Async and blocking forms of store, conditional store, fetch, ranged fetch and erase on the lending path
+- [ ] 2.5 Async and blocking forms of stat and list
 - [ ] 2.2 Copying convenience forms that take and return slices
 - [ ] 2.3 Streaming upload on multipart with abort on drop
 - [ ] 2.4 Streaming download on ranged fetches with checksum verification of each range where the store allows it

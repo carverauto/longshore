@@ -30,6 +30,8 @@ enum State {
     ConnectRelease,
     /// A timer. Its normal expiry arrives as `-ETIME`.
     Timer,
+    /// Waiting on the wake-up eventfd. A read of its 8 bytes is a wake.
+    Wake,
     /// Zero-copy send: result seen, waiting for the kernel to release the buffer.
     AwaitNotif,
     /// Zero-copy send: release seen first, waiting for the result.
@@ -62,6 +64,8 @@ struct Slot {
     /// be read once it connects, or -1. See `measure_segment_sizes`.
     probe_fd: i32,
     ts: timespec,
+    /// Where the kernel puts the eventfd's counter.
+    wake_count: u64,
 }
 
 pub struct UringIo {
@@ -72,6 +76,8 @@ pub struct UringIo {
     free: Vec<u32>,
     /// Paths registered for `Op::ReadFile`, NUL-terminated for the kernel.
     files: Vec<CString>,
+    /// The eventfd behind `Io::waker`, or -1 before it is asked for.
+    wake_fd: i32,
     measure_segments: bool,
 }
 
@@ -83,6 +89,32 @@ const PHASE_FILE_CLOSE: u64 = 4 << 32;
 const PHASE_SOCK_RELEASE: u64 = 5 << 32;
 
 mod completions;
+
+/// The other threads' end of the wake-up eventfd.
+struct EventFd(i32);
+
+impl crate::io::Wake for EventFd {
+    fn wake(&self) {
+        let one: u64 = 1;
+        // The counter cannot overflow in practice, and a failed write only
+        // means the reader is already due to wake.
+        unsafe { write(self.0, (&one as *const u64).cast(), 8) };
+    }
+}
+
+impl Drop for EventFd {
+    fn drop(&mut self) {
+        unsafe { close(self.0) };
+    }
+}
+
+impl Drop for UringIo {
+    fn drop(&mut self) {
+        if self.wake_fd >= 0 {
+            unsafe { close(self.wake_fd) };
+        }
+    }
+}
 
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
@@ -119,6 +151,7 @@ impl UringIo {
             addr_len: 0,
             probe_fd: -1,
             ts: timespec::default(),
+            wake_count: 0,
         };
         Ok(UringIo {
             ring,
@@ -127,6 +160,7 @@ impl UringIo {
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
             free: (0..limits.ops_max).rev().collect(),
             files: Vec::new(),
+            wake_fd: -1,
             measure_segments: false,
         })
     }

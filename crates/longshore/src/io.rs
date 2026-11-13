@@ -89,6 +89,11 @@ pub enum Op {
     Close {
         sock: Sock,
     },
+    /// Wait until the backend's waker has been signalled from any thread.
+    /// Completes with 0. Signals that arrive while no `AwaitWake` is in
+    /// flight are kept, so the next one completes at once. Requires
+    /// [`Io::waker`] to have been called.
+    AwaitWake,
     /// Read a registered file from its start into buffer `buf` at `off`, up
     /// to `len` bytes. Completes with the number of bytes read; the file is
     /// opened and closed around the read, so a replaced file is seen.
@@ -170,6 +175,12 @@ impl Completions {
         self.len -= 1;
         Some(c)
     }
+}
+
+/// Signals a backend from another thread. See [`Io::waker`].
+pub trait Wake: Send + Sync {
+    /// Complete the backend's pending or next [`Op::AwaitWake`]. Never blocks.
+    fn wake(&self);
 }
 
 /// Everything the I/O layer allocates is sized from these, once.
@@ -273,6 +284,13 @@ pub trait Io {
     /// in place of 0. May be changed at any time. A backend that cannot measure
     /// ignores this, and its connects complete with 0.
     fn measure_segment_sizes(&mut self, _on: bool) {}
+    /// A handle another thread can use to complete an [`Op::AwaitWake`],
+    /// and so bring a thread blocked in `tick` back to its caller.
+    /// Initialization-time only: it may allocate. `None` from a backend
+    /// that has no such thing.
+    fn waker(&mut self) -> Option<std::sync::Arc<dyn Wake>> {
+        None
+    }
     /// Queue an operation. Performs no system call.
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy>;
     /// Hand queued operations to the kernel and collect completions, in one

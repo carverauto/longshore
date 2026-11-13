@@ -20,6 +20,7 @@
 //!   kernel in tests.
 
 pub mod checksum;
+pub mod client;
 pub mod crypto;
 pub mod dns;
 pub mod http;
