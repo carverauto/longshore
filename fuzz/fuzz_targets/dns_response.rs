@@ -13,13 +13,16 @@ use libfuzzer_sys::fuzz_target;
 #[allow(dead_code)]
 #[path = "../../crates/longshore/src/dns/codec.rs"]
 mod codec;
-use codec::parse_response;
+use codec::{parse_response_for, Record};
 
 fuzz_target!(|data: &[u8]| {
     let id = if data.len() >= 2 { u16::from_be_bytes([data[0], data[1]]) } else { 0 };
     for name in ["s3.example.com", "a.b", "bucket.us-east-1.linodeobjects.com"] {
-        if let Ok(a) = parse_response(data, id, name) {
-            assert!(a.len >= 1 && a.len <= a.addrs.len());
+        for record in [Record::A, Record::Aaaa] {
+            if let Ok(a) = parse_response_for(data, id, name, record) {
+                assert!(a.len >= 1 && a.len <= a.addrs.len());
+                assert!(a.as_slice().iter().all(|ip| ip.is_ipv6() == (record == Record::Aaaa)));
+            }
         }
     }
 });

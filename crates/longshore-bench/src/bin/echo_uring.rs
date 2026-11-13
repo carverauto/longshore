@@ -7,7 +7,9 @@
 //! forbidden after setup. This is the real-kernel counterpart of the
 //! simulator's echo test.
 //!
-//!   echo_uring [--total BYTES] [--chunk BYTES] [--zc]
+//!   echo_uring [--total BYTES] [--chunk BYTES] [--zc] [--v6]
+//!
+//! `--v6` runs the echo and the refused connect over the IPv6 loopback.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -25,13 +27,15 @@ fn main() {
     use longshore::io::uring::UringIo;
     use longshore::io::{Completions, Limits};
     use longshore::sim::scenario::echo;
-    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
     let (mut total, mut chunk, mut zc) = (64u64 << 20, 1u32 << 20, false);
+    let mut v6 = false;
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
             "--zc" => zc = true,
+            "--v6" => v6 = true,
             "--total" => {
                 total = it
                     .next()
@@ -147,7 +151,7 @@ fn main() {
             Token(1),
             Op::Connect {
                 sock: Sock(3),
-                addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 9),
+                addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9),
             },
         )
         .unwrap();
@@ -244,6 +248,11 @@ fn main() {
             "ok cancel: connect ended with {r} after {ms} ms, file read cancelled before reading"
         );
     }
+    let loopback = if v6 {
+        IpAddr::V6(Ipv6Addr::LOCALHOST)
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
     // A connect that fails must leave its socket slot free: the socket the
     // first step created is closed before the failure is reported. A second
     // connect on the same slot then fails the same way, for the same reason,
@@ -257,7 +266,7 @@ fn main() {
                 Token(1),
                 Op::Connect {
                     sock: Sock(3),
-                    addr: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1),
+                    addr: SocketAddr::new(loopback, 1),
                 },
             )
             .unwrap();
@@ -275,7 +284,7 @@ fn main() {
         );
         println!("ok failed connect releases its socket slot");
     }
-    let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0);
+    let addr = SocketAddr::new(loopback, 0);
     let start = std::time::Instant::now();
     let r = sealed(|| echo(&mut io, addr, total, chunk, zc, &mut out));
     let secs = start.elapsed().as_secs_f64();

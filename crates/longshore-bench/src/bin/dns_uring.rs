@@ -21,11 +21,11 @@ static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Gu
 #[cfg(target_os = "linux")]
 fn main() {
     use longshore::dns::codec::parse_resolv_conf;
-    use longshore::dns::{Config, Resolver};
+    use longshore::dns::{Config, Family, Resolver};
     use longshore::io::alloc_guard::sealed;
     use longshore::io::uring::UringIo;
     use longshore::io::{BufId, Completions, Io, Limits, Sock};
-    use std::net::SocketAddrV4;
+    use std::net::SocketAddr;
 
     let hosts: Vec<String> = std::env::args().skip(1).collect();
     if hosts.is_empty() {
@@ -33,15 +33,20 @@ fn main() {
         std::process::exit(2);
     }
     let conf = std::fs::read_to_string("/etc/resolv.conf").expect("read /etc/resolv.conf");
-    let servers: Vec<SocketAddrV4> = parse_resolv_conf(&conf)
+    let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
         .into_iter()
         .take(2)
-        .map(|ip| SocketAddrV4::new(ip, 53))
+        .map(|ip| SocketAddr::new(ip, 53))
         .collect();
-    assert!(
-        !servers.is_empty(),
-        "no IPv4 nameserver in /etc/resolv.conf"
-    );
+    assert!(!servers.is_empty(), "no nameserver in /etc/resolv.conf");
+    // DNS_FAMILY: 4 (the default), 6, prefer6 or prefer4.
+    let family = match std::env::var("DNS_FAMILY").as_deref() {
+        Err(_) | Ok("4") => Family::V4,
+        Ok("6") => Family::V6,
+        Ok("prefer6") => Family::PreferV6,
+        Ok("prefer4") => Family::PreferV4,
+        Ok(other) => panic!("DNS_FAMILY={other}: expected 4, 6, prefer6 or prefer4"),
+    };
     println!("nameservers: {servers:?}");
 
     let mut io = UringIo::new(Limits {
@@ -60,6 +65,7 @@ fn main() {
     let mut r = Resolver::new(Config {
         servers,
         hosts,
+        family,
         refresh_ns: 30_000_000_000,
         timeout_ns: 1_000_000_000,
         socks: [Sock(0), Sock(1)],

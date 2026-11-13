@@ -53,6 +53,9 @@ impl Client {
     /// The request failed: close the connection and report.
     pub(super) fn fail<IO: Io>(&mut self, io: &mut IO, i: usize, e: Error) -> Handled {
         let c = &mut self.conns[i];
+        if c.state == State::Connecting {
+            self.connect_failure = Some(c.addr);
+        }
         c.state = State::Closing {
             then_connect: false,
         };

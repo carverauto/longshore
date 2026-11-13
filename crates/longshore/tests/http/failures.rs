@@ -59,7 +59,7 @@ fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
     // The peer answers with a partial response exactly when the timeout
     // fires, then goes silent. Depending on the seed, the client's read
     // completes with that data before the cancel reaches it.
-    const PEER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 81), 80);
+    const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 81)), 80);
     const LISTEN: Sock = Sock(1 + CONNS * 2);
     const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
     const ACCEPT: u64 = 3 << 40;

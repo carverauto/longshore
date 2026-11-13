@@ -32,7 +32,7 @@ pub(super) fn selftest() {
         checksum: None,
     });
     let addr = server
-        .start(&mut io, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+        .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap_or_else(|e| die(&e.to_string()));
     let mut client = Client::new(client::Config {
         first_buf: limits.small(0).0,

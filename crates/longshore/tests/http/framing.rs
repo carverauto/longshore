@@ -16,7 +16,7 @@ fn raw_reply(reply: &'static [u8]) -> Result<Response, Error> {
 }
 
 fn raw_reply_with(cfg: client::Config, reply: &'static [u8]) -> Result<Response, Error> {
-    const PEER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 82), 80);
+    const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 82)), 80);
     const LISTEN: Sock = Sock(1 + CONNS * 2);
     const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
     const ACCEPT: u64 = 3 << 40;

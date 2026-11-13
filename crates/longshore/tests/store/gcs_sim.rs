@@ -16,7 +16,7 @@ use longshore::store::creds::Credentials;
 use longshore::store::s3::{
     Checksum, Config, CredentialsFile, Done, Endpoint, Fatal, Outcome, Vendor, S3,
 };
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -25,7 +25,7 @@ const CONNS: u32 = 3;
 const BUF: u32 = 16 * 1024;
 const HEAD_MAX: u32 = 4096;
 const MS: u64 = 1_000_000;
-const ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 80), 80);
+const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 80)), 80);
 const HEARTBEAT: u64 = 1 << 50;
 const REREAD_MS: u64 = 200;
 // Large buffers: server pairs 0..6, user tx 6, rx 7, token file 8. Small buffers: client heads.

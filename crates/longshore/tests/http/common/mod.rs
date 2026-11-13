@@ -12,7 +12,7 @@ pub use longshore::http::server::{self, Behavior, Server};
 pub use longshore::io::alloc_guard::{sealed, Guard};
 pub use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 pub use longshore::sim::{Faults, SimIo};
-pub use std::net::{Ipv4Addr, SocketAddrV4};
+pub use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -25,7 +25,7 @@ pub const HEAD_MAX: u32 = 2048;
 
 pub const MS: u64 = 1_000_000;
 
-pub const ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 80), 80);
+pub const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 80)), 80);
 
 pub const HEARTBEAT: u64 = 1 << 50;
 

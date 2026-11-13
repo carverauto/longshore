@@ -22,7 +22,7 @@ use crate::store::retry::{classify, Class, STATUS_PRECONDITION_FAILED};
 use crate::store::sigv4::{self, authorization, uri_encode, EMPTY_SHA256, UNSIGNED_PAYLOAD};
 use crate::store::stat::Stat;
 use crate::store::time::{amz_date, parse_http_date};
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 
 pub const KEY_ENCODED_MAX: usize = 512;
 /// Room for a multipart query: `partNumber=10000&uploadId=` and an upload
@@ -275,7 +275,15 @@ impl S3 {
                 return true;
             }
         }
-        match self.client.on_completion(io, c) {
+        let handled = self.client.on_completion(io, c);
+        // An address that cannot be connected to: let the resolver move to
+        // the other family if the name has one.
+        if let Some(addr) = self.client.connect_failure.take() {
+            if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
+                r.connect_failed(0, addr.ip());
+            }
+        }
+        match handled {
             Handled::NotMine => false,
             Handled::Pending => true,
             Handled::Done(d) => {

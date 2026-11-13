@@ -31,7 +31,7 @@ impl Io for SimIo {
         Ok(FileId(self.files.len() as u32 - 1))
     }
 
-    fn listen(&mut self, sock: Sock, addr: SocketAddrV4) -> io::Result<SocketAddrV4> {
+    fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
         if self
             .socks
             .iter()

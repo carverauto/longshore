@@ -12,7 +12,7 @@ impl S3 {
     pub(super) fn attempt<IO: Io>(&mut self, io: &mut IO, i: usize) {
         let addr = match &mut self.cfg.endpoint {
             Endpoint::Fixed(a) => Some(*a),
-            Endpoint::Resolved(r) => r.lookup(0).map(|ip| SocketAddrV4::new(ip, self.cfg.port)),
+            Endpoint::Resolved(r) => r.lookup(0).map(|ip| SocketAddr::new(ip, self.cfg.port)),
         };
         // No address yet: wait a little rather than fail. This does not count
         // as an attempt, but it is not allowed to go on for ever: a name that

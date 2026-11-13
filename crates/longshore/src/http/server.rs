@@ -15,7 +15,7 @@ use crate::http::stream::{Step, Stream};
 use crate::io::{BufId, Completion, Io, Op, Sock, Token};
 use crate::tls::handshake::{Handshake, ServerSetup};
 use std::io;
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 
 /// Maps a body to the checksum header value it must carry.
 ///
@@ -294,7 +294,7 @@ impl Server {
     }
 
     /// Listen and start accepting. Returns the bound address.
-    pub fn start<IO: Io>(&mut self, io: &mut IO, addr: SocketAddrV4) -> io::Result<SocketAddrV4> {
+    pub fn start<IO: Io>(&mut self, io: &mut IO, addr: SocketAddr) -> io::Result<SocketAddr> {
         let bound = io.listen(self.cfg.listener, addr)?;
         self.accept(io);
         Ok(bound)

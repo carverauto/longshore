@@ -20,7 +20,7 @@ use crate::http::head::{parse_response, Fields, HeadWriter, HttpError};
 use crate::http::stream::{IdleCheck, Step, Stream};
 use crate::io::{BufId, Completion, Io, Op, Sock, Token, ECANCELED};
 use crate::tls::handshake::{ClientSetup, Handshake, TlsError};
-use std::net::SocketAddrV4;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
@@ -71,7 +71,7 @@ pub struct Request<'a> {
     /// Connections are reused only for the same `host_id`.
     pub host_id: u16,
     /// Address to connect to if a new connection is needed.
-    pub addr: SocketAddrV4,
+    pub addr: SocketAddr,
     pub headers: &'a [(&'a str, &'a [u8])],
     /// Request body: a pool buffer and the number of bytes to send from it.
     pub body: Option<(BufId, u32)>,
@@ -175,7 +175,7 @@ enum State {
 struct Conn {
     state: State,
     host_id: u16,
-    addr: SocketAddrV4,
+    addr: SocketAddr,
     opened_at: u64,
     uses: u32,
     // Current request.
@@ -218,6 +218,9 @@ pub struct Client {
     pub idle_closed: u64,
     /// Idle connections found holding bytes nobody asked for, and replaced.
     pub idle_dirty: u64,
+    /// The address of the last connection that failed or timed out before it
+    /// opened. The owner takes it to learn that an address is unreachable.
+    pub connect_failure: Option<SocketAddr>,
 }
 
 mod chunked_body;
@@ -250,7 +253,7 @@ impl Client {
         let conn = Conn {
             state: State::Closed,
             host_id: 0,
-            addr: SocketAddrV4::new(0.into(), 0),
+            addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             opened_at: 0,
             uses: 0,
             token: 0,
@@ -293,6 +296,7 @@ impl Client {
             connects: 0,
             idle_closed: 0,
             idle_dirty: 0,
+            connect_failure: None,
         }
     }
 

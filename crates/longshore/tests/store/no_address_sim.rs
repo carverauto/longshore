@@ -12,7 +12,7 @@ use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use longshore::sim::{Faults, SimIo};
 use longshore::store::creds::Credentials;
 use longshore::store::s3::{Checksum, Config, Endpoint, Fatal, Outcome, SubmitError, Vendor, S3};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -34,8 +34,12 @@ fn operations_end_when_the_name_never_resolves() {
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
     // Nothing listens at the nameserver's address, so no query is answered.
     let resolver = Resolver::new(longshore::dns::Config {
-        servers: vec![SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 53), 53)],
+        servers: vec![SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)),
+            53,
+        )],
         hosts: vec!["bucket.objects.test".into()],
+        family: longshore::dns::Family::V4,
         refresh_ns: 30_000 * MS,
         timeout_ns: 200 * MS,
         socks: [Sock(1), Sock(2)],

@@ -21,6 +21,7 @@ is meant to become part of a larger project.
 | `stat`, stores with a content type and metadata, `copy`, `erase_many`, listing with a delimiter, presigned URLs | Work against Amazon S3, Linode Object Storage and Google Cloud Storage. `erase_many` and presigned URLs need signing keys, so they are not available with Google's bearer token |
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
+| IPv4 and IPv6 | The resolver asks for A records, AAAA records or both, and prefers the family the configuration names. When connections to that family fail and the name has addresses in the other, it uses the other. Run over IPv6 against Linode Object Storage |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
 | Checksums | CRC-64/NVME for S3, CRC-32C for Google. A fetch is verified when the store returns a checksum, and both stores do |
 | Credentials | Long-lived keys, temporary keys with a session token, or a bearer token. Read from a file and replaced when the file changes, once the store has accepted the new ones |
@@ -58,7 +59,7 @@ The library is one crate, `longshore`, in `crates/longshore`.
 |---|---|
 | `io` | The `Io` trait, the `io_uring` backend on raw system calls, and the allocation guard |
 | `sim` | The simulator, behind the `sim` feature |
-| `dns` | A-record resolver over UDP |
+| `dns` | Resolver for A and AAAA records over UDP |
 | `http` | HTTP/1.1 client with a connection pool and chunked decoding, a stream that is plain or TLS, and a server used by the tests |
 | `tls` | TLS 1.3 record layer and the `rustls` handshake wrapper |
 | `checksum` | CRC-64/NVME, CRC-32C, base64 |
@@ -108,6 +109,7 @@ export S3_ENDPOINT=s3.us-east-1.amazonaws.com S3_REGION=us-east-1 S3_BUCKET=my-b
 export S3_ACCESS_KEY=... S3_SECRET_KEY=...
 export S3_SESSION_TOKEN=...               # only with temporary keys
 export S3_TLS=1                           # HTTPS; omit for plain HTTP
+export S3_FAMILY=prefer6                  # 4 (the default), 6, prefer6 or prefer4
 
 s3_uring selftest                         # store, conditional store, fetch, range, erase
 s3_uring put --conns 64 --secs 10         # throughput, 8 MiB objects by default
@@ -243,7 +245,12 @@ the client is mostly idle.
   in the store. A bucket rule that expires incomplete uploads is the backstop.
 - Azure Blob Storage cannot be used through the store yet, and its signing
   has not been tried against a real account.
-- HTTP/1.1, IPv4 and A records only.
+- HTTP/1.1 only.
+- After connections to the preferred address family fail, the client stays
+  on the other family until a connection to that one fails too. It does not
+  try the preferred family again on its own.
+- IPv6 has not been run against Amazon S3's dual-stack endpoints, only
+  against Linode Object Storage and over loopback.
 - Most measurements were taken on a single afternoon each. The rows marked
   as medians were run five times, and the others once.
 

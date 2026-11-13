@@ -12,8 +12,8 @@ impl UringIo {
         let s = &self.slots[i as usize];
         let mut sqe = self.fixed(Sock(s.sock));
         sqe.opcode = IORING_OP_CONNECT;
-        sqe.addr = &s.addr as *const sockaddr_in as u64;
-        sqe.off = core::mem::size_of::<sockaddr_in>() as u64;
+        sqe.addr = &s.addr as *const sockaddr_any as u64;
+        sqe.off = s.addr_len as u64;
         sqe.user_data = i as u64;
         sqe
     }

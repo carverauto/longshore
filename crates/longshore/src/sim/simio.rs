@@ -9,7 +9,7 @@ use crate::io::{
 };
 use crate::sim::prng::Prng;
 use std::io;
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 
 mod backend;
 
@@ -48,7 +48,7 @@ enum SockState {
 
 struct SimSock {
     state: SockState,
-    addr: Option<SocketAddrV4>,
+    addr: Option<SocketAddr>,
     peer: u32,
     /// Bytes in flight towards this socket.
     rx: Box<[u8]>,
@@ -146,7 +146,7 @@ impl SimIo {
 
     /// Bind a UDP socket for a simulated server. Not part of `Io`: production
     /// code never serves UDP.
-    pub fn bind_udp(&mut self, sock: Sock, addr: SocketAddrV4) {
+    pub fn bind_udp(&mut self, sock: Sock, addr: SocketAddr) {
         let s = &mut self.socks[sock.0 as usize];
         s.state = SockState::UdpBound;
         s.addr = Some(addr);

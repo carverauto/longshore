@@ -7,8 +7,11 @@
 
 use hegel::generators as gs;
 use hegel::TestCase;
-use longshore::dns::codec::{encode_query, parse_response, DnsError, ADDRS_MAX, MESSAGE_MAX};
-use std::net::Ipv4Addr;
+use longshore::dns::codec::{
+    encode_query, encode_query_for, parse_response, parse_response_for, DnsError, Record,
+    ADDRS_MAX, MESSAGE_MAX,
+};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 const LABEL: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-";
 
@@ -130,4 +133,53 @@ fn truncated_answers_are_rejected(tc: TestCase) {
         "accepted an answer cut at {cut} of {}",
         full.len()
     );
+}
+
+/// A response may mix A and AAAA records. A query for one family gets that
+/// family's addresses, in order, and never one of the other family.
+#[hegel::test]
+fn mixed_answers_are_split_by_family(tc: TestCase) {
+    let name = hostname(&tc);
+    let id = tc.draw(gs::integers::<u16>());
+    let addrs: Vec<IpAddr> = tc
+        .draw(gs::vecs(gs::integers::<u128>()).min_size(1).max_size(12))
+        .into_iter()
+        // Odd values become IPv6 addresses, even ones IPv4.
+        .map(|v| match v & 1 {
+            1 => IpAddr::V6(Ipv6Addr::from(v)),
+            _ => IpAddr::V4(Ipv4Addr::from((v >> 64) as u32)),
+        })
+        .collect();
+    for record in [Record::A, Record::Aaaa] {
+        let mut q = [0u8; MESSAGE_MAX];
+        let n = encode_query_for(&name, id, record, &mut q).unwrap();
+        let mut m = q[..n].to_vec();
+        m[2..4].copy_from_slice(&0x8180u16.to_be_bytes());
+        m[6..8].copy_from_slice(&(addrs.len() as u16).to_be_bytes());
+        for a in &addrs {
+            match a {
+                IpAddr::V4(a) => {
+                    m.extend_from_slice(&[0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4]);
+                    m.extend_from_slice(&a.octets());
+                }
+                IpAddr::V6(a) => {
+                    m.extend_from_slice(&[0xc0, 12, 0, 28, 0, 1, 0, 0, 0, 60, 0, 16]);
+                    m.extend_from_slice(&a.octets());
+                }
+            }
+        }
+        let want: Vec<IpAddr> = addrs
+            .iter()
+            .copied()
+            .filter(|a| a.is_ipv6() == (record == Record::Aaaa))
+            .take(ADDRS_MAX)
+            .collect();
+        match parse_response_for(&m, id, &name, record) {
+            Ok(got) => assert_eq!(got.as_slice(), &want[..]),
+            Err(e) => {
+                assert_eq!(e, DnsError::NoAddresses);
+                assert!(want.is_empty());
+            }
+        }
+    }
 }
