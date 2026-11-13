@@ -317,8 +317,9 @@ the client is mostly idle.
   try the preferred family again on its own.
 - IPv6 has not been run against Amazon S3's dual-stack endpoints, only
   against Linode Object Storage and over loopback.
-- Each table states how many runs are behind its figures. Figures in
-  tables that do not say are single runs taken on one afternoon.
+- Each measurement table states how many runs are behind its figures. The
+  comparison with the talk takes its figures from those tables and from the
+  files it names. Anything stated with no count is a single run.
 
 ## License
 

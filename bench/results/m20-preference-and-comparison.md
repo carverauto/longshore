@@ -141,7 +141,7 @@ s5cmd 2.3.0 and the AWS CLI 2.40.2 with its CRT transfer client (`preferred_tran
 | s5cmd, 1,024 workers, PUT over HTTP | 3 | 20.4 to 22.1 | 69.4 to 72.0 | 3.0 to 3.3 |
 | s5cmd, 256 workers, PUT over HTTPS | 3 | 11.8 to 14.3 | 44.4 to 54.0 | 4.7 to 5.7 |
 | AWS CLI, PUT over HTTP | 3 | 6.4 to 6.5 | 5.3 to 5.9 | 10.3 to 10.5 |
-| AWS CLI, PUT over HTTPS | 3 | 6.1 to 6.5 | 7.1 to 8.8 | 10.2 to 11.1 |
+| AWS CLI, PUT over HTTPS | 3 | 6.1 to 6.6 | 7.1 to 8.8 | 10.2 to 11.1 |
 | AWS CLI, PUT over HTTP, checksums only when required | 3 | 6.3 to 6.5 | 4.7 to 5.1 | 10.4 to 10.6 |
 | s5cmd, 256 workers, GET over HTTP | 2 | 8.2 to 11.0 | 27.5 to 42.4 | 6.1 to 8.2 |
 | s5cmd, 256 workers, GET over HTTPS | 2 | 11.2 to 11.5 | 42.6 to 43.0 | 5.8 to 6.0 |
