@@ -24,12 +24,10 @@ Most callers are on other threads, often inside an async runtime.
   back with the result.
 - When no buffer or operation slot is free, calls wait. Nothing is queued
   without bound and nothing is allocated to hold the backlog.
-- Streaming upload fills lent buffers and sends each as a part, keeping a
-  fixed number in flight. Streaming download issues ranged fetches ahead of
-  the reader by a fixed window. Both are bounded by the buffer pool. An
-  upload stream is limited by the store's multipart rules: every part but
-  the last must be at least 5 MiB, and an upload has at most 10,000 parts.
-  How the stream meets those rules is an open question below.
+- Streaming upload fills lent buffers and sends them as multipart parts,
+  keeping a fixed number in flight. How buffers map to parts is under Open
+  Questions. Streaming download issues ranged fetches ahead of the reader by
+  a fixed window. Both are bounded by the buffer pool.
 - A stream that is dropped before completion aborts its multipart upload.
 - Cancellation: dropping a future detaches the caller but lets the operation
   finish on the I/O thread, so a buffer is never returned while the kernel

@@ -52,7 +52,7 @@ up to the store's multipart limits, and download an object of any size
 through ranged fetches, each using a bounded number of buffers.
 
 #### Scenario: Upload larger than the buffer pool
-- **WHEN** a caller writes more bytes to an upload stream than all registered buffers hold together
+- **WHEN** a caller writes more bytes to an upload stream than all registered buffers hold together, in a stream that stays within the store's part size and part count limits
 - **THEN** the upload completes and the object equals what was written
 
 #### Scenario: Buffer below the minimum part size
