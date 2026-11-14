@@ -59,9 +59,10 @@ pub struct Builder {
     /// [`Credentials::parse`] reads. Each I/O thread rereads it every
     /// [`Builder::credentials_reread_secs`] and, when its contents differ
     /// from the credentials in use, tries the new ones with one request
-    /// and adopts them if the store accepts them. Temporary credentials
-    /// expire, so a client that runs longer than they last needs this.
-    /// The path must be absolute.
+    /// and adopts them if the store accepts them (see
+    /// [`Builder::credentials_validate`]). Temporary credentials expire, so
+    /// a client that runs longer than they last needs this. The path must
+    /// be absolute and UTF-8.
     pub credentials_file: Option<std::path::PathBuf>,
     pub credentials_reread_secs: u64,
     /// The request that proves new credentials before they are adopted.
