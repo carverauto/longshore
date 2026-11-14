@@ -256,18 +256,39 @@ fn break_threads(fault: Fault, threads: u32) {
         client.inject_fault(thread, fault);
     }
     (1..threads as usize).for_each(noticed);
+    let all_noticed = count(&seen.stored);
     // With no thread left every call still returns, and returns closed.
     reaches(
         "operations ended closed with every thread failed",
         &seen.closed,
         closed_by_first + 200,
     );
-    let settled = count(&seen.stored);
-    std::thread::sleep(Duration::from_millis(200));
-    assert_eq!(
-        count(&seen.stored),
-        settled,
-        "an operation succeeded with every I/O thread failed"
+    // A failed thread marks its lane closed before it quiesces, and only
+    // then reports the outcomes of operations that had already finished
+    // before the failure. Those are real successes and may arrive after
+    // every thread noticed, so wait for the count to stop changing. Each
+    // thread has CONNS operation slots, so at most threads * CONNS
+    // operations can have finished unreported; anything more succeeded
+    // after the failure.
+    let started = Instant::now();
+    let mut settled = count(&seen.stored);
+    loop {
+        std::thread::sleep(Duration::from_millis(300));
+        let now = count(&seen.stored);
+        if now == settled {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "round trips still succeeding 10 s after every I/O thread failed: {all_noticed} then {now}"
+        );
+        settled = now;
+    }
+    assert!(
+        settled - all_noticed <= u64::from(threads * CONNS),
+        "{} operations succeeded after every I/O thread failed, more than the {} that could have been finished and unreported",
+        settled - all_noticed,
+        threads * CONNS
     );
     if fault == Fault::RingLost {
         assert!(count(&seen.void) > 0, "no buffer came back void");
