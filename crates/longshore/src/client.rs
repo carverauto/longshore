@@ -229,7 +229,7 @@ impl Client {
     /// Erase the object under `key`. Erasing a key that is not there succeeds.
     pub fn erase(&self, key: &str) -> Pending<Result<(), Error>> {
         Pending::new(
-            (least_busy(&self.lanes).clone(), self.alive.clone()),
+            (self.lanes[least_busy(&self.lanes)].clone(), self.alive.clone()),
             key,
             Kind::Erase,
             None,
@@ -272,12 +272,11 @@ fn request(op: u32, key: &str, kind: Kind, buf: u32, len: u32) -> Result<Request
     Ok(r)
 }
 
-/// The open lane with the fewest operations in progress, or a closed one if
-/// none is open.
-fn least_busy(lanes: &[Arc<Lane>]) -> &Arc<Lane> {
-    lanes
-        .iter()
-        .min_by_key(|l| (!open(l), l.in_flight()))
+/// The index of the open lane with the fewest operations in progress, or of
+/// a closed one if none is open.
+fn least_busy(lanes: &[Arc<Lane>]) -> usize {
+    (0..lanes.len())
+        .min_by_key(|&n| (!open(&lanes[n]), lanes[n].in_flight()))
         .expect("at least one lane")
 }
 

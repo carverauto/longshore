@@ -5,7 +5,7 @@
 
 //! Lent buffers, and waiting for one.
 
-use super::lane::{waiter_id, Lane};
+use super::lane::{waiter_id, Lane, Pool};
 use super::{open, Alive};
 use std::future::Future;
 use std::pin::Pin;
@@ -98,22 +98,23 @@ impl Drop for Buffer {
     }
 }
 
-/// Waits for a buffer on every open lane at once, and takes the first that
-/// is free. Only when every lane is closed does it take a closed lane's, and
-/// if none is free then, it ends with a void buffer instead of waiting.
-pub(super) struct Borrow {
-    lanes: Arc<[Arc<Lane>]>,
-    alive: Alive,
+/// Waits on one pool of every open lane at once, and takes the first index
+/// that is free, looking first at lane `first`. Only when every lane is
+/// closed does it take a closed lane's, and if none is free then, it ends
+/// with nothing instead of waiting.
+pub(super) struct AnyLane {
+    pub(super) lanes: Arc<[Arc<Lane>]>,
+    pool: fn(&Lane) -> &Pool,
     waiter: u64,
     /// Waiting in some lane's queue.
     queued: bool,
 }
 
-impl Borrow {
-    pub(super) fn new(lanes: Arc<[Arc<Lane>]>, alive: Alive) -> Borrow {
-        Borrow {
+impl AnyLane {
+    pub(super) fn new(lanes: Arc<[Arc<Lane>]>, pool: fn(&Lane) -> &Pool) -> AnyLane {
+        AnyLane {
             lanes,
-            alive,
+            pool,
             waiter: waiter_id(),
             queued: false,
         }
@@ -127,8 +128,66 @@ impl Borrow {
         if self.queued {
             self.queued = false;
             for l in self.lanes.iter() {
-                l.bufs.forget(self.waiter);
+                (self.pool)(l).forget(self.waiter);
             }
+        }
+    }
+
+    pub(super) fn poll(
+        &mut self,
+        first: usize,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<(Arc<Lane>, u32)>> {
+        let count = self.lanes.len();
+        loop {
+            let closed = self.closed();
+            let all_closed = closed == count;
+            for n in 0..count {
+                let lane = &self.lanes[(first + n) % count];
+                if !all_closed && !open(lane) {
+                    continue;
+                }
+                let pool = (self.pool)(lane);
+                if let Poll::Ready(index) = pool.poll_take(self.waiter, cx) {
+                    if !all_closed && !open(lane) {
+                        pool.give(index);
+                        continue;
+                    }
+                    let lane = lane.clone();
+                    self.forget();
+                    return Poll::Ready(Some((lane, index)));
+                }
+                self.queued = true;
+            }
+            if self.closed() == closed {
+                if !all_closed {
+                    return Poll::Pending;
+                }
+                self.forget();
+                return Poll::Ready(None);
+            }
+        }
+    }
+}
+
+impl Drop for AnyLane {
+    fn drop(&mut self) {
+        self.forget();
+    }
+}
+
+/// Waits for a buffer on every lane: see [`AnyLane`]. If no lane is open
+/// and none is free, it ends with a void buffer.
+pub(super) struct Borrow {
+    any: AnyLane,
+    alive: Alive,
+}
+
+impl Borrow {
+    pub(super) fn new(lanes: Arc<[Arc<Lane>]>, alive: Alive) -> Borrow {
+        Borrow {
+            any: AnyLane::new(lanes, |l| &l.bufs),
+            alive,
         }
     }
 }
@@ -138,46 +197,14 @@ impl Future for Borrow {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Buffer> {
         let me = self.get_mut();
-        loop {
-            let closed = me.closed();
-            let all_closed = closed == me.lanes.len();
-            for n in 0..me.lanes.len() {
-                let lane = &me.lanes[n];
-                if !all_closed && !open(lane) {
-                    continue;
-                }
-                if let Poll::Ready(index) = lane.bufs.poll_take(me.waiter, cx) {
-                    if !all_closed && !open(lane) {
-                        lane.bufs.give(index);
-                        continue;
-                    }
-                    let lane = lane.clone();
-                    me.forget();
-                    return Poll::Ready(Buffer {
-                        lane,
-                        index,
-                        alive: me.alive.clone(),
-                    });
-                }
-                me.queued = true;
-            }
-            if me.closed() == closed {
-                if !all_closed {
-                    return Poll::Pending;
-                }
-                me.forget();
-                return Poll::Ready(Buffer {
-                    lane: me.lanes[0].clone(),
-                    index: NO_INDEX,
-                    alive: me.alive.clone(),
-                });
-            }
-        }
-    }
-}
-
-impl Drop for Borrow {
-    fn drop(&mut self) {
-        self.forget();
+        let (lane, index) = match core::task::ready!(me.any.poll(0, cx)) {
+            Some(taken) => taken,
+            None => (me.any.lanes[0].clone(), NO_INDEX),
+        };
+        Poll::Ready(Buffer {
+            lane,
+            index,
+            alive: me.alive.clone(),
+        })
     }
 }

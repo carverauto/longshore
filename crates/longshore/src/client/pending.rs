@@ -5,6 +5,7 @@
 
 //! An operation in progress: a future, with a blocking wait as well.
 
+use super::buffer::AnyLane;
 use super::lane::{block_on, waiter_id, Finished, Kind, Lane, Request};
 use super::{least_busy, open, request, Alive, Buffer, Error};
 use std::future::Future;
@@ -47,9 +48,9 @@ impl<R> Output for (Result<R, Error>, Buffer) {
 #[must_use = "an operation's result, and the buffer it borrowed, come back through this"]
 pub struct Pending<T: Output> {
     lane: Arc<Lane>,
-    /// For an operation with no lent buffer: every lane, so that it is sent
-    /// to the open one with the fewest in flight when it is sent.
-    lanes: Option<Arc<[Arc<Lane>]>>,
+    /// For an operation with no lent buffer: a wait for a slot on every
+    /// lane, starting at the open one with the fewest in flight.
+    any: Option<AnyLane>,
     alive: Alive,
     stage: Stage,
     /// This operation's name while it waits for a slot.
@@ -92,7 +93,7 @@ impl<T: Output> Pending<T> {
         };
         Pending {
             lane,
-            lanes: None,
+            any: None,
             alive,
             stage,
             waiter: waiter_id(),
@@ -104,7 +105,7 @@ impl<T: Output> Pending<T> {
 
     /// Let the operation run on whichever of `lanes` is open when it is sent.
     pub(super) fn on_any(mut self, lanes: Arc<[Arc<Lane>]>) -> Self {
-        self.lanes = Some(lanes);
+        self.any = Some(AnyLane::new(lanes, |l| &l.ops));
         self
     }
 
@@ -168,27 +169,44 @@ impl<T: Output> Pending<T> {
             return Poll::Ready(());
         }
         loop {
-            if let Some(lanes) = &self.lanes {
-                let pick = least_busy(lanes);
-                if !Arc::ptr_eq(pick, &self.lane) {
-                    self.lane.ops.forget(self.waiter);
-                    self.lane = pick.clone();
-                }
-            }
-            if !open(&self.lane) {
-                self.lane.ops.forget(self.waiter);
-                self.stage = Stage::Early(Error::Closed);
-                return Poll::Ready(());
-            }
-            match self.lane.ops.poll_take(self.waiter, cx) {
-                Poll::Ready(op) if !open(&self.lane) => self.lane.ops.give(op),
-                Poll::Ready(op) => {
-                    if self.send(op) {
-                        return Poll::Ready(());
+            let op = match &mut self.any {
+                Some(any) => {
+                    let first = least_busy(&any.lanes);
+                    match core::task::ready!(any.poll(first, cx)) {
+                        Some((lane, op)) if open(&lane) => {
+                            self.lane = lane;
+                            op
+                        }
+                        Some((lane, op)) => {
+                            lane.ops.give(op);
+                            self.stage = Stage::Early(Error::Closed);
+                            return Poll::Ready(());
+                        }
+                        None => {
+                            self.stage = Stage::Early(Error::Closed);
+                            return Poll::Ready(());
+                        }
                     }
                 }
-                Poll::Pending if open(&self.lane) => return Poll::Pending,
-                Poll::Pending => {}
+                None => {
+                    if !open(&self.lane) {
+                        self.lane.ops.forget(self.waiter);
+                        self.stage = Stage::Early(Error::Closed);
+                        return Poll::Ready(());
+                    }
+                    match self.lane.ops.poll_take(self.waiter, cx) {
+                        Poll::Ready(op) if open(&self.lane) => op,
+                        Poll::Ready(op) => {
+                            self.lane.ops.give(op);
+                            continue;
+                        }
+                        Poll::Pending if open(&self.lane) => return Poll::Pending,
+                        Poll::Pending => continue,
+                    }
+                }
+            };
+            if self.send(op) {
+                return Poll::Ready(());
             }
         }
     }

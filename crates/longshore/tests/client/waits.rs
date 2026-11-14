@@ -274,3 +274,27 @@ fn a_waiter_parked_when_the_last_lane_goes_void_is_given_a_void_buffer() {
     }
     drop(held);
 }
+
+#[test]
+fn an_erase_takes_a_free_slot_on_another_lane_rather_than_wait() {
+    // Four slots per lane. Lane 0's four hold erases that have ended but
+    // whose results nobody has collected: none in flight there, no slot free.
+    let mut r = rig(2);
+    let client = r.client.clone();
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut uncollected = Vec::new();
+    for i in 0..4 {
+        let mut e = Box::pin(client.erase(&format!("u{i}")));
+        assert!(e.as_mut().poll(&mut cx).is_pending());
+        r.pump();
+        while r.lanes[0].worker.store().in_progress() > 0 {
+            r.pump();
+        }
+        r.pump();
+        uncollected.push(e);
+    }
+    assert_eq!(r.lanes[1].worker.store().in_progress(), 0);
+    // Lane 1 has four free slots, so this one runs without waiting for them.
+    assert_eq!(r.run(client.erase("now")), Ok(()));
+    drop(uncollected);
+}
