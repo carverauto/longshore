@@ -52,6 +52,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Model-checked client hand-offs
+        run: ./scripts/test-model.sh
 
   uring:
     name: Real io_uring checks
@@ -75,3 +77,27 @@ jobs:
           timeout 60 ./echo_uring --zc
           timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc
           timeout 60 ./http_uring selftest
+      - name: Client I/O threads failing and torn down under load
+        run: |
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          cargo build --release -p longshore-bench --features fault-injection --bin client_faults
+          cd target/release
+          timeout 250 ./client_faults break tick
+          timeout 250 ./client_faults break ring
+          timeout 250 ./client_faults churn
+      - name: The same teardown under the address and thread sanitizers
+        env:
+          # The sanitizers need a nightly compiler and a standard library
+          # built with them. Pinned, like the stable toolchain above.
+          NIGHTLY: nightly-2026-11-01
+          RUSTFLAGS: ""
+        run: |
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          rustup toolchain install "${NIGHTLY}" --profile minimal --component rust-src
+          for sanitizer in address thread; do
+            RUSTFLAGS="-Zsanitizer=${sanitizer}" cargo "+${NIGHTLY}" build -Zbuild-std \
+              --target x86_64-unknown-linux-gnu --target-dir "target/${sanitizer}" \
+              -p longshore-bench --features fault-injection --bin client_faults
+            timeout 600 "target/${sanitizer}/x86_64-unknown-linux-gnu/debug/client_faults" churn --rounds 300
+            timeout 600 "target/${sanitizer}/x86_64-unknown-linux-gnu/debug/client_faults" break tick
+          done

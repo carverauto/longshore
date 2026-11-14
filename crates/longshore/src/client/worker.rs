@@ -9,9 +9,10 @@
 //! a caller's event loop.
 
 use super::lane::{Cell, Finished, Kind, Lane, Pool, Request};
+use super::sync::{AtomicBool, AtomicU32, AtomicU64};
 use crate::io::{BufId, Completion, Io, Op, Token};
 use crate::store::s3::S3;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
@@ -62,15 +63,17 @@ impl Worker {
         let lane = Arc::new(Lane {
             requests: tx,
             wake,
-            cells: (0..layout.operations).map(|_| Cell::default()).collect(),
+            cells: (0..layout.operations).map(|_| Cell::new()).collect(),
             ops: Pool::new(layout.operations),
             bufs: Pool::new(layout.buffers),
             base,
             buf_size,
             in_flight: AtomicU32::new(0),
             closed: AtomicBool::new(false),
-            reloads: Default::default(),
+            reloads: [AtomicU64::new(0), AtomicU64::new(0)],
             void: AtomicBool::new(false),
+            #[cfg(all(feature = "fault-injection", target_os = "linux"))]
+            fault: Default::default(),
         });
         let worker = Worker {
             s3,

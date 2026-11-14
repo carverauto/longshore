@@ -7,15 +7,15 @@
 //! pools of operation slots and lent buffers, and the request queue. All of
 //! it is allocated when the lane is built.
 
+use super::sync::{current, park, AtomicBool, AtomicU32, AtomicU64, Condvar, Mutex, Thread};
 use crate::store::s3::{Checksum, Outcome, SubmitError};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::SyncSender;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
-use std::thread::Thread;
 
 /// The longest key a request message carries.
 pub const KEY_MAX: usize = 1024;
@@ -84,7 +84,8 @@ impl PoolState {
 
 /// A fresh name for a caller that may wait on a [`Pool`].
 pub(super) fn waiter_id() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
+    // Only a source of distinct numbers, so never the model checker's kind.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
@@ -147,25 +148,41 @@ pub(super) fn block_on<F: Future>(f: F) -> F::Output {
             self.0.unpark();
         }
     }
-    thread_local! {
-        static PARKER: Waker = Waker::from(Arc::new(Parker(std::thread::current())));
-    }
-    let mut f = pin!(f);
-    PARKER.with(|waker| {
+    fn drive<F: Future>(mut f: std::pin::Pin<&mut F>, waker: &Waker) -> F::Output {
         let mut cx = Context::from_waker(waker);
         loop {
             if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
                 return v;
             }
-            std::thread::park();
+            park();
         }
-    })
+    }
+    let f = pin!(f);
+    // One waker per thread, made the first time the thread blocks here.
+    #[cfg(not(longshore_model))]
+    {
+        thread_local! {
+            static PARKER: Waker = Waker::from(Arc::new(Parker(current())));
+        }
+        PARKER.with(|waker| drive(f, waker))
+    }
+    // The model checker's threads do not outlive one run of the model.
+    #[cfg(longshore_model)]
+    drive(f, &Waker::from(Arc::new(Parker(current()))))
 }
 
-#[derive(Default)]
 pub(super) struct Cell {
     pub state: Mutex<CellState>,
     pub done: Condvar,
+}
+
+impl Cell {
+    pub fn new() -> Cell {
+        Cell {
+            state: Mutex::new(CellState::default()),
+            done: Condvar::new(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -194,10 +211,14 @@ pub struct Lane {
     pub(super) closed: AtomicBool,
     /// Credentials adopted from the file, and reloads that failed, as the
     /// I/O thread's store counts them.
-    pub(super) reloads: [std::sync::atomic::AtomicU64; 2],
+    pub(super) reloads: [AtomicU64; 2],
     /// The kernel may still use this lane's buffers: none is lent again or
     /// read or written through a [`super::Buffer`].
     pub(super) void: AtomicBool,
+    /// A failure a test has asked this lane's I/O thread to cause in its
+    /// ring: 0 for none. See [`super::Client::inject_fault`].
+    #[cfg(all(feature = "fault-injection", target_os = "linux"))]
+    pub(super) fault: std::sync::atomic::AtomicU8,
 }
 
 // The raw pointer is to memory the I/O thread owns for as long as the lane

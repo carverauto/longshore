@@ -152,6 +152,17 @@ impl Ring {
         }
     }
 
+    /// Put another file where the ring's descriptor is, so that every
+    /// later `enter` is refused by the kernel. The ring itself lives on
+    /// through its mappings, with whatever it had in flight.
+    #[cfg(feature = "fault-injection")]
+    pub fn lose(&mut self) {
+        use std::os::fd::AsRawFd;
+        let null = std::fs::File::open("/dev/null").expect("open /dev/null");
+        let replaced = unsafe { dup2(null.as_raw_fd(), self.fd) };
+        assert_eq!(replaced, self.fd, "dup2 over the ring's descriptor");
+    }
+
     /// Queue one SQE. No syscall.
     #[inline]
     pub fn push(&mut self, sqe: io_uring_sqe) -> Result<(), SqFull> {

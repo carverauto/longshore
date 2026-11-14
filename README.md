@@ -90,7 +90,8 @@ uses `io_uring` has to be cross-compiled and run on a Linux host.
 ```sh
 cargo test --workspace          # unit, simulation and property tests
 cargo clippy --workspace --all-targets -- -D warnings
-./scripts/test.sh               # the above, then the real-kernel checks
+./scripts/test-model.sh         # the client's hand-offs, model checked
+./scripts/test.sh               # the tests and the model, then the real-kernel checks
 ```
 
 `scripts/test-linux.sh` cross-compiles the check programs for
@@ -98,6 +99,16 @@ cargo clippy --workspace --all-targets -- -D warnings
 the hosts listed in `~/.config/longshore/test-hosts`, and runs them. That file
 has one `<rust-target> <ssh-destination>` per line. If it is missing, the
 real-kernel checks are skipped with a warning.
+
+`scripts/test-model.sh` builds the crate with its locks, atomics and thread
+parking replaced by [loom](https://github.com/tokio-rs/loom)'s, and runs the
+hand-offs between callers and I/O threads in every order loom reaches with
+one or two forced thread switches. A wake-up that could be lost shows up
+there as a thread left waiting. loom is only in that build.
+
+`client_faults`, one of the check programs, makes a running client's rings
+fail and tears clients down with work in flight. It is built with the
+`fault-injection` feature, which is off everywhere else.
 
 Property tests use [Hegel](https://hegel.dev). The fuzz targets run with
 `cargo fuzz` from `fuzz/`.
