@@ -5,8 +5,14 @@
 
 //! Throughput of the shareable client (`longshore::client`) against a store.
 //!
-//!   client_s3 put|get [--threads N] [--conns N] [--callers N] [--size BYTES]
-//!             [--secs S] [--cpu N] [--cpu-step N]
+//!   client_s3 put|get|mix [--threads N] [--conns N] [--callers N]
+//!             [--size BYTES] [--secs S] [--cpu N] [--cpu-step N]
+//!             [--puts-per-sec N]
+//!
+//! `mix` is for long runs: it fetches as fast as it can and stores at most
+//! `--puts-per-sec` objects a second (default 100), since a store is the
+//! request a store charges most for. Every object holds a pattern that
+//! names it, and every fetch checks bytes of that pattern.
 //!
 //! The store comes from the same environment variables as `s3_uring`:
 //! S3_ENDPOINT, S3_REGION, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY,
@@ -44,12 +50,14 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let cmd = args
         .next()
-        .unwrap_or_else(|| die("usage: client_s3 put|get [flags]"));
-    let put = match cmd.as_str() {
-        "put" => true,
-        "get" => false,
+        .unwrap_or_else(|| die("usage: client_s3 put|get|mix [flags]"));
+    let (put, mix) = match cmd.as_str() {
+        "put" => (true, false),
+        "get" => (false, false),
+        "mix" => (false, true),
         other => die(&format!("unknown command {other}")),
     };
+    let mut puts_per_sec = 100u64;
     let (mut threads, mut conns, mut callers, mut size, mut secs) =
         (1u32, 64u32, 0u32, 8u32 << 20, 10u64);
     let (mut cpu, mut cpu_step) = (None, 1usize);
@@ -66,6 +74,7 @@ fn main() {
             "--secs" => secs = v,
             "--cpu" => cpu = Some(v as usize),
             "--cpu-step" => cpu_step = v as usize,
+            "--puts-per-sec" => puts_per_sec = v,
             _ => die(&format!("unknown flag {k}")),
         }
     }
@@ -138,6 +147,19 @@ fn main() {
                 Op::Get(p) => Pin::new(p).poll(cx).map(|(r, b)| (r == Ok(Some(size)), b)),
             }
         }
+
+        fn is_put(&self) -> bool {
+            matches!(self, Op::Put(_))
+        }
+    }
+
+    /// The byte at `at` of the object a caller keeps under its key `i`.
+    fn pattern(c: u32, i: usize, at: usize) -> u8 {
+        (at as u32).wrapping_mul(2654435761).to_le_bytes()[2] ^ (c as usize * 131 + i) as u8
+    }
+    /// Places in an object that a fetch checks: its ends and some between.
+    fn sampled(size: usize) -> impl Iterator<Item = usize> {
+        (0..64).map(move |k| k * (size - 1) / 63)
     }
 
     // Each caller holds a share of the buffers, and the shares sum to all
@@ -150,6 +172,14 @@ fn main() {
     // the run.
     let tolerate = std::env::var("S3_TOLERATE_ERRORS").is_ok_and(|v| v == "1");
     let failed = Arc::new(AtomicU64::new(0));
+    // For `mix`: stores begun, fetches ended, and fetches whose bytes were
+    // not the object's.
+    let (puts, gets, wrong) = (
+        Arc::new(AtomicU64::new(0)),
+        Arc::new(AtomicU64::new(0)),
+        Arc::new(AtomicU64::new(0)),
+    );
+    let started = Instant::now();
     let (measuring, stop) = (
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
@@ -160,6 +190,7 @@ fn main() {
         .map(|c| {
             let (client, bytes, requests) = (client.clone(), bytes.clone(), requests.clone());
             let failed = failed.clone();
+            let (puts, gets, wrong) = (puts.clone(), gets.clone(), wrong.clone());
             let (measuring, stop, ready) = (measuring.clone(), stop.clone(), ready.clone());
             let mine = share(c as usize);
             std::thread::spawn(move || {
@@ -168,27 +199,40 @@ fn main() {
                 let keys: Vec<String> = (0..mine)
                     .map(|i| format!("bench/{pid}-c{c}-{i}.bin"))
                     .collect();
+                let fill = |i: usize, buffer: &mut Buffer| {
+                    for (at, b) in buffer.as_mut_slice().iter_mut().enumerate() {
+                        *b = pattern(c, i, at);
+                    }
+                };
+                // In `mix`, the next operation on a key is a store while
+                // the run is behind its rate of stores, and a fetch if not.
+                let next = |i: usize, mut buffer: Buffer| {
+                    let due = started.elapsed().as_millis() as u64 * puts_per_sec / 1000;
+                    let store = put || (mix && puts.fetch_add(1, Ordering::Relaxed) < due);
+                    if mix && !store {
+                        puts.fetch_sub(1, Ordering::Relaxed);
+                    }
+                    if mix && store {
+                        fill(i, &mut buffer);
+                    }
+                    Op::begin(&client, store, &keys[i], buffer, size as usize)
+                };
                 // For GET the objects must exist first.
                 if !put {
-                    for key in &keys {
-                        let (stored, _b) = client
-                            .store(key, client.buffer_blocking(), size as usize)
-                            .wait();
+                    for (i, key) in keys.iter().enumerate() {
+                        let mut body = client.buffer_blocking();
+                        if mix {
+                            fill(i, &mut body);
+                        }
+                        let (stored, _b) = client.store(key, body, size as usize).wait();
                         if stored.is_err() {
                             die("could not create an object to fetch");
                         }
                     }
                 }
                 ready.wait();
-                let mut ops: Vec<(usize, Op)> = keys
-                    .iter()
-                    .enumerate()
-                    .map(|(i, key)| {
-                        (
-                            i,
-                            Op::begin(&client, put, key, client.buffer_blocking(), size as usize),
-                        )
-                    })
+                let mut ops: Vec<(usize, Op)> = (0..keys.len())
+                    .map(|i| (i, next(i, client.buffer_blocking())))
                     .collect();
                 while !stop.load(Ordering::Relaxed) {
                     let mut progressed = false;
@@ -204,7 +248,14 @@ fn main() {
                                 bytes.fetch_add(size as u64, Ordering::Relaxed);
                                 requests.fetch_add(1, Ordering::Relaxed);
                             }
-                            *op = Op::begin(&client, put, &keys[*i], buffer, size as usize);
+                            if mix && ok && !op.is_put() {
+                                gets.fetch_add(1, Ordering::Relaxed);
+                                let got = buffer.as_slice();
+                                if sampled(size as usize).any(|at| got[at] != pattern(c, *i, at)) {
+                                    wrong.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                            *op = next(*i, buffer);
                             progressed = true;
                         }
                     }
@@ -236,10 +287,13 @@ fn main() {
                 let now = bytes.load(Ordering::Relaxed);
                 let (adopted, reload_failures) = client.credential_reloads();
                 eprintln!(
-                    "t={}s gb_per_s={:.2} failed={} fds={} rss_mb={} reloads_adopted={adopted} reload_failures={reload_failures}",
+                    "t={}s gb_per_s={:.2} failed={} puts={} gets={} wrong={} fds={} rss_mb={} reloads_adopted={adopted} reload_failures={reload_failures}",
                     t0.elapsed().as_secs(),
                     (now - last) as f64 / 1e9 / every as f64,
                     failed.load(Ordering::Relaxed),
+                    puts.load(Ordering::Relaxed),
+                    gets.load(Ordering::Relaxed),
+                    wrong.load(Ordering::Relaxed),
                     std::fs::read_dir("/proc/self/fd").map(|d| d.count()).unwrap_or(0),
                     resident_mb(),
                 );
@@ -252,10 +306,13 @@ fn main() {
     let cpu_s = process_cpu_secs() - cpu0;
     let gb = bytes.load(Ordering::Relaxed) as f64 / 1e9;
     println!(
-        "{{\"cmd\":\"client-{cmd}\",\"arch\":\"{}\",\"threads\":{threads},\"callers\":{callers},\"checksums\":{checksums},\"conns\":{conns},\"size\":{size},\"secs\":{wall:.2},\"requests\":{},\"failed\":{},\"gb_per_s\":{:.3},\"process_cpu_cores\":{:.2},\"gb_per_cpu_s\":{:.2}}}",
+        "{{\"cmd\":\"client-{cmd}\",\"arch\":\"{}\",\"threads\":{threads},\"callers\":{callers},\"checksums\":{checksums},\"conns\":{conns},\"size\":{size},\"secs\":{wall:.2},\"requests\":{},\"failed\":{},\"puts\":{},\"gets\":{},\"wrong\":{},\"gb_per_s\":{:.3},\"process_cpu_cores\":{:.2},\"gb_per_cpu_s\":{:.2}}}",
         std::env::consts::ARCH,
         requests.load(Ordering::Relaxed),
         failed.load(Ordering::Relaxed),
+        puts.load(Ordering::Relaxed),
+        gets.load(Ordering::Relaxed),
+        wrong.load(Ordering::Relaxed),
         gb / wall,
         cpu_s / wall,
         gb / cpu_s.max(1e-9),
