@@ -38,6 +38,10 @@ hegeltest.workspace = true
 rcgen.workspace = true
 
 [[test]]
+name = "client_multipart"
+path = "tests/client/multipart.rs"
+
+[[test]]
 name = "client_driven"
 path = "tests/client/driven.rs"
 

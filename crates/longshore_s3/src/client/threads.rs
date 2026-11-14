@@ -73,7 +73,8 @@ pub struct Builder {
     /// Send a CRC-64/NVME with every stored body, which the store checks.
     /// On by default. It is one more pass over the body: a plain upload
     /// from one thread ran at 16 GB/s with it and 37 GB/s without. Off
-    /// affects plain stores only. [`Client::store_no_clobber`] always sends
+    /// affects plain stores and multipart uploads (see
+    /// [`Client::upload_begin`]). [`Client::store_no_clobber`] always sends
     /// one, since a retry refused because an object exists compares it to
     /// tell this call's own write from someone else's.
     pub checksums: bool,
@@ -277,6 +278,8 @@ impl Drop for Threads {
                 key_len: 0,
                 buf: 0,
                 len: 0,
+                upload: None,
+                number: 0,
             });
             lane.wake.wake();
         }

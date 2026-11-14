@@ -9,13 +9,18 @@
 //!   client_uring [--threads N] [--v6]
 //!
 //! Stores, fetches and erases objects from several caller threads at once,
-//! through blocking calls and through futures, verifies every byte, then
+//! through blocking calls and through futures, verifies every byte, uploads
+//! an object in parts, then
 //! drops the client and checks that its I/O threads have gone.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
     eprintln!("client_uring needs Linux");
 }
+
+#[cfg(target_os = "linux")]
+#[path = "client_uring/multipart.rs"]
+mod multipart;
 
 #[cfg(target_os = "linux")]
 fn main() {
@@ -82,7 +87,10 @@ fn main() {
             buffer_size: SIZE,
             objects_max: (CALLERS * 2) as u32,
             token_base: 2 << 40,
-            checksum: None,
+            // The server keeps and checks the checksum the client sends.
+            checksum: Some(|body: &[u8]| {
+                longshore::checksum::crc64_header_value(longshore::checksum::crc64_nvme(body))
+            }),
         });
         if path_style {
             server.serve_bucket_in_path("media");
@@ -263,6 +271,8 @@ fn main() {
         c.join().expect("a caller thread failed");
     }
 
+    multipart::round_trip(&client, SIZE as usize / 4);
+
     // A buffer still out keeps the I/O threads alive after the last handle.
     let kept = client.buffer_blocking();
     drop(client);
@@ -372,7 +382,7 @@ fn main() {
         acceptor.join().expect("acceptor");
     }
     println!(
-        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, threads stopped on drop, over 200 operations quiesced 50 times",
+        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, a multipart upload of three parts, threads stopped on drop, over 200 operations quiesced 50 times",
         CALLERS * ROUNDS
     );
 

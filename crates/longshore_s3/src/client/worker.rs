@@ -174,6 +174,23 @@ impl Worker {
                 .store_no_clobber(io, token, key, buf, r.len, checksum),
             Kind::Fetch { range } => self.s3.fetch(io, token, key, range, buf),
             Kind::Erase => self.s3.erase(io, token, key),
+            Kind::Begin { checksums } => self.s3.multipart_begin(io, token, key, checksums),
+            Kind::Part { checksum } => match &r.upload {
+                Some(upload) => self
+                    .s3
+                    .multipart_store_part(io, token, key, upload, r.number, buf, r.len, checksum),
+                None => Err(crate::s3::SubmitError::BadPart),
+            },
+            Kind::Complete => match &r.upload {
+                Some(upload) => self
+                    .s3
+                    .multipart_complete(io, token, key, upload, buf, r.len, None),
+                None => Err(crate::s3::SubmitError::BadPart),
+            },
+            Kind::Abort => match &r.upload {
+                Some(upload) => self.s3.multipart_abort(io, token, key, upload),
+                None => Err(crate::s3::SubmitError::BadPart),
+            },
         };
         match sent {
             Ok(()) => self.running[r.op as usize] = true,

@@ -59,7 +59,9 @@ pub struct Pending<T: Output> {
     request: Option<Request>,
     /// The lent buffer the operation holds, as an index in the lane.
     buf: Option<u32>,
-    map: fn(Finished) -> Result<T::Value, Error>,
+    /// The second argument is the part number, for a part of an upload.
+    map: fn(Finished, u32) -> Result<T::Value, Error>,
+    number: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -81,7 +83,7 @@ impl<T: Output> Pending<T> {
         buf: Option<u32>,
         len: u32,
         early: Option<Error>,
-        map: fn(Finished) -> Result<T::Value, Error>,
+        map: fn(Finished, u32) -> Result<T::Value, Error>,
     ) -> Self {
         let built = match early {
             Some(e) => Err(e),
@@ -100,7 +102,18 @@ impl<T: Output> Pending<T> {
             request,
             buf,
             map,
+            number: 0,
         }
+    }
+
+    /// Name the multipart upload the request belongs to, and its part.
+    pub(super) fn of_upload(mut self, upload: &crate::multipart::UploadId, number: u32) -> Self {
+        if let Some(r) = &mut self.request {
+            r.upload = Some(*upload);
+            r.number = number;
+        }
+        self.number = number;
+        self
     }
 
     /// Let the operation run on whichever of `lanes` is open when it is sent.
@@ -153,7 +166,7 @@ impl<T: Output> Pending<T> {
         self.lane.ops.give(op);
         self.stage = Stage::Taken;
         let buffer = self.buffer();
-        T::build((self.map)(finished), buffer)
+        T::build((self.map)(finished, self.number), buffer)
     }
 
     fn early(&mut self, e: Error) -> T {
