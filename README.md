@@ -22,6 +22,7 @@ is meant to become part of a larger project.
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | Bucket addressing | The bucket goes in the host name by default, or in the path when configured, as self-hosted S3-compatible stores commonly expect. Both forms run against Linode Object Storage. Not yet run against MinIO or Ceph |
+| Shareable client | `longshore::client`: a handle usable from any thread over one or more independent I/O threads, with async and blocking calls and lent buffers. Store, conditional store, fetch, ranged fetch and erase. Run on Linux 6.8 and 6.14 against the in-tree server. Not yet measured against a store |
 | IPv4 and IPv6 | The resolver asks for A records, AAAA records or both, and prefers the family the configuration names. When connections to that family fail and the name has addresses in the other, it uses the other. Run over IPv6 against Linode Object Storage |
 | Large-segment addresses | Optional, off by default. A store's name can resolve to addresses whose connections get different TCP segment sizes, and on a network card that does not segment in hardware the small ones cost several times more CPU per byte. With the setting on, the client measures each new connection, keeps its connections on the addresses with large segments, and asks DNS again sooner when every address is small. It can be switched while the store runs. Works on Linux 6.1 and later |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
@@ -30,8 +31,8 @@ is meant to become part of a larger project.
 
 ## How it works
 
-Everything runs on one thread, driven by `io_uring` completions. There are no
-locks and no async runtime. Sockets and buffers are registered with the
+A store runs on one thread, driven by `io_uring` completions. There are no
+locks and no async runtime on that thread. Sockets and buffers are registered with the
 kernel once.
 
 Buffers, connection slots and operation slots are sized from the
@@ -67,6 +68,7 @@ The library is one crate, `longshore`, in `crates/longshore`.
 | `checksum` | CRC-64/NVME, CRC-32C, base64 |
 | `crypto` | SHA-256 and HMAC-SHA256 |
 | `store` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials |
+| `client` | A handle any thread can share, over one or more I/O threads that each run a store, with lent buffers |
 
 `crates/longshore-bench` has the benchmarks and the programs that check the
 real kernel path. It is not published.
@@ -128,10 +130,48 @@ For Google Cloud Storage, set `S3_VENDOR=gcs` and
 `S3_ENDPOINT=storage.googleapis.com`, and give `S3_BEARER_TOKEN` in place of
 the keys.
 
-The API is low level. The caller owns the event loop, gives the store
-registered buffers, submits each operation with a token, and collects
+The store's own API is low level. The caller owns the event loop, gives the
+store registered buffers, submits each operation with a token, and collects
 outcomes with `poll`. The simulation tests in `crates/longshore/tests/store/` are
 the shortest complete examples.
+
+## Using it from other threads
+
+`longshore::client` puts the store behind a handle that any thread can
+share. It starts one I/O thread, or as many as asked for. Each I/O thread is
+a complete store with its own connections and buffers, and they share
+nothing. One thread fills a fast network card with plain uploads. More are
+for HTTPS and downloads, which one core bounds.
+
+```rust,no_run
+use longshore::client::Builder;
+use longshore::store::creds::Credentials;
+
+let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
+let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
+settings.tls = true;
+settings.port = 443;
+settings.threads = 4; // four independent I/O threads
+let client = settings.build().unwrap();
+
+// A body lives in a registered buffer borrowed from the client, so it is
+// never copied. The operation takes the buffer and hands it back.
+let mut body = client.buffer_blocking();
+body.as_mut_slice()[..5].copy_from_slice(b"hello");
+let (stored, body) = client.store("greeting", body, 5).wait();
+stored.unwrap();
+let (fetched, body) = client.fetch("greeting", body).wait();
+assert_eq!(fetched.unwrap(), Some(5));
+assert_eq!(&body.as_slice()[..5], b"hello");
+```
+
+Every operation returns a value that is a `Future` and also has a blocking
+`wait`, so the same calls work under any async executor and from plain
+threads. When no buffer or operation slot is free a call waits. It has
+store, conditional store, fetch, ranged fetch and erase so far. Listing,
+`stat`, multipart and the other store operations are on the low-level API
+only. `client::Worker` is one I/O thread's logic without the thread, for a
+caller that already runs an event loop per core.
 
 ## Measurements
 

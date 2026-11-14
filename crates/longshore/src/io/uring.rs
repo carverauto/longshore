@@ -10,6 +10,7 @@ use crate::io::sys::*;
 use crate::io::{
     BufId, Busy, Completion, Completions, FileId, Io, Limits, Op, Sock, Token, ECANCELED, ETIME,
 };
+use core::mem::ManuallyDrop;
 use std::ffi::CString;
 use std::io;
 use std::net::{SocketAddr, TcpListener};
@@ -30,6 +31,8 @@ enum State {
     ConnectRelease,
     /// A timer. Its normal expiry arrives as `-ETIME`.
     Timer,
+    /// Waiting on the wake-up eventfd. A read of its 8 bytes is a wake.
+    Wake,
     /// Zero-copy send: result seen, waiting for the kernel to release the buffer.
     AwaitNotif,
     /// Zero-copy send: release seen first, waiting for the result.
@@ -62,16 +65,32 @@ struct Slot {
     /// be read once it connects, or -1. See `measure_segment_sizes`.
     probe_fd: i32,
     ts: timespec,
+    /// Where the kernel puts the eventfd's counter.
+    wake_count: u64,
 }
 
+/// The kernel holds pointers into memory this owns while operations are in
+/// flight (the fields `UringIo::leak` lists), and closing the ring does not
+/// wait for them to end. The rule: that memory is freed only when
+/// `in_flight` is zero, and otherwise leaked, which is always safe.
+/// Dropping calls [`UringIo::quiesce`], closes the ring and then the
+/// eventfd, and frees that memory if it returned true or leaks it if it
+/// returned false. A field the kernel can reach belongs in `leak`.
 pub struct UringIo {
-    ring: Ring,
+    ring: ManuallyDrop<Ring>,
     limits: Limits,
     bufs: Box<[u8]>,
     slots: Box<[Slot]>,
+    /// Completions the kernel still owes: one per SQE pushed, and one more
+    /// after each that says more follow (a zero-copy send's notification).
+    in_flight: u32,
+    /// The wait bound of `quiesce`'s timer.
+    quiet_ts: Box<timespec>,
     free: Vec<u32>,
     /// Paths registered for `Op::ReadFile`, NUL-terminated for the kernel.
     files: Vec<CString>,
+    /// The eventfd behind `Io::waker`, or -1 before it is asked for.
+    wake_fd: i32,
     measure_segments: bool,
 }
 
@@ -81,13 +100,47 @@ const PHASE_FILE_OPEN: u64 = 2 << 32;
 const PHASE_FILE_READ: u64 = 3 << 32;
 const PHASE_FILE_CLOSE: u64 = 4 << 32;
 const PHASE_SOCK_RELEASE: u64 = 5 << 32;
+/// The cancel and timer `quiesce` submits, which belong to no slot.
+const QUIESCE: u64 = 6 << 32;
 
 mod completions;
+
+/// The other threads' end of the wake-up eventfd.
+struct EventFd(i32);
+
+impl crate::io::Wake for EventFd {
+    fn wake(&self) {
+        let one: u64 = 1;
+        // The counter cannot overflow in practice, and a failed write only
+        // means the reader is already due to wake.
+        unsafe { write(self.0, (&one as *const u64).cast(), 8) };
+    }
+}
+
+impl Drop for EventFd {
+    fn drop(&mut self) {
+        unsafe { close(self.0) };
+    }
+}
+
+impl Drop for UringIo {
+    fn drop(&mut self) {
+        let quiet = self.quiesce();
+        unsafe { ManuallyDrop::drop(&mut self.ring) };
+        if self.wake_fd >= 0 {
+            unsafe { close(self.wake_fd) };
+        }
+        if !quiet {
+            self.leak();
+        }
+    }
+}
 
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
     pub fn new(limits: Limits) -> io::Result<UringIo> {
-        let entries = limits.ops_max.next_power_of_two().max(8);
+        // Room for one SQE per operation, and for `quiesce`'s cancel and timer.
+        let entries = (limits.ops_max + 2).next_power_of_two().max(8);
         let mut ring = Ring::new(
             entries,
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN,
@@ -119,16 +172,126 @@ impl UringIo {
             addr_len: 0,
             probe_fd: -1,
             ts: timespec::default(),
+            wake_count: 0,
         };
         Ok(UringIo {
-            ring,
+            ring: ManuallyDrop::new(ring),
             limits,
             bufs,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
+            in_flight: 0,
+            quiet_ts: Box::new(timespec {
+                sec: 0,
+                nsec: 100_000_000,
+            }),
             free: (0..limits.ops_max).rev().collect(),
             files: Vec::new(),
+            wake_fd: -1,
             measure_segments: false,
         })
+    }
+
+    /// Cancel every operation in flight and reap it, so the kernel touches
+    /// no buffer or slot afterwards. Completions are discarded. True once
+    /// nothing is in flight; false if the ring fails or something has not
+    /// ended within five seconds (a zero-copy send whose data the peer never
+    /// acknowledges can hold its buffer that long). Dropping calls this.
+    pub fn quiesce(&mut self) -> bool {
+        if self.in_flight == 0 {
+            return true;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Operations of several steps do not start their next step.
+        for s in self.slots.iter_mut() {
+            s.cancel_requested = true;
+        }
+        // Each round cancels every operation still in flight by its own
+        // identity, then waits for one completion or 100 ms and reaps what
+        // came, so operations of several steps advance as they normally do.
+        let mut timing = false;
+        let mut out = Completions::new(8);
+        while self.in_flight > 0 {
+            if std::time::Instant::now() > deadline {
+                return false;
+            }
+            for k in 0..self.slots.len() {
+                let s = &self.slots[k];
+                let opcode = match s.state {
+                    // A close is never cancelled, and a zero-copy send whose
+                    // result is in only waits for its notification.
+                    State::Free | State::FileClose | State::ConnectRelease | State::AwaitNotif => {
+                        continue
+                    }
+                    State::Timer => IORING_OP_TIMEOUT_REMOVE,
+                    _ => IORING_OP_ASYNC_CANCEL,
+                };
+                let cancel = io_uring_sqe {
+                    opcode,
+                    fd: -1,
+                    addr: k as u64 | s.phase,
+                    user_data: QUIESCE,
+                    ..Default::default()
+                };
+                if !self.push_flushing(cancel) {
+                    return false;
+                }
+            }
+            if !timing {
+                let timer = io_uring_sqe {
+                    opcode: IORING_OP_TIMEOUT,
+                    addr: &*self.quiet_ts as *const timespec as u64,
+                    len: 1,
+                    user_data: QUIESCE | 1,
+                    ..Default::default()
+                };
+                if !self.push_flushing(timer) {
+                    return false;
+                }
+                timing = true;
+            }
+            if self.ring.enter(1).is_err() {
+                return false;
+            }
+            while let Some(c) = self.reap() {
+                match c.user_data {
+                    QUIESCE => {}
+                    t if t == QUIESCE | 1 => timing = false,
+                    _ => {
+                        self.on_cqe(c, &mut out);
+                        while out.pop().is_some() {}
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Everything the kernel may still read or write, given up for good
+    /// because it may still be in use.
+    fn leak(&mut self) {
+        Box::leak(core::mem::take(&mut self.slots));
+        Box::leak(core::mem::take(&mut self.bufs));
+        Box::leak(core::mem::take(&mut self.quiet_ts));
+        core::mem::forget(core::mem::take(&mut self.files));
+    }
+
+    /// Push for `quiesce`, which must not panic: if the queue is full, hand
+    /// it to the kernel and try once more. False if that fails.
+    fn push_flushing(&mut self, sqe: io_uring_sqe) -> bool {
+        let pushed = self.ring.push(sqe).is_ok()
+            || (self.ring.enter(0).is_ok() && self.ring.push(sqe).is_ok());
+        self.in_flight += pushed as u32;
+        pushed
+    }
+
+    /// Take one completion, keeping `in_flight` exact.
+    fn reap(&mut self) -> Option<io_uring_cqe> {
+        let c = self.ring.pop()?;
+        self.in_flight -= 1;
+        if c.flags & IORING_CQE_F_MORE != 0 {
+            self.in_flight += 1;
+        }
+        Some(c)
     }
 
     /// `io_uring_enter` calls made so far.
@@ -155,5 +318,6 @@ impl UringIo {
         self.ring
             .push(sqe)
             .expect("submission queue sized for ops_max");
+        self.in_flight += 1;
     }
 }

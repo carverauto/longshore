@@ -31,6 +31,10 @@ impl Io for SimIo {
         Ok(FileId(self.files.len() as u32 - 1))
     }
 
+    fn waker(&mut self) -> Option<std::sync::Arc<dyn crate::io::Wake>> {
+        Some(std::sync::Arc::new(super::SimWaker(self.woken.clone())))
+    }
+
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
         if self
             .socks
