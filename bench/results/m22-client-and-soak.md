@@ -40,8 +40,8 @@ Three AMD cells had one run well below the other two: direct GET on one thread (
 
 ## What the figures say
 
-- Handing requests to the client's I/O threads from other threads costs nothing that these runs can see. With the same work asked of both, the client is within 4% of the store driven directly in every cell, and above it in most.
-- The client's default upload is slower than `s3_uring put` only because it sends a checksum. Plain PUT with a checksum is 16.2 GB/s through the client and 16.8 direct on Graviton4, and 13.6 against 13.8 on AMD. Over HTTPS the checksum costs 16% to 18% where the core is the limit.
+- Handing requests to the client's I/O threads from other threads costs nothing that these runs can see. With the same work asked of both, the client is never more than 4% below the store driven directly and is up to 7% above it.
+- The client's default upload is slower than `s3_uring put` only because it sends a checksum. Plain PUT with a checksum is 16.2 GB/s through the client and 16.8 direct on Graviton4, and 13.6 against 13.8 on AMD. Over HTTPS the checksum costs 15% to 18% where the core is the limit.
 - One I/O thread fills the Graviton4 card with plain PUT when checksums are off (37.6 GB/s). Eight I/O threads reach 31.1 GB/s for HTTPS PUT with checksums and 37.6 without, 26.7 for GET and 18.0 for HTTPS GET.
 - On AMD, four I/O threads reach the same 24 to 25 GB/s over HTTPS that one thread reaches over plain HTTP. That is 190 to 200 Gbit/s on a 200 Gbit/s card.
 
@@ -60,9 +60,9 @@ On the Graviton4 instance: four I/O threads with 64 connections each, four calle
 | Objects stored | 3,365,488 |
 | Operations that returned an error to the caller | 0 |
 | Throughput, whole run | 15.7 GB/s |
-| Throughput per 30 s window | 13.0 to 16.5 GB/s, median 16.2. The ten windows with a 5 s packet drop are the ten lowest, 13.0 to 13.6 |
-| Open file descriptors, sampled every 30 s | 16 at every sample |
-| Resident memory, sampled every 30 s | 6,151 MB at every sample |
+| Throughput per 30 s window | 13.0 to 16.5 GB/s, median 16.2. The ten windows with a 5 s packet drop are the ten lowest, 13.0 to 13.2 |
+| Open file descriptors, sampled every 30 s | 16 at 58 of 60 samples, 17 and 18 at the other two, with no growth |
+| Resident memory, sampled every 30 s | 6,151 MB at 58 samples and 6,152 MB at two |
 | Credentials adopted from the file | 4, one per I/O thread. No reload failed |
 
 The per-window samples are in `m22-soak-progress.txt` and the time of each injected failure in `m22-soak-faults.txt`.

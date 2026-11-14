@@ -24,5 +24,3 @@ The question was how large an object has to be before the fixed cost of a reques
 ## What this does not show
 
 - One instance type and one run of the sweep. The AMD instance was not measured.
-- 512 connections with 1 MiB and 4 MiB objects were tried once for plain PUT and the runs failed. S3 limits a prefix to 3,500 PUT requests per second, and 512 connections of 1 MiB objects would exceed that, but the failure was not investigated and that cause is not confirmed.
-- Reads of a small range from a large object were measured once in the same session and are not in the file: about 5,000 reads of 4 KiB per second on 128 connections, 26 ms each.

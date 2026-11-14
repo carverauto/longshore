@@ -246,12 +246,13 @@ per core. Medians of three runs (`m22-client-and-soak.md`):
 | HTTPS GET | 2.7 | 10.1 | 18.0 | 5.3 | 9.5 | 15.0 |
 
 The client sends a checksum with every upload unless told not to. With the
-same work asked of both, it is within 4% of the store driven directly in
-every cell of that file. One I/O thread with checksums off stores 37.6 GB/s
-over plain HTTP on the Graviton4 instance and 25.0 on the AMD one. In a 30
-minute HTTPS upload on four I/O threads, with every connection to S3 closed
-every 40 seconds and all traffic to it dropped for 5 seconds every 160, the
-client stored 3.4 million objects and returned no error to its callers.
+same work asked of both, it is never more than 4% below the store driven
+directly and is up to 7% above it. One I/O thread with checksums off stores
+37.6 GB/s over plain HTTP on the Graviton4 instance and 25.0 on the AMD one.
+In a 30 minute HTTPS upload on four I/O threads, with every connection to S3
+closed every 40 seconds and all traffic to it dropped for 5 seconds every
+160, the client stored 3.4 million objects and returned no error to its
+callers.
 
 Object size matters below about 4 MiB. On 128 connections one thread
 stores 2.9 GB/s of 1 MiB objects and 13.9 GB/s of 64 MiB objects, because
