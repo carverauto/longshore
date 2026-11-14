@@ -51,9 +51,9 @@ On the Graviton4 instance: four I/O threads with 64 connections each, four calle
 
 - every 40 s closed every TCP connection to port 443 with `ss -K` (43 times),
 - every fourth time also dropped all outgoing packets to port 443 for 5 s with an `iptables` rule (10 times),
-- every 120 s rewrote the client's credentials file from the instance role. The client reread the file every 60 s.
+- every 120 s rewrote the client's credentials file from the instance role. The client reread the file every 60 s. These two periods are settings of the run, not recorded in the files.
 
-`ss -K` was checked afterwards on the same machine: it aborts an open connection to S3.
+That `ss -K` aborts an open connection to S3 was checked on the same machine, done once by hand afterwards, with no output kept.
 
 | | |
 |---|---|

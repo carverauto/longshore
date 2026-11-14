@@ -16,7 +16,7 @@ The question was how large an object has to be before the fixed cost of a reques
 
 ## What the figures say
 
-- Plain PUT is never bound by the client here. Its thread is a quarter busy at every size. With 128 requests in flight, the time one request takes fits 32 ms plus 9.1 ms per MiB. The 32 ms is spent waiting for S3, and it is 78% of a 1 MiB request, 64% of 2 MiB, 47% of 4 MiB, 31% of 8 MiB, 18% of 16 MiB, 10% of 32 MiB and 5% of 64 MiB.
+- Plain PUT is never bound by the client here. Its thread is a quarter busy at every size. With 128 requests in flight, the time one request takes fits 32 ms plus 9.1 ms per MiB. The 32 ms is spent waiting for S3. As a share of the fitted request time it is 78% of a 1 MiB request, 64% of 2 MiB, 47% of 4 MiB, 31% of 8 MiB, 18% of 16 MiB, 10% of 32 MiB and 5% of 64 MiB. The measured 1 MiB median request takes 46 ms where the fit gives 41.
 - That fixed time costs throughput per connection and no client CPU. More connections buy the throughput back: milestone 20 reaches 36.7 GB/s with 8 MiB objects on 640 connections.
 - GET and HTTPS PUT are bound by the client's core from 2 to 4 MiB up, at about 4.8 and 4.9 GB/s. Below that the per-request wait is the limit, as for plain PUT.
 - At 64 MiB, GET and HTTPS PUT are slower than at 32 MiB by 5% and 11%. The cause was not looked for.

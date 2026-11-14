@@ -250,14 +250,14 @@ same work asked of both, it is never more than 4% below the store driven
 directly and is up to 7% above it. One I/O thread with checksums off stores
 37.6 GB/s over plain HTTP on the Graviton4 instance and 25.0 on the AMD one.
 In a 30 minute HTTPS upload on four I/O threads, with every connection to S3
-closed every 40 seconds and all traffic to it dropped for 5 seconds every
-160, the client stored 3.4 million objects and returned no error to its
-callers.
+closed every 40 seconds and all traffic to it dropped for 5 seconds after
+every fourth of those, the client stored 3.4 million objects and returned no
+error to its callers.
 
 Object size matters below about 4 MiB. On 128 connections one thread
-stores 2.9 GB/s of 1 MiB objects and 13.9 GB/s of 64 MiB objects, because
-each request waits about 32 ms for S3 whatever its size
-(`m21-object-sizes.md`).
+stores 2.9 GB/s of 1 MiB objects and 13.9 GB/s of 64 MiB objects. The time
+a request takes fits about 32 ms plus 9 ms per MiB, so the fixed 32 ms
+dominates small objects (`m21-object-sizes.md`).
 
 ### Compared with other clients
 

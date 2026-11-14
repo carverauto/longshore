@@ -127,7 +127,7 @@ Each process is a complete client pinned to its own CPU, sharing nothing with th
 - Throughput grows with the number of clients until the card is full. Eight clients upload over HTTPS at 34.5 to 36.2 GB/s on Graviton4, which is the card, against 5.0 for one.
 - Whole-machine cores divided by clients run from 1.05 to 2.35 across the rows, counting kernel network work on other cores, and 1.5 to 1.9 for the Graviton4 HTTPS PUT rows with four and eight clients.
 - On the AMD instance four clients fill the 200 Gbit/s card over HTTPS at 24.0 GB/s. Eight gave 16.7 GB/s in one run, below the 24.0 GB/s of four, with very uneven rates per client: four at 3.7 to 3.8 GB/s and four at 0.2 to 0.5. The cause was not looked for. Three give 21.8 to 22.1.
-- These are separate processes. A client that runs several I/O threads itself is planned and not built.
+- These are separate processes. A client that runs several I/O threads itself is measured in m22-client-and-soak.md.
 
 ## Other clients on the same machines
 
