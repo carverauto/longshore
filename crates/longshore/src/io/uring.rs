@@ -17,6 +17,10 @@ use std::net::{SocketAddr, TcpListener};
 use std::os::fd::IntoRawFd;
 
 mod backend;
+#[cfg(feature = "fault-injection")]
+mod fault;
+#[cfg(feature = "fault-injection")]
+pub use fault::Fault;
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -92,6 +96,9 @@ pub struct UringIo {
     /// The eventfd behind `Io::waker`, or -1 before it is asked for.
     wake_fd: i32,
     measure_segments: bool,
+    /// The next `tick` reports a failure. See [`Fault::TickFails`].
+    #[cfg(feature = "fault-injection")]
+    fail_tick: bool,
 }
 
 /// Marks the CQE of the socket-creation half of a connect.
@@ -188,6 +195,8 @@ impl UringIo {
             files: Vec::new(),
             wake_fd: -1,
             measure_segments: false,
+            #[cfg(feature = "fault-injection")]
+            fail_tick: false,
         })
     }
 
