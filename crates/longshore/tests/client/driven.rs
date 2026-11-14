@@ -162,3 +162,31 @@ fn work_spreads_over_the_lanes_and_a_buffer_stays_on_its_own() {
     };
     assert_eq!((held(&r.lanes[0]), held(&r.lanes[1])), (2, 2));
 }
+
+#[test]
+fn erases_built_together_still_go_to_the_least_busy_lane_when_sent() {
+    let mut r = rig(2);
+    // Built before any is sent, when both lanes are equally idle.
+    let mut pending: Vec<_> = (0..4)
+        .map(|i| Box::pin(r.client.erase(&format!("e{i}"))))
+        .collect();
+    let mut cx = Context::from_waker(Waker::noop());
+    for _ in 0..100_000 {
+        pending.retain_mut(|p| match p.as_mut().poll(&mut cx) {
+            Poll::Ready(result) => {
+                assert_eq!(result, Ok(()));
+                false
+            }
+            Poll::Pending => true,
+        });
+        if pending.is_empty() {
+            break;
+        }
+        r.pump();
+    }
+    assert!(pending.is_empty());
+    // Each lane's store connected to its server, so each ran some of them.
+    for (n, l) in r.lanes.iter().enumerate() {
+        assert!(l.worker.store().connects() > 0, "lane {n} ran none of the erases");
+    }
+}

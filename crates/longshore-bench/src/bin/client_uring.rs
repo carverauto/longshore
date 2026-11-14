@@ -209,12 +209,12 @@ fn main() {
     );
     // A ring dropped with operations in flight first stops them all, well
     // inside quiesce's five-second bound: idle receives on connected
-    // sockets, timers an hour away and the wake-up read, over 200 at once,
-    // and every time.
+    // sockets, timers an hour away, a connect to an address nothing answers
+    // and the wake-up read, over 200 at once, and every time.
     {
         use longshore::io::{Op, Token};
         const SOCKS: u32 = 100;
-        const REPEATS: u32 = 10;
+        const REPEATS: u32 = 50;
         let listener = std::net::TcpListener::bind((loopback, 0)).expect("listener");
         let peer = listener.local_addr().unwrap();
         let (accepted, round_accepted) = channel();
@@ -230,12 +230,12 @@ fn main() {
         });
         for round in 0..REPEATS {
             let limits = Limits {
-                sockets_max: SOCKS,
+                sockets_max: SOCKS + 1,
                 buffers: 1,
                 buffer_size: 8192,
                 small_buffers: SOCKS,
                 small_buffer_size: 64,
-                ops_max: 2 * SOCKS + 1,
+                ops_max: 2 * SOCKS + 2,
             };
             let mut io = UringIo::new(limits).expect("ring");
             let _wake = io.waker().expect("waker");
@@ -260,9 +260,15 @@ fn main() {
                 let hour = Op::Timeout { nanos: 3_600 * 1_000_000_000 };
                 io.submit(Token(2000 + n as u64), hour).unwrap();
             }
+            // TEST-NET-1: routed nowhere, so the connect waits.
+            let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
+            io.submit(Token(9998), Op::Connect { sock: Sock(SOCKS), addr: nowhere }).unwrap();
             io.submit(Token(9999), Op::AwaitWake).unwrap();
             io.tick(false, &mut out).expect("submit");
-            assert!(out.is_empty(), "round {round}: an idle operation ended early");
+            // A host with no route at all refuses the connect at once.
+            while let Some(c) = out.pop() {
+                assert_eq!(c.token, Token(9998), "round {round}: an idle operation ended early");
+            }
             let started = std::time::Instant::now();
             assert!(io.quiesce(), "round {round}: operations in flight after quiesce");
             let took = started.elapsed();
@@ -273,7 +279,7 @@ fn main() {
         acceptor.join().expect("acceptor");
     }
     println!(
-        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, threads stopped on drop, 201 operations quiesced 10 times",
+        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, threads stopped on drop, over 200 operations quiesced 50 times",
         CALLERS * ROUNDS
     );
 

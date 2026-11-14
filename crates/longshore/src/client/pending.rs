@@ -48,7 +48,7 @@ impl<R> Output for (Result<R, Error>, Buffer) {
 pub struct Pending<T: Output> {
     lane: Arc<Lane>,
     /// For an operation with no lent buffer: every lane, so that it is sent
-    /// to one still open.
+    /// to the open one with the fewest in flight when it is sent.
     lanes: Option<Arc<[Arc<Lane>]>>,
     alive: Alive,
     stage: Stage,
@@ -168,15 +168,17 @@ impl<T: Output> Pending<T> {
             return Poll::Ready(());
         }
         loop {
+            if let Some(lanes) = &self.lanes {
+                let pick = least_busy(lanes);
+                if !Arc::ptr_eq(pick, &self.lane) {
+                    self.lane.ops.forget(self.waiter);
+                    self.lane = pick.clone();
+                }
+            }
             if !open(&self.lane) {
                 self.lane.ops.forget(self.waiter);
-                match self.lanes.as_deref().map(least_busy).filter(|l| open(l)) {
-                    Some(lane) => self.lane = lane.clone(),
-                    None => {
-                        self.stage = Stage::Early(Error::Closed);
-                        return Poll::Ready(());
-                    }
-                }
+                self.stage = Stage::Early(Error::Closed);
+                return Poll::Ready(());
             }
             match self.lane.ops.poll_take(self.waiter, cx) {
                 Poll::Ready(op) if !open(&self.lane) => self.lane.ops.give(op),

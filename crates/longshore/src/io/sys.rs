@@ -41,13 +41,9 @@ pub const IORING_REGISTER_FILES_UPDATE: c_uint = 6; // 5.1
 // Opcodes.
 pub const IORING_OP_NOP: u8 = 0;
 pub const IORING_OP_TIMEOUT: u8 = 11;
+pub const IORING_OP_TIMEOUT_REMOVE: u8 = 12;
 pub const IORING_OP_ACCEPT: u8 = 13;
 pub const IORING_OP_ASYNC_CANCEL: u8 = 14;
-/// Cancel every request that matches, not only the first.
-pub const IORING_ASYNC_CANCEL_ALL: u32 = 1 << 0;
-/// Match any request, whatever its user data. Alone it cancels one request;
-/// with `IORING_ASYNC_CANCEL_ALL` it cancels every request in the ring.
-pub const IORING_ASYNC_CANCEL_ANY: u32 = 1 << 2;
 pub const IORING_OP_CONNECT: u8 = 16;
 pub const IORING_OP_OPENAT: u8 = 18;
 pub const IORING_OP_CLOSE: u8 = 19;

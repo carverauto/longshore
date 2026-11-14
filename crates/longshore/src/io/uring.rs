@@ -205,37 +205,39 @@ impl UringIo {
         for s in self.slots.iter_mut() {
             s.cancel_requested = true;
         }
-        let cancel = io_uring_sqe {
-            opcode: IORING_OP_ASYNC_CANCEL,
-            fd: -1,
-            op_flags: IORING_ASYNC_CANCEL_ALL | IORING_ASYNC_CANCEL_ANY,
-            user_data: QUIESCE,
-            ..Default::default()
-        };
-        // One cancel is in flight at a time. Another follows whenever one
-        // ends having cancelled something with work still in flight, and
-        // whenever the timer expires (Linux 6.8 can pass over a timer on a
-        // given cancel). A cancel also ends the timer if it is running, so
-        // that one is not counted as work.
-        let mut cancelling = true;
-        let mut cancel_live = false;
-        let mut cancel_ends_timer = false;
+        // Each round cancels every operation still in flight by its own
+        // identity, then waits for one completion or 100 ms and reaps what
+        // came, so operations of several steps advance as they normally do.
         let mut timing = false;
         let mut out = Completions::new(8);
         while self.in_flight > 0 {
             if std::time::Instant::now() > deadline {
                 return false;
             }
-            if cancelling && !cancel_live {
-                if !self.try_push(cancel) {
+            for k in 0..self.slots.len() {
+                let s = &self.slots[k];
+                let opcode = match s.state {
+                    // A close is never cancelled, and a zero-copy send whose
+                    // result is in only waits for its notification.
+                    State::Free
+                    | State::FileClose
+                    | State::ConnectRelease
+                    | State::AwaitNotif => continue,
+                    State::Timer => IORING_OP_TIMEOUT_REMOVE,
+                    _ => IORING_OP_ASYNC_CANCEL,
+                };
+                let cancel = io_uring_sqe {
+                    opcode,
+                    fd: -1,
+                    addr: k as u64 | s.phase,
+                    user_data: QUIESCE,
+                    ..Default::default()
+                };
+                if !self.push_flushing(cancel) {
                     return false;
                 }
-                (cancelling, cancel_live, cancel_ends_timer) = (false, true, timing);
             }
             if !timing {
-                if self.ring.pending() > 0 && self.ring.enter(0).is_err() {
-                    return false;
-                }
                 let timer = io_uring_sqe {
                     opcode: IORING_OP_TIMEOUT,
                     addr: &*self.quiet_ts as *const timespec as u64,
@@ -243,7 +245,7 @@ impl UringIo {
                     user_data: QUIESCE | 1,
                     ..Default::default()
                 };
-                if !self.try_push(timer) {
+                if !self.push_flushing(timer) {
                     return false;
                 }
                 timing = true;
@@ -253,14 +255,8 @@ impl UringIo {
             }
             while let Some(c) = self.reap() {
                 match c.user_data {
-                    QUIESCE => {
-                        cancel_live = false;
-                        cancelling |= c.res > cancel_ends_timer as i32;
-                    }
-                    t if t == QUIESCE | 1 => {
-                        timing = false;
-                        cancelling |= c.res == -ETIME;
-                    }
+                    QUIESCE => {}
+                    t if t == QUIESCE | 1 => timing = false,
                     _ => {
                         self.on_cqe(c, &mut out);
                         while out.pop().is_some() {}
@@ -280,9 +276,11 @@ impl UringIo {
         core::mem::forget(core::mem::take(&mut self.files));
     }
 
-    /// Push for `quiesce`, which must not panic: false if the queue is full.
-    fn try_push(&mut self, sqe: io_uring_sqe) -> bool {
-        let pushed = self.ring.push(sqe).is_ok();
+    /// Push for `quiesce`, which must not panic: if the queue is full, hand
+    /// it to the kernel and try once more. False if that fails.
+    fn push_flushing(&mut self, sqe: io_uring_sqe) -> bool {
+        let pushed = self.ring.push(sqe).is_ok()
+            || (self.ring.enter(0).is_ok() && self.ring.push(sqe).is_ok());
         self.in_flight += pushed as u32;
         pushed
     }
