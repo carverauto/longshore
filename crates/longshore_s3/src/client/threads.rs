@@ -277,6 +277,8 @@ impl Drop for Threads {
                 key_len: 0,
                 buf: 0,
                 len: 0,
+                upload: None,
+                number: 0,
             });
             lane.wake.wake();
         }

@@ -45,6 +45,7 @@
 
 mod buffer;
 mod lane;
+mod multipart;
 mod pending;
 mod sync;
 mod threads;
@@ -68,8 +69,11 @@ use std::sync::Arc;
 pub enum Error {
     /// The key is empty, or longer than [`KEY_MAX`] or than the store allows.
     BadKey,
-    /// The byte range ends before it starts.
+    /// The byte range ends before it starts, or the parts of an upload are
+    /// not in ascending order.
     BadRange,
+    /// The part number is not 1 to 10000.
+    BadPart,
     /// More bytes than the buffer holds.
     TooLong,
     /// The store refused or could not be reached. Retries have been made.
@@ -198,7 +202,7 @@ impl Client {
         body: Buffer,
         len: usize,
     ) -> Pending<(Result<(), Error>, Buffer)> {
-        self.store_as(key, body, len, false, |f| match f {
+        self.store_as(key, body, len, false, |f, _| match f {
             Finished::Outcome(Outcome::Stored) => Ok(()),
             other => Err(error_of(other)),
         })
@@ -212,7 +216,7 @@ impl Client {
         body: Buffer,
         len: usize,
     ) -> Pending<(Result<bool, Error>, Buffer)> {
-        self.store_as(key, body, len, true, |f| match f {
+        self.store_as(key, body, len, true, |f, _| match f {
             Finished::Outcome(Outcome::Stored) => Ok(true),
             Finished::Outcome(Outcome::AlreadyExists { .. }) => Ok(false),
             other => Err(error_of(other)),
@@ -225,7 +229,7 @@ impl Client {
         body: Buffer,
         len: usize,
         no_clobber: bool,
-        map: fn(Finished) -> Result<T, Error>,
+        map: fn(Finished, u32) -> Result<T, Error>,
     ) -> Pending<(Result<T, Error>, Buffer)> {
         let too_long = len > body.lane.buf_size;
         let (lane, buf, alive) = body.into_parts();
@@ -276,7 +280,7 @@ impl Client {
             Some(buf),
             0,
             None,
-            |f| match f {
+            |f, _| match f {
                 Finished::Outcome(Outcome::Fetched { len, .. }) => Ok(Some(len as usize)),
                 Finished::Outcome(Outcome::NotFound) => Ok(None),
                 other => Err(error_of(other)),
@@ -286,22 +290,23 @@ impl Client {
 
     /// Erase the object under `key`. Erasing a key that is not there succeeds.
     pub fn erase(&self, key: &str) -> Pending<Result<(), Error>> {
-        Pending::new(
-            (
-                self.lanes[least_busy(&self.lanes)].clone(),
-                self.alive.clone(),
-            ),
-            key,
-            Kind::Erase,
-            None,
-            0,
-            None,
-            |f| match f {
-                Finished::Outcome(Outcome::Erased | Outcome::NotFound) => Ok(()),
-                other => Err(error_of(other)),
-            },
-        )
-        .on_any(self.lanes.clone())
+        self.unbuffered(key, Kind::Erase, |f, _| match f {
+            Finished::Outcome(Outcome::Erased | Outcome::NotFound) => Ok(()),
+            other => Err(error_of(other)),
+        })
+    }
+
+    /// An operation that uses no lent buffer, so it runs on whichever I/O
+    /// thread is open and least busy when it is sent.
+    fn unbuffered<T>(
+        &self,
+        key: &str,
+        kind: Kind,
+        map: fn(Finished, u32) -> Result<T, Error>,
+    ) -> Pending<Result<T, Error>> {
+        let first = self.lanes[least_busy(&self.lanes)].clone();
+        Pending::new((first, self.alive.clone()), key, kind, None, 0, None, map)
+            .on_any(self.lanes.clone())
     }
 }
 
@@ -311,6 +316,7 @@ fn error_of(f: Finished) -> Error {
         Finished::Outcome(_) => Error::Unexpected,
         Finished::Rejected(SubmitError::BadKey) => Error::BadKey,
         Finished::Rejected(SubmitError::BadRange) => Error::BadRange,
+        Finished::Rejected(SubmitError::BadPart) => Error::BadPart,
         Finished::Rejected(_) => Error::Unexpected,
         Finished::Closed => Error::Closed,
     }
@@ -328,6 +334,8 @@ fn request(op: u32, key: &str, kind: Kind, buf: u32, len: u32) -> Result<Request
         key_len: key.len() as u16,
         buf,
         len,
+        upload: None,
+        number: 0,
     };
     r.key[..key.len()].copy_from_slice(key.as_bytes());
     Ok(r)

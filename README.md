@@ -22,7 +22,7 @@ is meant to become part of a larger project.
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | Bucket addressing | The bucket goes in the host name by default, or in the path when configured, as self-hosted S3-compatible stores commonly expect. Both forms run against Linode Object Storage. Not yet run against MinIO or Ceph |
-| Shareable client | `longshore::client`: a handle usable from any thread over one or more independent I/O threads, with async and blocking calls and lent buffers. Store, conditional store, fetch, ranged fetch and erase. Run on Linux 6.8 and 6.14 against the in-tree server, and measured against Amazon S3 |
+| Shareable client | `longshore::client`: a handle usable from any thread over one or more independent I/O threads, with async and blocking calls and lent buffers. Store, conditional store, fetch, ranged fetch, erase and multipart upload. Run on Linux 6.8 and 6.14 against the in-tree server, and measured against Amazon S3 |
 | IPv4 and IPv6 | The resolver asks for A records, AAAA records or both, and prefers the family the configuration names. When connections to that family fail and the name has addresses in the other, it uses the other. Run over IPv6 against Linode Object Storage |
 | Large-segment addresses | Optional, off by default. A store's name can resolve to addresses whose connections get different TCP segment sizes, and on a network card that does not segment in hardware the small ones cost several times more CPU per byte. With the setting on, the client measures each new connection, keeps its connections on the addresses with large segments, and asks DNS again sooner when every address is small. It can be switched while the store runs. Works on Linux 6.1 and later |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
@@ -182,9 +182,16 @@ assert_eq!(&body.as_slice()[..5], b"hello");
 Every operation returns a value that is a `Future` and also has a blocking
 `wait`, so the same calls work under any async executor and from plain
 threads. When no buffer or operation slot is free a call waits. It has
-store, conditional store, fetch, ranged fetch and erase so far. Listing,
-`stat`, multipart and the other store operations are on the low-level API
-only. `client::Worker` is one I/O thread's logic without the thread, for a
+store, conditional store, fetch, ranged fetch, erase and multipart upload
+so far. Listing, `stat` and the other store operations are on the
+low-level API only.
+
+An object larger than one buffer goes up in parts. `upload_begin` returns
+an id, each `upload_part` stores one buffer under a part number and
+returns what completing needs, and `upload_complete` joins them. Parts are
+separate operations, so several can be in flight at once and on different
+I/O threads. The caller holds the id and the parts, and an upload that is
+neither completed nor aborted keeps its parts in the store. `client::Worker` is one I/O thread's logic without the thread, for a
 caller that already runs an event loop per core.
 
 Settings on the builder cover what a long-running program needs:

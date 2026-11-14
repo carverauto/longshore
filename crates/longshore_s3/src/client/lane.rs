@@ -8,6 +8,7 @@
 //! it is allocated when the lane is built.
 
 use super::sync::{current, park, AtomicBool, AtomicU32, AtomicU64, Condvar, Mutex, Thread};
+use crate::multipart::UploadId;
 use crate::s3::{Checksum, Outcome, SubmitError};
 use std::collections::VecDeque;
 use std::future::Future;
@@ -42,6 +43,9 @@ pub(super) struct Request {
     /// The lent buffer the operation uses, as an index into the lane's.
     pub buf: u32,
     pub len: u32,
+    /// The multipart upload the request belongs to, and its part number.
+    pub upload: Option<UploadId>,
+    pub number: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +58,17 @@ pub(super) enum Kind {
         range: Option<(u64, u64)>,
     },
     Erase,
+    /// Begin a multipart upload, asking the store to keep a checksum of
+    /// the whole object or not.
+    Begin {
+        checksums: bool,
+    },
+    Part {
+        checksum: Checksum,
+    },
+    /// The lent buffer holds the list of parts.
+    Complete,
+    Abort,
     /// Finish what is in progress, then stop.
     Shutdown,
 }
