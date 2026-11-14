@@ -105,6 +105,7 @@ fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
             buf: TOKEN_BUF,
             reread_ns: REREAD_MS * MS,
             token: 1 << 51,
+            validate: longshore::store::s3::Validate::List(longshore::store::s3::KeyPrefix::EMPTY),
         }),
         requests_max: 4,
         attempts_max,

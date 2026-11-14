@@ -58,3 +58,31 @@ fn ordinary_settings_pass_the_checks() {
     b.nameservers.push("192.0.2.54:53".parse().unwrap());
     assert!(!refused(b));
 }
+
+#[test]
+fn a_credentials_file_must_be_an_absolute_path() {
+    let mut b = settings("bucket.s3.example.com");
+    b.credentials_file = Some("relative/credentials".into());
+    assert!(refused(b));
+    let mut b = settings("bucket.s3.example.com");
+    b.credentials_file = Some("/etc/longshore/credentials".into());
+    assert!(!refused(b));
+}
+
+#[test]
+fn a_bucket_in_the_path_must_be_a_bucket_name() {
+    for bad in [
+        "ab",
+        "Has-Capitals",
+        "with space",
+        "with/slash",
+        &"x".repeat(64),
+    ] {
+        let mut b = settings("s3.example.com");
+        b.bucket_in_path = Some(bad.into());
+        assert!(refused(b), "{bad:?}");
+    }
+    let mut b = settings("s3.example.com");
+    b.bucket_in_path = Some("my.bucket-1".into());
+    assert!(!refused(b));
+}

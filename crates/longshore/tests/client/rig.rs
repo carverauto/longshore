@@ -54,7 +54,9 @@ pub fn rig_with(lanes: usize, operations: u32) -> Rig {
                 buffer_size: BUF,
                 objects_max: 8,
                 token_base: 2 << 40,
-                checksum: None,
+                checksum: Some(|body: &[u8]| {
+                    longshore::checksum::crc64_header_value(longshore::checksum::crc64_nvme(body))
+                }),
             });
             server.start(&mut io, ADDR).unwrap();
             let layout = Layout {

@@ -106,9 +106,10 @@ enum State {
 }
 
 const TARGET_MAX: usize = 256;
-/// A listing's request target: one that fitted before, and a continuation
-/// token for a cursor of up to `TARGET_MAX` bytes.
-const LIST_TARGET_MAX: usize = TARGET_MAX + b"continuation-token=t&".len() + 2 * TARGET_MAX;
+/// A listing's request target: a prefix of up to `TARGET_MAX` bytes with
+/// every byte percent-encoded, and a continuation token for a cursor of up
+/// to `TARGET_MAX` bytes.
+const LIST_TARGET_MAX: usize = 4 * TARGET_MAX + b"continuation-token=t&".len() + 2 * TARGET_MAX;
 /// Room for the headers that describe an object: content type and metadata.
 const DESCRIBING_MAX: usize = 192;
 
@@ -178,6 +179,8 @@ pub struct Server {
     uploads_begun: u32,
     /// A batch erase refuses keys that start with this, if it is not empty.
     erase_denied: &'static str,
+    /// A listing is refused unless its prefix starts with this.
+    list_only_under: &'static str,
     /// The bucket requests name in their path, if the store is addressed
     /// that way. See `serve_bucket_in_path`.
     bucket: &'static str,
@@ -281,6 +284,7 @@ impl Server {
             uploads: [0; multipart::UPLOADS_MAX],
             uploads_begun: 0,
             erase_denied: "",
+            list_only_under: "",
             bucket: "",
             script: [Behavior::Normal; SCRIPT_MAX],
             script_head: 0,
@@ -313,6 +317,12 @@ impl Server {
     /// so it finds nothing.
     pub fn serve_bucket_in_path(&mut self, bucket: &'static str) {
         self.bucket = bucket;
+    }
+
+    /// Refuse a listing whose prefix does not start with `prefix`, as a
+    /// policy that permits listing only part of a bucket does.
+    pub fn allow_listing_only_under(&mut self, prefix: &'static str) {
+        self.list_only_under = prefix;
     }
 
     /// Queue a behavior for an upcoming request; unscripted requests are `Normal`.

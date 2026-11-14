@@ -7,6 +7,7 @@
 - [ ] 1.6 A client driven by the caller's event loop: readable descriptor, non-blocking `turn`, tests under the simulator and on a real kernel with a caller that only polls
 - [x] 1.7 Bucket in the path as a store setting (`Config::bucket_in_path`), run against Linode Object Storage in both forms
 - [ ] 1.8 Run path addressing against a self-hosted store that requires it, MinIO or Ceph
+- [x] 1.9 Builder settings for a credentials file that is reread, the bucket in the path, and checksums on or off; real-kernel check of each
 
 ## 2. Operations
 - [x] 2.1 Async and blocking forms of store, conditional store, fetch, ranged fetch and erase on the lending path

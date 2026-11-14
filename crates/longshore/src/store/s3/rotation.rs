@@ -44,11 +44,22 @@ impl S3 {
             self.provider = again;
             return;
         }
-        // Prove the new credentials work before any request depends on them.
         self.creds[1 - self.active] = candidate;
+        let prefix = match f.validate {
+            Validate::List(prefix) => prefix,
+            // Adopted as they are, with nothing to prove them.
+            Validate::Nothing => {
+                self.active = 1 - self.active;
+                self.credential_rotations += 1;
+                self.provider = again;
+                return;
+            }
+        };
+        // Prove the new credentials work before any request depends on them.
         let slot = self.cfg.requests_max as usize;
         self.slots[slot].candidate = true;
-        match self.list_in_slot(io, slot, 0, "", submit::ListFrom::Start, 1, None, f.buf) {
+        let from = submit::ListFrom::Start;
+        match self.list_in_slot(io, slot, 0, prefix.as_str(), from, 1, None, f.buf) {
             Ok(()) => self.provider = Provider::Validating,
             Err(_) => {
                 self.credential_failures += 1;

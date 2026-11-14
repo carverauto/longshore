@@ -27,7 +27,7 @@ is meant to become part of a larger project.
 | Large-segment addresses | Optional, off by default. A store's name can resolve to addresses whose connections get different TCP segment sizes, and on a network card that does not segment in hardware the small ones cost several times more CPU per byte. With the setting on, the client measures each new connection, keeps its connections on the addresses with large segments, and asks DNS again sooner when every address is small. It can be switched while the store runs. Works on Linux 6.1 and later |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
 | Checksums | CRC-64/NVME for S3, CRC-32C for Google. A fetch is verified when the store returns a checksum, and both stores do |
-| Credentials | Long-lived keys, temporary keys with a session token, or a bearer token. Read from a file and replaced when the file changes, once the store has accepted the new ones |
+| Credentials | Long-lived keys, temporary keys with a session token, or a bearer token. Read from a file and replaced when the file changes, once the store has accepted the new ones unless that check is turned off |
 
 ## How it works
 
@@ -172,6 +172,28 @@ store, conditional store, fetch, ranged fetch and erase so far. Listing,
 `stat`, multipart and the other store operations are on the low-level API
 only. `client::Worker` is one I/O thread's logic without the thread, for a
 caller that already runs an event loop per core.
+
+Settings on the builder cover what a long-running program needs:
+
+- `credentials_file`: a file the client rereads its keys from. Temporary
+  keys expire, and a client that only has the keys it was built with stops
+  working when they do. Each I/O thread rereads the file on its own
+  interval, tries new keys with one request, and adopts them if the store
+  accepts them. That request is a listing of one key, of the whole bucket
+  unless `credentials_validate` names a prefix. Keys that may list only
+  under a prefix need the prefix set, or they are never adopted.
+  `Client::credential_reloads` counts reloads adopted and failed.
+- `bucket_in_path`: the bucket in the path, for stores that expect it there.
+- `checksums`: whether a store sends a CRC-64 of its body. It is on by
+  default and is one more pass over the data. Turning it off affects plain
+  stores only. A conditional store always sends one, because when a retry
+  is refused as already existing, the checksum is how the client tells its
+  own earlier write from another writer's object.
+
+The client is new. Its ordinary path is tested in the simulator and on real
+kernels. What happens when an I/O thread's ring fails is tested only as far
+as the simulator and unit tests can reach, and the client has not been run
+for long periods.
 
 ## Measurements
 
