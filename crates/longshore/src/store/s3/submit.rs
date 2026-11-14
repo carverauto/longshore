@@ -7,6 +7,14 @@
 
 use super::*;
 
+/// A listing's prefix or start key once percent-encoded: a key, or a
+/// [`KeyPrefix`] with every byte encoded.
+const LIST_VALUE_ENCODED_MAX: usize = if KEY_ENCODED_MAX > 3 * KeyPrefix::MAX {
+    KEY_ENCODED_MAX
+} else {
+    3 * KeyPrefix::MAX
+};
+
 /// Where a listing starts.
 #[derive(Clone, Copy)]
 pub(super) enum ListFrom<'a> {
@@ -240,7 +248,7 @@ impl S3 {
             ] {
                 if let Some(value) = value {
                     put(&mut s.path, name.as_bytes())?;
-                    let mut enc = [0u8; KEY_ENCODED_MAX];
+                    let mut enc = [0u8; LIST_VALUE_ENCODED_MAX];
                     let len = uri_encode(value.as_bytes(), true, &mut enc)?;
                     put(&mut s.path, &enc[..len])?;
                 }

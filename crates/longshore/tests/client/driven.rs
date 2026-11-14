@@ -8,6 +8,7 @@
 #[path = "../store/common/mod.rs"]
 mod common;
 mod rig;
+use common::Behavior;
 use longshore::client::{Buffer, Error};
 use rig::*;
 use std::future::Future;
@@ -192,4 +193,20 @@ fn erases_built_together_still_go_to_the_least_busy_lane_when_sent() {
             "lane {n} ran none of the erases"
         );
     }
+}
+
+/// Checksums off covers plain stores only. A conditional store whose first
+/// response is lost is retried and refused as existing, and still reports
+/// that this call stored the object.
+#[test]
+fn a_conditional_store_with_checksums_off_still_knows_its_own_retried_write() {
+    let mut r = rig(1);
+    let client = r.client.clone().with_checksums(false);
+    let mut body = r.buffer();
+    fill(&mut body, 3);
+    let sent = body.as_slice()[..LEN].to_vec();
+    r.lanes[0].server.script(Behavior::ApplyThenClose);
+    let (stored, _body) = r.run(client.store_no_clobber("k", body, LEN));
+    assert_eq!(stored, Ok(true));
+    assert_eq!(r.lanes[0].server.object("/k"), Some(&sent[..]));
 }

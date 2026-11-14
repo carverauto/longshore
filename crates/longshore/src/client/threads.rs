@@ -71,7 +71,10 @@ pub struct Builder {
     pub credentials_validate: Validate,
     /// Send a CRC-64/NVME with every stored body, which the store checks.
     /// On by default. It is one more pass over the body: a plain upload
-    /// from one thread ran at 16 GB/s with it and 37 GB/s without.
+    /// from one thread ran at 16 GB/s with it and 37 GB/s without. Off
+    /// affects plain stores only. [`Client::store_no_clobber`] always sends
+    /// one, since a retry refused because an object exists compares it to
+    /// tell this call's own write from someone else's.
     pub checksums: bool,
     /// HTTPS, verified against the public root certificates.
     pub tls: bool,

@@ -113,6 +113,10 @@ name = "store_creds_sim"
 path = "tests/store/creds_sim.rs"
 
 [[test]]
+name = "store_creds_validate_sim"
+path = "tests/store/creds_validate_sim.rs"
+
+[[test]]
 name = "store_gcs_sim"
 path = "tests/store/gcs_sim.rs"
 

@@ -118,8 +118,9 @@ impl Client {
     }
 
     /// A handle that sends, or does not send, a CRC-64/NVME with every
-    /// stored body. See [`Builder::checksums`]. Other handles to the same
-    /// client are not changed.
+    /// plain stored body. Conditional stores always send one. See
+    /// [`Builder::checksums`]. Other handles to the same client are not
+    /// changed.
     pub fn with_checksums(mut self, on: bool) -> Client {
         self.checksum = if on {
             Checksum::Compute
@@ -208,7 +209,11 @@ impl Client {
         let (lane, buf, alive) = body.into_parts();
         let kind = Kind::Store {
             no_clobber,
-            checksum: self.checksum,
+            checksum: if no_clobber {
+                Checksum::Compute
+            } else {
+                self.checksum
+            },
         };
         let early = too_long.then_some(Error::TooLong);
         Pending::new((lane, alive), key, kind, Some(buf), len as u32, early, map)

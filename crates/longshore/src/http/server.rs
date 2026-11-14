@@ -106,9 +106,10 @@ enum State {
 }
 
 const TARGET_MAX: usize = 256;
-/// A listing's request target: one that fitted before, and a continuation
-/// token for a cursor of up to `TARGET_MAX` bytes.
-const LIST_TARGET_MAX: usize = TARGET_MAX + b"continuation-token=t&".len() + 2 * TARGET_MAX;
+/// A listing's request target: a prefix of up to `TARGET_MAX` bytes with
+/// every byte percent-encoded, and a continuation token for a cursor of up
+/// to `TARGET_MAX` bytes.
+const LIST_TARGET_MAX: usize = 4 * TARGET_MAX + b"continuation-token=t&".len() + 2 * TARGET_MAX;
 /// Room for the headers that describe an object: content type and metadata.
 const DESCRIBING_MAX: usize = 192;
 

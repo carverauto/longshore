@@ -15,7 +15,7 @@
 //! otherwise sends with every body.
 //!
 //! `--threads` is the client's I/O threads and `--conns` the connections of
-//! each. `--callers` threads share the client, each keeping an equal part of
+//! each. `--callers` threads share the client, each keeping a part of
 //! the operations in flight through futures. Prints one JSON line.
 
 #[cfg(not(target_os = "linux"))]
@@ -140,8 +140,10 @@ fn main() {
         }
     }
 
+    // Each caller holds a share of the buffers, and the shares sum to all
+    // of them, so no caller waits for one that another holds for good.
     let total = (threads * conns) as usize;
-    let per_caller = total.div_ceil(callers as usize);
+    let share = |c: usize| total / callers as usize + usize::from(c < total % callers as usize);
     let (bytes, requests) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
     // S3_TOLERATE_ERRORS=1 counts operations that fail and carries on, for
     // runs that break connections on purpose. Otherwise the first one ends
@@ -159,10 +161,11 @@ fn main() {
             let (client, bytes, requests) = (client.clone(), bytes.clone(), requests.clone());
             let failed = failed.clone();
             let (measuring, stop, ready) = (measuring.clone(), stop.clone(), ready.clone());
+            let mine = share(c as usize);
             std::thread::spawn(move || {
                 let waker = Waker::from(Arc::new(Unpark(std::thread::current())));
                 let mut cx = Context::from_waker(&waker);
-                let keys: Vec<String> = (0..per_caller)
+                let keys: Vec<String> = (0..mine)
                     .map(|i| format!("bench/{pid}-c{c}-{i}.bin"))
                     .collect();
                 // For GET the objects must exist first.

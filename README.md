@@ -185,7 +185,10 @@ Settings on the builder cover what a long-running program needs:
   `Client::credential_reloads` counts reloads adopted and failed.
 - `bucket_in_path`: the bucket in the path, for stores that expect it there.
 - `checksums`: whether a store sends a CRC-64 of its body. It is on by
-  default and is one more pass over the data.
+  default and is one more pass over the data. Turning it off affects plain
+  stores only. A conditional store always sends one, because when a retry
+  is refused as already existing, the checksum is how the client tells its
+  own earlier write from another writer's object.
 
 The client is new. Its ordinary path is tested in the simulator and on real
 kernels. What happens when an I/O thread's ring fails is tested only as far
