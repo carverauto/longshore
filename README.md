@@ -103,7 +103,7 @@ the hosts listed in `~/.config/longshore/test-hosts`, and runs them. That file
 has one `<rust-target> <ssh-destination>` per line. If it is missing, the
 real-kernel checks are skipped with a warning.
 
-`scripts/test-model.sh` builds the crate with its locks, atomics and thread
+`scripts/test-model.sh` builds `longshore_s3` with its locks, atomics and thread
 parking replaced by [loom](https://github.com/tokio-rs/loom)'s, and runs the
 hand-offs between callers and I/O threads in every order loom reaches with
 one or two forced thread switches. A wake-up that could be lost shows up
