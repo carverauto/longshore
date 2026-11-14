@@ -46,10 +46,11 @@ Most callers are on other threads, often inside an async runtime.
   needs more for a while, such as a restore, builds a second client for
   that job and drops it afterwards.
 - An operation runs on one thread from start to finish. A new operation
-  goes to the thread with the fewest in progress. A lent buffer belongs to
-  the thread that registered it, so an operation that carries a lent
-  buffer runs on that buffer's thread, and `client.buffer()` hands out
-  buffers from the least busy thread. The parts of one streamed upload may
+  goes to the thread with the fewest in progress, or, if that thread has
+  no free operation slot, to any open thread that has one. A lent buffer
+  belongs to the thread that registered it, so an operation that carries a
+  lent buffer runs on that buffer's thread, and `client.buffer()` hands out
+  the first free buffer on any open thread. The parts of one streamed upload may
   run on different threads, since each part is its own request. Beginning
   and completing the upload are ordinary operations.
 - Limits given to the builder (connections, buffers, operations) are per
