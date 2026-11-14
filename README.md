@@ -22,7 +22,7 @@ is meant to become part of a larger project.
 | Google Cloud Storage | Works against a real bucket, with a bearer token |
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | Bucket addressing | The bucket goes in the host name by default, or in the path when configured, as self-hosted S3-compatible stores commonly expect. Both forms run against Linode Object Storage. Not yet run against MinIO or Ceph |
-| Shareable client | `longshore::client`: a handle usable from any thread over one or more independent I/O threads, with async and blocking calls and lent buffers. Store, conditional store, fetch, ranged fetch and erase. Run on Linux 6.8 and 6.14 against the in-tree server. Not yet measured against a store |
+| Shareable client | `longshore::client`: a handle usable from any thread over one or more independent I/O threads, with async and blocking calls and lent buffers. Store, conditional store, fetch, ranged fetch and erase. Run on Linux 6.8 and 6.14 against the in-tree server, and measured against Amazon S3 |
 | IPv4 and IPv6 | The resolver asks for A records, AAAA records or both, and prefers the family the configuration names. When connections to that family fail and the name has addresses in the other, it uses the other. Run over IPv6 against Linode Object Storage |
 | Large-segment addresses | Optional, off by default. A store's name can resolve to addresses whose connections get different TCP segment sizes, and on a network card that does not segment in hardware the small ones cost several times more CPU per byte. With the setting on, the client measures each new connection, keeps its connections on the addresses with large segments, and asks DNS again sooner when every address is small. It can be switched while the store runs. Works on Linux 6.1 and later |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
@@ -233,7 +233,30 @@ client processes side by side, each on its own core and sharing nothing:
 
 Four clients fill the AMD instance's card over HTTPS, and eight were slower
 there than four. These are processes started by hand, three runs per cell
-unless marked. A client that runs several I/O threads itself is planned.
+unless marked.
+
+`longshore::client` does the same inside one process, with one I/O thread
+per core. Medians of three runs (`m22-client-and-soak.md`):
+
+| Request | Graviton4, 1 I/O thread | 4 | 8 | AMD, 1 I/O thread | 2 | 4 |
+|---|---|---|---|---|---|---|
+| HTTPS PUT with a CRC-64 checksum | 4.4 GB/s | 17.1 | 31.1 | 6.2 GB/s | 13.1 | 23.9 |
+| HTTPS PUT, checksums off | 5.3 | 20.9 | 37.6 | 7.5 | 15.5 | 25.0 |
+| GET | 4.6 | 15.6 | 26.7 | 8.0 | 14.5 | 22.4 |
+| HTTPS GET | 2.7 | 10.1 | 18.0 | 5.3 | 9.5 | 15.0 |
+
+The client sends a checksum with every upload unless told not to. With the
+same work asked of both, it is within 4% of the store driven directly in
+every cell of that file. One I/O thread with checksums off stores 37.6 GB/s
+over plain HTTP on the Graviton4 instance and 25.0 on the AMD one. In a 30
+minute HTTPS upload on four I/O threads, with every connection to S3 closed
+every 40 seconds and all traffic to it dropped for 5 seconds every 160, the
+client stored 3.4 million objects and returned no error to its callers.
+
+Object size matters below about 4 MiB. On 128 connections one thread
+stores 2.9 GB/s of 1 MiB objects and 13.9 GB/s of 64 MiB objects, because
+each request waits about 32 ms for S3 whatever its size
+(`m21-object-sizes.md`).
 
 ### Compared with other clients
 
@@ -255,7 +278,7 @@ Four clients side by side pass it for HTTPS PUT and plain GET on both
 machines and for HTTPS GET on the AMD machine. For HTTPS GET on the
 Graviton4 machine four clients give 9.9 to 10.0 GB/s against s5cmd's 11.2
 to 11.5, and eight clients give 17.6 to 17.9. Those tools read and write files, which costs them a copy
-that our benchmark does not make, and their runs lasted 3 to 17 seconds.
+that our benchmark does not make, and their runs lasted 3.0 to 17.2 seconds.
 The same file has the AMD figures and the conditions.
 
 An earlier 32-core Graviton4 instance with a 100 Gbit/s card is in
@@ -348,12 +371,15 @@ the client is mostly idle.
 - With one client everything except plain PUT is bound by that client's
   core. With several clients the network card becomes the limit: eight
   Graviton4 HTTPS PUT clients, four AMD HTTPS PUT clients and eight AMD GET
-  clients. Several clients have only been run as separate processes.
+  clients.
+- The shareable client was run against S3 for 30 minutes with connections
+  being broken, not for days. The failure of an I/O thread itself is tested
+  only in the simulator.
 - On x86-64 the only real-store measurements are from one AMD instance
   type. Intel has not been measured against a store.
-- On Linux 6.1 the client was run for minutes, not hours. Connections it
-  had closed and replaced were still listed as established some seconds
-  later there, and not on Linux 7.0. The cause was not looked for.
+- On Linux 6.1 the client was run for minutes, not hours. A connection it
+  has closed stays listed as established for about 30 seconds there and
+  then goes. On Linux 7.0 it goes at once. Linux 6.6 has not been run.
 - TLS keys are never updated in place. A connection is retired after 2^23
   records and the next request handshakes again. If a server updates its
   keys in the middle of a connection, the request is retried on a new one.

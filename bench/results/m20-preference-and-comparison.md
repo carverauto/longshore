@@ -86,8 +86,8 @@ Later the same session, with the client that compares segment sizes with what th
 | HTTPS GET | 128 | 4 MiB | 5 | 5.1 (5.0 to 5.1) |
 
 - The AMD cell that had a starved run now gives 19.2 to 19.6 GB/s in all five runs. Five runs do not show how often a starved answer occurs, only that none of these five was slow.
-- A 3 MiB batch is the best measured on both instances, 4% above 4 MiB. The benchmark's default is now 3 MiB.
-- 69 of the 173,867 uploads in the Graviton4 PUT rows here needed a second attempt. The AMD instance was running another client against the same bucket at the time.
+- A 3 MiB batch is the best measured on both instances. Its median is 5.5% above 4 MiB on Graviton4 and 3.9% above on AMD. The benchmark's default is now 3 MiB.
+- 69 of the 173,867 uploads in the Graviton4 plain PUT row with the preference on needed a second attempt. The HTTPS PUT rows needed none. The AMD instance was running another client against the same bucket at the time.
 
 ## Several clients side by side
 
@@ -185,7 +185,7 @@ One thing seen there and not explained: five seconds into those runs, the 8 or 1
 
 - The other clients read files and write files. Even from RAM that is a copy between the page cache and their buffers which `s3_uring` does not make, because it sends and receives in registered memory and keeps nothing. They do more work per byte by design.
 - The AWS CLI is one program built on the CRT library. Its figures are the CLI's, and may be below what the library does when used directly.
-- The other clients' runs lasted 3 to 17 s and include their start-up. s5cmd's upload runs were 3 to 6 s.
+- The other clients' runs lasted 3.0 to 17.2 s and include their start-up. s5cmd's upload runs were 3 to 6 s.
 - s5cmd signs the body of a PUT over plain HTTP with SHA-256, and the AWS CLI adds a CRC to uploads by default. Those are their defaults. The CLI was also run with checksums only when required.
 - The preference concentrates connections. With it on, the Graviton4 runs used 4 of the 8 addresses in the first sample taken. S3 did not throttle at these rates. A store that limits load per address might.
 - The multi-client rows used processes placed on consecutive even-numbered CPUs with no attention to which cores take the card's interrupts.
