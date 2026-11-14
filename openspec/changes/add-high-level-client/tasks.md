@@ -19,9 +19,9 @@
 ## 3. Quality
 - [ ] 3.1 Cancellation tests: futures dropped at every stage never free a buffer the kernel still holds
 - [ ] 3.2 Tests under at least two async executors and from plain threads
-- [ ] 3.3 Overhead benchmark against the low-level API, recorded in `bench/results/`
+- [x] 3.3 Overhead benchmark against the low-level API, recorded in `bench/results/` (`m22-client-and-soak.md`: Amazon S3)
 - [ ] 3.4 Runs against Amazon S3 and Google Cloud Storage
-- [ ] 3.5 Throughput by thread count for HTTPS upload, download and HTTPS download, recorded in `bench/results/`
+- [x] 3.5 Throughput by thread count for HTTPS upload, download and HTTPS download, recorded in `bench/results/` (`m22-client-and-soak.md`)
 
 ## 4. Packaging
 - [ ] 4.1 Compile on non-Linux targets with an unsupported error at build of a client
