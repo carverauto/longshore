@@ -1,0 +1,26 @@
+[package]
+name = "longshore_common"
+description = "The I/O layer of longshore: one trait, an io_uring backend with memory allocated at start-up, and a deterministic simulator for tests"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+autotests = false
+
+[features]
+# The deterministic simulator: an `Io` with virtual sockets, files and time.
+# Meant for tests, in this crate and in crates that use it.
+sim = []
+# Lets a test break a real ring while it runs: see `io::uring::Fault`. Off
+# in every ordinary build.
+fault-injection = []
+
+[dependencies]
+
+[dev-dependencies]
+longshore_common = { workspace = true, features = ["sim"] }
+
+[[test]]
+name = "sim_echo"
+path = "tests/sim/echo.rs"

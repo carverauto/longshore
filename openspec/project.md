@@ -3,7 +3,8 @@
 ## Purpose
 longshore is an object storage client in Rust for Linux `io_uring`. It moves
 large amounts of data with little CPU. It talks to Amazon S3, S3-compatible
-stores and Google Cloud Storage, and is published as one crate.
+stores and Google Cloud Storage. It is six small crates, and a seventh,
+`longshore`, that gathers them under one name.
 
 ## Tech Stack
 - Rust, stable toolchain, edition 2021

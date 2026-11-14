@@ -10,7 +10,7 @@
 use libfuzzer_sys::fuzz_target;
 // Compiled straight from its source file; see fuzz/Cargo.toml.
 #[allow(dead_code)]
-#[path = "../../crates/longshore/src/http/head.rs"]
+#[path = "../../crates/longshore_http_client/src/head.rs"]
 mod head;
 use head::{parse_request, parse_response};
 

@@ -1,0 +1,118 @@
+[package]
+name = "longshore_s3"
+description = "An object storage client for S3 and stores that speak its protocol, and Google Cloud Storage: one thread per ring, memory allocated at start-up, bodies sent without copying"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+autotests = false
+
+[features]
+# Lets a test break a running client's ring: see `Client::inject_fault`.
+# Off in every ordinary build.
+fault-injection = ["longshore_common/fault-injection"]
+
+[dependencies]
+longshore_common.workspace = true
+longshore_crc.workspace = true
+longshore_dns.workspace = true
+longshore_http_client.workspace = true
+longshore_tls.workspace = true
+# SHA-256 and HMAC-SHA256 for request signing.
+ring.workspace = true
+
+# The model checker behind `tests/client/model.rs`. Present only in a build
+# with `--cfg longshore_model`, which nothing but that test asks for.
+[target.'cfg(longshore_model)'.dependencies]
+loom.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(longshore_model)'] }
+
+[dev-dependencies]
+# Turns the simulator on for this crate's own tests.
+longshore_common = { workspace = true, features = ["sim"] }
+hegeltest.workspace = true
+# Test certificates.
+rcgen.workspace = true
+
+[[test]]
+name = "client_driven"
+path = "tests/client/driven.rs"
+
+[[test]]
+name = "client_builder"
+path = "tests/client/builder.rs"
+
+[[test]]
+name = "client_model"
+path = "tests/client/model.rs"
+
+[[test]]
+name = "client_waits"
+path = "tests/client/waits.rs"
+
+[[test]]
+name = "store_creds_sim"
+path = "tests/store/creds_sim.rs"
+
+[[test]]
+name = "store_creds_validate_sim"
+path = "tests/store/creds_validate_sim.rs"
+
+[[test]]
+name = "store_gcs_sim"
+path = "tests/store/gcs_sim.rs"
+
+[[test]]
+name = "store_list_props"
+path = "tests/store/list_props.rs"
+
+[[test]]
+name = "store_no_address_sim"
+path = "tests/store/no_address_sim.rs"
+
+[[test]]
+name = "store_ipv6_sim"
+path = "tests/store/ipv6_sim.rs"
+
+[[test]]
+name = "store_s3_path_addressing"
+path = "tests/store/s3_path_addressing.rs"
+
+[[test]]
+name = "store_segments_sim"
+path = "tests/store/segments_sim.rs"
+
+[[test]]
+name = "store_s3_checksums"
+path = "tests/store/s3_checksums.rs"
+
+[[test]]
+name = "store_s3_conditional"
+path = "tests/store/s3_conditional.rs"
+
+[[test]]
+name = "store_s3_listing"
+path = "tests/store/s3_listing.rs"
+
+[[test]]
+name = "store_s3_multipart"
+path = "tests/store/s3_multipart.rs"
+
+[[test]]
+name = "store_s3_object_ops"
+path = "tests/store/s3_object_ops.rs"
+
+[[test]]
+name = "store_s3_operations"
+path = "tests/store/s3_operations.rs"
+
+[[test]]
+name = "store_s3_retries"
+path = "tests/store/s3_retries.rs"
+
+[[test]]
+name = "store_sigv4_suite"
+path = "tests/store/sigv4_suite.rs"

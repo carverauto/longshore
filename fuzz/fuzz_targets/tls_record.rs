@@ -11,7 +11,7 @@
 use libfuzzer_sys::fuzz_target;
 // Compiled straight from its source file; see fuzz/Cargo.toml.
 #[allow(dead_code)]
-#[path = "../../crates/longshore/src/tls/record.rs"]
+#[path = "../../crates/longshore_tls/src/record.rs"]
 mod record;
 use record::{record_len, Direction, Suite, CONTENT_APPLICATION_DATA, OVERHEAD};
 

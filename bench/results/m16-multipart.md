@@ -56,5 +56,5 @@ part checksums listed.
 
 Not covered here: a completion whose response is lost, a store answering a
 completion with status 200 and an error document, and damaged parts. Those
-are exercised in the simulator (`crates/longshore/tests/store/s3_multipart.rs`),
+are exercised in the simulator (`crates/longshore_s3/tests/store/s3_multipart.rs`),
 since a real store cannot be made to do them on demand.

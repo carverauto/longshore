@@ -40,4 +40,4 @@ What this settles:
 Not covered here: a copy answered with status 200 and an error document, a
 lost copy response, a batch erase in which the store refuses some keys, and
 options resent on a retry. Those are exercised in the simulator
-(`crates/longshore/tests/store/s3_object_ops.rs`).
+(`crates/longshore_s3/tests/store/s3_object_ops.rs`).
