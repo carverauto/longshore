@@ -377,9 +377,11 @@ the client is mostly idle.
   only in the simulator.
 - On x86-64 the only real-store measurements are from one AMD instance
   type. Intel has not been measured against a store.
-- On Linux 6.1 the client was run for minutes, not hours. A connection it
-  has closed stays listed as established for about 30 seconds there and
-  then goes. On Linux 7.0 it goes at once. Linux 6.6 has not been run.
+- On Linux 6.1 the client was run for minutes, not hours. One thing was
+  seen once by hand there and no output was kept, so no file in this
+  repository records it: a connection the client had closed stayed listed
+  as established for about 30 seconds and then went. On Linux 7.0 it went
+  at once. Linux 6.6 has not been run.
 - TLS keys are never updated in place. A connection is retired after 2^23
   records and the next request handshakes again. If a server updates its
   keys in the middle of a connection, the request is retried on a new one.
