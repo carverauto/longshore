@@ -11,6 +11,14 @@ longshore = { path = "../longshore", features = ["sim"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }
 
+[features]
+# Builds `client_faults`, which breaks rings on purpose.
+fault-injection = ["longshore/fault-injection"]
+
+[[bin]]
+name = "client_faults"
+required-features = ["fault-injection"]
+
 [dev-dependencies]
 aes-gcm = "0.11.1"
 aws-lc-rs = "1.19.0"

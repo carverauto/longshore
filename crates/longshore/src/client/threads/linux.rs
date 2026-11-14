@@ -129,6 +129,8 @@ pub fn run(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
     };
     let (mut worker, lane) = Worker::new(&mut io, s3, layout);
     worker.start(&mut io);
+    #[cfg(feature = "fault-injection")]
+    let asked = lane.clone();
     if ready.send(Ok(lane)).is_err() {
         return;
     }
@@ -138,6 +140,12 @@ pub fn run(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
         worker.turn(&mut io);
         if worker.finished() {
             break;
+        }
+        #[cfg(feature = "fault-injection")]
+        match asked.fault.swap(0, std::sync::atomic::Ordering::AcqRel) {
+            1 => io.inject(crate::io::uring::Fault::TickFails),
+            2 => io.inject(crate::io::uring::Fault::RingLost),
+            _ => {}
         }
         if io.tick(true, &mut out).is_err() {
             // A broken ring. Stop what the kernel still runs, then hand

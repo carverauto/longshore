@@ -259,6 +259,10 @@ impl Io for UringIo {
     }
 
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()> {
+        #[cfg(feature = "fault-injection")]
+        if core::mem::take(&mut self.fail_tick) {
+            return Err(io::Error::other("injected: tick fails"));
+        }
         // A zero-copy result CQE does not produce a completion by itself, so
         // keep waiting until something is deliverable.
         loop {

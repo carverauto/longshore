@@ -46,6 +46,7 @@
 mod buffer;
 mod lane;
 mod pending;
+mod sync;
 mod threads;
 mod worker;
 
@@ -144,6 +145,27 @@ impl Client {
                 .sum()
         };
         (sum(0), sum(1))
+    }
+
+    /// Make I/O thread `thread`'s ring fail, at that thread's next turn of
+    /// its loop. For tests of what callers see when a thread fails.
+    #[cfg(all(feature = "fault-injection", target_os = "linux"))]
+    pub fn inject_fault(&self, thread: usize, fault: crate::io::uring::Fault) {
+        use crate::io::uring::Fault;
+        let lane = &self.lanes[thread];
+        let code = match fault {
+            Fault::TickFails => 1,
+            Fault::RingLost => 2,
+        };
+        lane.fault.store(code, Ordering::Release);
+        lane.wake.wake();
+    }
+
+    /// Whether I/O thread `thread` has stopped taking work, as it does
+    /// once its ring has failed.
+    #[cfg(all(feature = "fault-injection", target_os = "linux"))]
+    pub fn thread_failed(&self, thread: usize) -> bool {
+        !open(&self.lanes[thread])
     }
 
     /// How many I/O threads this client has.

@@ -246,6 +246,8 @@ extern "C" {
     pub fn eventfd(initval: c_uint, flags: c_int) -> c_int;
     pub fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
     pub fn dup(fd: c_int) -> c_int;
+    #[cfg(feature = "fault-injection")]
+    pub fn dup2(old: c_int, new: c_int) -> c_int;
     pub fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
     pub fn getsockopt(
         fd: c_int,
