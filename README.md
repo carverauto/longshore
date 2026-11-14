@@ -1,3 +1,15 @@
+<p align="center">
+  <img
+    src="assets/longshore-logo.png"
+    alt="Longshore"
+    width="900"
+  />
+</p>
+
+<p align="center">
+  <strong>The fastest object-storage client on the planet.</strong>
+</p>
+
 # longshore
 
 longshore is an object storage client written in Rust. It is built to move a
