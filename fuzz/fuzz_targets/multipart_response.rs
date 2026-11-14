@@ -12,7 +12,7 @@ use libfuzzer_sys::fuzz_target;
 
 // Compiled straight from its source file; see fuzz/Cargo.toml.
 #[allow(dead_code)]
-#[path = "../../crates/longshore/src/store/multipart.rs"]
+#[path = "../../crates/longshore_s3/src/multipart.rs"]
 mod multipart;
 use multipart::{error_code_in, upload_id_in, write_manifest, Part, PartTag, UploadId};
 

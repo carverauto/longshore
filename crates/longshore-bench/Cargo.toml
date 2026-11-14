@@ -6,10 +6,10 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-longshore = { path = "../longshore", features = ["sim"] }
+longshore = { workspace = true, features = ["sim"] }
 # For the benchmark sink's TLS mode. This is a tool crate; nothing ships from it.
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }
+rustls.workspace = true
+rcgen.workspace = true
 
 [features]
 # Builds `client_faults`, which breaks rings on purpose.
@@ -20,20 +20,21 @@ name = "client_faults"
 required-features = ["fault-injection"]
 
 [dev-dependencies]
-aes-gcm = "0.11.1"
-aws-lc-rs = "1.19.0"
-aws-lc-sys = "0.47"
-crc = "3.4.0"
-crc-fast = "1.10.0"
-crc32c = "0.6.9"
-crc64fast-nvme = "1.2.1"
+aes-gcm.workspace = true
+aws-lc-rs.workspace = true
+aws-lc-sys.workspace = true
+crc.workspace = true
+# With its default features here, for the comparison.
+crc-fast = { workspace = true, default-features = true }
+crc32c.workspace = true
+crc64fast-nvme.workspace = true
 # 0.8 pulls in `alloca` on Unix, which compiles a few lines of C. Cross builds
 # from macOS need the musl GCCs on PATH; see bench/README.md. Linking still
 # uses the bundled lld.
-criterion = { version = "0.8", default-features = false }
-ring = "0.17.14"
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-webpki-roots = "1.0.12"
+criterion.workspace = true
+ring.workspace = true
+rustls = { workspace = true, features = ["tls12"] }
+webpki-roots.workspace = true
 
 # Criterion microbenchmarks (dev tooling). Network throughput between hosts is
 # measured by the `tcp_raw` binary instead: it needs two machines and reports

@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Runs the model-checked tests of the shareable client's hand-offs between
-# callers and I/O threads (crates/longshore/tests/client/model.rs).
+# callers and I/O threads (crates/longshore_s3/tests/client/model.rs).
 #
 # They need the crate built with `--cfg longshore_model`, which swaps its
 # locks, atomics and thread parking for the model checker's. That is a
@@ -15,5 +15,5 @@ set -eu
 cd "$(dirname "$0")/.."
 
 RUSTFLAGS="${RUSTFLAGS:-} --cfg longshore_model" \
-    cargo test -p longshore --release --target-dir target/model \
+    cargo test -p longshore_s3 --release --target-dir target/model \
     --test client_model -- --nocapture

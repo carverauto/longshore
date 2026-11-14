@@ -11,7 +11,7 @@
 use libfuzzer_sys::fuzz_target;
 // Compiled straight from its source file; see fuzz/Cargo.toml.
 #[allow(dead_code)]
-#[path = "../../crates/longshore/src/dns/codec.rs"]
+#[path = "../../crates/longshore_dns/src/codec.rs"]
 mod codec;
 use codec::{parse_response_for, Record};
 
