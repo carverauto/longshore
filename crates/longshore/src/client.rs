@@ -229,7 +229,10 @@ impl Client {
     /// Erase the object under `key`. Erasing a key that is not there succeeds.
     pub fn erase(&self, key: &str) -> Pending<Result<(), Error>> {
         Pending::new(
-            (self.lanes[least_busy(&self.lanes)].clone(), self.alive.clone()),
+            (
+                self.lanes[least_busy(&self.lanes)].clone(),
+                self.alive.clone(),
+            ),
             key,
             Kind::Erase,
             None,

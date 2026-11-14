@@ -180,7 +180,9 @@ impl Builder {
             }
         }
         if failed.is_none() && lanes.len() != self.threads as usize {
-            failed = Some(std::io::Error::other("an I/O thread stopped while starting"));
+            failed = Some(std::io::Error::other(
+                "an I/O thread stopped while starting",
+            ));
         }
         let threads = Threads::new(lanes.clone(), joins);
         match failed {

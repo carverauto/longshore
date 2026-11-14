@@ -39,7 +39,11 @@ fn more_than_two_nameservers_are_refused() {
 
 #[test]
 fn a_host_dns_cannot_look_up_is_refused_unless_an_address_is_given() {
-    for host in ["bucket..example.com", "bucket example.com", "bücket.example"] {
+    for host in [
+        "bucket..example.com",
+        "bucket example.com",
+        "bücket.example",
+    ] {
         assert!(refused(settings(host)), "{host:?}");
         let mut fixed = settings(host);
         fixed.address = Some("192.0.2.1:80".parse().unwrap());

@@ -241,7 +241,10 @@ fn main() {
             let _wake = io.waker().expect("waker");
             let mut out = Completions::new(SOCKS as usize);
             for n in 0..SOCKS {
-                let to = Op::Connect { sock: Sock(n), addr: peer };
+                let to = Op::Connect {
+                    sock: Sock(n),
+                    addr: peer,
+                };
                 io.submit(Token(n as u64), to).unwrap();
             }
             let mut connected = 0;
@@ -255,24 +258,48 @@ fn main() {
             round_accepted.recv().unwrap();
             for n in 0..SOCKS {
                 let (sock, buf) = (Sock(n), limits.small(n));
-                let recv = Op::Recv { sock, buf, off: 0, len: 64 };
+                let recv = Op::Recv {
+                    sock,
+                    buf,
+                    off: 0,
+                    len: 64,
+                };
                 io.submit(Token(1000 + n as u64), recv).unwrap();
-                let hour = Op::Timeout { nanos: 3_600 * 1_000_000_000 };
+                let hour = Op::Timeout {
+                    nanos: 3_600 * 1_000_000_000,
+                };
                 io.submit(Token(2000 + n as u64), hour).unwrap();
             }
             // TEST-NET-1: routed nowhere, so the connect waits.
             let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
-            io.submit(Token(9998), Op::Connect { sock: Sock(SOCKS), addr: nowhere }).unwrap();
+            io.submit(
+                Token(9998),
+                Op::Connect {
+                    sock: Sock(SOCKS),
+                    addr: nowhere,
+                },
+            )
+            .unwrap();
             io.submit(Token(9999), Op::AwaitWake).unwrap();
             io.tick(false, &mut out).expect("submit");
             // A host with no route at all refuses the connect at once.
             while let Some(c) = out.pop() {
-                assert_eq!(c.token, Token(9998), "round {round}: an idle operation ended early");
+                assert_eq!(
+                    c.token,
+                    Token(9998),
+                    "round {round}: an idle operation ended early"
+                );
             }
             let started = std::time::Instant::now();
-            assert!(io.quiesce(), "round {round}: operations in flight after quiesce");
+            assert!(
+                io.quiesce(),
+                "round {round}: operations in flight after quiesce"
+            );
             let took = started.elapsed();
-            assert!(took < std::time::Duration::from_secs(1), "round {round}: quiesce took {took:?}");
+            assert!(
+                took < std::time::Duration::from_secs(1),
+                "round {round}: quiesce took {took:?}"
+            );
             drop(io);
             finished.send(()).unwrap();
         }

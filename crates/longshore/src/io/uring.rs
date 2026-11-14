@@ -219,10 +219,9 @@ impl UringIo {
                 let opcode = match s.state {
                     // A close is never cancelled, and a zero-copy send whose
                     // result is in only waits for its notification.
-                    State::Free
-                    | State::FileClose
-                    | State::ConnectRelease
-                    | State::AwaitNotif => continue,
+                    State::Free | State::FileClose | State::ConnectRelease | State::AwaitNotif => {
+                        continue
+                    }
                     State::Timer => IORING_OP_TIMEOUT_REMOVE,
                     _ => IORING_OP_ASYNC_CANCEL,
                 };

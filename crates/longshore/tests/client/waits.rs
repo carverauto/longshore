@@ -42,7 +42,10 @@ fn a_waiter_polled_twice_leaves_the_next_buffer_to_the_other_waiter() {
     }
     let before = b.get();
     drop(held1);
-    assert!(b.get() > before, "a buffer came back and its waiter slept on");
+    assert!(
+        b.get() > before,
+        "a buffer came back and its waiter slept on"
+    );
     assert!(first.as_mut().poll(&mut cb).is_ready());
 }
 
@@ -57,7 +60,11 @@ fn a_buffer_returned_on_another_lane_wakes_a_waiter() {
     let mut waiting = pin!(client.buffer());
     assert!(waiting.as_mut().poll(&mut cx).is_pending());
     drop(bufs.pop());
-    assert_eq!(woken.get(), 1, "a buffer came back on lane 1 and woke nobody");
+    assert_eq!(
+        woken.get(),
+        1,
+        "a buffer came back on lane 1 and woke nobody"
+    );
     assert!(waiting.as_mut().poll(&mut cx).is_ready());
 }
 
@@ -79,7 +86,10 @@ fn a_blocking_borrow_takes_a_buffer_returned_on_another_lane() {
     // Unblock the borrower before failing, so the rig outlives it.
     drop(bufs);
     borrower.join().unwrap();
-    assert!(took.is_ok(), "a buffer came back on lane 1 and the borrower slept on");
+    assert!(
+        took.is_ok(),
+        "a buffer came back on lane 1 and the borrower slept on"
+    );
 }
 
 #[test]
@@ -124,12 +134,21 @@ fn every_operation_waiting_for_a_slot_ends_closed_when_the_io_fails() {
     assert!(second.as_mut().poll(&mut cb).is_pending());
     assert!(third.as_mut().poll(&mut cc).is_pending());
     l.worker.abandon(true);
-    assert_eq!(first.as_mut().poll(&mut ca), Poll::Ready(Err(Error::Closed)));
+    assert_eq!(
+        first.as_mut().poll(&mut ca),
+        Poll::Ready(Err(Error::Closed))
+    );
     // Each waiter is polled once woken, as an executor would.
     assert!(b.0.get() > 0, "the freed slot woke nobody");
-    assert_eq!(second.as_mut().poll(&mut cb), Poll::Ready(Err(Error::Closed)));
+    assert_eq!(
+        second.as_mut().poll(&mut cb),
+        Poll::Ready(Err(Error::Closed))
+    );
     assert!(c.0.get() > 0, "the last waiter was left asleep");
-    assert_eq!(third.as_mut().poll(&mut cc), Poll::Ready(Err(Error::Closed)));
+    assert_eq!(
+        third.as_mut().poll(&mut cc),
+        Poll::Ready(Err(Error::Closed))
+    );
 }
 
 #[test]
@@ -160,7 +179,10 @@ fn once_every_lane_is_closed_a_waiter_ends_with_a_void_buffer() {
     let mut waiting = pin!(client.buffer());
     assert!(waiting.as_mut().poll(&mut cx).is_pending());
     r.lanes[1].worker.abandon(true);
-    assert!(woken.get() > 0, "the last lane closed and the waiter slept on");
+    assert!(
+        woken.get() > 0,
+        "the last lane closed and the waiter slept on"
+    );
     // Every operation would end closed, so the wait ends rather than
     // waiting for a closed lane's buffer to come back.
     let void = match waiting.as_mut().poll(&mut cx) {
@@ -207,8 +229,14 @@ fn a_lane_failing_wakes_the_erases_waiting_for_its_slots() {
     assert!(waiting.as_mut().poll(&mut cw).is_pending());
     r.lanes[0].worker.abandon(true);
     r.lanes[1].worker.abandon(true);
-    assert!(woken.get() > 0, "the lanes closed under a waiting erase and woke nobody");
-    assert_eq!(waiting.as_mut().poll(&mut cw), Poll::Ready(Err(Error::Closed)));
+    assert!(
+        woken.get() > 0,
+        "the lanes closed under a waiting erase and woke nobody"
+    );
+    assert_eq!(
+        waiting.as_mut().poll(&mut cw),
+        Poll::Ready(Err(Error::Closed))
+    );
 }
 
 #[test]

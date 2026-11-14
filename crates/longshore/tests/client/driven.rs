@@ -187,6 +187,9 @@ fn erases_built_together_still_go_to_the_least_busy_lane_when_sent() {
     assert!(pending.is_empty());
     // Each lane's store connected to its server, so each ran some of them.
     for (n, l) in r.lanes.iter().enumerate() {
-        assert!(l.worker.store().connects() > 0, "lane {n} ran none of the erases");
+        assert!(
+            l.worker.store().connects() > 0,
+            "lane {n} ran none of the erases"
+        );
     }
 }
