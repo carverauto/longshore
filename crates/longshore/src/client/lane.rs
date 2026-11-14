@@ -192,6 +192,9 @@ pub struct Lane {
     /// Operations sent and not yet ended, for choosing the least busy lane.
     pub(super) in_flight: AtomicU32,
     pub(super) closed: AtomicBool,
+    /// Credentials adopted from the file, and reloads that failed, as the
+    /// I/O thread's store counts them.
+    pub(super) reloads: [std::sync::atomic::AtomicU64; 2],
     /// The kernel may still use this lane's buffers: none is lent again or
     /// read or written through a [`super::Buffer`].
     pub(super) void: AtomicBool,

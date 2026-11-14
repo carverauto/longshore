@@ -84,6 +84,55 @@ pub struct CredentialsFile {
     pub reread_ns: u64,
     /// `Io` token for the file read.
     pub token: u64,
+    /// How new credentials are tried before they replace the ones in use.
+    pub validate: Validate,
+}
+
+/// The request that proves new credentials before they are adopted.
+// The prefix is held inline so the setting stays `Copy` and allocates
+// nothing. There is one per store.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Validate {
+    /// List one key under this prefix. The credentials must be allowed to
+    /// list there: a policy that permits listing only under some prefix
+    /// refuses a listing of the whole bucket, and the new credentials would
+    /// then never be adopted. [`KeyPrefix::EMPTY`] lists the whole bucket.
+    List(KeyPrefix),
+    /// Send nothing and adopt what the file holds. For credentials that may
+    /// not list at all. Wrong credentials are then in use until the file is
+    /// corrected and reread.
+    Nothing,
+}
+
+/// A key prefix of at most [`KeyPrefix::MAX`] bytes, held without allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyPrefix {
+    bytes: [u8; KeyPrefix::MAX],
+    len: u16,
+}
+
+impl KeyPrefix {
+    pub const MAX: usize = 256;
+    /// No prefix: the whole bucket.
+    pub const EMPTY: KeyPrefix = KeyPrefix {
+        bytes: [0; KeyPrefix::MAX],
+        len: 0,
+    };
+
+    /// `None` if `prefix` is longer than [`KeyPrefix::MAX`] bytes.
+    pub fn new(prefix: &str) -> Option<KeyPrefix> {
+        let mut p = KeyPrefix::EMPTY;
+        p.bytes
+            .get_mut(..prefix.len())?
+            .copy_from_slice(prefix.as_bytes());
+        p.len = prefix.len() as u16;
+        Some(p)
+    }
+
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("built from a str")
+    }
 }
 
 // One per store, built once and never moved while it runs, so the size

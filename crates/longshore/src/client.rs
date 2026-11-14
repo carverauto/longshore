@@ -96,6 +96,8 @@ pub struct Client {
     /// Stops and joins the I/O threads when the last handle, buffer and
     /// operation are gone.
     alive: Alive,
+    /// Whether a store computes and sends a checksum of its body.
+    checksum: Checksum,
 }
 
 impl Client {
@@ -111,7 +113,36 @@ impl Client {
         Client {
             lanes: lanes.into(),
             alive: None,
+            checksum: Checksum::Compute,
         }
+    }
+
+    /// A handle that sends, or does not send, a CRC-64/NVME with every
+    /// stored body. See [`Builder::checksums`]. Other handles to the same
+    /// client are not changed.
+    pub fn with_checksums(mut self, on: bool) -> Client {
+        self.checksum = if on {
+            Checksum::Compute
+        } else {
+            Checksum::None
+        };
+        self
+    }
+
+    /// Credentials reloads so far, summed over the I/O threads: how many
+    /// times new credentials from the file were adopted, and how many times
+    /// a reload failed (the file could not be read or parsed, or the store
+    /// refused the request that tries the new credentials). A count of
+    /// failures that keeps growing means the file's credentials are not
+    /// being taken up. See [`Builder::credentials_validate`].
+    pub fn credential_reloads(&self) -> (u64, u64) {
+        let sum = |k: usize| {
+            self.lanes
+                .iter()
+                .map(|l| l.reloads[k].load(Ordering::Relaxed))
+                .sum()
+        };
+        (sum(0), sum(1))
     }
 
     /// How many I/O threads this client has.
@@ -177,7 +208,7 @@ impl Client {
         let (lane, buf, alive) = body.into_parts();
         let kind = Kind::Store {
             no_clobber,
-            checksum: Checksum::Compute,
+            checksum: self.checksum,
         };
         let early = too_long.then_some(Error::TooLong);
         Pending::new((lane, alive), key, kind, Some(buf), len as u32, early, map)

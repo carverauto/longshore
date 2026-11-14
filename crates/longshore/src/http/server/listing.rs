@@ -54,6 +54,9 @@ impl Server {
             &after[..after_len]
         };
         let prefix = &prefix[..prefix_len];
+        if !prefix.starts_with(self.list_only_under.as_bytes()) {
+            return self.error_document(io, i, 403, "AccessDenied");
+        }
 
         // Emit matching keys in order, smallest first, without sorting the table.
         let cap = self.cfg.buffer_size as usize - 256;

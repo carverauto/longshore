@@ -34,10 +34,16 @@ fn main() {
     const ROUNDS: usize = 8;
 
     let (mut threads, mut v6) = (2u32, false);
+    // --path-style addresses the bucket in the path. --rotate starts with
+    // keys the server refuses and expects the client to pick up good ones
+    // from its credentials file.
+    let (mut path_style, mut rotate) = (false, false);
     let mut args = std::env::args().skip(1);
     while let Some(k) = args.next() {
         match k.as_str() {
             "--v6" => v6 = true,
+            "--path-style" => path_style = true,
+            "--rotate" => rotate = true,
             "--threads" => {
                 threads = args
                     .next()
@@ -78,6 +84,12 @@ fn main() {
             token_base: 2 << 40,
             checksum: None,
         });
+        if path_style {
+            server.serve_bucket_in_path("media");
+        }
+        if rotate {
+            server.allow_access_keys(&["AKIDSECOND"]);
+        }
         let addr = server
             .start(&mut io, SocketAddr::new(loopback, 0))
             .expect("server start");
@@ -105,12 +117,66 @@ fn main() {
     b.buffers = 2;
     b.operations = 4;
     b.buffer_size = SIZE;
+    if path_style {
+        b.host = "objects.test".into();
+        b.bucket_in_path = Some("media".into());
+    }
+    let credentials_path = std::env::temp_dir().join(format!(
+        "longshore-client-{}.credentials",
+        std::process::id()
+    ));
+    if rotate {
+        std::fs::write(
+            &credentials_path,
+            "[default]\naws_access_key_id = AKIDSECOND\naws_secret_access_key = second-secret\n",
+        )
+        .expect("write the credentials file");
+        b.credentials_file = Some(credentials_path.clone());
+        b.credentials_reread_secs = 1;
+    }
     let client = b.build().unwrap_or_else(|e| {
         eprintln!("client_uring: {e}");
         std::process::exit(1);
     });
     assert_eq!(client.threads(), threads as usize);
     assert_eq!(thread_count(), threads_before + threads as usize);
+    if rotate {
+        // The keys the client was built with are refused. Every I/O thread
+        // rereads the file within a second or two and switches; until all
+        // have, a store may still land on a thread with the old keys.
+        let started = std::time::Instant::now();
+        let mut refused = 0;
+        let mut accepted_in_a_row = 0;
+        while accepted_in_a_row < 4 * threads {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(20),
+                "the client never adopted the credentials in its file"
+            );
+            let (stored, _body) = client
+                .store("rotate-probe", client.buffer_blocking(), 16)
+                .wait();
+            match stored {
+                Ok(()) => accepted_in_a_row += 1,
+                Err(Error::Store(_)) => {
+                    refused += 1;
+                    accepted_in_a_row = 0;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(other) => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(refused > 0, "the first keys were supposed to be refused");
+        let (adopted, _failed) = client.credential_reloads();
+        assert!(
+            adopted >= threads as u64,
+            "every I/O thread adopts the new keys, {adopted} of {threads} did"
+        );
+        assert_eq!(client.erase("rotate-probe").wait(), Ok(()));
+        let _ = std::fs::remove_file(&credentials_path);
+        println!(
+            "ok rotate: refused {refused} times with the first keys, then accepted with the file's"
+        );
+    }
 
     /// A minimal executor: polls on this thread, parked between wake-ups.
     fn block_on<F: Future>(f: F) -> F::Output {
@@ -310,9 +376,20 @@ fn main() {
         CALLERS * ROUNDS
     );
 
+    /// The client's I/O threads alive in this process, by their names.
+    /// Counting every task would also count the kernel's io_uring worker
+    /// threads, which appear when a ring reads a file and linger for some
+    /// seconds after their work is done.
     fn thread_count() -> usize {
-        std::fs::read_dir("/proc/self/task")
-            .map(|d| d.count())
-            .unwrap_or(0)
+        let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
+            return 0;
+        };
+        tasks
+            .flatten()
+            .filter(|t| {
+                std::fs::read_to_string(t.path().join("comm"))
+                    .is_ok_and(|name| name.starts_with("longshore-io-"))
+            })
+            .count()
     }
 }

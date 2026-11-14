@@ -173,6 +173,25 @@ store, conditional store, fetch, ranged fetch and erase so far. Listing,
 only. `client::Worker` is one I/O thread's logic without the thread, for a
 caller that already runs an event loop per core.
 
+Settings on the builder cover what a long-running program needs:
+
+- `credentials_file`: a file the client rereads its keys from. Temporary
+  keys expire, and a client that only has the keys it was built with stops
+  working when they do. Each I/O thread rereads the file on its own
+  interval, tries new keys with one request, and adopts them if the store
+  accepts them. That request is a listing of one key, of the whole bucket
+  unless `credentials_validate` names a prefix. Keys that may list only
+  under a prefix need the prefix set, or they are never adopted.
+  `Client::credential_reloads` counts reloads adopted and failed.
+- `bucket_in_path`: the bucket in the path, for stores that expect it there.
+- `checksums`: whether a store sends a CRC-64 of its body. It is on by
+  default and is one more pass over the data.
+
+The client is new. Its ordinary path is tested in the simulator and on real
+kernels. What happens when an I/O thread's ring fails is tested only as far
+as the simulator and unit tests can reach, and the client has not been run
+for long periods.
+
 ## Measurements
 
 All of these use 8 MiB objects, and one client thread unless a row says

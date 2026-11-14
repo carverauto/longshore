@@ -55,6 +55,8 @@ while read -r target dest <&3; do
         timeout 60 ./http_uring selftest
         timeout 60 ./client_uring
         timeout 60 ./client_uring --threads 4 --v6
+        timeout 60 ./client_uring --path-style
+        timeout 90 ./client_uring --rotate
         timeout 30 ./dns_uring example.com
         DNS_FAMILY=prefer6 timeout 30 ./dns_uring example.com"; then
         echo "== $target on $dest: ok"

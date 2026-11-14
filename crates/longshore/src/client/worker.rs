@@ -69,6 +69,7 @@ impl Worker {
             buf_size,
             in_flight: AtomicU32::new(0),
             closed: AtomicBool::new(false),
+            reloads: Default::default(),
             void: AtomicBool::new(false),
         });
         let worker = Worker {
@@ -133,6 +134,14 @@ impl Worker {
     }
 
     fn report(&mut self) {
+        for (shown, count) in self
+            .lane
+            .reloads
+            .iter()
+            .zip([self.s3.credential_rotations, self.s3.credential_failures])
+        {
+            shown.store(count, Ordering::Relaxed);
+        }
         while let Some(d) = self.s3.poll() {
             self.running[d.token as usize] = false;
             self.lane
