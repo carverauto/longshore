@@ -208,25 +208,29 @@ impl UringIo {
         let cancel = io_uring_sqe {
             opcode: IORING_OP_ASYNC_CANCEL,
             fd: -1,
-            op_flags: IORING_ASYNC_CANCEL_ANY,
+            op_flags: IORING_ASYNC_CANCEL_ALL | IORING_ASYNC_CANCEL_ANY,
             user_data: QUIESCE,
             ..Default::default()
         };
-        // The cancel is issued again each time the timer below expires with
-        // something still in flight: Linux 6.8 can pass over a timer on a
-        // given cancel, so one cancel is not always enough.
+        // One cancel is in flight at a time. Another follows whenever one
+        // ends having cancelled something with work still in flight, and
+        // whenever the timer expires (Linux 6.8 can pass over a timer on a
+        // given cancel). A cancel also ends the timer if it is running, so
+        // that one is not counted as work.
         let mut cancelling = true;
+        let mut cancel_live = false;
+        let mut cancel_ends_timer = false;
         let mut timing = false;
         let mut out = Completions::new(8);
         while self.in_flight > 0 {
             if std::time::Instant::now() > deadline {
                 return false;
             }
-            if cancelling {
+            if cancelling && !cancel_live {
                 if !self.try_push(cancel) {
                     return false;
                 }
-                cancelling = false;
+                (cancelling, cancel_live, cancel_ends_timer) = (false, true, timing);
             }
             if !timing {
                 if self.ring.pending() > 0 && self.ring.enter(0).is_err() {
@@ -249,10 +253,13 @@ impl UringIo {
             }
             while let Some(c) = self.reap() {
                 match c.user_data {
-                    QUIESCE => {}
+                    QUIESCE => {
+                        cancel_live = false;
+                        cancelling |= c.res > cancel_ends_timer as i32;
+                    }
                     t if t == QUIESCE | 1 => {
                         timing = false;
-                        cancelling = c.res == -ETIME;
+                        cancelling |= c.res == -ETIME;
                     }
                     _ => {
                         self.on_cqe(c, &mut out);

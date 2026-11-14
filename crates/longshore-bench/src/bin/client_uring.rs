@@ -207,30 +207,73 @@ fn main() {
         threads_before,
         "the I/O threads did not stop"
     );
-    // A ring dropped with operations in flight first stops them: a wake-up
-    // read and a timer far in the future both end, and promptly.
+    // A ring dropped with operations in flight first stops them all, well
+    // inside quiesce's five-second bound: idle receives on connected
+    // sockets, timers an hour away and the wake-up read, over 200 at once,
+    // and every time.
     {
         use longshore::io::{Op, Token};
-        let mut io = UringIo::new(Limits {
-            sockets_max: 1,
-            buffers: 1,
-            buffer_size: 8192,
-            small_buffers: 0,
-            small_buffer_size: 0,
-            ops_max: 2,
-        })
-        .expect("ring");
-        let _wake = io.waker().expect("waker");
-        io.submit(Token(1), Op::AwaitWake).unwrap();
-        io.submit(Token(2), Op::Timeout { nanos: 3_600 * 1_000_000_000 }).unwrap();
-        io.tick(false, &mut Completions::new(4)).expect("submit");
-        let started = std::time::Instant::now();
-        assert!(io.quiesce(), "operations still in flight after quiesce");
-        assert!(started.elapsed() < std::time::Duration::from_secs(1));
-        drop(io);
+        const SOCKS: u32 = 100;
+        const REPEATS: u32 = 10;
+        let listener = std::net::TcpListener::bind((loopback, 0)).expect("listener");
+        let peer = listener.local_addr().unwrap();
+        let (accepted, round_accepted) = channel();
+        let (finished, round_finished) = channel::<()>();
+        // Holds each round's peers open, so the receives stay idle.
+        let acceptor = std::thread::spawn(move || {
+            for _ in 0..REPEATS {
+                let peers: Vec<_> = (0..SOCKS).map(|_| listener.accept().unwrap()).collect();
+                accepted.send(()).unwrap();
+                round_finished.recv().unwrap();
+                drop(peers);
+            }
+        });
+        for round in 0..REPEATS {
+            let limits = Limits {
+                sockets_max: SOCKS,
+                buffers: 1,
+                buffer_size: 8192,
+                small_buffers: SOCKS,
+                small_buffer_size: 64,
+                ops_max: 2 * SOCKS + 1,
+            };
+            let mut io = UringIo::new(limits).expect("ring");
+            let _wake = io.waker().expect("waker");
+            let mut out = Completions::new(SOCKS as usize);
+            for n in 0..SOCKS {
+                let to = Op::Connect { sock: Sock(n), addr: peer };
+                io.submit(Token(n as u64), to).unwrap();
+            }
+            let mut connected = 0;
+            while connected < SOCKS {
+                io.tick(true, &mut out).expect("connect");
+                while let Some(c) = out.pop() {
+                    assert!(c.result >= 0, "connect failed: {}", c.result);
+                    connected += 1;
+                }
+            }
+            round_accepted.recv().unwrap();
+            for n in 0..SOCKS {
+                let (sock, buf) = (Sock(n), limits.small(n));
+                let recv = Op::Recv { sock, buf, off: 0, len: 64 };
+                io.submit(Token(1000 + n as u64), recv).unwrap();
+                let hour = Op::Timeout { nanos: 3_600 * 1_000_000_000 };
+                io.submit(Token(2000 + n as u64), hour).unwrap();
+            }
+            io.submit(Token(9999), Op::AwaitWake).unwrap();
+            io.tick(false, &mut out).expect("submit");
+            assert!(out.is_empty(), "round {round}: an idle operation ended early");
+            let started = std::time::Instant::now();
+            assert!(io.quiesce(), "round {round}: operations in flight after quiesce");
+            let took = started.elapsed();
+            assert!(took < std::time::Duration::from_secs(1), "round {round}: quiesce took {took:?}");
+            drop(io);
+            finished.send(()).unwrap();
+        }
+        acceptor.join().expect("acceptor");
     }
     println!(
-        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, threads stopped on drop, ring quiesced",
+        "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, threads stopped on drop, 201 operations quiesced 10 times",
         CALLERS * ROUNDS
     );
 
