@@ -14,6 +14,12 @@
 //! request a store charges most for. Every object holds a pattern that
 //! names it, and every fetch checks bytes of that pattern.
 //!
+//!   client_s3 multipart [--parts N] [--objects N] [--size BYTES] [--threads N] [--conns N]
+//!
+//! uploads objects of `--parts` parts of `--size` bytes each through the
+//! client's multipart calls, with an object's parts in flight together,
+//! and checks every part with a ranged fetch.
+//!
 //! The store comes from the same environment variables as `s3_uring`:
 //! S3_ENDPOINT, S3_REGION, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY,
 //! S3_SESSION_TOKEN, S3_TLS, S3_PATH_STYLE, S3_PREFER_LARGE_SEGMENTS, and
@@ -28,6 +34,10 @@
 fn main() {
     eprintln!("client_s3 needs Linux");
 }
+
+#[cfg(target_os = "linux")]
+#[path = "client_s3/multipart.rs"]
+mod multipart;
 
 #[cfg(target_os = "linux")]
 fn main() {
@@ -50,14 +60,16 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let cmd = args
         .next()
-        .unwrap_or_else(|| die("usage: client_s3 put|get|mix [flags]"));
+        .unwrap_or_else(|| die("usage: client_s3 put|get|mix|multipart [flags]"));
     let (put, mix) = match cmd.as_str() {
         "put" => (true, false),
         "get" => (false, false),
         "mix" => (false, true),
+        "multipart" => (true, false),
         other => die(&format!("unknown command {other}")),
     };
     let mut puts_per_sec = 100u64;
+    let (mut parts, mut objects) = (4u32, 4u32);
     let (mut threads, mut conns, mut callers, mut size, mut secs) =
         (1u32, 64u32, 0u32, 8u32 << 20, 10u64);
     let (mut cpu, mut cpu_step) = (None, 1usize);
@@ -75,6 +87,8 @@ fn main() {
             "--cpu" => cpu = Some(v as usize),
             "--cpu-step" => cpu_step = v as usize,
             "--puts-per-sec" => puts_per_sec = v,
+            "--parts" => parts = v as u32,
+            "--objects" => objects = v as u32,
             _ => die(&format!("unknown flag {k}")),
         }
     }
@@ -118,6 +132,14 @@ fn main() {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0);
     let client = b.build().unwrap_or_else(|e| die(&e.to_string()));
+    if cmd == "multipart" {
+        if parts == 0 || parts > threads * conns {
+            die("--parts must be 1 to the number of buffers (threads x conns)");
+        }
+        multipart::run(&client, size as usize, parts, objects);
+        drop(client);
+        std::process::exit(0);
+    }
 
     struct Unpark(std::thread::Thread);
     impl Wake for Unpark {
