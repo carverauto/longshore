@@ -85,15 +85,25 @@ jobs:
           timeout 250 ./client_faults break tick
           timeout 250 ./client_faults break ring
           timeout 250 ./client_faults churn
-      - name: The same teardown under the address and thread sanitizers
-        env:
-          # The sanitizers need a nightly compiler and a standard library
-          # built with them. Pinned, like the stable toolchain above.
-          NIGHTLY: nightly-2026-11-01
-          RUSTFLAGS: ""
+
+  sanitizers:
+    name: Client teardown under the address and thread sanitizers
+    # Two standard library builds and two sanitized runs: more than the
+    # uring job's time allows, so they run alongside it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # The sanitizers need a nightly compiler and a standard library
+      # built with them. Pinned, like the stable toolchain above.
+      NIGHTLY: nightly-2026-11-01
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install "${NIGHTLY}" --profile minimal --component rust-src
+      - name: Run
         run: |
           sudo prlimit --pid $$ --memlock=unlimited:unlimited
-          rustup toolchain install "${NIGHTLY}" --profile minimal --component rust-src
           for sanitizer in address thread; do
             RUSTFLAGS="-Zsanitizer=${sanitizer}" cargo "+${NIGHTLY}" build -Zbuild-std \
               --target x86_64-unknown-linux-gnu --target-dir "target/${sanitizer}" \

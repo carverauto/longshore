@@ -39,9 +39,8 @@ enum Way {
 fn caller(client: Client, n: usize, way: Way) {
     let key = format!("churn-{n}");
     let mut body = client.buffer_blocking();
-    if body.is_empty() {
-        return;
-    }
+    let void = body.is_empty();
+    assert!(!void || way == Way::Fail, "{way:?}: lent a void buffer");
     body.as_mut_slice().fill(n as u8);
     match way {
         Way::Detach => {
@@ -52,7 +51,7 @@ fn caller(client: Client, n: usize, way: Way) {
         Way::Finish | Way::Outlive | Way::Fail => {
             let (stored, body) = client.store(&key, body, SIZE as usize).wait();
             match stored {
-                Ok(()) => {}
+                Ok(()) if !void => {}
                 Err(Error::Closed) if way == Way::Fail => return,
                 other => panic!("{way:?}: store ended {other:?}"),
             }
