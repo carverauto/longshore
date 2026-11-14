@@ -191,9 +191,10 @@ Settings on the builder cover what a long-running program needs:
   own earlier write from another writer's object.
 
 The client is new. Its ordinary path is tested in the simulator and on real
-kernels. What happens when an I/O thread's ring fails is tested only as far
-as the simulator and unit tests can reach, and the client has not been run
-for long periods.
+kernels. What happens when an I/O thread's ring fails is covered by the
+simulator and unit tests and has not been made to happen on a real kernel.
+The client's longest run against a store is 30 minutes
+(`m22-client-and-soak.md`).
 
 ## Measurements
 
@@ -374,8 +375,9 @@ the client is mostly idle.
   Graviton4 HTTPS PUT clients, four AMD HTTPS PUT clients and eight AMD GET
   clients.
 - The shareable client was run against S3 for 30 minutes with connections
-  being broken, not for days. The failure of an I/O thread itself is tested
-  only in the simulator.
+  being broken, not for days. The failure of an I/O thread itself is covered
+  by the simulator and unit tests and has not been made to happen on a real
+  kernel.
 - On x86-64 the only real-store measurements are from one AMD instance
   type. Intel has not been measured against a store.
 - On Linux 6.1 the client was run for minutes, not hours. Seen once by hand
