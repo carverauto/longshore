@@ -191,7 +191,11 @@ an id, each `upload_part` stores one buffer under a part number and
 returns what completing needs, and `upload_complete` joins them. Parts are
 separate operations, so several can be in flight at once and on different
 I/O threads. The caller holds the id and the parts, and an upload that is
-neither completed nor aborted keeps its parts in the store. `client::Worker` is one I/O thread's logic without the thread, for a
+neither completed nor aborted keeps its parts in the store. Whether parts
+carry checksums follows the `checksums` setting of the handle, so begin an
+upload and store its parts through handles with the same setting.
+
+`client::Worker` is one I/O thread's logic without the thread, for a
 caller that already runs an event loop per core.
 
 Settings on the builder cover what a long-running program needs:
@@ -207,7 +211,7 @@ Settings on the builder cover what a long-running program needs:
 - `bucket_in_path`: the bucket in the path, for stores that expect it there.
 - `checksums`: whether a store sends a CRC-64 of its body. It is on by
   default and is one more pass over the data. Turning it off affects plain
-  stores only. A conditional store always sends one, because when a retry
+  stores and multipart uploads. A conditional store always sends one, because when a retry
   is refused as already existing, the checksum is how the client tells its
   own earlier write from another writer's object.
 

@@ -123,9 +123,10 @@ impl Client {
     }
 
     /// A handle that sends, or does not send, a CRC-64/NVME with every
-    /// plain stored body. Conditional stores always send one. See
-    /// [`Builder::checksums`]. Other handles to the same client are not
-    /// changed.
+    /// plain stored body and multipart part, and asks for one of the whole
+    /// object when it begins an upload. Conditional stores always send
+    /// one. See [`Builder::checksums`]. Other handles to the same client
+    /// are not changed.
     pub fn with_checksums(mut self, on: bool) -> Client {
         self.checksum = if on {
             Checksum::Compute
