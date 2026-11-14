@@ -69,7 +69,8 @@ fn caller(client: Client, n: usize, way: Way) {
     }
 }
 
-pub fn run(rounds: u32) {
+/// `bounded_memory` is off under a sanitizer, which keeps freed memory.
+pub fn run(rounds: u32, bounded_memory: bool) {
     // Each round's connections are closed when its client goes, and the
     // server learns of that a little later, so it has room for several
     // rounds at once.
@@ -107,7 +108,7 @@ pub fn run(rounds: u32) {
     settles("descriptors after the rounds", fds_before, descriptors);
     let grown = resident_kib().saturating_sub(settled_kib);
     assert!(
-        grown < 32 * 1024,
+        !bounded_memory || grown < 32 * 1024,
         "resident memory grew by {grown} KiB over the last three quarters of the rounds"
     );
     println!(

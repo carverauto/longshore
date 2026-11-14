@@ -98,6 +98,6 @@ jobs:
             RUSTFLAGS="-Zsanitizer=${sanitizer}" cargo "+${NIGHTLY}" build -Zbuild-std \
               --target x86_64-unknown-linux-gnu --target-dir "target/${sanitizer}" \
               -p longshore-bench --features fault-injection --bin client_faults
-            timeout 600 "target/${sanitizer}/x86_64-unknown-linux-gnu/debug/client_faults" churn --rounds 300
+            timeout 600 "target/${sanitizer}/x86_64-unknown-linux-gnu/debug/client_faults" churn --rounds 300 --any-memory
             timeout 600 "target/${sanitizer}/x86_64-unknown-linux-gnu/debug/client_faults" break tick
           done

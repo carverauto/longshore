@@ -8,12 +8,14 @@
 //! Built only with the `fault-injection` feature.
 //!
 //!   client_faults break tick|ring [--threads N]
-//!   client_faults churn [--rounds N]
+//!   client_faults churn [--rounds N] [--any-memory]
 //!
 //! `break` runs callers against the client, makes the first I/O thread's
 //! ring fail while they work, checks that the other threads carry on, then
 //! fails the rest and checks that every caller still gets an answer.
-//! `churn` builds and drops a client over and over with work in flight.
+//! `churn` builds and drops a client over and over with work in flight, and
+//! checks that memory does not grow, unless told a sanitizer is holding on
+//! to what was freed.
 //! Both then check that the I/O threads and their descriptors are gone.
 
 #[cfg(not(target_os = "linux"))]

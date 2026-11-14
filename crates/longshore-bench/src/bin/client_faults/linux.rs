@@ -44,8 +44,13 @@ pub fn main() {
             };
             break_threads(fault, number("--threads", 2));
         }
-        Some("churn") => churn::run(number("--rounds", 2000)),
-        _ => panic!("client_faults break tick|ring [--threads N] | churn [--rounds N]"),
+        Some("churn") => churn::run(
+            number("--rounds", 2000),
+            !args.iter().any(|a| a == "--any-memory"),
+        ),
+        _ => panic!(
+            "client_faults break tick|ring [--threads N] | churn [--rounds N] [--any-memory]"
+        ),
     }
 }
 

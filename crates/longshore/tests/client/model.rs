@@ -153,6 +153,30 @@ fn callers_holding_buffers_of_a_lane_that_cannot_be_stopped_all_get_an_answer() 
 }
 
 #[test]
+fn a_caller_waiting_for_a_slot_when_its_lane_fails_stops_waiting() {
+    for after_turns in [0, 1] {
+        model(move || {
+            let fate = Fate::Fail {
+                quiet: true,
+                after_turns,
+            };
+            let w = World::new(&[fate], 1, 1);
+            // Takes the lane's one slot if the lane is still open, and is
+            // then left alone: its caller does not come back for the result.
+            let mut held = Box::pin(w.client.erase("a"));
+            let _ = poll_once(held.as_mut());
+            let other = w.client.clone();
+            // The slot will not come back, so this ends only because the
+            // lane closing wakes it.
+            let t = spawn(move || assert_eq!(other.erase("b").wait(), Err(Error::Closed)));
+            t.join().unwrap();
+            drop(held);
+            w.end();
+        });
+    }
+}
+
+#[test]
 fn a_caller_waiting_for_a_buffer_when_the_last_lane_fails_stops_waiting() {
     for quiet in [true, false] {
         model(move || {

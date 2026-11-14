@@ -201,11 +201,18 @@ Settings on the builder cover what a long-running program needs:
   is refused as already existing, the checksum is how the client tells its
   own earlier write from another writer's object.
 
-The client is new. Its ordinary path is tested in the simulator and on real
-kernels. What happens when an I/O thread's ring fails is covered by the
-simulator and unit tests and has not been made to happen on a real kernel.
-The client's longest run against a store is 30 minutes
-(`m22-client-and-soak.md`).
+The client's ordinary path is tested in the simulator and on real kernels.
+So is what happens when an I/O thread's ring fails. `client_faults` makes
+rings fail under a client that callers are using, on Linux 6.8 and 6.14, in
+two ways: the next wait reports an error, or the kernel refuses the ring
+from then on. Each time, the callers of the failed thread get their
+operations back as closed, the other threads carry on, and once every
+thread has failed every call still returns. It also builds and drops 2,000
+clients with work in flight. After both, the I/O threads and their
+descriptors are gone. The hand-offs between callers and I/O threads are
+model checked. Those failures are ones a test causes. A ring failing by
+itself has not been seen. The client's longest run against a store is 30
+minutes (`m22-client-and-soak.md`).
 
 ## Measurements
 
@@ -386,9 +393,12 @@ the client is mostly idle.
   Graviton4 HTTPS PUT clients, four AMD HTTPS PUT clients and eight AMD GET
   clients.
 - The shareable client was run against S3 for 30 minutes with connections
-  being broken, not for days. The failure of an I/O thread itself is covered
-  by the simulator and unit tests and has not been made to happen on a real
-  kernel.
+  being broken, not for days. The failure of an I/O thread itself is made
+  to happen by a test, in the simulator and on Linux 6.8 and 6.14. It has
+  not been seen to happen by itself, and was not part of that 30 minute run.
+- The model checker runs the client's hand-offs with at most two forced
+  thread switches, and one in the tests of four threads. An order that
+  needs more is not reached.
 - On x86-64 the only real-store measurements are from one AMD instance
   type. Intel has not been measured against a store.
 - On Linux 6.1 the client was run for minutes, not hours. Seen once by hand
