@@ -238,7 +238,8 @@ pub struct Done {
 pub enum SubmitError {
     /// All operation slots are in use.
     Busy,
-    /// The key is empty or too long once encoded.
+    /// The key is empty or too long once encoded, or an expected `ETag`
+    /// holds a byte that is not visible ASCII and so cannot be sent.
     BadKey,
     /// The byte range ends before it starts.
     BadRange,

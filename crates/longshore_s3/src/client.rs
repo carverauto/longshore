@@ -75,7 +75,8 @@ use std::sync::Arc;
 /// Why an operation did not do what was asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// The key is empty, or longer than [`KEY_MAX`] or than the store allows.
+    /// The key is empty, or longer than [`KEY_MAX`] or than the store allows,
+    /// or an expected `ETag` holds a byte that is not visible ASCII.
     BadKey,
     /// The byte range ends before it starts, or the parts of an upload are
     /// not in ascending order.
