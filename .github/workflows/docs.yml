@@ -1,0 +1,78 @@
+# Copyright 2026 Carver Automation Corporation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License").
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds the API documentation from main and serves it on GitHub Pages,
+# until a published release puts the same pages on docs.rs.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: -D warnings
+  # The same compiler CI uses.
+  RUST_VERSION: "1.100.0"
+
+jobs:
+  build:
+    name: Build the documentation
+    runs-on: arc-runner-set
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+          rustc --version
+      - name: Build
+        run: cargo doc --no-deps --workspace --exclude longshore-bench --features longshore/sim
+      - name: Front page
+        # The site's root goes to the crate users start from.
+        run: |
+          printf '%s\n' '<!doctype html>' \
+            '<meta charset="utf-8">' \
+            '<meta http-equiv="refresh" content="0; url=longshore/index.html">' \
+            '<title>longshore</title>' \
+            '<a href="longshore/index.html">longshore documentation</a>' \
+            > target/doc/index.html
+          # rustdoc leaves target/doc/.lock behind with mode 0600, and
+          # deploy-pages rejects an artifact holding a file others cannot read.
+          rm -f target/doc/.lock
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

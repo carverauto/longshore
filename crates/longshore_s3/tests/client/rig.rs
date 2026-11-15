@@ -126,9 +126,9 @@ impl Rig {
     }
 }
 
-pub fn fill(buf: &mut Buffer, salt: u8) {
+pub fn fill(buf: &mut Buffer, pattern: u8) {
     for (i, b) in buf.as_mut_slice()[..LEN].iter_mut().enumerate() {
-        *b = (i as u8).wrapping_mul(31) ^ salt;
+        *b = (i as u8).wrapping_mul(31) ^ pattern;
     }
 }
 

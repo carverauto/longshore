@@ -1,0 +1,17 @@
+Linux 6.14.0-1015-nvidia aarch64
+put encrypted-sha256: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption Some(Aes256) sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+put sha256: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption Some(Aes256) sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+put encrypted-crc64: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption Some(Aes256) sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+put crc64: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption Some(Aes256) sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+reading back longshore-exact/1794719216826654278-16175/encrypted-sha256
+put again, must be refused: status 412 etag - version - encryption None sha256 - crc64 - length Some(267) range None body 0 request-id present malformed false sent 1 unanswered 0
+head: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption Some(Aes256) sha256 - crc64 - length Some(300000) range None body 0 request-id present malformed false sent 1 unanswered 0
+head, another etag: status 412 etag - version - encryption None sha256 - crc64 - length Some(267) range None body 0 request-id present malformed false sent 1 unanswered 0
+get: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption Some(Aes256) sha256 - crc64 - length Some(300000) range None body 300000 request-id present malformed false sent 1 unanswered 0
+get bytes 1000-1999: status 206 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption Some(Aes256) sha256 - crc64 - length Some(1000) range Some((1000, 1999, Some(300000))) body 1000 request-id present malformed false sent 1 unanswered 0
+bytes read back: whole true, part true
+get, another etag: status 412 etag - version - encryption None sha256 - crc64 - length Some(267) range None body 267 request-id present malformed false sent 1 unanswered 0
+put with a SHA-256 of other bytes: status 200 etag "3e5af252edbd822fcf5853248b1e57fc" version - encryption Some(Aes256) sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+put after its deadline: not sent, Deadline
+erased 5 keys under longshore-exact/1794719216826654278-16175
+ok exact_s3

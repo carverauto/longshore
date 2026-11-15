@@ -156,3 +156,8 @@ path = "tests/store/sigv4_suite.rs"
 [[test]]
 name = "store_sigv4_props"
 path = "tests/store/sigv4_props.rs"
+
+[package.metadata.docs.rs]
+# io_uring is Linux only.
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
