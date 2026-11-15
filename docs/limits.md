@@ -1,6 +1,6 @@
 # Limits
 
-What has not been done, measured or proven. Files named in backticks, such as `m20-preference-and-comparison.md`, are in [`bench/results/`](../bench/results/), each with the conditions it was measured under.
+Files named in backticks, such as `m20-preference-and-comparison.md`, are in [`bench/results/`](../bench/results/), each with the conditions it was measured under.
 
 - Plain PUT fills a 200 Gbit/s link between our own machines and 100 and
   300 Gbit/s cards to S3, and reaches about 90 percent of the 200 Gbit/s

@@ -1,7 +1,5 @@
 # Status
 
-What works, and against which stores. Back to the [README](../README.md).
-
 | Area | State |
 |---|---|
 | S3: `store`, `store_no_clobber`, `fetch`, ranged `fetch`, `list`, `list_continue`, `erase` | Works against Amazon S3 and Linode Object Storage, over HTTP and HTTPS |
