@@ -378,8 +378,9 @@ error to its callers. In an eight hour run of HTTPS fetches and stores
 with the same failures injected, it fetched 20.4 million objects, stored
 2.9 million, and returned no error. Every fetch was checked against the
 object's pattern at 64 sampled offsets, and none differed. Its memory was
-the same at the end as at the start (`m23-client-eight-hours.md`). Multipart uploads through the client were
-checked against S3 in the same milestone.
+the same at the end as at the start (`m23-client-eight-hours.md`).
+Multipart uploads through the client were checked against S3 in the same
+milestone.
 
 Object size matters below about 4 MiB. On 128 connections one thread
 stores 2.9 GB/s of 1 MiB objects and 13.9 GB/s of 64 MiB objects. The time
