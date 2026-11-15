@@ -79,3 +79,63 @@ fn rejects_what_is_not_a_result_or_is_cut_short() {
     let cut = Failures::parse(b"<DeleteResult><Error><Key>k</Key></Error></DeleteResult>").unwrap();
     assert_eq!(cut.collect::<Vec<_>>(), [Err(ListError::Malformed)]);
 }
+
+/// An XML parser turns a carriage return into a line feed unless it is
+/// written as a reference, which would name another key.
+#[test]
+fn a_carriage_return_in_a_key_is_written_as_a_reference() {
+    let mut out = [0u8; 128];
+    let n = write_manifest(&mut out, &["a\rb\r\nc\td'e"]).unwrap();
+    assert_eq!(
+        core::str::from_utf8(&out[..n]).unwrap(),
+        "<Delete><Quiet>true</Quiet>\
+         <Object><Key>a&#13;b&#13;\nc\td'e</Key></Object>\
+         </Delete>"
+    );
+}
+
+#[test]
+fn a_result_with_attributes_or_damage_after_its_name() {
+    // A self-closing root is an empty result, with or without attributes.
+    assert_eq!(Failures::parse(b"<DeleteResult />").unwrap().count(), 0);
+    // Cut off at the name, or inside the opening tag.
+    assert_eq!(
+        Failures::parse(b"<DeleteResult").err(),
+        Some(ListError::Malformed)
+    );
+    assert_eq!(
+        Failures::parse(b"<DeleteResult xmlns=\"x\"").err(),
+        Some(ListError::Malformed)
+    );
+    assert_eq!(
+        Failures::parse(b"<DeleteResult><Error><Key>k</Key><Code>c</Code></Error>").err(),
+        Some(ListError::Malformed),
+        "no closing root"
+    );
+    // A failure with an empty key, or with no key at all, is damage; an
+    // empty code is not.
+    for (doc, expected) in [
+        (
+            &b"<DeleteResult><Error><Key></Key><Code>c</Code></Error></DeleteResult>"[..],
+            vec![Err(ListError::Malformed)],
+        ),
+        (
+            b"<DeleteResult><Error><Code>c</Code></Error><Error><Key>k</Key><Code>c</Code></Error></DeleteResult>",
+            vec![Err(ListError::Malformed)],
+        ),
+        (
+            b"<DeleteResult><Error><Key>k</Key><Code></Code></Error></DeleteResult>",
+            vec![Ok(Failure {
+                key_raw: b"k",
+                code: b"",
+            })],
+        ),
+    ] {
+        assert_eq!(
+            Failures::parse(doc).unwrap().collect::<Vec<_>>(),
+            expected,
+            "{}",
+            String::from_utf8_lossy(doc)
+        );
+    }
+}

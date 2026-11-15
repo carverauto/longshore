@@ -155,3 +155,81 @@ fn a_ranged_fetch_answered_with_the_whole_object_is_refused() {
         }
     );
 }
+
+/// Send `doc` as the body of a response with this status line.
+fn raw(status: &str, doc: &str) -> Behavior {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\n\r\n{doc}",
+        doc.len()
+    );
+    Behavior::Raw(Box::leak(response.into_bytes().into_boxed_slice()))
+}
+
+/// A 404 to an erase means the object is gone only when the store's error
+/// code says so. A store that repeats the key in its error document must not
+/// turn a missing bucket into a success because of what the key is called.
+#[test]
+fn an_erase_reads_the_error_code_and_not_the_key_echoed_beside_it() {
+    let mut w = world(40, Faults::default(), 3);
+    w.server.script(raw(
+        "404 Not Found",
+        "<Error><Code>NoSuchBucket</Code><Resource>/b/NoSuchKey.bin</Resource></Error>",
+    ));
+    w.s3.erase(&mut w.io, 1, "NoSuchKey.bin").unwrap();
+    assert_eq!(
+        w.last(),
+        Done {
+            token: 1,
+            outcome: Outcome::Fatal(Fatal::Status(404)),
+            attempts: 1
+        }
+    );
+    // The code itself still means the object is gone.
+    w.server.script(raw(
+        "404 Not Found",
+        "<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>",
+    ));
+    w.s3.erase(&mut w.io, 2, "absent").unwrap();
+    assert_eq!(w.last().outcome, Outcome::Erased);
+}
+
+/// A key is refused by its length once encoded, at exactly the limit: one
+/// byte of the path's room is kept back, so 511 encoded bytes are the most.
+#[test]
+fn a_key_is_accepted_up_to_the_encoded_limit_and_refused_one_byte_past_it() {
+    use longshore_s3::s3::KEY_ENCODED_MAX;
+    let mut w = world(41, Faults::default(), 1);
+    let limit = KEY_ENCODED_MAX - 1;
+    let mut token = 0;
+    let mut submit = |w: &mut World, key: &str| {
+        token += 1;
+        let result = w.s3.erase(&mut w.io, token, key);
+        if result.is_ok() {
+            // Whatever the test server makes of so long a key, the slot is freed.
+            w.last();
+        }
+        result
+    };
+    // Bytes that stay as they are.
+    assert_eq!(submit(&mut w, &"a".repeat(limit)), Ok(()));
+    assert_eq!(
+        submit(&mut w, &"a".repeat(limit + 1)),
+        Err(SubmitError::BadKey)
+    );
+    // Slashes are kept, not encoded.
+    assert_eq!(submit(&mut w, &"a/".repeat(limit / 2)), Ok(()));
+    // Two bytes that become six: 85 of them are 510 bytes, 86 are 516.
+    assert_eq!(submit(&mut w, &"é".repeat(limit / 6)), Ok(()));
+    assert_eq!(
+        submit(&mut w, &"é".repeat(limit / 6 + 1)),
+        Err(SubmitError::BadKey)
+    );
+    // One byte short of the limit, then a byte that needs three.
+    assert_eq!(
+        submit(&mut w, &("a".repeat(limit - 1) + " ")),
+        Err(SubmitError::BadKey)
+    );
+    assert_eq!(submit(&mut w, &("a".repeat(limit - 3) + " ")), Ok(()));
+    // A refused key takes no slot.
+    assert_eq!(w.s3.in_progress(), 0);
+}

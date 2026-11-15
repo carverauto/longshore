@@ -169,3 +169,52 @@ fn writer_never_emits_injected_lines(tc: TestCase) {
         }
     }
 }
+
+/// A response head the writer accepts reads back with the same status and
+/// headers. The in-tree server writes its answers this way, so every test
+/// against it depends on this.
+#[hegel::test]
+fn written_response_heads_parse_back(tc: TestCase) {
+    let status = tc.draw(gs::integers::<u16>().min_value(100).max_value(999));
+    let reason = if tc.draw(gs::booleans()) {
+        string_from(
+            &tc,
+            b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -",
+            20,
+        )
+    } else {
+        String::new()
+    };
+    let length = tc.draw(gs::integers::<u64>());
+    let names: Vec<String> = (0..tc.draw(gs::integers::<usize>().min_value(0).max_value(6)))
+        .map(|i| format!("{}-{i}", string_from(&tc, TOKEN, 10)))
+        .collect();
+    let values: Vec<String> = names
+        .iter()
+        .map(|_| string_from(&tc, VISIBLE, 30))
+        .collect();
+
+    let mut buf = [0u8; LIMIT];
+    let mut w = HeadWriter::response(&mut buf, status, &reason);
+    w.header_u64("Content-Length", length);
+    for (name, value) in names.iter().zip(&values) {
+        w.header(name, value.as_bytes());
+    }
+    let n = w.finish().expect("short enough to fit");
+    let head = parse_response(&buf[..n], LIMIT)
+        .expect("what the writer wrote is well formed")
+        .expect("and complete");
+    assert_eq!(head.status, status);
+    assert_eq!(head.fields.head_len, n);
+    assert_eq!(head.fields.content_length, Some(length));
+    for (name, value) in names.iter().zip(&values) {
+        assert_eq!(
+            head.fields.header(&buf[..n], &name.to_ascii_uppercase()),
+            Some(value.as_bytes()),
+            "{name}"
+        );
+    }
+    // Every strict prefix is undecided, never an error.
+    let cut = tc.draw(gs::integers::<usize>().min_value(7).max_value(n - 1));
+    assert_eq!(parse_response(&buf[..cut], LIMIT), Ok(None));
+}

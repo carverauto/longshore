@@ -149,3 +149,78 @@ fn refuses_what_a_store_would_refuse_and_what_does_not_fit() {
         Err(PresignError::NotSigningCredentials)
     );
 }
+
+fn url(creds: &Credentials, root: &str, access: Access, key: &str, expires: u32) -> String {
+    let mut out = [0u8; 8192];
+    let t = Target {
+        root,
+        ..target(creds)
+    };
+    let n = presign(&mut out, &t, access, key, EXAMPLE_TIME, expires).unwrap();
+    String::from_utf8(out[..n].to_vec()).unwrap()
+}
+
+fn signature_of(url: &str) -> &str {
+    let sig = url.rsplit_once("&X-Amz-Signature=").unwrap().1;
+    assert!(sig.len() == 64 && sig.bytes().all(|b| b.is_ascii_hexdigit()));
+    sig
+}
+
+/// Everything a URL says is signed: change any one of them and the
+/// signature changes with it.
+#[test]
+fn each_part_of_a_url_changes_its_signature() {
+    let creds = example_creds();
+    let temporary = Credentials::with_session(
+        "AKIAIOSFODNN7EXAMPLE",
+        "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "token/with+odd=chars",
+    )
+    .unwrap();
+    let other_token = Credentials::with_session(
+        "AKIAIOSFODNN7EXAMPLE",
+        "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "another-token",
+    )
+    .unwrap();
+    let urls = [
+        url(&creds, "", Access::Fetch, "k", 60),
+        url(&creds, "", Access::Store, "k", 60),
+        url(&creds, "", Access::Fetch, "k2", 60),
+        url(&creds, "", Access::Fetch, "k", 61),
+        url(&creds, "/bucket", Access::Fetch, "k", 60),
+        url(&temporary, "", Access::Fetch, "k", 60),
+        url(&other_token, "", Access::Fetch, "k", 60),
+    ];
+    for (i, a) in urls.iter().enumerate() {
+        for b in &urls[i + 1..] {
+            assert_ne!(signature_of(a), signature_of(b), "{a}\n{b}");
+        }
+    }
+    // The same request signs the same.
+    assert_eq!(urls[0], url(&creds, "", Access::Fetch, "k", 60));
+    // A bucket addressed in the path comes before the key.
+    assert!(urls[4].starts_with("https://examplebucket.s3.amazonaws.com/bucket/k?"));
+}
+
+/// The path holds the longest bucket and a key of 1024 bytes with every
+/// byte encoded to three; a shorter bucket leaves its room to the key.
+#[test]
+fn a_key_is_signed_up_to_what_its_path_holds() {
+    let creds = example_creds();
+    let mut out = vec![0u8; 16 * 1024];
+    let root = format!("/{}", "b".repeat(63));
+    let mut call = |root: &str, key: &str| {
+        let t = Target {
+            root,
+            ..target(&creds)
+        };
+        presign(&mut out, &t, Access::Fetch, key, EXAMPLE_TIME, 60)
+    };
+    assert!(call(&root, &" ".repeat(1024)).is_ok());
+    assert_eq!(call(&root, &" ".repeat(1025)), Err(PresignError::BadKey));
+    assert!(call(&root, &"a".repeat(3072)).is_ok());
+    assert_eq!(call(&root, &"a".repeat(3073)), Err(PresignError::BadKey));
+    assert!(call("", &"a".repeat(3072 + 64)).is_ok());
+    assert_eq!(call("", &"a".repeat(3072 + 65)), Err(PresignError::BadKey));
+}

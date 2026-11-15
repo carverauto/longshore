@@ -41,8 +41,19 @@ fn listings_round_trip(tc: TestCase) {
         .collect();
     let truncated = tc.draw(gs::booleans());
     let summary_first = tc.draw(gs::booleans());
+    // The token that resumes a truncated listing: any text, as an entry's key is.
+    let token = truncated.then(|| {
+        let mut token = tc.draw(gs::text().min_size(1).max_size(40));
+        token.retain(|c| !c.is_control());
+        token.push('t');
+        token
+    });
     let summary = format!(
-        "<Name>bucket</Name><IsTruncated>{truncated}</IsTruncated><KeyCount>{}</KeyCount>",
+        "<Name>bucket</Name>{}<IsTruncated>{truncated}</IsTruncated><KeyCount>{}</KeyCount>",
+        token.as_ref().map_or(String::new(), |t| format!(
+            "<NextContinuationToken>{}</NextContinuationToken>",
+            escape(t)
+        )),
         entries.len()
     );
     // Common prefixes, as a listing with a delimiter reports them.
@@ -72,6 +83,12 @@ fn listings_round_trip(tc: TestCase) {
 
     let listing = Listing::parse(xml.as_bytes()).expect("a well-formed listing must parse");
     assert_eq!(listing.is_truncated, truncated);
+    let got = listing.next_token_raw.map(|raw| {
+        let mut out = vec![0u8; raw.len()];
+        let n = unescape(raw, &mut out).expect("valid references");
+        String::from_utf8(out[..n].to_vec()).unwrap()
+    });
+    assert_eq!(got, token);
     let got: Vec<(String, u64)> = listing
         .entries()
         .map(|e| {
@@ -105,15 +122,27 @@ fn arbitrary_documents_are_safe(tc: TestCase) {
         doc.append(&mut data);
         data = doc;
     }
+    let inside = |part: &[u8]| {
+        let (p, w) = (part.as_ptr_range(), data.as_ptr_range());
+        w.start <= p.start && p.end <= w.end
+    };
     if let Ok(listing) = Listing::parse(&data) {
         for e in listing.entries().flatten() {
-            assert!(!e.key_raw.is_empty());
+            assert!(!e.key_raw.is_empty() && inside(e.key_raw));
             let mut out = vec![0u8; e.key_raw.len()];
             let _ = unescape(e.key_raw, &mut out);
         }
         for p in listing.common_prefixes().flatten() {
-            assert!(!p.is_empty());
+            assert!(!p.is_empty() && inside(p));
         }
+        if let Some(token) = listing.next_token_raw {
+            assert!(!token.is_empty() && inside(token));
+        }
+        // An error is reported once and ends the iteration.
+        let entries: Vec<_> = listing.entries().collect();
+        assert!(entries.iter().rev().skip(1).all(|e| e.is_ok()));
+        let prefixes: Vec<_> = listing.common_prefixes().collect();
+        assert!(prefixes.iter().rev().skip(1).all(|p| p.is_ok()));
     }
     let mut out = vec![0u8; data.len()];
     if let Some(n) = unescape(&data, &mut out) {

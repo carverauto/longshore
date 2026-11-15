@@ -93,6 +93,12 @@ impl Server {
                 };
                 while sent < o.len as usize {
                     let k = (chunk.max(1) as usize).min(o.len as usize - sent);
+                    // A size line, the data, its line end, and the last chunk.
+                    assert!(
+                        n + 18 + k + 2 + 5 <= body.len(),
+                        "ChunkedBody({chunk}): the encoded object does not fit the \
+                         server's buffer; use larger chunks or a smaller object"
+                    );
                     n += hex(k, &mut body[n..]);
                     body[n..n + 2].copy_from_slice(b"\r\n");
                     body[n + 2..n + 2 + k].copy_from_slice(&o.data[sent..sent + k]);

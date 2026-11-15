@@ -192,3 +192,54 @@ fn a_failed_comparison_still_reports_that_an_object_exists() {
         }
     );
 }
+
+/// The object is gone by the time the comparison asks about it: the refusal
+/// no longer stands, so the store is sent again, and the comparison made
+/// again if that is refused too.
+#[test]
+fn an_object_that_vanishes_before_the_comparison_is_stored_again() {
+    let mut w = world_with(26, Faults::default(), 6, true);
+    w.fill_tx(1000, 1);
+    for b in [
+        Behavior::ApplyThenClose,
+        Behavior::Normal,
+        Behavior::Status(404),
+    ] {
+        w.server.script(b);
+    }
+    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+        .unwrap();
+    // PUT (applied, lost), PUT (412), HEAD (404), PUT (412), HEAD (ours).
+    assert_eq!(
+        w.last(),
+        Done {
+            token: 1,
+            outcome: Outcome::Stored,
+            attempts: 5
+        }
+    );
+    assert_eq!(w.s3.store_comparisons, 2);
+    let sent = w.io.buf(TX)[..1000].to_vec();
+    assert_eq!(w.server.object("/k"), Some(&sent[..]));
+
+    // With no attempt left to store it again, nothing is known to be there.
+    let mut w = world_with(27, Faults::default(), 3, true);
+    w.fill_tx(1000, 1);
+    for b in [
+        Behavior::ApplyThenClose,
+        Behavior::Normal,
+        Behavior::Status(404),
+    ] {
+        w.server.script(b);
+    }
+    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+        .unwrap();
+    assert_eq!(
+        w.last(),
+        Done {
+            token: 1,
+            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
+            attempts: 3
+        }
+    );
+}

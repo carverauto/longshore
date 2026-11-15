@@ -17,6 +17,8 @@ pub use longshore_s3::s3::{Checksum, Config, Done, Endpoint, Fatal, Outcome, Sub
 pub use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 pub mod names;
+pub mod parts;
+pub mod signing;
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -75,6 +77,9 @@ pub fn world_with(seed: u64, faults: Faults, attempts_max: u32, enforce: bool) -
             longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body))
         }),
     });
+    // Every request must carry a signature that matches the bytes it
+    // arrived as; see `signing`.
+    server.verify_requests(signing::verify_sigv4);
     server.start(&mut io, ADDR).unwrap();
     finish_world(io, server, s3_config(attempts_max, enforce))
 }

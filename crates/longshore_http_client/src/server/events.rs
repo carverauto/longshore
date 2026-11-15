@@ -98,6 +98,14 @@ impl Server {
                             .any(|(a, n)| &a[..*n] == k)
                     })
                 });
+            if let Some(verify) = self.verify {
+                c.authorized &= verify(
+                    method,
+                    head.target(buf),
+                    &buf[..head.fields.head_len],
+                    &head.fields,
+                );
+            }
             let (token, token_len) = self.session_token;
             if token_len > 0 {
                 c.authorized &=

@@ -34,5 +34,17 @@ name = "tls_handshake"
 path = "tests/tls/handshake.rs"
 
 [[test]]
+name = "tls_handshake_errors"
+path = "tests/tls/handshake_errors.rs"
+
+[[test]]
+name = "tls_interop"
+path = "tests/tls/interop.rs"
+
+[[test]]
 name = "tls_record"
 path = "tests/tls/record.rs"
+
+[[test]]
+name = "tls_record_edges"
+path = "tests/tls/record_edges.rs"

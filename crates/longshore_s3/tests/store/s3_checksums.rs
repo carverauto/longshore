@@ -61,6 +61,23 @@ fn checksums_are_sent_enforced_and_verified_on_fetch() {
     assert_eq!(w.server.object_len("/k3"), None);
 }
 
+/// What a flipped bit may turn an operation into when it is not retried
+/// away: a status the damage produced in the response's first line, a head
+/// that no longer parses, or every attempt damaged. Never a response that
+/// lacked what it had to carry, or an error document.
+fn assert_refusal_of_damage(seed: u64, f: Fatal) {
+    assert!(
+        matches!(
+            f,
+            Fatal::Status(_)
+                | Fatal::Transport(_)
+                | Fatal::RetriesExhausted
+                | Fatal::ChecksumMismatch
+        ),
+        "seed {seed}: {f:?}"
+    );
+}
+
 /// Bits flipped in transit. With checksums on, a store that reports success
 /// holds exactly the bytes sent, and a fetch that reports success returns
 /// exactly the bytes stored. Damage is retried or reported, never accepted.
@@ -90,8 +107,10 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
                     "seed {seed}: Stored, but the server holds damaged bytes"
                 );
             }
-            Outcome::Fatal(_) => {
+            Outcome::Fatal(f) => {
                 refused += 1;
+                assert_refusal_of_damage(seed, f);
+                assert_eq!(w.s3.in_progress(), 0);
                 continue;
             }
             o => panic!("seed {seed}: unexpected store outcome {o:?}"),
@@ -111,11 +130,20 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
                     "seed {seed}: Fetched, but the bytes are damaged"
                 );
             }
-            Outcome::Fatal(_) => refused += 1,
+            Outcome::Fatal(f) => {
+                refused += 1;
+                assert_refusal_of_damage(seed, f);
+            }
             o => panic!("seed {seed}: unexpected fetch outcome {o:?}"),
         }
+        assert_eq!(w.s3.in_progress(), 0);
     }
-    // The run must actually exercise the damage paths to mean anything.
+    // The run must actually exercise the damage paths to mean anything, and
+    // damage is mostly retried away: a refusal is the exception.
+    // 49 of the 160 operations when this was written. Most of those are
+    // 403s: the server verifies signatures, so a bit flipped in a request
+    // head is refused as a real store refuses it, and a 403 is not retried.
+    assert!(refused <= 60, "refused {refused} of 160 operations");
     assert!(
         stored >= 20 && fetched >= 15 && retried >= 15,
         "stored {stored}, fetched {fetched}, retried {retried}, refused {refused}"

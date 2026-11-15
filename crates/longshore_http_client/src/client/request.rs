@@ -72,6 +72,11 @@ impl Client {
         c.name[..name.len()].copy_from_slice(name.as_bytes());
         c.name_len = name.len() as u8;
         if reuse {
+            // If the idle check finds this connection dead, its replacement
+            // is a new connection and goes where this request says. The
+            // address is read only when connecting, so the live connection
+            // is not affected.
+            c.addr = req.addr;
             // The check reads into the free space after the request head. A
             // head that fills the buffer leaves none, and goes unchecked.
             if self.cfg.check_idle && head_len < self.cfg.head_max {

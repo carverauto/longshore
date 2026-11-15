@@ -8,12 +8,6 @@ license.workspace = true
 repository = "https://github.com/carverauto/longshore"
 autotests = false
 
-[dependencies]
-# Adopted by benchmark: see bench/results/m5-checksums.md. `std` is the
-# smallest feature set that builds outside no_std; the C FFI and CLI features
-# stay off.
-crc-fast.workspace = true
-
 [dev-dependencies]
 # The allocation guard its property test runs under.
 longshore_common.workspace = true
@@ -22,3 +16,7 @@ hegeltest.workspace = true
 [[test]]
 name = "checksum_props"
 path = "tests/checksum/props.rs"
+
+[[test]]
+name = "checksum_kernels"
+path = "tests/checksum/kernels.rs"

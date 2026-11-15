@@ -25,6 +25,18 @@ name = "dns_resolver"
 path = "tests/dns/resolver.rs"
 
 [[test]]
+name = "dns_resolver_edges"
+path = "tests/dns/resolver_edges.rs"
+
+[[test]]
+name = "dns_resolver_forged"
+path = "tests/dns/resolver_forged.rs"
+
+[[test]]
+name = "dns_resolver_props"
+path = "tests/dns/resolver_props.rs"
+
+[[test]]
 name = "dns_resolver_families"
 path = "tests/dns/resolver_families.rs"
 

@@ -94,6 +94,13 @@ fn falls_back_to_the_second_nameserver() {
         r.failures >= 1,
         "the dead server should cost at least one timeout"
     );
+    // Exactly one: having moved to the server that answers, the resolver
+    // stays with it for the next host instead of asking the dead one again.
+    assert_eq!((r.failures, r.queries, s.queries, r.cycles), (1, 3, 2, 1));
+    assert_eq!(
+        (r.addrs(0), r.addrs(1)),
+        (&zone_addrs(0)[..], &zone_addrs(1)[..])
+    );
 }
 
 #[test]

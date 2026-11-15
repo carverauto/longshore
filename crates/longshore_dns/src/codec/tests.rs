@@ -187,8 +187,8 @@ fn reports_each_rejection() {
 
 #[test]
 fn compression_loops_are_bounded() {
-    // Question name is a pointer to itself, then a forward pointer, then a
-    // long backward chain that exceeds the jump limit.
+    // Question name is a pointer to itself, then a forward pointer. A long
+    // backward chain that exceeds the jump limit is in `limit_tests.rs`.
     let mut m = vec![
         0, 9, 0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0, 0xc0, 12, 0, 1, 0, 1,
     ];

@@ -3,52 +3,24 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! Property tests (Hegel) and an allocation check for the checksum wrappers.
+//! Property tests (Hegel) and an allocation check for the checksums.
+
+mod reference;
 
 use hegel::generators as gs;
 use hegel::TestCase;
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_crc::{base64, crc32c, crc64_nvme, Crc32c, Crc64Nvme};
+use reference::{crc32c as crc32c_reference, crc64_nvme as crc64_nvme_reference};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
-/// Bit-at-a-time reference implementations, straight from the definitions.
-fn crc64_nvme_reference(data: &[u8]) -> u64 {
-    let mut crc = !0u64;
-    for &b in data {
-        crc ^= b as u64;
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0x9a6c_9329_ac4b_c9b5
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
-}
-
-fn crc32c_reference(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0x82f6_3b78
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
-}
-
-/// The accelerated library agrees with an independent bitwise implementation
+/// The selected kernel agrees with an independent bitwise implementation
 /// for every input, at every length and alignment.
 #[hegel::test]
 fn accelerated_matches_bitwise_reference(tc: TestCase) {
-    let data = tc.draw(gs::binary().max_size(700));
+    let data = tc.draw(gs::binary().max_size(3000));
     let skip = tc.draw(
         gs::integers::<usize>()
             .min_value(0)
@@ -85,6 +57,41 @@ fn a_flipped_bit_is_detected(tc: TestCase) {
     data[bit / 8] ^= 1 << (bit % 8);
     assert_ne!(crc64_nvme(&data), before64);
     assert_ne!(crc32c(&data), before32);
+}
+
+/// A standard base64 decoder, written for the test.
+fn base64_decode(text: &[u8]) -> Vec<u8> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        b'/' => 63,
+        _ => panic!("{:?} is not in the base64 alphabet", c as char),
+    };
+    let mut out = Vec::new();
+    for quad in text.chunks(4) {
+        let pad = quad.iter().rev().take_while(|c| **c == b'=').count();
+        let bits = quad[..4 - pad]
+            .iter()
+            .fold(0u32, |acc, c| acc << 6 | value(*c) as u32)
+            << (6 * pad);
+        out.extend_from_slice(&bits.to_be_bytes()[1..4 - pad]);
+    }
+    out
+}
+
+/// Any bytes encode to padded base64 of the standard length, and decode back.
+#[hegel::test]
+fn base64_round_trips(tc: TestCase) {
+    let data = tc.draw(gs::binary().max_size(200));
+    let want = data.len().div_ceil(3) * 4;
+    let mut out = vec![0xeeu8; want + 3];
+    assert_eq!(base64(&data, &mut out), want);
+    assert!(out[want..].iter().all(|b| *b == 0xee), "wrote past the end");
+    let pad = out[..want].iter().filter(|c| **c == b'=').count();
+    assert_eq!(pad, (3 - data.len() % 3) % 3);
+    assert_eq!(base64_decode(&out[..want]), data);
 }
 
 #[test]
