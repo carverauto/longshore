@@ -42,3 +42,23 @@ path = "tests/http/pool.rs"
 [[test]]
 name = "http_requests"
 path = "tests/http/requests.rs"
+
+[[test]]
+name = "http_chunked_props"
+path = "tests/http/chunked_props.rs"
+
+[[test]]
+name = "http_head_edges"
+path = "tests/http/head_edges.rs"
+
+[[test]]
+name = "http_framing_edges"
+path = "tests/http/framing_edges.rs"
+
+[[test]]
+name = "http_pool_edges"
+path = "tests/http/pool_edges.rs"
+
+[[test]]
+name = "http_server_refusals"
+path = "tests/http/server_refusals.rs"

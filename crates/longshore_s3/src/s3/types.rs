@@ -234,3 +234,33 @@ pub enum SubmitError {
     /// This store has no such operation.
     Unsupported,
 }
+
+/// The bucket named by a host of the form `bucket.endpoint`: what is left
+/// when the store's endpoint is taken off the right.
+///
+/// A bucket's name may contain dots, so it is not simply the first label.
+/// The endpoint is recognised by what marks it: for S3 and stores like it,
+/// the last label that is `s3` or begins `s3-`; for Google Cloud Storage,
+/// `storage.googleapis.com`. A host with no such mark gives its first
+/// label, which is right only for a bucket without dots; a dotted bucket
+/// on such a store must be addressed in the path instead.
+pub fn bucket_in_host(vendor: Vendor, host: &str) -> &str {
+    let first = host.split('.').next().unwrap_or("");
+    match vendor {
+        Vendor::Gcs => host
+            .strip_suffix(".storage.googleapis.com")
+            .unwrap_or(first),
+        Vendor::S3 => {
+            // Byte offset of the last endpoint label that is not the first.
+            let mut at = 0;
+            let mut endpoint = None;
+            for label in host.split('.') {
+                if at > 0 && (label == "s3" || label.starts_with("s3-")) {
+                    endpoint = Some(at);
+                }
+                at += label.len() + 1;
+            }
+            endpoint.map_or(first, |at| &host[..at - 1])
+        }
+    }
+}

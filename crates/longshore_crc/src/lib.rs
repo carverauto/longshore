@@ -130,4 +130,6 @@ pub fn crc32c_header_value(crc: u32) -> [u8; 8] {
 }
 
 #[cfg(test)]
+mod keys_tests;
+#[cfg(test)]
 mod tests;

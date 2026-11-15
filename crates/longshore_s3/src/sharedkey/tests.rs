@@ -167,3 +167,76 @@ fn decodes_account_keys_and_refuses_malformed_ones() {
         None
     );
 }
+
+/// Every line of the string in its place, with each field the store uses
+/// given a value: the order is the reference's, and a length of zero is an
+/// empty line where any other is written out in full.
+#[test]
+fn every_field_has_its_own_line() {
+    let req = Request {
+        method: "PUT",
+        content_length: u64::MAX,
+        content_type: "text/plain",
+        if_none_match: "*",
+        range: "bytes=0-9",
+        ms_headers: &[("x-ms-b", "2"), ("x-ms-a", "1")],
+        account: "acct",
+        path: "/c/k",
+        query: &[("b", "2"), ("a", "1")],
+    };
+    assert_eq!(
+        string(&req),
+        "PUT\n\n\n18446744073709551615\n\ntext/plain\n\n\n\n*\n\nbytes=0-9\n\
+         x-ms-a:1\nx-ms-b:2\n/acct/c/k\na:1\nb:2"
+    );
+    for (length, line) in [(0, ""), (1, "1"), (10, "10"), (1000, "1000")] {
+        let req = Request {
+            content_length: length,
+            ms_headers: &[],
+            query: &[],
+            ..req
+        };
+        assert_eq!(
+            string(&req),
+            format!("PUT\n\n\n{line}\n\ntext/plain\n\n\n\n*\n\nbytes=0-9\n/acct/c/k")
+        );
+    }
+}
+
+/// The limits are exact: the most headers and query parameters are signed,
+/// and a string or a header value fits its buffer to the byte.
+#[test]
+fn what_fits_exactly_is_signed() {
+    let base = Request {
+        method: "GET",
+        content_length: 0,
+        content_type: "",
+        if_none_match: "",
+        range: "",
+        ms_headers: &[("x-ms-a", "v"); HEADERS_MAX],
+        account: "a",
+        path: "/c",
+        query: &[("q", "v"); QUERY_MAX],
+    };
+    let mut out = [0u8; STRING_MAX];
+    let n = string_to_sign(&base, &mut out).unwrap();
+    assert_eq!(string_to_sign(&base, &mut out[..n]), Ok(n));
+    assert_eq!(
+        string_to_sign(&base, &mut out[..n - 1]),
+        Err(SignError::TooLong)
+    );
+    let mut value = [0u8; 128];
+    let m = authorization(&base, b"key", &mut value).unwrap();
+    // "SharedKey a:" and the 44 characters of a base64 SHA-256 MAC.
+    assert_eq!(m, 12 + 44);
+    assert_eq!(authorization(&base, b"key", &mut value[..m]), Ok(m));
+    assert_eq!(
+        authorization(&base, b"key", &mut value[..m - 1]),
+        Err(SignError::TooLong)
+    );
+    // The signature is the MAC of the string, in base64.
+    let mut mac = [0u8; 44];
+    base64(&hmac_sha256(b"key", &out[..n]), &mut mac);
+    assert_eq!(&value[12..m], &mac[..]);
+    assert_eq!(&value[..12], b"SharedKey a:");
+}

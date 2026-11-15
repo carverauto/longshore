@@ -90,8 +90,10 @@ fn reset_is_reported_not_hidden() {
     assert!(resets > 0, "expected some seeds to hit a reset");
 }
 
+/// The echo listens before it connects, so this refusal is the injected
+/// fault. A connect with nothing listening is in `sockets.rs`.
 #[test]
-fn refused_when_nothing_listens() {
+fn a_refused_connect_is_reported_with_its_token() {
     let mut io = SimIo::new(
         LIMITS,
         1,

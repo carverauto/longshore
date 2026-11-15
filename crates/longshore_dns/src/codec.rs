@@ -292,4 +292,6 @@ pub fn parse_resolv_conf(text: &str) -> Vec<IpAddr> {
 }
 
 #[cfg(test)]
+mod limit_tests;
+#[cfg(test)]
 mod tests;

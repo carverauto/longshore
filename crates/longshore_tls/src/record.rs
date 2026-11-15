@@ -84,7 +84,9 @@ pub enum RecordError {
     /// Authentication failed: the record was modified, or the keys or
     /// sequence number are wrong.
     BadRecord,
-    /// The decrypted record is all padding, with no content type.
+    /// The decrypted record is all padding, with no content type. Also what
+    /// sealing answers when asked for a content type of zero, which a
+    /// receiver could not tell from padding.
     NoContentType,
     /// The destination cannot hold the record.
     DestinationTooSmall,
@@ -206,6 +208,7 @@ impl Direction {
     /// Returns the record length, `content.len() + OVERHEAD`.
     ///
     /// `content` is read once and not copied. At most [`FRAGMENT_MAX`] bytes.
+    /// `content_type` must not be zero.
     pub fn seal(
         &mut self,
         content_type: u8,
@@ -214,6 +217,11 @@ impl Direction {
     ) -> Result<usize, RecordError> {
         if !self.keyed {
             return Err(RecordError::BadKey);
+        }
+        // A zero type would read as padding: the receiver would take the
+        // content's last non-zero byte for the type.
+        if content_type == 0 {
+            return Err(RecordError::NoContentType);
         }
         if content.len() > FRAGMENT_MAX {
             return Err(RecordError::BadLength);

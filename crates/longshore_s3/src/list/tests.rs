@@ -170,3 +170,93 @@ fn a_truncated_listing_carries_the_token_that_resumes_it() {
         None
     );
 }
+
+fn one_entry(key: &str, size: &str) -> Result<(Vec<(String, u64)>, bool), ListError> {
+    keys(&format!("<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>{key}</Key><Size>{size}</Size></Contents></ListBucketResult>"))
+}
+
+#[test]
+fn a_size_is_read_up_to_the_largest_u64_and_refused_past_it() {
+    assert_eq!(
+        one_entry("a", "18446744073709551615").unwrap().0,
+        [("a".to_string(), u64::MAX)]
+    );
+    assert_eq!(
+        one_entry("a", "18446744073709551616"),
+        Err(ListError::Malformed)
+    );
+    // Twenty digits are the most a size is read from, zeros included.
+    assert_eq!(
+        one_entry("a", "00000000000000000001").unwrap().0,
+        [("a".to_string(), 1)]
+    );
+    assert_eq!(
+        one_entry("a", "000000000000000000001"),
+        Err(ListError::Malformed)
+    );
+    for bad in ["", " 1", "1 ", "+1", "-1", "1.0", "0x10", "1e3"] {
+        assert_eq!(one_entry("a", bad), Err(ListError::Malformed), "{bad:?}");
+    }
+    assert_eq!(one_entry("", "1"), Err(ListError::Malformed), "empty key");
+}
+
+#[test]
+fn a_damaged_entry_is_an_error_once_and_ends_the_listing() {
+    let xml = b"<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>a</Key><Size>1</Size></Contents><Contents><Key>b</Key><Size>x</Size></Contents><Contents><Key>c</Key><Size>3</Size></Contents></ListBucketResult>";
+    let got: Vec<_> = Listing::parse(xml).unwrap().entries().collect();
+    assert_eq!(
+        got,
+        [
+            Ok(Entry {
+                key_raw: b"a",
+                size: 1
+            }),
+            Err(ListError::Malformed)
+        ]
+    );
+}
+
+#[test]
+fn a_root_element_cut_off_at_its_name_is_malformed() {
+    assert_eq!(keys("<ListBucketResult"), Err(ListError::Malformed));
+    assert_eq!(keys("<ListBucketResult "), Err(ListError::Malformed));
+    assert_eq!(keys("<ListBucketResult>"), Err(ListError::Malformed));
+    assert_eq!(keys("<ListBucketResul"), Err(ListError::NotAListing));
+}
+
+/// A reference to character zero is decoded like any other, though XML
+/// allows no such character. This is deliberate: a key may hold any byte,
+/// a store that lists such a key writes it this way, and the listing has
+/// to hand back the key as it is or the object could not be named.
+#[test]
+fn a_reference_to_character_zero_is_decoded() {
+    let mut out = [0xffu8; 4];
+    assert_eq!(unescape(b"a&#0;b", &mut out), Some(3));
+    assert_eq!(&out[..3], b"a\0b");
+    assert_eq!(unescape(b"&#x0;", &mut out), Some(1));
+}
+
+#[test]
+fn references_at_their_limits() {
+    let d = |s: &str| {
+        let mut out = [0u8; 16];
+        unescape(s.as_bytes(), &mut out).map(|n| String::from_utf8(out[..n].to_vec()).unwrap())
+    };
+    assert_eq!(d("&#1114111;").as_deref(), Some("\u{10FFFF}"));
+    assert_eq!(d("&#x10FFFF;").as_deref(), Some("\u{10FFFF}"));
+    assert_eq!(d("&#x10ffff;").as_deref(), Some("\u{10FFFF}"));
+    assert_eq!(d("&#x110000;"), None);
+    assert_eq!(d("&#xD7FF;").as_deref(), Some("\u{D7FF}"));
+    assert_eq!(d("&#xDFFF;"), None);
+    assert_eq!(d("&#xE000;").as_deref(), Some("\u{E000}"));
+    assert_eq!(d("&#0000065;").as_deref(), Some("A"), "seven digits");
+    assert_eq!(d("&#00000065;"), None, "eight digits");
+    assert_eq!(d("&#x000041;").as_deref(), Some("A"), "six hex digits");
+    assert_eq!(d("&#x0000041;"), None, "seven hex digits");
+    assert_eq!(d("&#X41;"), None, "the x is lowercase");
+    assert_eq!(d("&AMP;"), None, "names are lowercase");
+    assert_eq!(d("&amp;amp;").as_deref(), Some("&amp;"), "decoded once");
+    // The decoded character must fit: three bytes of output for this one.
+    assert_eq!(unescape("&#x20AC;".as_bytes(), &mut [0u8; 3]), Some(3));
+    assert_eq!(unescape("&#x20AC;".as_bytes(), &mut [0u8; 2]), None);
+}

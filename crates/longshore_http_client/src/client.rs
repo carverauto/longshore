@@ -375,6 +375,20 @@ impl Client {
         fields.header(io.buf(self.head_buf(conn as usize)), name)
     }
 
+    /// Every value of a header of the last response served by `conn`, one
+    /// for each line it was sent on. Valid until that connection starts
+    /// another request.
+    pub fn headers<'a, IO: Io>(
+        &self,
+        io: &'a mut IO,
+        conn: u32,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a [u8]> {
+        let fields = self.conns[conn as usize].fields;
+        let buf: &'a [u8] = io.buf(self.head_buf(conn as usize));
+        fields.into_iter().flat_map(move |f| f.headers(buf, name))
+    }
+
     /// The `Content-Length` of the last response served by `conn`. For a
     /// HEAD this is the length of the body that was not sent.
     pub fn content_length(&self, conn: u32) -> Option<u64> {

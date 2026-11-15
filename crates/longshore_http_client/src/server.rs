@@ -10,7 +10,7 @@
 //! Because it is generic over `Io`, the client and this server run together
 //! on one simulated `Io`, or on real sockets.
 
-use crate::head::{parse_request, HeadWriter};
+use crate::head::{parse_request, Fields, HeadWriter};
 use crate::stream::{Step, Stream};
 use longshore_common::io::{BufId, Completion, Io, Op, Sock, Token};
 use longshore_tls::handshake::{Handshake, ServerSetup};
@@ -24,6 +24,11 @@ use std::net::SocketAddr;
 /// by four zero bytes are a CRC-32C as Google Cloud Storage carries it in
 /// `x-goog-hash: crc32c=...`.
 pub type ChecksumFn = fn(&[u8]) -> [u8; 12];
+
+/// Judges a request by its method, its target exactly as sent, the bytes of
+/// its head and the parsed fields. Called while requests run, so it must
+/// not allocate.
+pub type VerifyFn = fn(method: &[u8], target: &[u8], head: &[u8], fields: &Fields) -> bool;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
@@ -193,6 +198,7 @@ pub struct Server {
     allowed_count: usize,
     /// With a non-zero length, the session token every request must carry.
     session_token: ([u8; 64], usize),
+    verify: Option<VerifyFn>,
     /// Connections accepted so far.
     pub accepted: u64,
     /// Complete requests received so far.
@@ -294,6 +300,7 @@ impl Server {
             allowed_keys: [([0; 64], 0); 2],
             allowed_count: 0,
             session_token: ([0; 64], 0),
+            verify: None,
             accepted: 0,
             requests: 0,
             closed: 0,
@@ -352,6 +359,14 @@ impl Server {
             slot.0[..key.len()].copy_from_slice(key.as_bytes());
             slot.1 = key.len();
         }
+    }
+
+    /// Refuse with 403 every request `verify` does not accept, the way a
+    /// store refuses a request whose signature does not match what it
+    /// received. The server cannot check a signature itself, since it does
+    /// not know the secret; a test that does supplies the check.
+    pub fn verify_requests(&mut self, verify: VerifyFn) {
+        self.verify = Some(verify);
     }
 
     /// Require `x-amz-security-token` to carry exactly this value, as a

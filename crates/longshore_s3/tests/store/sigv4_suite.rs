@@ -29,6 +29,17 @@ fn case(name: &str) -> (String, String, bool) {
     )
 }
 
+/// The signed header names of a case, as its canonical request lists them.
+fn signed_headers(name: &str) -> String {
+    let path = format!(
+        "{}/tests/store/sigv4/{name}/header-canonical-request.txt",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len() - 2].to_string()
+}
+
 /// Sign the request in `request.txt` the way a caller would.
 fn sign(request: &str, sign_body: bool) -> (String, String) {
     let mut lines = request.lines();
@@ -124,11 +135,30 @@ fn matches_the_official_test_suite() {
     ] {
         let (request, expected, sign_body) = case(name);
         let (sig, auth) = sign(&request, sign_body);
-        if sig != expected || !auth.ends_with(&format!("Signature={expected}")) {
+        // The whole header value: the names signed are the suite's own
+        // list, the line before the payload hash in its canonical request.
+        let signed_headers = signed_headers(name);
+        let whole = format!("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders={signed_headers}, Signature={expected}");
+        if sig != expected || auth != whole {
             failures.push(name);
         }
     }
     assert!(failures.is_empty(), "wrong signature for: {failures:?}");
+}
+
+/// A name sent three times is one signed header, listed once.
+#[test]
+fn a_repeated_header_is_named_once_among_the_signed_headers() {
+    assert_eq!(
+        signed_headers("get-header-key-duplicate"),
+        "host;my-header1;x-amz-date"
+    );
+    let (request, _, sign_body) = case("get-header-key-duplicate");
+    let (_, auth) = sign(&request, sign_body);
+    assert!(
+        auth.contains(", SignedHeaders=host;my-header1;x-amz-date, "),
+        "{auth}"
+    );
 }
 
 #[test]

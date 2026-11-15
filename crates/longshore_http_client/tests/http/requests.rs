@@ -63,6 +63,64 @@ fn invalid_requests_are_refused_before_any_io() {
     assert_eq!((w.client.in_flight(), w.client.connects), (0, 0));
 }
 
+/// The limits to the byte: a request head that exactly fills the head
+/// buffer is sent, one byte more is refused; a host name of 253 bytes is
+/// the longest there is.
+#[test]
+fn request_size_limits_are_exact() {
+    let mut w = world(9, Faults::default());
+    // The head is padded with a header value; the in-tree server has its
+    // own, shorter limit on targets.
+    let around = "GET /missing HTTP/1.1\r\nHost: objects.test\r\nx-pad: \r\n\r\n".len();
+    let fits = "p".repeat(HEAD_MAX as usize - around);
+    let over = format!("{fits}p");
+    let start = |w: &mut World, token: u64, pad: &str| {
+        let req = Request {
+            method: "GET",
+            target: "/missing",
+            host: "objects.test",
+            host_id: 0,
+            addr: ADDR,
+            headers: &[("x-pad", pad.as_bytes())],
+            body: None,
+            response_buf: Some(RX),
+        };
+        w.client.start(&mut w.io, token, &req)
+    };
+    assert_eq!(start(&mut w, 1, &over), Err(Error::BadRequest));
+    assert_eq!((w.client.in_flight(), w.client.connects), (0, 0));
+    assert_eq!(start(&mut w, 1, &fits), Ok(()));
+    w.run_until_done(1);
+    ok(404, 0)(w.done[0].result);
+    // On a reused connection a full head leaves the idle check no room, so
+    // the request goes out unchecked, and still succeeds.
+    assert_eq!(start(&mut w, 2, &fits), Ok(()));
+    w.run_until_done(2);
+    ok(404, 0)(w.done[1].result);
+    assert_eq!(start(&mut w, 3, &over), Err(Error::BadRequest));
+    assert_eq!((w.client.connects, w.client.in_flight()), (1, 0));
+
+    let host = |len: usize| format!("{}.test", "h".repeat(len - 5));
+    let start = |w: &mut World, host: &str| {
+        let req = Request {
+            method: "GET",
+            target: "/k",
+            host,
+            host_id: 3,
+            addr: ADDR,
+            headers: &[],
+            body: None,
+            response_buf: Some(RX),
+        };
+        w.client.start(&mut w.io, 7, &req)
+    };
+    assert_eq!(start(&mut w, &host(254)), Err(Error::BadRequest));
+    assert_eq!(w.client.in_flight(), 0, "nothing was started");
+    assert_eq!(start(&mut w, &host(253)), Ok(()));
+    w.run_until_done(3);
+    ok(404, 0)(w.done[2].result);
+}
+
 #[test]
 fn a_rejected_request_does_not_serve_the_previous_headers() {
     let mut w = world(10, Faults::default());

@@ -41,7 +41,11 @@ fn violation(what: &'static str) -> ! {
 #[inline]
 fn check(what: &'static str) {
     // `try_with` so allocations during thread teardown do not panic.
-    if SEALED.try_with(|s| s.get()).unwrap_or(false) {
+    // A panic is exempt: reporting one allocates (the message, the payload,
+    // the test harness's capture of the output) before any destructor can
+    // lift the seal, and aborting there would replace the panic's message
+    // with this module's.
+    if SEALED.try_with(|s| s.get()).unwrap_or(false) && !std::thread::panicking() {
         violation(what);
     }
 }
@@ -68,10 +72,17 @@ unsafe impl GlobalAlloc for Guard {
 /// Run `f` with allocation forbidden on this thread. The result must not need
 /// dropping heap memory inside the sealed region, so return plain values.
 pub fn sealed<R>(f: impl FnOnce() -> R) -> R {
-    SEALED.with(|s| s.set(true));
-    let r = f();
-    SEALED.with(|s| s.set(false));
-    r
+    let _restore = Restore(SEALED.with(|s| s.replace(true)));
+    f()
+}
+
+/// Puts the seal back as it was when the region ends, by return or by panic.
+struct Restore(bool);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        SEALED.with(|s| s.set(self.0));
+    }
 }
 
 /// Run `f` with allocation permitted on this thread, even inside [`sealed`].
@@ -80,8 +91,6 @@ pub fn sealed<R>(f: impl FnOnce() -> R) -> R {
 /// initialization": establishing a TLS connection, where the handshake
 /// library allocates. Nothing on the data path may use it.
 pub fn allow_alloc<R>(f: impl FnOnce() -> R) -> R {
-    let was = SEALED.with(|s| s.replace(false));
-    let r = f();
-    SEALED.with(|s| s.set(was));
-    r
+    let _restore = Restore(SEALED.with(|s| s.replace(false)));
+    f()
 }

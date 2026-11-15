@@ -66,6 +66,16 @@ impl Fields {
             .find(|(n, _)| n.get(buf).eq_ignore_ascii_case(name.as_bytes()))
             .map(|(_, v)| v.get(buf))
     }
+
+    /// Every value of a header, in the order the lines came, by
+    /// case-insensitive name. A header may be sent on several lines, which
+    /// means the same as one line with the values joined by commas.
+    pub fn headers<'a>(self, buf: &'a [u8], name: &'a str) -> impl Iterator<Item = &'a [u8]> {
+        (0..self.count)
+            .map(move |i| self.headers[i])
+            .filter(move |(n, _)| n.get(buf).eq_ignore_ascii_case(name.as_bytes()))
+            .map(move |(_, v)| v.get(buf))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

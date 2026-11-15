@@ -215,12 +215,23 @@ fn concurrent_requests_use_separate_connections() {
     }
     let before = w.done.len();
     w.run_until_done(before + CONNS as usize);
-    assert!(w.done[before..].iter().all(|d| d.result
-        == Ok(Response {
-            status: 200,
-            body_len: 0,
-            conn: d.result.unwrap().conn
-        })));
+    // Each on its own connection, each token answered once.
+    let mut seen: Vec<(u64, u32)> = w.done[before..]
+        .iter()
+        .map(|d| {
+            let r = d.result.expect("a response");
+            assert_eq!((r.status, r.body_len), (200, 0));
+            (d.token, r.conn)
+        })
+        .collect();
+    seen.sort();
+    assert_eq!(
+        seen.iter().map(|s| s.0).collect::<Vec<_>>(),
+        [200, 201, 202]
+    );
+    let mut conns: Vec<u32> = seen.iter().map(|s| s.1).collect();
+    conns.sort();
+    assert_eq!(conns, [0, 1, 2]);
     assert_eq!(w.client.connects, CONNS as u64);
 }
 
@@ -254,9 +265,48 @@ fn a_connection_closed_while_idle_is_replaced_before_it_is_used() {
     w.server.script(Behavior::Raw(REPLY));
     ok(200, 2)(w.request("GET", "/k", None));
     w.settle(20);
-    assert!(
-        w.request("GET", "/missing", None).is_err(),
+    assert_eq!(
+        w.request("GET", "/missing", None),
+        Err(Error::Io(longshore_common::io::EPIPE)),
         "without the check the request goes into the closed connection"
+    );
+}
+
+/// A request names the address to use if a connection must be opened. When
+/// the idle check finds the old connection dead, the replacement is such a
+/// connection, so it goes to the address this request named and not to the
+/// one the dead connection was opened to. A resolver that has dropped an
+/// address would otherwise keep being sent back to it.
+#[test]
+fn a_replacement_for_a_dead_idle_connection_uses_the_requests_address() {
+    const REPLY: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    const SECOND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 99)), 80);
+    let mut w = world(31, Faults::default());
+    // A second address for the same server, as a store with several front
+    // ends has.
+    w.io.route(SECOND, ADDR, 0);
+    w.server.script(Behavior::Raw(REPLY));
+    ok(200, 2)(w.request("GET", "/k", None));
+    w.settle(20);
+
+    let req = Request {
+        method: "GET",
+        target: "/missing",
+        host: "objects.test",
+        host_id: 0,
+        addr: SECOND,
+        headers: &[],
+        body: None,
+        response_buf: Some(RX),
+    };
+    w.client.start(&mut w.io, 500, &req).unwrap();
+    w.run_until_done(2);
+    ok(404, 0)(w.done[1].result);
+    assert_eq!((w.client.idle_closed, w.client.connects), (1, 2));
+    assert_eq!(
+        w.io.route_connects(SECOND),
+        1,
+        "the replacement connection went to the old address"
     );
 }
 

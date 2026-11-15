@@ -19,7 +19,7 @@ pub const OPTIONS_BYTES: usize = 512;
 pub(crate) const NAME_MAX: usize = 96;
 
 /// Headers the client sets itself. An option may not replace them.
-const RESERVED: [&str; 14] = [
+const RESERVED: [&str; 17] = [
     "authorization",
     "connection",
     "content-length",
@@ -27,7 +27,10 @@ const RESERVED: [&str; 14] = [
     "if-none-match",
     "range",
     "transfer-encoding",
+    "x-amz-checksum-algorithm",
     "x-amz-checksum-crc64nvme",
+    "x-amz-checksum-mode",
+    "x-amz-checksum-type",
     "x-amz-content-sha256",
     "x-amz-copy-source",
     "x-amz-date",
@@ -42,6 +45,17 @@ enum Naming {
     Plain,
     /// The stored name follows the vendor's prefix: `x-amz-` or `x-goog-`.
     Vendor,
+}
+
+/// What follows the vendor's prefix in a header's name, if it has one: the
+/// part a name given in full shares with the same header given by a method.
+fn vendor_part(naming: Naming, name: &[u8]) -> Option<&[u8]> {
+    match naming {
+        Naming::Vendor => Some(name),
+        Naming::Plain => name
+            .strip_prefix(b"x-amz-")
+            .or_else(|| name.strip_prefix(b"x-goog-")),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -106,10 +120,19 @@ impl Options {
         self.bytes[start..at].make_ascii_lowercase();
         self.bytes[at..end].copy_from_slice(value.as_bytes());
         let name = &self.bytes[start..at];
+        // The same header may be named in full or through the method for
+        // it, which leaves the vendor's prefix off. Neither form may repeat
+        // the other.
         let taken = |this: &Options| {
             (0..this.count as usize).any(|k| {
                 let e = this.entries[k];
-                e.naming == naming && this.slice(e.name) == name
+                let other = this.slice(e.name);
+                if e.naming == naming {
+                    other == name
+                } else {
+                    vendor_part(e.naming, other)
+                        .is_some_and(|part| Some(part) == vendor_part(naming, name))
+                }
             })
         };
         let reserved = naming == Naming::Plain && RESERVED.iter().any(|r| r.as_bytes() == name);

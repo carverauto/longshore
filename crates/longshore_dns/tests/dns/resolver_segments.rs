@@ -200,6 +200,92 @@ fn unmeasured_addresses_are_probed_first_when_the_measured_ones_are_small() {
     assert_eq!(handed_out(&mut r, 6), [all[2]]);
 }
 
+/// "Large" is at least half the largest size seen, rounded up, and an
+/// address exactly there is in.
+#[test]
+fn the_floor_is_half_the_largest_rounded_up_and_includes_its_own_value() {
+    for (largest, half) in [(8228, 4114), (8229, 4115), (3, 2), (1, 1)] {
+        let (_io, mut r, _s, _out) = resolved(Some(1));
+        let all = zone_addrs(0);
+        r.connected(0, all[0], seg(largest));
+        r.connected(0, all[1], seg(half));
+        assert_eq!(r.connected(0, all[2], seg(half - 1)), half, "{largest}");
+        assert_eq!(r.segment_floor(0), half, "{largest}");
+        // An address measured at zero is one not measured, so with a floor
+        // of 1 the third address is still handed out.
+        let want = if half == 1 {
+            all.clone()
+        } else {
+            vec![all[0], all[1]]
+        };
+        assert_eq!(handed_out(&mut r, 9), want, "{largest}");
+    }
+}
+
+/// With the path's limit known, "large" is also at least a quarter of it,
+/// and an address exactly there is in.
+#[test]
+fn a_quarter_of_the_path_limit_is_large_and_one_byte_less_is_not() {
+    let (_io, mut r, _s, _out) = resolved(Some(1));
+    let all = zone_addrs(0);
+    assert_eq!(r.connected(0, all[0], on_path(PATH / 4)), PATH / 4);
+    assert_eq!(r.connected(0, all[1], on_path(PATH / 4 - 1)), PATH / 4);
+    // The third address is unmeasured and is tried with the large one.
+    assert_eq!(handed_out(&mut r, 9), [all[0], all[2]]);
+    assert_eq!(r.probes_wanted(0), 0, "a large address is already known");
+}
+
+#[test]
+fn starvation_begins_one_byte_under_a_quarter_of_the_path_limit() {
+    for (size, starved) in [(PATH / 4, false), (PATH / 4 - 1, true)] {
+        let (mut io, mut r, mut s, mut out) = resolved(Some(1));
+        for ip in zone_addrs(0) {
+            r.connected(0, ip, on_path(size));
+        }
+        pump(&mut io, &mut r, &mut s, &mut out, 600 * MS);
+        assert_eq!(r.early_refreshes > 0, starved, "size {size}");
+        assert_eq!(handed_out(&mut r, 6), zone_addrs(0), "size {size}");
+    }
+}
+
+/// Keeping no addresses is not a thing: zero is taken as one.
+#[test]
+fn keeping_zero_addresses_keeps_one() {
+    let (_io, mut r, _s, _out) = resolved(Some(0));
+    let all = zone_addrs(0);
+    for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], SMALL)] {
+        r.connected(0, ip, seg(size));
+    }
+    assert_eq!(r.segment_floor(0), LARGE / 2);
+    assert_eq!(handed_out(&mut r, 9), [all[1]]);
+}
+
+/// The preference can be turned on and off while running; measurements
+/// made in the meantime count once it is on.
+#[test]
+fn the_preference_can_be_switched_while_running() {
+    let (_io, mut r, _s, _out) = resolved(None);
+    let all = zone_addrs(0);
+    for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], SMALL)] {
+        r.connected(0, ip, seg(size));
+    }
+    assert_eq!((r.segment_floor(0), r.probes_wanted(0)), (0, 0));
+    assert_eq!(handed_out(&mut r, 9), all);
+    r.set_prefer_large_segments(Some(1));
+    assert_eq!(r.segment_floor(0), LARGE / 2);
+    assert_eq!(handed_out(&mut r, 9), [all[1]]);
+    r.set_prefer_large_segments(Some(2));
+    assert_eq!(r.segment_floor(0), SMALL);
+    assert_eq!(
+        handed_out(&mut r, 9),
+        all,
+        "both small ones are next largest"
+    );
+    r.set_prefer_large_segments(None);
+    assert_eq!(r.segment_floor(0), 0);
+    assert_eq!(handed_out(&mut r, 9), all);
+}
+
 #[test]
 fn one_address_small_for_the_path_is_ranked_out_without_seeing_a_large_one() {
     // With the path limit known, "small" needs no larger neighbour to

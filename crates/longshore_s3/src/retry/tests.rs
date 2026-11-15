@@ -14,6 +14,51 @@ fn status(s: u16) -> Class {
     }))
 }
 
+/// Each status the policy treats specially, and its neighbours, written out
+/// rather than computed: a change to the policy has to be made here too.
+#[test]
+fn statuses_are_classed_as_the_policy_says() {
+    for (s, expected) in [
+        (199, Class::Fatal),
+        (200, Class::Success),
+        (201, Class::Success),
+        (299, Class::Success),
+        (300, Class::Fatal),
+        (304, Class::Fatal),
+        (307, Class::Fatal),
+        (400, Class::Fatal),
+        (401, Class::Fatal),
+        (407, Class::Fatal),
+        (408, Class::Retry),
+        (409, Class::Fatal),
+        (416, Class::Fatal),
+        (428, Class::Fatal),
+        (429, Class::RetryDelayed),
+        (430, Class::Fatal),
+        (499, Class::Fatal),
+        (500, Class::Retry),
+        (501, Class::Fatal),
+        (502, Class::Retry),
+        (503, Class::RetryDelayed),
+        (504, Class::Retry),
+        (505, Class::Fatal),
+        (507, Class::Fatal),
+        (599, Class::Fatal),
+        (100, Class::Fatal),
+        (0, Class::Fatal),
+        (999, Class::Fatal),
+    ] {
+        assert_eq!(status(s), expected, "status {s}");
+    }
+    // Exactly six statuses are retried, and nothing outside 2xx succeeds.
+    let retried: Vec<u16> = (0..1000)
+        .filter(|s| matches!(status(*s), Class::Retry | Class::RetryDelayed))
+        .collect();
+    assert_eq!(retried, [408, 429, 500, 502, 503, 504]);
+    let succeeded = (0..1000).filter(|s| status(*s) == Class::Success);
+    assert!(succeeded.eq(200..300));
+}
+
 #[test]
 fn every_status_has_a_class() {
     for s in 100..600u16 {
@@ -57,6 +102,17 @@ fn every_transport_error_has_a_class() {
         (Error::Tls(TlsError::Setup), Class::Fatal),
         (Error::Tls(TlsError::BadRecord), Class::Retry),
         (Error::Tls(TlsError::Handshake), Class::Retry),
+        (Error::Tls(TlsError::UnsupportedSuite), Class::Fatal),
+        (Error::Tls(TlsError::NotDone), Class::Fatal),
+        // An alert after the handshake is a property of that connection.
+        (Error::Tls(TlsError::Alert(20)), Class::Retry),
+        (Error::Tls(TlsError::Alert(80)), Class::Retry),
+        (
+            Error::Tls(TlsError::Record(
+                longshore_tls::record::RecordError::BadRecord,
+            )),
+            Class::Retry,
+        ),
     ] {
         assert_eq!(classify(&Err(e)), expected, "{e:?}");
     }
