@@ -33,8 +33,8 @@ It talks to:
 The design follows the TigerBeetle talk
 [The Fastest Object Storage Client in the World](https://youtu.be/NJrqmoNpVGg).
 
-This is a library under development. A preview is published on crates.io as
-`0.1.0-alpha.1`, and its API will change.
+This is a library under development. It is published on crates.io, and its
+API will change between releases.
 [Status](docs/status.md) lists what works and against which stores, and
 [Limits](docs/limits.md) lists what has not been done, measured or proven.
 
@@ -67,12 +67,11 @@ runs between two machines. Every measurement is in
 
 ```toml
 [dependencies]
-longshore = "=0.1.0-alpha.1"
+longshore = "0.1"
 ```
 
-A preview has to be asked for by its exact version. The API documentation
-is on [docs.rs](https://docs.rs/longshore), and for the `main` branch at
-<https://carverauto.github.io/longshore/>.
+The API documentation is on [docs.rs](https://docs.rs/longshore), and for
+the `main` branch at <https://carverauto.github.io/longshore/>.
 
 `longshore::client` puts the store behind a handle that any thread can
 share, over one or more I/O threads that share nothing.
