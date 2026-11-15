@@ -2,7 +2,8 @@
 name = "longshore-bench"
 edition.workspace = true
 version.workspace = true
-publish.workspace = true
+# The benchmarks and check programs are not a library.
+publish = false
 license.workspace = true
 
 [dependencies]

@@ -3,7 +3,6 @@ name = "longshore_common"
 description = "The I/O layer of longshore: one trait, an io_uring backend with memory allocated at start-up, and a deterministic simulator for tests"
 edition.workspace = true
 version.workspace = true
-publish.workspace = true
 license.workspace = true
 repository = "https://github.com/carverauto/longshore"
 autotests = false
@@ -19,7 +18,9 @@ fault-injection = []
 [dependencies]
 
 [dev-dependencies]
-longshore_common = { workspace = true, features = ["sim"] }
+# By path only, with no version: cargo leaves such a development dependency
+# out of the published crate, and a crate cannot name itself on the registry.
+longshore_common = { path = ".", features = ["sim"] }
 hegeltest.workspace = true
 
 [[test]]
@@ -41,3 +42,9 @@ path = "tests/sim/faults.rs"
 [[test]]
 name = "sim_sockets"
 path = "tests/sim/sockets.rs"
+
+[package.metadata.docs.rs]
+# io_uring is Linux only, and the simulator is part of the documented API.
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+features = ["sim"]

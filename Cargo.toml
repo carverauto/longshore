@@ -13,19 +13,19 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.0.0"
-publish = false
+version = "0.1.0-alpha.1"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-# Internal Dependencies
-longshore = { path = "crates/longshore" }
-longshore_common = { path = "crates/longshore_common" }
-longshore_crc = { path = "crates/longshore_crc" }
-longshore_dns = { path = "crates/longshore_dns" }
-longshore_http_client = { path = "crates/longshore_http_client" }
-longshore_s3 = { path = "crates/longshore_s3" }
-longshore_tls = { path = "crates/longshore_tls" }
+# Internal Dependencies. The crates are released together, so each names
+# the others at exactly its own version.
+longshore = { path = "crates/longshore", version = "=0.1.0-alpha.1" }
+longshore_common = { path = "crates/longshore_common", version = "=0.1.0-alpha.1" }
+longshore_crc = { path = "crates/longshore_crc", version = "=0.1.0-alpha.1" }
+longshore_dns = { path = "crates/longshore_dns", version = "=0.1.0-alpha.1" }
+longshore_http_client = { path = "crates/longshore_http_client", version = "=0.1.0-alpha.1" }
+longshore_s3 = { path = "crates/longshore_s3", version = "=0.1.0-alpha.1" }
+longshore_tls = { path = "crates/longshore_tls", version = "=0.1.0-alpha.1" }
 
 # External Dependencies
 aws-lc-sys = "0.47"
