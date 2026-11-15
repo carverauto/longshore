@@ -628,7 +628,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "longshore"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "longshore_common",
  "longshore_crc",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "longshore-bench"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_common"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_crc"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -675,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_dns"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_http_client"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_s3"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_tls"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "aws-lc-sys",
  "hegeltest",
