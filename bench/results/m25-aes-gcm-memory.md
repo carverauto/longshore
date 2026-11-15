@@ -33,7 +33,7 @@ The cipher benchmark seals every record into one 16 KiB destination that it reus
 - That accounts for the gap the question starts from. The profile's 55% of a thread at 7.1 GB/s is 12 GiB/s for the cipher inside the client, and the cold pattern measures 13.8. On Graviton4 the profile in milestone 18 gives 72% of a thread at 4.9 GB/s, which is 6.3 GiB/s, and the cold pattern measures 6.4.
 - On the Arm processors the pattern makes no difference, because the cipher there is slower than the memory under it.
 - Sealing in place is 1.2 to 1.6 times faster than sealing to a separate destination on x86, and no faster on Arm. A separate destination costs three streams of memory traffic for each byte: the source is read, the destination is read so that it can be written, and it is written. In place there are two.
-- The `.large` and the `24xlarge` instance of the Zen 5 `m8azn` agree to within 4% in every column. The two Graviton4 rows are different instance families and differ by up to 8%.
+- The `.large` and the `24xlarge` instance of the Zen 5 `m8azn` agree to within 4% in every column. The two Graviton4 rows are different instance families and differ by up to about 11%, in the batch column.
 
 ## What this does not show
 

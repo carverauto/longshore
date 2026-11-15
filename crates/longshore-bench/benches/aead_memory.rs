@@ -1,4 +1,4 @@
-// Copyright 2026 Carver Automation Corporation.
+// Copyright 2026 Carer Automation Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
@@ -20,8 +20,8 @@
 //! - `cold, in place`: many sources, each sealed over itself, with only the
 //!   17 bytes that follow a record written elsewhere.
 //!
-//! `SETS` 8 MiB bodies are used for the cold cases (default 32, 256 MiB
-//! each of source and destination; set `AEAD_SETS` to change it).
+//! The cold cases use `SETS` (32) bodies of 8 MiB, 256 MiB each of source
+//! and destination.
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::hint::black_box;
@@ -32,6 +32,7 @@ const TAIL: usize = 1 + TAG; // the sealed content type, then the tag
 const SLOT: usize = RECORD + TAIL; // a record's space in a destination, less its header
 const RECORDS: usize = 512; // 8 MiB of application data
 const BODY: usize = RECORD * RECORDS;
+const SETS: usize = 32; // bodies in the cold working set, 256 MiB of each
 const KEY: [u8; 16] = *b"0123456789abcdef";
 const AAD: [u8; 5] = [0x17, 0x03, 0x03, 0x40, 0x11]; // a TLS 1.3 record header
 const CONTENT_TYPE: [u8; 1] = [0x17];
@@ -140,10 +141,6 @@ fn filled(len: usize, salt: u32) -> Vec<u8> {
 }
 
 fn bench(c: &mut Criterion) {
-    let sets: usize = std::env::var("AEAD_SETS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(32);
     let cipher = Cipher::new();
 
     // In place and out of place must agree, or the comparison means nothing.
@@ -192,12 +189,12 @@ fn bench(c: &mut Criterion) {
         })
     });
 
-    let sources: Vec<Vec<u8>> = (0..sets).map(|i| filled(BODY, i as u32)).collect();
-    let mut dests: Vec<Vec<u8>> = (0..sets).map(|_| vec![1u8; SLOT * RECORDS]).collect();
+    let sources: Vec<Vec<u8>> = (0..SETS).map(|i| filled(BODY, i as u32)).collect();
+    let mut dests: Vec<Vec<u8>> = (0..SETS).map(|_| vec![1u8; SLOT * RECORDS]).collect();
     let mut at = 0usize;
-    g.bench_function(format!("cold: {sets} sources, {sets} destinations"), |b| {
+    g.bench_function(format!("cold: {SETS} sources, {SETS} destinations"), |b| {
         b.iter(|| {
-            at = (at + 1) % sets;
+            at = (at + 1) % SETS;
             cipher.body_to(black_box(&sources[at]), &mut dests[at]);
             black_box(&dests[at]);
         })
@@ -206,9 +203,9 @@ fn bench(c: &mut Criterion) {
 
     let mut bodies = sources;
     let mut at = 0usize;
-    g.bench_function(format!("cold, in place: {sets} bodies"), |b| {
+    g.bench_function(format!("cold, in place: {SETS} bodies"), |b| {
         b.iter(|| {
-            at = (at + 1) % sets;
+            at = (at + 1) % SETS;
             cipher.body_in_place(black_box(&mut bodies[at]), &mut tails);
             black_box(&bodies[at]);
         })
