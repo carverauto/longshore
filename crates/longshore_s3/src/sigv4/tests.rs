@@ -73,6 +73,74 @@ fn tabs_in_a_header_value_are_whitespace_like_spaces() {
     assert_ne!(with("ab"), with("a b"));
 }
 
+/// The signature of a canonical request written out by hand, by the steps
+/// of the SigV4 specification and with none of the signer's code: only the
+/// hash functions are shared.
+fn signature_of(canonical_request: &str) -> [u8; 64] {
+    use crate::crypto::{hex, hmac_sha256, sha256};
+    let s = scope();
+    let date = core::str::from_utf8(&DATE[..8]).unwrap();
+    let mut hashed = [0u8; 64];
+    hex(&sha256(canonical_request.as_bytes()), &mut hashed);
+    let to_sign = format!(
+        "AWS4-HMAC-SHA256\n{}\n{date}/{}/{}/aws4_request\n{}",
+        core::str::from_utf8(DATE).unwrap(),
+        s.region,
+        s.service,
+        core::str::from_utf8(&hashed).unwrap(),
+    );
+    let key = hmac_sha256(format!("AWS4{}", s.secret_key).as_bytes(), date.as_bytes());
+    let key = hmac_sha256(&key, s.region.as_bytes());
+    let key = hmac_sha256(&key, s.service.as_bytes());
+    let key = hmac_sha256(&key, b"aws4_request");
+    let mut out = [0u8; 64];
+    hex(&hmac_sha256(&key, to_sign.as_bytes()), &mut out);
+    out
+}
+
+/// What a value with tabs is signed as, against a canonical request that
+/// is written here and not produced by the signer. The tests above compare
+/// the signer with itself, so they would pass a canonical form that was
+/// wrong in the same way for both sides. The form is the one AWS's own
+/// SDKs produce: the words of the value joined by single spaces, where a
+/// tab separates words as a space does.
+#[test]
+fn a_value_with_tabs_is_signed_as_its_words_joined_by_single_spaces() {
+    let expected = signature_of(
+        "GET\n/k\n\nhost:example.amazonaws.com\nx-amz-meta-k:a b c\n\n\
+         host;x-amz-meta-k\nUNSIGNED-PAYLOAD",
+    );
+    for value in ["a b c", "a\tb\tc", "\ta \t b\t\tc \t", "  a\t \tb   c\t"] {
+        let signed = sign(
+            &[("host", "example.amazonaws.com"), ("x-amz-meta-k", value)],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(signed, expected, "{value:?}");
+    }
+    // And the hand-written route agrees with the signer where no tab is
+    // involved, on a vector of the official suite's shape.
+    assert_eq!(
+        sign(
+            &[("host", "example.amazonaws.com")],
+            &[("b", "2"), ("a", "1")]
+        )
+        .unwrap(),
+        signature_of("GET\n/k\na=1&b=2\nhost:example.amazonaws.com\n\nhost\nUNSIGNED-PAYLOAD"),
+    );
+    // A canonical form that kept the tab, or dropped the separator, is a
+    // different request.
+    for wrong in ["a\tb\tc", "abc", "a  b  c"] {
+        assert_ne!(
+            expected,
+            signature_of(&format!(
+                "GET\n/k\n\nhost:example.amazonaws.com\nx-amz-meta-k:{wrong}\n\n\
+                 host;x-amz-meta-k\nUNSIGNED-PAYLOAD"
+            ))
+        );
+    }
+}
+
 #[test]
 fn refuses_more_headers_or_query_pairs_than_it_can_sort() {
     let headers = [("x-h", "v"); HEADERS_MAX + 1];

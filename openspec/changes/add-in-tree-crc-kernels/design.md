@@ -50,9 +50,17 @@ with `PMULL` there. No x86-64 kernel has been written or measured yet.
   and the four results are joined by multiplication
 - Decision: CRC-64/NVME reduces 128 bits to 64 by Barrett reduction; the
   prototype's table step is not kept
-- Decision: adoption is per algorithm. If an in-tree kernel is slower than
-  `crc-fast` for one algorithm on any benchmark machine after task 4, that
-  algorithm stays on `crc-fast` and the result is recorded
+- Decision: adopt on correctness and a recorded comparison, with slower
+  cells tracked. The first form of this rule kept an algorithm on
+  `crc-fast` if it was slower on any benchmark machine at 64 KiB or 8 MiB.
+  Two runs on thirteen machines (`bench/results/m24-crc-kernels.md`) show
+  the kernels correct everywhere and faster on most cells, with a handful
+  behind: short lengths on Arm, CRC-32C at short lengths on Zen 5, and 2
+  to 4% on large CRC-64 bodies on Graviton3 and Graviton4. The owner chose
+  to adopt both checksums and track those in issue #29, since none is on
+  a machine or at a size that matters at this stage
+  - Alternatives considered: keep `crc-fast` for CRC-32C until every cell
+    is level (keeps six crates in the shipped tree for gaps of that size)
 
 ## Risks / Trade-offs
 - A wrong checksum corrupts nothing silently on S3, which verifies it, but
@@ -76,8 +84,6 @@ No interface changes. Rollback is restoring the `crc-fast` call in
   so a regression of this kind shows as one row falling behind
 
 ## Open Questions
-- Lane count per processor family: twelve won on Apple silicon; Cortex-X925,
-  Ice Lake and Zen 3 are to be measured
-- The first results (`bench/results/m23-crc-kernels.md`) leave both
-  checksums behind `crc-fast` on some machines at the sizes the gate
-  names. Two changes were made in answer and are not yet measured there
+- The gaps in issue #29: the lane count by length on Arm, a method for
+  short CRC-32C inputs on Zen 5, and a quiet-machine measurement of
+  CRC-32C at 64 KiB on Granite Rapids and Sapphire Rapids

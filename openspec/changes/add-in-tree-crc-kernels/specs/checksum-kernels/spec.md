@@ -45,15 +45,17 @@ the accelerated kernels.
 - **WHEN** the processor reports none of these, or the target is another architecture
 - **THEN** the table kernel is used and the result is the same
 
-### Requirement: Throughput not below the replaced library
-An algorithm SHALL move to its in-tree kernel only when a recorded
-benchmark shows it at least as fast as `crc-fast` on every benchmark
-machine at 64 KiB and 8 MiB.
+### Requirement: Adoption on a recorded comparison
+An algorithm SHALL move to its in-tree kernel only when every kernel has
+passed the reference test on each benchmark machine that can run it, and
+`bench/results/` holds a comparison with `crc-fast` on those machines.
+Where the in-tree kernel is slower, the cell SHALL be named in that record
+and tracked in an issue.
 
 #### Scenario: Recorded comparison
 - **WHEN** an algorithm is switched to the in-tree kernel
-- **THEN** `bench/results/` holds the comparison for each benchmark machine
+- **THEN** `bench/results/` holds the comparison for each benchmark machine, and the kernel test has passed on each
 
-#### Scenario: A kernel that is slower
-- **WHEN** the in-tree kernel for an algorithm is slower than `crc-fast` on a benchmark machine
-- **THEN** that algorithm stays on `crc-fast` and the result is recorded
+#### Scenario: A cell that is slower
+- **WHEN** the in-tree kernel for an algorithm is slower than `crc-fast` on a benchmark machine at some size
+- **THEN** the record names the machine, the size and both speeds, and an issue tracks it

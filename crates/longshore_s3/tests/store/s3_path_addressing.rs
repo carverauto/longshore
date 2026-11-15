@@ -8,6 +8,7 @@
 
 mod common;
 use common::*;
+use longshore_http_client::head::Fields;
 use longshore_s3::erase::write_manifest;
 use longshore_s3::presign::Access;
 
@@ -190,6 +191,49 @@ fn the_bucket_in_a_host_name_is_what_precedes_the_endpoint() {
     ] {
         assert_eq!(bucket_in_host(Vendor::Gcs, host), bucket, "{host}");
     }
+}
+
+/// A bucket whose name has dots, addressed in the host name.
+const DOTTED: &str = "my.dotted.bucket";
+
+/// Signed, and a copy's source names `DOTTED`: S3 reads
+/// `x-amz-copy-source` as "/bucket/key", and refuses a bucket it does not
+/// serve.
+fn signed_and_copied_from_dotted(method: &[u8], target: &[u8], head: &[u8], f: &Fields) -> bool {
+    signing::verify_sigv4(method, target, head, f)
+        && f.header(head, "x-amz-copy-source").is_none_or(|source| {
+            source
+                .strip_prefix(b"/")
+                .and_then(|s| s.strip_prefix(DOTTED.as_bytes()))
+                .is_some_and(|rest| rest.first() == Some(&b'/'))
+        })
+}
+
+/// The copy's source header, as sent, names the whole bucket. Found in
+/// review: the fix for dotted names had no test that failed without it.
+#[test]
+fn a_copy_names_a_dotted_bucket_in_the_host_whole() {
+    let mut io = SimIo::new(LIMITS, 9, Faults::default());
+    let mut server = Server::new(server::Config {
+        listener: Sock(0),
+        connections_max: CONNS,
+        first_sock: 1 + CONNS,
+        first_buf: 0,
+        head_max: HEAD_MAX,
+        buffer_size: BUF,
+        objects_max: 8,
+        token_base: 2 << 40,
+        checksum: None,
+    });
+    server.verify_requests(signed_and_copied_from_dotted);
+    server.start(&mut io, ADDR).unwrap();
+    let mut cfg = s3_config(3, false);
+    cfg.host = format!("{DOTTED}.s3.us-test-1.amazonaws.com");
+    let mut w = finish_world(io, server, cfg);
+    put(&mut w, 1, "a/src");
+    w.s3.copy(&mut w.io, 2, "a/src", "b/dst").unwrap();
+    assert_eq!(w.last().outcome, Outcome::Copied);
+    assert_eq!(w.server.object_len("/b/dst"), Some(LEN));
 }
 
 #[test]
