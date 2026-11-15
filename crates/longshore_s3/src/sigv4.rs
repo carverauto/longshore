@@ -96,8 +96,12 @@ fn update_lower(h: &mut Sha256, s: &str) {
     }
 }
 
-/// Hex signature for a request.
-pub fn signature(req: &Request, scope: &Scope) -> Result<[u8; 64], SignError> {
+/// SHA-256 of the canonical request: the method, the path, the query, every
+/// signed header with its value, the list of their names, and the payload
+/// line. It is what a signature is made over, and it needs no credentials,
+/// so it can be rebuilt from the values a request was expected to carry and
+/// compared with [`crate::report::Signed::canonical_request_sha256`].
+pub fn canonical_request_sha256(req: &Request) -> Result<[u8; 32], SignError> {
     if req.headers.len() > HEADERS_MAX {
         return Err(SignError::TooManyHeaders);
     }
@@ -162,8 +166,40 @@ pub fn signature(req: &Request, scope: &Scope) -> Result<[u8; 64], SignError> {
         update_lower(&mut h, req.headers[*i].0);
     }
     h.update(b"\n").update(req.payload_hash.as_bytes());
+    Ok(h.finish())
+}
+
+/// Write the names of the headers `req` signs into `out`, in lower case,
+/// sorted and joined by `;`, each listed once. Returns the length.
+pub fn signed_headers(req: &Request, out: &mut [u8]) -> Result<usize, SignError> {
+    if req.headers.len() > HEADERS_MAX {
+        return Err(SignError::TooManyHeaders);
+    }
+    let headers: [usize; HEADERS_MAX] = sorted(req.headers, |a, b| lower_less(a.0, b.0));
+    let order = &headers[..req.headers.len()];
+    let mut n = 0;
+    for (k, i) in order.iter().enumerate() {
+        let name = req.headers[*i].0;
+        if k > 0 && req.headers[order[k - 1]].0.eq_ignore_ascii_case(name) {
+            continue;
+        }
+        let end = n + (k > 0) as usize + name.len();
+        let room = out.get_mut(n..end).ok_or(SignError::OutputTooSmall)?;
+        if k > 0 {
+            room[0] = b';';
+        }
+        let at = room.len() - name.len();
+        room[at..].copy_from_slice(name.as_bytes());
+        room[at..].make_ascii_lowercase();
+        n = end;
+    }
+    Ok(n)
+}
+
+/// Hex signature for a request.
+pub fn signature(req: &Request, scope: &Scope) -> Result<[u8; 64], SignError> {
     let mut request_hash = [0u8; 64];
-    hex(&h.finish(), &mut request_hash);
+    hex(&canonical_request_sha256(req)?, &mut request_hash);
 
     // String to sign: algorithm, timestamp, credential scope, request hash.
     let date = &scope.amz_date[..8];

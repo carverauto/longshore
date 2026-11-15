@@ -65,6 +65,7 @@ impl Client {
         c.response_buf = req.response_buf;
         c.is_head = req.method == "HEAD";
         c.timed_out = false;
+        c.sent = false;
         // The name the certificate must match is the host alone: a Host value
         // may carry a port, a server name may not.
         let name = req.host.split(':').next().unwrap_or(req.host);
@@ -139,6 +140,7 @@ impl Client {
 
     pub(super) fn send_head<IO: Io>(&mut self, io: &mut IO, i: usize, off: u32) {
         self.conns[i].state = State::SendHead { off };
+        self.conns[i].sent = true;
         // Heads are small; the kernel would copy a zero-copy send this size anyway.
         self.streams[i].send(
             io,

@@ -9,11 +9,11 @@ use super::*;
 
 /// Thread-per-connection HTTP peer that never becomes the bottleneck:
 /// request bodies are discarded in the kernel with MSG_TRUNC.
-pub(super) fn sink(port: u16, get_size: u32, tls_cert: Option<&str>) {
+pub(super) fn sink(port: u16, get_size: u32, trust_file: Option<&str>) {
     let l =
         TcpListener::bind(("0.0.0.0", port)).unwrap_or_else(|e| die(&format!("bind {port}: {e}")));
     // TLS mode: a throwaway certificate for `bench.test`, saved for the client to trust.
-    let tls = tls_cert.map(|path| {
+    let tls = trust_file.map(|path| {
         let k = rcgen::generate_simple_self_signed(vec!["bench.test".to_string()])
             .unwrap_or_else(|e| die(&format!("certificate: {e}")));
         std::fs::write(path, k.cert.der()).unwrap_or_else(|e| die(&format!("{path}: {e}")));

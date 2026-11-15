@@ -70,7 +70,7 @@ struct Args {
     size: u32,
     secs: u64,
     cpu: Option<usize>,
-    tls_cert: Option<String>,
+    trust_file: Option<String>,
     batch: u32,
     /// Checksum every PUT body with CRC-64/NVME.
     crc: bool,
@@ -85,7 +85,7 @@ pub fn main() {
         size: 8 << 20,
         secs: 5,
         cpu: None,
-        tls_cert: None,
+        trust_file: None,
         batch: 1 << 20,
         crc: false,
     };
@@ -107,7 +107,7 @@ pub fn main() {
                 .unwrap_or_else(|_| die(&format!("bad number for {k}: {v}")))
         };
         match k.as_str() {
-            "--tls-cert" => a.tls_cert = Some(v),
+            "--tls-cert" => a.trust_file = Some(v),
             "--batch" => a.batch = num() as u32,
             "--addr" => a.addr = v,
             "--port" => a.port = num() as u16,
@@ -121,7 +121,7 @@ pub fn main() {
     }
     match a.cmd.as_str() {
         "selftest" => selftest(),
-        "sink" => sink(a.port, a.size, a.tls_cert.as_deref()),
+        "sink" => sink(a.port, a.size, a.trust_file.as_deref()),
         "put" => bench(&a, true),
         "get" => bench(&a, false),
         other => die(&format!("unknown command {other}")),

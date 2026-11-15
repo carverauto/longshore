@@ -41,12 +41,12 @@ pub(super) fn bench(a: &Args, put: bool) {
     let mut cfg = client_cfg(n, limits.buffer_size, 0);
     cfg.first_buf = limits.small(0).0;
     cfg.tls_batch = a.batch;
-    let host = if a.tls_cert.is_some() {
+    let host = if a.trust_file.is_some() {
         "bench.test"
     } else {
         "bench"
     };
-    let mut client = match &a.tls_cert {
+    let mut client = match &a.trust_file {
         None => Client::new(cfg),
         Some(path) => {
             let der = std::fs::read(path).unwrap_or_else(|e| die(&format!("{path}: {e}")));
@@ -174,7 +174,7 @@ pub(super) fn bench(a: &Args, put: bool) {
     let gb = bytes as f64 / 1e9;
     println!(
         "{{\"cmd\":\"{}\",\"crc\":{crc},\"links\":{},\"tls\":{},\"batch\":{},\"arch\":\"{}\",\"conns\":{},\"size\":{},\"secs\":{:.2},\"requests\":{},\"gb_per_s\":{:.2},\"thread_cpu\":{:.2},\"core_util\":{:.2},\"gb_per_cpu_s\":{:.2},\"enters_per_request\":{:.1},\"connects\":{}}}",
-        a.cmd, addrs.len(), a.tls_cert.is_some(), a.batch, std::env::consts::ARCH, n, size, wall, requests, gb / wall, cpu / wall, core, gb / cpu, (io.enters() - enters0) as f64 / requests.max(1) as f64, client.connects
+        a.cmd, addrs.len(), a.trust_file.is_some(), a.batch, std::env::consts::ARCH, n, size, wall, requests, gb / wall, cpu / wall, core, gb / cpu, (io.enters() - enters0) as f64 / requests.max(1) as f64, client.connects
     );
     std::process::exit(0);
 }

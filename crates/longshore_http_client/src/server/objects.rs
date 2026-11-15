@@ -178,7 +178,12 @@ impl Server {
                         );
                     }
                 }
+                if !self.sha256_agrees(&c.asked, &io.buf(self.body_buf(i))[..len]) {
+                    return self.error_document(io, i, 400, "BadDigest");
+                }
+                let kept = self.keep(&c.asked);
                 let o = &mut self.objects[slot];
+                o.kept = kept;
                 o.checksum = c.claimed.filter(|_| self.cfg.checksum.is_some());
                 o.data[..len]
                     .copy_from_slice(&io.buf(BufId(self.cfg.first_buf + i as u32 * 2 + 1))[..len]); // body buffer
@@ -191,16 +196,21 @@ impl Server {
                 if behavior == Behavior::ApplyThenClose {
                     return self.close(io, i);
                 }
-                // A stored part is answered with its tag.
-                if target.windows(12).any(|w| w == b"?partNumber=") {
-                    self.conns[i].reply_tag = Some(multipart::tag(&self.objects[slot].data[..len]));
+                // A stored part is answered with its tag, and so is an object.
+                self.conns[i].reply_tag = Some(multipart::tag(&self.objects[slot].data[..len]));
+                if !target.windows(12).any(|w| w == b"?partNumber=") {
+                    self.conns[i].asked.reply = Some(slot as u32);
                 }
                 self.status(io, i, 200, "OK", 0, 0, false)
             }
             b"GET" | b"HEAD" => {
                 let len = match found {
                     Some(slot) => {
+                        if let Some((status, reason)) = self.refused(&c.asked, slot) {
+                            return self.status(io, i, status, reason, 0, 0, false);
+                        }
                         self.conns[i].reply_object = Some(slot as u32);
+                        self.conns[i].asked.reply = Some(slot as u32);
                         let o = &self.objects[slot];
                         // A satisfiable range is served as 206 with just those bytes.
                         if let Some((a, b)) = c
@@ -209,6 +219,7 @@ impl Server {
                         {
                             let b = b.min(o.len - 1);
                             let n = (b - a + 1) as usize;
+                            self.conns[i].asked.reply_range = Some((a, b));
                             io.buf(self.body_buf(i))[..n]
                                 .copy_from_slice(&o.data[a as usize..a as usize + n]);
                             return self.status(

@@ -59,12 +59,13 @@ impl Client {
         c.state = State::Closing {
             then_connect: false,
         };
-        let token = c.token;
+        let (token, sent) = (c.token, c.sent);
         self.streams[i].reset();
         self.submit(io, i, K_CLOSE, Op::Close { sock: self.sock(i) });
         Handled::Done(Done {
             token,
             result: Err(e),
+            sent,
         })
     }
 
@@ -83,6 +84,7 @@ impl Client {
                 body_len: c.body_len,
                 conn: i as u32,
             }),
+            sent: true,
         };
         // Close when the server asked to, and when the traffic keys have done
         // enough work: the next request gets a new connection and new keys.

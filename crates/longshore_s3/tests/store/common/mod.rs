@@ -38,7 +38,7 @@ pub const TX: BufId = BufId(6);
 
 pub const RX: BufId = BufId(7);
 
-pub const HEAD_MAX: u32 = 2048;
+pub const HEAD_MAX: u32 = 8192;
 
 pub const LIMITS: Limits = Limits {
     sockets_max: 1 + CONNS * 2,
@@ -69,7 +69,7 @@ pub fn world_with(seed: u64, faults: Faults, attempts_max: u32, enforce: bool) -
         connections_max: CONNS,
         first_sock: 1 + CONNS,
         first_buf: 0,
-        head_max: 2048,
+        head_max: HEAD_MAX,
         buffer_size: BUF,
         objects_max: 8,
         token_base: 2 << 40,

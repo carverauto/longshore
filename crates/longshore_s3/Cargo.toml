@@ -46,6 +46,10 @@ name = "client_driven"
 path = "tests/client/driven.rs"
 
 [[test]]
+name = "client_exact"
+path = "tests/client/exact.rs"
+
+[[test]]
 name = "client_builder"
 path = "tests/client/builder.rs"
 
@@ -108,6 +112,10 @@ path = "tests/store/s3_checksums.rs"
 [[test]]
 name = "store_s3_conditional"
 path = "tests/store/s3_conditional.rs"
+
+[[test]]
+name = "store_s3_exact"
+path = "tests/store/s3_exact.rs"
 
 [[test]]
 name = "store_s3_listing"

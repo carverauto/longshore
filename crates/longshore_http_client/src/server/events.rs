@@ -38,7 +38,12 @@ impl Server {
             } else {
                 TARGET_MAX
             };
+            // A version is named in the query; the object table knows the key alone.
+            let (asked, target_len) =
+                identity::Asked::read(|name| head.fields.header(buf, name), target);
+            let target = &target[..target_len];
             let too_long = target.len() > target_max || method.len() > c.method.len();
+            c.asked = asked;
             if !too_long {
                 c.target[..target.len()].copy_from_slice(target);
                 c.target_len = target.len();
