@@ -2,10 +2,10 @@
   <picture>
     <source
       media="(prefers-color-scheme: light)"
-      srcset="assets/longshore-logo-light.png"
+      srcset="https://raw.githubusercontent.com/carverauto/longshore/v0.1.0/assets/longshore-logo-light.png"
     />
     <img
-      src="assets/longshore-logo.png"
+      src="https://raw.githubusercontent.com/carverauto/longshore/v0.1.0/assets/longshore-logo.png"
       alt="Longshore"
       width="900"
     />
@@ -35,8 +35,8 @@ The design follows the TigerBeetle talk
 
 This is a library under development. It is published on crates.io, and its
 API will change between releases.
-[Status](docs/status.md) lists what works and against which stores, and
-[Limits](docs/limits.md) lists what has not been done, measured or proven.
+[Status][status] lists what works and against which stores, and
+[Limits][limits] lists what has not been done, measured or proven.
 
 ## Performance
 
@@ -58,10 +58,10 @@ with more I/O threads: eight of them store 31.1 GB/s over HTTPS on the
 Graviton4 instance, with a checksum on every body.
 
 These figures need the preference for large-segment addresses, which is off
-by default. [Measurements](docs/benchmarks.md) has the conditions, the
+by default. [Measurements][benchmarks] has the conditions, the
 figures for several threads, the comparison with s5cmd and the AWS CLI, and
 runs between two machines. Every measurement is in
-[`bench/results/`](bench/results/) with the conditions it was taken under.
+[`bench/results/`][results] with the conditions it was taken under.
 
 ## Using it
 
@@ -100,10 +100,10 @@ assert_eq!(&body.as_slice()[..5], b"hello");
 
 Every operation returns a value that is a `Future` and also has a blocking
 `wait`, so the same calls work under any async executor and from plain
-threads. [The shareable client](docs/client.md) covers multipart uploads,
+threads. [The shareable client][client] covers multipart uploads,
 the calls that report exactly what the store answered, the settings, and
 how it is tested. The store's own API is lower level:
-[Building, testing and running against a store](docs/testing.md) shows how
+[Building, testing and running against a store][testing] shows how
 to drive it.
 
 ## Requirements
@@ -121,21 +121,31 @@ cargo test --workspace          # unit, simulation and property tests
 
 In a container, `io_uring` needs a seccomp profile that allows it and a
 locked-memory limit large enough for the client's buffers. Both are set on
-the node. See [Running in containers](docs/containers.md).
+the node. See [Running in containers][containers].
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [Status](docs/status.md) | What works, and against which stores |
-| [How it works](docs/design.md) | The design, and the crates in this repository |
-| [The shareable client](docs/client.md) | The handle other threads use: operations, settings, failure behaviour |
-| [Building, testing and running against a store](docs/testing.md) | The test scripts, and `s3_uring` against a real bucket |
-| [Running in containers](docs/containers.md) | The seccomp profile and the locked-memory limit |
-| [Measurements](docs/benchmarks.md) | Every benchmark table, with what bounds each figure |
-| [Limits](docs/limits.md) | What has not been done, measured or proven |
-| [`bench/README.md`](bench/README.md) | How to run the benchmarks |
+| [Status][status] | What works, and against which stores |
+| [How it works][design] | The design, and the crates in this repository |
+| [The shareable client][client] | The handle other threads use: operations, settings, failure behaviour |
+| [Building, testing and running against a store][testing] | The test scripts, and `s3_uring` against a real bucket |
+| [Running in containers][containers] | The seccomp profile and the locked-memory limit |
+| [Measurements][benchmarks] | Every benchmark table, with what bounds each figure |
+| [Limits][limits] | What has not been done, measured or proven |
+| [`bench/README.md`][bench] | How to run the benchmarks |
 
 ## License
 
 Apache License 2.0. See `LICENSE`.
+
+[bench]: https://github.com/carverauto/longshore/blob/main/bench/README.md
+[benchmarks]: https://github.com/carverauto/longshore/blob/main/docs/benchmarks.md
+[client]: https://github.com/carverauto/longshore/blob/main/docs/client.md
+[containers]: https://github.com/carverauto/longshore/blob/main/docs/containers.md
+[design]: https://github.com/carverauto/longshore/blob/main/docs/design.md
+[limits]: https://github.com/carverauto/longshore/blob/main/docs/limits.md
+[results]: https://github.com/carverauto/longshore/tree/main/bench/results
+[status]: https://github.com/carverauto/longshore/blob/main/docs/status.md
+[testing]: https://github.com/carverauto/longshore/blob/main/docs/testing.md
