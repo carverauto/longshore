@@ -165,9 +165,9 @@ impl World {
         self.run(self.done.len(), until);
     }
 
-    pub fn fill_tx(&mut self, len: u32, salt: u8) {
+    pub fn fill_tx(&mut self, len: u32, pattern: u8) {
         for (i, b) in self.io.buf(TX)[..len as usize].iter_mut().enumerate() {
-            *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[1] ^ salt;
+            *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[1] ^ pattern;
         }
     }
 }
