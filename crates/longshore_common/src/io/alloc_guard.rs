@@ -44,7 +44,11 @@ fn check(what: &'static str) {
     // A panic is exempt: reporting one allocates (the message, the payload,
     // the test harness's capture of the output) before any destructor can
     // lift the seal, and aborting there would replace the panic's message
-    // with this module's.
+    // with this module's. The exemption lasts for the whole unwind, so a
+    // destructor that allocates on the way out is let through as well: the
+    // two cannot be told apart from here. Nothing is hidden by that. The
+    // test has already failed, and what ships is built with
+    // `panic = "abort"`, where there is no unwind.
     if SEALED.try_with(|s| s.get()).unwrap_or(false) && !std::thread::panicking() {
         violation(what);
     }

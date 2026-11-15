@@ -84,6 +84,16 @@ fn child() {
             let got: Result<u32, String> = black_box(Err(String::new()));
             assert_eq!(got, Ok(1), "{PANIC_MESSAGE}");
         }),
+        "panic-drop-allocates" => sealed(|| {
+            struct AllocatesWhenDropped;
+            impl Drop for AllocatesWhenDropped {
+                fn drop(&mut self) {
+                    drop(black_box(Vec::<u8>::with_capacity(64)));
+                }
+            }
+            let _guard = AllocatesWhenDropped;
+            panic!("{PANIC_MESSAGE}");
+        }),
         "panic-caught" => {
             let caught = std::panic::catch_unwind(|| sealed(|| panic!("{PANIC_MESSAGE}")));
             assert!(caught.is_err());
@@ -218,6 +228,27 @@ fn a_panic_while_sealed_is_reported_as_itself() {
                 "{case} (capture {capture}): a failed test, not an abort\n{text}"
             );
         }
+    }
+}
+
+/// The exemption covers the whole unwind, not only the report: a destructor
+/// that allocates while a panic unwinds a sealed region is not a violation
+/// either. This is the rule, written down so that it is a choice. The
+/// guard cannot tell the report's allocations from a destructor's, since
+/// both happen while the thread is panicking; the test has failed already
+/// by then, with the panic's own message; and what ships is built with
+/// `panic = "abort"`, where nothing unwinds at all.
+#[test]
+fn a_destructor_that_allocates_during_the_unwind_is_exempt_too() {
+    for capture in [true, false] {
+        let (out, text) = run("panic-drop-allocates", capture);
+        assert!(text.contains(PANIC_MESSAGE), "capture {capture}:\n{text}");
+        assert!(!text.contains("alloc_guard"), "capture {capture}:\n{text}");
+        assert_eq!(
+            (out.status.signal(), out.status.code()),
+            (None, Some(101)),
+            "capture {capture}: a failed test, not an abort\n{text}"
+        );
     }
 }
 
