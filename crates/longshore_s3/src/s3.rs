@@ -4,7 +4,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! S3 and S3-compatible object stores: `store`, `store_no_clobber`, `fetch`
-//! and `erase` with SigV4 head signing and internal retries.
+//! and `erase` with SigV4 head signing and internal retries, and `put`,
+//! `head` and `get`, which report what the store answered.
 //!
 //! Each operation takes a slot from a fixed table. An attempt is one signed
 //! HTTP request; its outcome is classified and the operation is retried,
@@ -16,6 +17,7 @@
 use crate::creds::{Credentials, TOKEN_MAX};
 use crate::multipart::{self, PartTag, UploadId, PART_NUMBER_MAX, UPLOAD_ID_MAX};
 use crate::options::{Options, NAME_MAX, OPTIONS_MAX};
+use crate::report::{Report, VERSION_ID_MAX};
 use crate::retry::{classify, Class, STATUS_PRECONDITION_FAILED};
 use crate::sigv4::{self, authorization, uri_encode, EMPTY_SHA256, UNSIGNED_PAYLOAD};
 use crate::stat::Stat;
@@ -34,9 +36,17 @@ const PATH_MAX: usize = 1 + BUCKET_MAX + KEY_ENCODED_MAX;
 pub const LIST_TOKEN_ENCODED_MAX: usize = 1024;
 /// A slot's request target: a path, or a listing's query with a token.
 const TARGET_MAX: usize = PATH_MAX + b"continuation-token=&".len() + LIST_TOKEN_ENCODED_MAX;
-/// Room for a multipart query: `partNumber=10000&uploadId=` and an upload
-/// id with every byte percent-encoded.
-const QUERY_MAX: usize = 32 + 3 * UPLOAD_ID_MAX;
+/// Room for a slot's query: `partNumber=10000&uploadId=` and an upload id,
+/// or `versionId=` and a version id, with every byte percent-encoded.
+const QUERY_MAX: usize = {
+    let multipart = 32 + 3 * UPLOAD_ID_MAX;
+    let version = b"versionId=".len() + 3 * VERSION_ID_MAX;
+    if multipart > version {
+        multipart
+    } else {
+        version
+    }
+};
 /// A credentials file must be smaller than this and than the HTTP buffer
 /// size; a larger one is refused rather than read in part.
 pub const CREDENTIALS_FILE_MAX: u32 = 8192;
@@ -129,6 +139,10 @@ struct Slot {
     comparing: bool,
     /// CRC-64/NVME of the body, computed once and reused by every attempt.
     crc: Option<u64>,
+    /// The caller's SHA-256 of the body, sent instead of a CRC-64/NVME.
+    sha256: Option<[u8; 32]>,
+    /// Set for `put`, `head` and `get`, which end with a [`Report`].
+    exact: Option<exact::Exact>,
 }
 
 pub struct S3 {
@@ -169,6 +183,7 @@ impl S3 {
 }
 
 mod attempt;
+mod exact;
 mod multipart_ops;
 mod object_ops;
 mod outcome;
@@ -217,6 +232,8 @@ impl S3 {
             candidate: false,
             comparing: false,
             crc: None,
+            sha256: None,
+            exact: None,
         };
         let creds = [cfg.credentials; 2];
         S3 {
@@ -356,7 +373,7 @@ impl S3 {
             Handled::NotMine => false,
             Handled::Pending => true,
             Handled::Done(d) => {
-                self.on_attempt_done(io, d.token as usize, d.result);
+                self.on_attempt_done(io, d.token as usize, d.result, d.sent);
                 self.check_validation(io);
                 true
             }
@@ -385,6 +402,7 @@ impl S3 {
             }
         }
         self.check_validation(io);
+        self.expire(io, now);
         for i in 0..self.slots.len() {
             if matches!(self.slots[i].state, State::Waiting { until } if now >= until) {
                 self.attempt(io, i);

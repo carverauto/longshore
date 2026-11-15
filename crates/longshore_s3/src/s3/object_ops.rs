@@ -212,6 +212,7 @@ impl S3 {
         s.response_buf = Some(into);
         (s.candidate, s.comparing) = (false, false);
         (s.attempts, s.delays, s.address_waits, s.crc) = (0, 0, 0, Some(crc));
+        (s.sha256, s.exact) = (None, None);
         self.attempt(io, i);
         Ok(())
     }

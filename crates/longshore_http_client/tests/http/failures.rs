@@ -154,7 +154,9 @@ fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
             result,
             Some(Done {
                 token: 7,
-                result: Err(Error::Timeout)
+                result: Err(Error::Timeout),
+                // The request went out whole before the response stalled.
+                sent: true,
             }),
             "seed {seed}: the request did not end with a timeout"
         );

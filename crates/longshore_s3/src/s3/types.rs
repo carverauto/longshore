@@ -7,6 +7,7 @@
 
 use crate::creds::Credentials;
 use crate::multipart::{PartTag, UploadId};
+use crate::report::Report;
 use crate::stat::Stat;
 use longshore_common::io::{BufId, FileId};
 use longshore_dns::Resolver;
@@ -22,6 +23,13 @@ pub enum Checksum {
     Compute,
     /// The caller already has the CRC-64/NVME of the body.
     Provided(u64),
+    /// The caller has the SHA-256 of the body, and it is sent in place of
+    /// a CRC-64/NVME: a store takes one kind of checksum per object. The
+    /// store checks the body against it; this client never hashes a body
+    /// with SHA-256. For a whole object on S3 only: a part of an upload or
+    /// a store on Google Cloud Storage is refused as
+    /// [`SubmitError::Unsupported`].
+    Sha256([u8; 32]),
 }
 
 /// Which store's request forms to use.
@@ -143,6 +151,9 @@ pub enum Endpoint {
     Resolved(Resolver),
 }
 
+// Held in slots that exist whether or not they are used, and passed by
+// value: boxing the large variant would allocate on every operation.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Outcome {
     Stored,
@@ -188,6 +199,8 @@ pub enum Outcome {
     ErasedMany {
         len: u32,
     },
+    /// How a `put`, `head` or `get` ended. They end no other way.
+    Report(Report),
     Fatal(Fatal),
 }
 
@@ -225,7 +238,8 @@ pub struct Done {
 pub enum SubmitError {
     /// All operation slots are in use.
     Busy,
-    /// The key is empty or too long once encoded.
+    /// The key is empty or too long once encoded, or an expected `ETag`
+    /// holds a byte that is not visible ASCII and so cannot be sent.
     BadKey,
     /// The byte range ends before it starts.
     BadRange,

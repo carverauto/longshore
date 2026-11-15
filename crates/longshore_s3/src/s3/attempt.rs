@@ -5,11 +5,15 @@
 
 //! Building and sending one attempt of an operation, in the store vendor's request form.
 
+use super::exact::{self, Cause, Encryption};
 use super::*;
 
 impl S3 {
     /// Sign and send one attempt for slot `i`.
     pub(super) fn attempt<IO: Io>(&mut self, io: &mut IO, i: usize) {
+        if self.past_deadline(io, i) {
+            return self.end_unanswered(i, Cause::Deadline);
+        }
         let addr = match &mut self.cfg.endpoint {
             Endpoint::Fixed(a) => Some(*a),
             Endpoint::Resolved(r) => r.lookup(0).map(|ip| SocketAddr::new(ip, self.cfg.port)),
@@ -27,7 +31,7 @@ impl S3 {
                 / self.cfg.backoff_ns.max(1))
             .max(1);
             if self.slots[i].address_waits as u64 >= waits_max {
-                return self.finish(i, Outcome::Fatal(Fatal::NoAddress));
+                return self.fail_unsent(i, Fatal::NoAddress);
             }
             self.slots[i].address_waits += 1;
             return self.wait(io, i, self.cfg.backoff_ns);
@@ -143,6 +147,16 @@ impl S3 {
         let crc_str = crc_value
             .as_ref()
             .map(|v| core::str::from_utf8(v).expect("base64 is ASCII"));
+        let mut sha_value = [0u8; 44];
+        let sha_str = s.sha256.map(|digest| {
+            longshore_crc::base64(&digest, &mut sha_value);
+            core::str::from_utf8(&sha_value).expect("base64 is ASCII")
+        });
+        let asked = s.exact.unwrap_or_default();
+        let if_match = asked
+            .if_match
+            .as_ref()
+            .map(|tag| core::str::from_utf8(tag.as_bytes()).expect("checked when asked for"));
         let mut signed: [(&str, &str); sigv4::HEADERS_MAX] = [("", ""); sigv4::HEADERS_MAX];
         signed[0] = ("host", &self.cfg.host);
         signed[1] = ("x-amz-content-sha256", payload);
@@ -187,6 +201,17 @@ impl S3 {
                 s.kind.stores_bytes() || matches!(s.kind, Kind::Complete | Kind::EraseMany);
             if let (true, Some(v), false) = (checksummed, crc_str, s.comparing) {
                 signed[m] = (CHECKSUM_HEADER, v);
+                m += 1;
+            } else if let (Kind::Store { .. }, Some(v), false) = (s.kind, sha_str, s.comparing) {
+                signed[m] = ("x-amz-checksum-sha256", v);
+                m += 1;
+            }
+            if let Some(tag) = if_match {
+                signed[m] = ("if-match", tag);
+                m += 1;
+            }
+            if asked.encryption == Some(Encryption::Aes256) {
+                signed[m] = ("x-amz-server-side-encryption", "AES256");
                 m += 1;
             }
             // Whole-object checksums have to be asked for when the upload begins.
@@ -252,6 +277,9 @@ impl S3 {
             };
             let auth_len = authorization(&sreq, &scope, &mut auth)
                 .expect("at most sixteen headers, and the Authorization buffer always fits");
+            if let Some(exact) = &mut self.slots[i].exact {
+                exact.signing = Some(exact::describe(method, &date, &sreq));
+            }
 
             // Host is added by the HTTP client; send the rest plus Authorization.
             for (k, (name, value)) in signed[1..m].iter().enumerate() {
@@ -279,7 +307,7 @@ impl S3 {
             }
             // Every connection is busy: try again shortly, without spending an attempt.
             Err(Error::Busy) => self.wait(io, i, self.cfg.backoff_ns),
-            Err(e) => self.finish(i, Outcome::Fatal(Fatal::Transport(e))),
+            Err(e) => self.fail_unsent(i, Fatal::Transport(e)),
         }
     }
 }
