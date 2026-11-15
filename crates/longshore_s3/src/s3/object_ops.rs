@@ -136,6 +136,11 @@ impl S3 {
     /// Copy the object at `from_key` to `to_key` inside the store. No bytes
     /// pass through the client. The outcome is [`Outcome::Copied`], or
     /// [`Outcome::NotFound`] if there is nothing at `from_key`.
+    ///
+    /// The source bucket is this store's own. With the bucket in the host
+    /// name it is found by [`bucket_in_host`]; on a store whose endpoint
+    /// that cannot recognise, a bucket whose name contains dots must be
+    /// addressed in the path instead.
     pub fn copy<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -147,11 +152,11 @@ impl S3 {
             return Err(SubmitError::BadKey);
         }
         // The source is named as "/bucket/key". The bucket is the one in
-        // the path, or else the first label of the host.
+        // the path, or else the one the host names before the endpoint.
         let mut source = [0u8; QUERY_MAX];
         let bucket = match &self.cfg.bucket_in_path {
             Some(bucket) => bucket.as_bytes(),
-            None => self.cfg.host.split('.').next().unwrap_or("").as_bytes(),
+            None => bucket_in_host(self.cfg.vendor, &self.cfg.host).as_bytes(),
         };
         let key_at = bucket.len() + 2;
         if key_at >= source.len() {

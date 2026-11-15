@@ -70,13 +70,14 @@ fn lower_less(a: &str, b: &str) -> bool {
         .lt(b.bytes().map(|c| c.to_ascii_lowercase()))
 }
 
-/// Feed a header value with leading/trailing spaces removed and inner runs
-/// of spaces collapsed to one.
+/// Feed a header value with leading/trailing spaces and tabs removed and
+/// inner runs of them collapsed to one space. A tab counts because a server
+/// strips it from around a value as it does a space.
 fn update_trimmed(h: &mut Sha256, value: &str) {
     let mut pending_space = false;
     let mut started = false;
     for b in value.bytes() {
-        if b == b' ' {
+        if b == b' ' || b == b'\t' {
             pending_space = started;
             continue;
         }

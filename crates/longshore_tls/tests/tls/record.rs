@@ -329,6 +329,12 @@ fn seal_then_open_round_trips_and_matches_an_independent_cipher(tc: TestCase) {
         Ok((ctype, content.len()))
     );
     assert_eq!(&out[..content.len()], &content[..]);
+
+    // Opened where it lies, the content is the same and follows the header.
+    let mut rx = direction(&key, &iv, seq);
+    assert_eq!(rx.open_in_place(&mut rec), Ok((ctype, content.len())));
+    assert_eq!(&rec[HEADER_LEN..HEADER_LEN + content.len()], &content[..]);
+    assert_eq!(rx.sequence(), seq + 1);
 }
 
 /// Arbitrary bytes presented as a record are rejected, never accepted.

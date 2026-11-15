@@ -8,6 +8,7 @@
 
 mod common;
 use common::*;
+use longshore_http_client::head::Fields;
 use longshore_s3::erase::write_manifest;
 use longshore_s3::presign::Access;
 
@@ -147,6 +148,94 @@ fn a_copy_names_its_source_by_the_bucket_in_the_path() {
     assert_eq!(w.server.object_len("/b/dst"), Some(LEN));
 }
 
+/// With the bucket in the host name, the bucket is what is left when the
+/// store's endpoint is taken off the right. A bucket's name may contain
+/// dots, so its first label is not the bucket.
+#[test]
+fn the_bucket_in_a_host_name_is_what_precedes_the_endpoint() {
+    use longshore_s3::s3::{bucket_in_host, Vendor};
+    for (host, bucket) in [
+        ("media.s3.us-east-1.amazonaws.com", "media"),
+        (
+            "my.dotted.bucket.s3.us-east-1.amazonaws.com",
+            "my.dotted.bucket",
+        ),
+        ("my.bucket.s3.amazonaws.com", "my.bucket"),
+        (
+            "my.bucket.s3.dualstack.eu-west-1.amazonaws.com",
+            "my.bucket",
+        ),
+        ("my.bucket.s3-us-west-2.amazonaws.com", "my.bucket"),
+        ("my.bucket.s3.us-west-000.backblazeb2.com", "my.bucket"),
+        // A bucket may itself have a label "s3": the endpoint is the last.
+        (
+            "logs.s3.archive.s3.eu-central-1.amazonaws.com",
+            "logs.s3.archive",
+        ),
+        // No marker of the endpoint: the first label, as before.
+        ("media.us-ord-1.linodeobjects.com", "media"),
+        ("bucket.objects.test", "bucket"),
+        ("localhost", "localhost"),
+        // An endpoint with no bucket before it has none to find.
+        ("s3.us-east-1.amazonaws.com", "s3"),
+    ] {
+        assert_eq!(bucket_in_host(Vendor::S3, host), bucket, "{host}");
+    }
+    for (host, bucket) in [
+        ("media.storage.googleapis.com", "media"),
+        (
+            "my.dotted.bucket.storage.googleapis.com",
+            "my.dotted.bucket",
+        ),
+        ("media.objects.test", "media"),
+    ] {
+        assert_eq!(bucket_in_host(Vendor::Gcs, host), bucket, "{host}");
+    }
+}
+
+/// A bucket whose name has dots, addressed in the host name.
+const DOTTED: &str = "my.dotted.bucket";
+
+/// Signed, and a copy's source names `DOTTED`: S3 reads
+/// `x-amz-copy-source` as "/bucket/key", and refuses a bucket it does not
+/// serve.
+fn signed_and_copied_from_dotted(method: &[u8], target: &[u8], head: &[u8], f: &Fields) -> bool {
+    signing::verify_sigv4(method, target, head, f)
+        && f.header(head, "x-amz-copy-source").is_none_or(|source| {
+            source
+                .strip_prefix(b"/")
+                .and_then(|s| s.strip_prefix(DOTTED.as_bytes()))
+                .is_some_and(|rest| rest.first() == Some(&b'/'))
+        })
+}
+
+/// The copy's source header, as sent, names the whole bucket. Found in
+/// review: the fix for dotted names had no test that failed without it.
+#[test]
+fn a_copy_names_a_dotted_bucket_in_the_host_whole() {
+    let mut io = SimIo::new(LIMITS, 9, Faults::default());
+    let mut server = Server::new(server::Config {
+        listener: Sock(0),
+        connections_max: CONNS,
+        first_sock: 1 + CONNS,
+        first_buf: 0,
+        head_max: HEAD_MAX,
+        buffer_size: BUF,
+        objects_max: 8,
+        token_base: 2 << 40,
+        checksum: None,
+    });
+    server.verify_requests(signed_and_copied_from_dotted);
+    server.start(&mut io, ADDR).unwrap();
+    let mut cfg = s3_config(3, false);
+    cfg.host = format!("{DOTTED}.s3.us-test-1.amazonaws.com");
+    let mut w = finish_world(io, server, cfg);
+    put(&mut w, 1, "a/src");
+    w.s3.copy(&mut w.io, 2, "a/src", "b/dst").unwrap();
+    assert_eq!(w.last().outcome, Outcome::Copied);
+    assert_eq!(w.server.object_len("/b/dst"), Some(LEN));
+}
+
 #[test]
 fn a_batch_erase_goes_to_the_bucket() {
     let mut w = world_in_path(4);
@@ -243,4 +332,19 @@ fn a_store_for_another_bucket_does_not_reach_the_served_one() {
     w.s3.fetch(&mut w.io, 3, "shared", None, RX).unwrap();
     run_both(&mut w, &mut media, 3);
     assert_eq!(w.done[2].outcome, Outcome::NotFound);
+}
+
+/// The longest bucket name and the longest key fit the path together.
+#[test]
+fn the_longest_bucket_and_the_longest_key_fit_one_path() {
+    use longshore_s3::s3::{BUCKET_MAX, KEY_ENCODED_MAX};
+    let bucket: &'static str = Box::leak("b".repeat(BUCKET_MAX).into_boxed_str());
+    let mut w = world_for_bucket(8, bucket);
+    let key = "k".repeat(KEY_ENCODED_MAX - 1);
+    assert_eq!(w.s3.erase(&mut w.io, 1, &key), Ok(()));
+    w.last();
+    assert_eq!(
+        w.s3.erase(&mut w.io, 2, &(key + "k")),
+        Err(SubmitError::BadKey)
+    );
 }

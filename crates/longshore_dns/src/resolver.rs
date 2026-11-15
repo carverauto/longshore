@@ -51,7 +51,11 @@ pub struct Config {
     pub timeout_ns: u64,
     /// One socket slot and one receive buffer per server.
     pub socks: [Sock; SERVERS_MAX],
+    /// Each must hold [`MESSAGE_MAX`] bytes: that much is asked of every
+    /// receive. Checked when the resolver starts.
     pub rx_bufs: [BufId; SERVERS_MAX],
+    /// Must hold the longest query: 18 bytes more than the longest
+    /// hostname, so 271 at most. Checked when the resolver starts.
     pub tx_buf: BufId,
     /// Tokens used are `token_base..token_base + 256`.
     pub token_base: u64,
@@ -151,6 +155,22 @@ impl Resolver {
 
     /// Begin resolving. Call once.
     pub fn start<IO: Io>(&mut self, io: &mut IO) {
+        // The buffers are the caller's. Too small a one would panic at the
+        // first answer or query that did not fit; say so now, by name.
+        for (i, _) in self.cfg.servers.iter().enumerate() {
+            assert!(
+                io.buf(self.cfg.rx_bufs[i]).len() >= MESSAGE_MAX,
+                "rx_bufs[{i}] must hold {MESSAGE_MAX} bytes"
+            );
+        }
+        let record = self.cfg.family.records()[0];
+        for host in &self.hosts {
+            assert!(
+                encode_query_for(&host.name, 0, record, io.buf(self.cfg.tx_buf)).is_ok(),
+                "tx_buf is too small for a query for {:?}",
+                host.name
+            );
+        }
         self.rng = io.now_ns() ^ self.cfg.token_base ^ 0x9e37_79b9_7f4a_7c15;
         self.phase = Phase::Connecting {
             remaining: self.cfg.servers.len(),
@@ -257,6 +277,11 @@ impl Resolver {
         else {
             return false;
         };
+        // The range leaves room for eight servers and there are at most two.
+        // A completion naming one that does not exist is nobody's: ignore it.
+        if kind < K_SEND && (kind % K_RECV) as usize >= self.cfg.servers.len() {
+            return true;
+        }
         match kind {
             k if k < K_RECV => {
                 let server = (k - K_CONNECT) as usize;

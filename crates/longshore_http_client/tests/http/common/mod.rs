@@ -213,3 +213,120 @@ pub fn ok(status: u16, body_len: u32) -> impl Fn(Result<Response, Error>) {
         Err(e) => panic!("expected {status}, got {e:?}"),
     }
 }
+
+/// What a hand-driven peer saw and what the client made of its answer.
+pub struct RawExchange {
+    pub result: Result<Response, Error>,
+    /// The request exactly as the client put it on the wire.
+    pub request: Vec<u8>,
+}
+
+/// The address of the hand-driven peer.
+pub const RAW_PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 82)), 80);
+
+/// One request to a hand-driven peer that reads the request, answers with
+/// exactly `reply`, and then neither sends more nor closes. Unlike the
+/// in-tree server it shares no parsing code with the client, so what it
+/// records is an independent view of the client's bytes.
+pub fn raw_exchange(
+    cfg: client::Config,
+    method: &str,
+    headers: &[(&str, &[u8])],
+    response_buf: Option<BufId>,
+    reply: &[u8],
+) -> RawExchange {
+    const LISTEN: Sock = Sock(1 + CONNS * 2);
+    const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
+    const ACCEPT: u64 = 3 << 40;
+    const RECV: u64 = ACCEPT + 1;
+    const SEND: u64 = ACCEPT + 2;
+    const IN_MAX: u32 = 4096;
+    let mut w = world_with(12, Faults::default(), cfg);
+    w.io.listen(LISTEN, RAW_PEER).unwrap();
+    w.io.submit(
+        Token(ACCEPT),
+        Op::Accept {
+            listener: LISTEN,
+            sock: PEER_SOCK,
+        },
+    )
+    .unwrap();
+    assert!(reply.len() <= (BUF - IN_MAX) as usize);
+    w.io.buf(TX)[IN_MAX as usize..IN_MAX as usize + reply.len()].copy_from_slice(reply);
+    let req = Request {
+        method,
+        target: "/raw",
+        host: "raw.test",
+        host_id: 2,
+        addr: RAW_PEER,
+        headers,
+        body: None,
+        response_buf,
+    };
+    w.client.start(&mut w.io, 9, &req).unwrap();
+    let (mut sent, mut got, mut result) = (false, 0u32, None);
+    let World {
+        io,
+        client,
+        server,
+        out,
+        ..
+    } = &mut w;
+    let recv = |io: &mut SimIo, got: u32| {
+        io.submit(
+            Token(RECV),
+            Op::Recv {
+                sock: PEER_SOCK,
+                buf: TX,
+                off: got,
+                len: IN_MAX - got,
+            },
+        )
+        .unwrap()
+    };
+    sealed(|| {
+        while result.is_none() {
+            io.tick(true, out).expect("simulation deadlock");
+            while let Some(c) = out.pop() {
+                match c.token.0 {
+                    HEARTBEAT => {
+                        client.tick(io);
+                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                            .unwrap();
+                    }
+                    ACCEPT => recv(io, got),
+                    RECV if c.result > 0 => {
+                        got += c.result as u32;
+                        if !sent {
+                            io.submit(
+                                Token(SEND),
+                                Op::Send {
+                                    sock: PEER_SOCK,
+                                    buf: TX,
+                                    off: IN_MAX,
+                                    len: reply.len() as u32,
+                                    zero_copy: false,
+                                },
+                            )
+                            .unwrap();
+                            sent = true;
+                        }
+                        recv(io, got);
+                    }
+                    RECV | SEND => {}
+                    _ => match client.on_completion(io, c) {
+                        Handled::Done(d) => result = Some(d.result),
+                        Handled::Pending => {}
+                        Handled::NotMine => {
+                            assert!(server.on_completion(io, c), "unrouted completion {c:?}")
+                        }
+                    },
+                }
+            }
+        }
+    });
+    RawExchange {
+        result: result.unwrap(),
+        request: w.io.buf(TX)[..got as usize].to_vec(),
+    }
+}

@@ -29,8 +29,7 @@ The design follows the TigerBeetle talk
 
 ## Status
 
-This is a library under development. It is not published as a crate, and it
-is meant to become part of a larger project.
+This is a library under development and not yet published on crates.io.
 
 | Area | State |
 |---|---|
@@ -81,7 +80,7 @@ The library is six crates in `crates/`, and a seventh that gathers them.
 |---|---|---|
 | `longshore_common` | `io`: the `Io` trait, the `io_uring` backend on raw system calls, and the allocation guard. `sim`: the simulator, behind the `sim` feature | Nothing outside the standard library |
 | `longshore_dns` | Resolver for A and AAAA records over UDP | `longshore_common` |
-| `longshore_crc` | CRC-64/NVME, CRC-32C, base64 | `crc-fast` |
+| `longshore_crc` | CRC-64/NVME, CRC-32C, base64, with their own kernels for x86-64 and AArch64 | Nothing outside the standard library |
 | `longshore_tls` | TLS 1.3 record layer and the `rustls` handshake wrapper | `longshore_common`, `aws-lc-sys`, `rustls`, `webpki-roots` |
 | `longshore_http_client` | HTTP/1.1 client with a connection pool and chunked decoding, a stream that is plain or TLS, and a server used by the tests | `longshore_common`, `longshore_tls` |
 | `longshore_s3` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials. `client`: a handle any thread can share, over one or more I/O threads that each run a store, with lent buffers. `crypto`: SHA-256 and HMAC-SHA256 | The five above, `ring` |

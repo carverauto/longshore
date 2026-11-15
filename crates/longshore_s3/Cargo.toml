@@ -74,6 +74,18 @@ name = "store_gcs_sim"
 path = "tests/store/gcs_sim.rs"
 
 [[test]]
+name = "store_codec_props"
+path = "tests/store/codec_props.rs"
+
+[[test]]
+name = "store_doc_props"
+path = "tests/store/doc_props.rs"
+
+[[test]]
+name = "store_gcs_hash_sim"
+path = "tests/store/gcs_hash_sim.rs"
+
+[[test]]
 name = "store_list_props"
 path = "tests/store/list_props.rs"
 
@@ -114,6 +126,10 @@ name = "store_s3_multipart"
 path = "tests/store/s3_multipart.rs"
 
 [[test]]
+name = "store_s3_multipart_edges"
+path = "tests/store/s3_multipart_edges.rs"
+
+[[test]]
 name = "store_s3_object_ops"
 path = "tests/store/s3_object_ops.rs"
 
@@ -126,5 +142,17 @@ name = "store_s3_retries"
 path = "tests/store/s3_retries.rs"
 
 [[test]]
+name = "store_s3_retry_props"
+path = "tests/store/s3_retry_props.rs"
+
+[[test]]
+name = "store_s3_transport"
+path = "tests/store/s3_transport.rs"
+
+[[test]]
 name = "store_sigv4_suite"
 path = "tests/store/sigv4_suite.rs"
+
+[[test]]
+name = "store_sigv4_props"
+path = "tests/store/sigv4_props.rs"

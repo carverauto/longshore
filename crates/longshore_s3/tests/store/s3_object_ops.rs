@@ -314,3 +314,43 @@ fn a_presigned_url_carries_a_port_that_is_not_the_default() {
     let m = presign::presign(&mut expected, &target, Access::Fetch, "dir/a", now, 600).unwrap();
     assert_eq!(url.as_bytes(), &expected[..m]);
 }
+
+/// The store refusing the checksum of a batch erase means the document was
+/// damaged on the way: it is sent again. The refusal arrives in the
+/// caller's buffer, where the report would have.
+#[test]
+fn a_batch_erase_whose_checksum_is_refused_is_sent_again() {
+    let mut w = world_with(9, Faults::default(), 3, true);
+    w.put(1, "a", 1);
+    let len = write_manifest(w.io.buf(TX), &["a"]).unwrap() as u32;
+    w.server.script(Behavior::ErrorDocument(400, "BadDigest"));
+    w.s3.erase_many(&mut w.io, 10, TX, len, RX).unwrap();
+    let d = w.last();
+    let Outcome::ErasedMany { len: report } = d.outcome else {
+        panic!("expected a batch result, got {d:?}")
+    };
+    assert_eq!(d.attempts, 2);
+    assert_eq!(
+        Failures::parse(&w.io.buf(RX)[..report as usize])
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(w.stat(11, "a", None), Outcome::NotFound);
+
+    // Any other refusal is final.
+    w.put(2, "b", 2);
+    let len = write_manifest(w.io.buf(TX), &["b"]).unwrap() as u32;
+    w.server
+        .script(Behavior::ErrorDocument(400, "MalformedXML"));
+    w.s3.erase_many(&mut w.io, 12, TX, len, RX).unwrap();
+    assert_eq!(
+        w.last(),
+        Done {
+            token: 12,
+            outcome: Outcome::Fatal(Fatal::Status(400)),
+            attempts: 1
+        }
+    );
+    assert!(matches!(w.stat(13, "b", None), Outcome::Stat(_)));
+}

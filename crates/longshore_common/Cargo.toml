@@ -20,7 +20,24 @@ fault-injection = []
 
 [dev-dependencies]
 longshore_common = { workspace = true, features = ["sim"] }
+hegeltest.workspace = true
+
+[[test]]
+name = "io_props"
+path = "tests/io/props.rs"
+
+[[test]]
+name = "guard_death"
+path = "tests/guard/death.rs"
 
 [[test]]
 name = "sim_echo"
 path = "tests/sim/echo.rs"
+
+[[test]]
+name = "sim_faults"
+path = "tests/sim/faults.rs"
+
+[[test]]
+name = "sim_sockets"
+path = "tests/sim/sockets.rs"

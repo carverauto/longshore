@@ -31,11 +31,21 @@ fn identity(name: &str) -> Identity {
 /// Run both sides to completion, moving at most `step` bytes per hop, and
 /// return any bytes the peer sent after its handshake finished.
 fn run(client: &mut Handshake, server: &mut Handshake, step: usize) -> Result<Vec<u8>, TlsError> {
+    run_writing(client, server, step, 65536)
+}
+
+/// As [`run`], with `room` bytes offered to each `Handshake::write`.
+fn run_writing(
+    client: &mut Handshake,
+    server: &mut Handshake,
+    step: usize,
+    room: usize,
+) -> Result<Vec<u8>, TlsError> {
     let (mut to_server, mut to_client) = (Vec::new(), Vec::new());
     // How much of each queue has "arrived" so far: grows by `step` per turn,
     // so records straddle deliveries.
     let (mut at_server, mut at_client) = (0usize, 0usize);
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u8; room];
     for _ in 0..200_000 {
         let n = client.write(&mut buf);
         to_server.extend_from_slice(&buf[..n]);
@@ -82,6 +92,10 @@ fn handshake_completes_and_the_record_layer_takes_over_in_both_directions() {
         let (mut ctx, mut crx, mut stx, mut srx, leftover) = established(step);
         // Anything the server sent after its handshake (session tickets) must
         // open with the client's receive keys, as handshake-type records.
+        // Without them nothing here would tell the two directions apart.
+        assert!(!leftover.is_empty(), "step {step}: no session tickets");
+        assert!(stx.sequence() > 0, "the tickets were sent under these keys");
+        assert_eq!((ctx.sequence(), crx.sequence(), srx.sequence()), (0, 0, 0));
         let mut rest = &leftover[..];
         let mut out = vec![0u8; 20_000];
         while !rest.is_empty() {
@@ -168,6 +182,37 @@ fn finish_before_completion_and_garbage_input_are_errors() {
         Handshake::client(&cs, "not a hostname").err(),
         Some(TlsError::Setup)
     );
+}
+
+/// `write` fills what it is given and keeps the rest for the next call, so a
+/// flight larger than the send buffer goes out over several calls.
+#[test]
+fn flights_larger_than_the_write_buffer_go_out_in_pieces() {
+    let id = identity(NAME);
+    let cs = ClientSetup::with_roots(&[&id.cert]).unwrap();
+    let ss = ServerSetup::new(&[&id.cert], &id.key).unwrap();
+    for room in [1usize, 16, 333] {
+        let (mut c, mut s) = (
+            Handshake::client(&cs, NAME).unwrap(),
+            Handshake::server(&ss).unwrap(),
+        );
+        // Nothing is written into no room, and nothing is lost by asking.
+        assert_eq!(c.write(&mut []), 0);
+        run_writing(&mut c, &mut s, 4096, room).unwrap_or_else(|e| panic!("room {room}: {e:?}"));
+        let (mut ctx, mut srx) = (Direction::new(), Direction::new());
+        c.finish(&mut ctx, &mut Direction::new()).unwrap();
+        s.finish(&mut Direction::new(), &mut srx).unwrap();
+        let (mut rec, mut out) = (vec![0u8; 100], vec![0u8; 100]);
+        let n = ctx
+            .seal(CONTENT_APPLICATION_DATA, b"after small writes", &mut rec)
+            .unwrap();
+        assert_eq!(
+            srx.open(&rec[..n], &mut out),
+            Ok((CONTENT_APPLICATION_DATA, 18)),
+            "room {room}"
+        );
+        assert_eq!(&out[..18], b"after small writes");
+    }
 }
 
 /// The allocation exception covers the handshake and nothing after it.

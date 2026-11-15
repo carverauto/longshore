@@ -136,3 +136,79 @@ fn temporary_keys_carry_their_session_token() {
         "Debug must not print the token"
     );
 }
+
+/// A value is everything after the first `=`. Session tokens are base64 and
+/// commonly end in one or two more.
+#[test]
+fn a_value_keeps_the_equals_signs_inside_it() {
+    let c = Credentials::parse(
+        b"aws_access_key_id = A\naws_secret_access_key=a=b\naws_session_token = abc/def+ghi==\n",
+    )
+    .unwrap();
+    assert_eq!(
+        (c.access_key(), c.secret_key(), c.session_token()),
+        ("A", "a=b", "abc/def+ghi==")
+    );
+    // A name must be the whole name.
+    assert!(Credentials::parse(b"aws_access_key_id2 = A\naws_secret_access_key = s\n").is_none());
+    assert!(
+        Credentials::parse(b"AWS_ACCESS_KEY_ID = A\naws_secret_access_key = s\n").is_none(),
+        "names are lowercase"
+    );
+}
+
+/// What the code does today about where keys are read from, written down.
+#[test]
+fn which_lines_are_in_scope() {
+    let pair = |c: Credentials| (c.access_key().to_string(), c.secret_key().to_string());
+    // Keys before the first section count as well as those under
+    // `[default]`, and the later value wins.
+    let c = Credentials::parse(
+        b"aws_access_key_id = TOP\naws_secret_access_key = top\n[default]\naws_access_key_id = DEF\n",
+    )
+    .unwrap();
+    assert_eq!(pair(c), ("DEF".to_string(), "top".to_string()));
+    // A `[default]` section given twice is read both times.
+    let c = Credentials::parse(
+        b"[default]\naws_access_key_id = ONE\n[other]\naws_access_key_id = NO\n[default]\naws_secret_access_key = two\n",
+    )
+    .unwrap();
+    assert_eq!(pair(c), ("ONE".to_string(), "two".to_string()));
+    // Spaces inside the brackets do not make it another section.
+    let c =
+        Credentials::parse(b"[other]\n[ default ]\naws_access_key_id=A\naws_secret_access_key=s\n")
+            .unwrap();
+    assert_eq!(pair(c), ("A".to_string(), "s".to_string()));
+    for other in ["[Default]", "[profile default]", "[default2]"] {
+        let text = format!("{other}\naws_access_key_id=A\naws_secret_access_key=s\n");
+        assert!(Credentials::parse(text.as_bytes()).is_none(), "{other}");
+    }
+    // A comment after a value is part of the value, which a space makes unusable.
+    assert!(
+        Credentials::parse(b"aws_access_key_id = AKID # note\naws_secret_access_key = s\n")
+            .is_none()
+    );
+}
+
+#[test]
+fn each_part_is_held_up_to_its_limit() {
+    let at = "a".repeat(FIELD_MAX);
+    let c = Credentials::new(&at, &at).unwrap();
+    assert_eq!((c.access_key(), c.secret_key()), (at.as_str(), at.as_str()));
+    let over = "a".repeat(FIELD_MAX + 1);
+    assert!(Credentials::new(&over, "s").is_none());
+    assert!(Credentials::new("a", &over).is_none());
+    assert!(Credentials::new("", "s").is_none());
+    assert!(Credentials::new("a", "").is_none());
+    let token = "t".repeat(SESSION_MAX);
+    assert_eq!(
+        Credentials::with_session("a", "s", &token)
+            .unwrap()
+            .session_token(),
+        token
+    );
+    for bad in ["caf\u{e9}", "a\u{7f}", "a\0"] {
+        assert!(Credentials::new(bad, "s").is_none(), "{bad:?}");
+        assert!(Credentials::new("a", bad).is_none(), "{bad:?}");
+    }
+}

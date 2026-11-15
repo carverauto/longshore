@@ -51,6 +51,47 @@ pub struct Server {
     pub v6: bool,
     pub ttl: u32,
     pub queries: u64,
+    /// What is wrong with each response, if anything.
+    pub forge: Forge,
+    /// After a forged response, send the true one for the same query.
+    pub then_true: bool,
+    /// The length of the true response still to send.
+    resend: Option<u32>,
+}
+
+/// A way for a response to be something other than the answer to the
+/// query: what an off-path attacker, a confused middlebox or a stale
+/// datagram would deliver. Each is undone by applying it again.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Forge {
+    Nothing,
+    /// Another transaction id.
+    WrongId,
+    /// A question for another name.
+    WrongQuestion,
+    /// The response bit is clear: the datagram is a query.
+    NotAResponse,
+    /// The last byte is missing.
+    CutShort,
+    /// The server says the answer did not fit (the TC bit).
+    TcBit,
+}
+
+impl Forge {
+    fn apply(self, m: &mut [u8]) {
+        match self {
+            Forge::Nothing | Forge::CutShort => {}
+            Forge::WrongId => m[1] ^= 1,
+            // The first letter of the name: `s` becomes `r`, `b` becomes `c`.
+            Forge::WrongQuestion => m[13] ^= 1,
+            Forge::NotAResponse => m[2] ^= 0x80,
+            Forge::TcBit => m[2] ^= 0x02,
+        }
+    }
+
+    fn len(self, true_len: usize) -> u32 {
+        (true_len - usize::from(self == Forge::CutShort)) as u32
+    }
 }
 
 const S_SOCK: Sock = Sock(3);
@@ -77,6 +118,9 @@ impl Server {
             v6: true,
             ttl: 300,
             queries: 0,
+            forge: Forge::Nothing,
+            then_true: false,
+            resend: None,
         }
     }
 
@@ -88,7 +132,19 @@ impl Server {
             len: 512,
         };
         if token == S_SEND {
-            return io.submit(Token(S_RECV), recv).unwrap();
+            let Some(len) = self.resend.take() else {
+                return io.submit(Token(S_RECV), recv).unwrap();
+            };
+            // The forged response has gone; now the true one.
+            self.forge.apply(io.buf(S_BUF));
+            let send = Op::Send {
+                sock: S_SOCK,
+                buf: S_BUF,
+                off: 0,
+                len,
+                zero_copy: false,
+            };
+            return io.submit(Token(S_SEND), send).unwrap();
         }
         self.queries += 1;
         let n = result as usize;
@@ -134,13 +190,17 @@ impl Server {
             }
         }
         m[7] = count;
+        self.forge.apply(m);
+        if self.then_true && self.forge != Forge::Nothing {
+            self.resend = Some(at as u32);
+        }
         io.submit(
             Token(S_SEND),
             Op::Send {
                 sock: S_SOCK,
                 buf: S_BUF,
                 off: 0,
-                len: at as u32,
+                len: self.forge.len(at),
                 zero_copy: false,
             },
         )

@@ -250,3 +250,23 @@ fn a_token_at_the_limit_fits_beside_the_longest_prefix() {
         Err(SubmitError::BadKey)
     );
 }
+
+/// A page cannot be asked for with no keys: zero is sent as one.
+#[test]
+fn a_page_of_no_keys_is_asked_for_as_a_page_of_one() {
+    let mut w = world(35, Faults::default(), 3);
+    for (i, key) in KEYS.iter().enumerate() {
+        w.fill_tx(10, 0);
+        w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
+            .unwrap();
+        assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+    }
+    assert_eq!(
+        list_page(&mut w, "", None, 0),
+        (vec![(KEYS[0].to_string(), 10)], true)
+    );
+    assert_eq!(
+        list_page(&mut w, "", None, 1),
+        list_page(&mut w, "", None, 0)
+    );
+}

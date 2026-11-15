@@ -24,8 +24,7 @@ aes-gcm.workspace = true
 aws-lc-rs.workspace = true
 aws-lc-sys.workspace = true
 crc.workspace = true
-# With its default features here, for the comparison.
-crc-fast = { workspace = true, default-features = true }
+crc-fast.workspace = true
 crc32c.workspace = true
 crc64fast-nvme.workspace = true
 # 0.8 pulls in `alloca` on Unix, which compiles a few lines of C. Cross builds

@@ -173,6 +173,33 @@ impl World {
         })
     }
 
+    /// Let both sides settle (closes, keep-alive bookkeeping) for `ms` of
+    /// virtual time. No request may be in flight.
+    fn settle(&mut self, ms: u64) {
+        let until = self.io.now_ns() + ms * MS;
+        let World {
+            io,
+            client,
+            server,
+            out,
+            ..
+        } = self;
+        sealed(|| {
+            while io.now_ns() < until {
+                io.tick(true, out).expect("simulation deadlock");
+                while let Some(c) = out.pop() {
+                    if c.token.0 == HEARTBEAT {
+                        client.tick(io);
+                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                            .unwrap();
+                    } else if client.on_completion(io, c) == Handled::NotMine {
+                        server.on_completion(io, c);
+                    }
+                }
+            }
+        })
+    }
+
     fn request(
         &mut self,
         method: &str,
@@ -377,11 +404,9 @@ fn protocol_mismatches_fail_cleanly() {
         Some(ClientSetup::with_roots(&[&id.cert]).unwrap()),
         None,
     );
-    assert!(
-        matches!(
-            w.request("GET", "/k", None),
-            Err(Error::Timeout | Error::Tls(TlsError::BadRecord))
-        ),
+    assert_eq!(
+        w.request("GET", "/k", None),
+        Err(Error::Timeout),
         "TLS to a plain port must fail, not hang"
     );
     assert_eq!(w.client.in_flight(), 0);
@@ -392,11 +417,9 @@ fn protocol_mismatches_fail_cleanly() {
         None,
         Some(ServerSetup::new(&[&id.cert], &id.key).unwrap()),
     );
-    assert!(
-        matches!(
-            w.request("GET", "/k", None),
-            Err(Error::Closed { .. } | Error::Io(_))
-        ),
+    assert_eq!(
+        w.request("GET", "/k", None),
+        Err(Error::Closed { reused: false }),
         "plain request to a TLS port must fail, not hang"
     );
     assert_eq!(w.client.in_flight(), 0);
@@ -410,10 +433,11 @@ fn timeouts_and_server_failures_work_the_same_over_tls() {
     w.server.script(Behavior::Stall);
     assert_eq!(w.request("GET", "/k", None), Err(Error::Timeout));
     w.server.script(Behavior::TruncateBody);
-    assert!(matches!(
+    assert_eq!(
         w.request("GET", "/k", None),
-        Err(Error::Closed { .. })
-    ));
+        Err(Error::Closed { reused: false }),
+        "the timeout cost the first connection, so this one is new"
+    );
     w.server.script(Behavior::Status(503));
     ok(503, 0)(w.request("GET", "/k", None));
     ok(200, 1000)(w.request("GET", "/k", None));
@@ -585,6 +609,38 @@ fn a_record_after_a_complete_response_is_not_taken_for_the_next_response() {
     ok(200, body_len as u32)(w.request("GET", "/k", None));
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!((w.client.idle_dirty, w.client.connects), (1, 2));
+}
+
+/// A TLS peer that closed while the connection sat idle is found by the
+/// idle check, as on plain HTTP, and the request goes out on a new one.
+#[test]
+fn a_tls_connection_closed_while_idle_is_replaced_before_it_is_used() {
+    const REPLY: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    let mut w = world(45, Faults::default());
+    w.server.script(Behavior::Raw(REPLY));
+    ok(200, 2)(w.request("GET", "/k", None));
+    w.settle(20);
+    ok(404, 0)(w.request("GET", "/missing", None));
+    assert_eq!(
+        (w.client.idle_closed, w.client.idle_dirty, w.client.connects),
+        (1, 0, 2)
+    );
+}
+
+/// close_notify is an orderly close, not a failure of TLS: it is reported
+/// like a peer closing a plain connection, so a retry layer treats it as a
+/// stale connection.
+#[test]
+fn close_notify_in_place_of_a_response_is_a_close_not_a_tls_error() {
+    let mut w = world(46, Faults::default());
+    ok(404, 0)(w.request("GET", "/missing", None));
+    w.server.script(Behavior::TlsAlert(0));
+    assert_eq!(
+        w.request("GET", "/missing", None),
+        Err(Error::Closed { reused: true })
+    );
+    ok(404, 0)(w.request("GET", "/missing", None));
+    assert_eq!((w.client.connects, w.client.idle_closed), (2, 0));
 }
 
 /// Session tickets arrive after the handshake as records that are not

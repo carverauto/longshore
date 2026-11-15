@@ -53,3 +53,48 @@ fn a_range_past_a_small_buffer_is_refused() {
 fn a_buffer_past_the_pool_is_refused() {
     LIMITS.span(BufId(5));
 }
+
+#[test]
+fn a_range_may_end_exactly_at_its_buffers_end() {
+    assert_eq!(LIMITS.range(BufId(2), 4, 6), 2004..2010);
+    assert_eq!(LIMITS.range(BufId(2), 10, 0), 2010..2010);
+    assert_eq!(LIMITS.range(BufId(1), 0, 1000), 1000..2000);
+}
+
+#[test]
+#[should_panic(expected = "buffer range out of bounds")]
+fn a_range_whose_end_overflows_is_refused() {
+    LIMITS.range(BufId(0), u32::MAX, 2);
+}
+
+#[test]
+#[should_panic(expected = "small buffer out of range")]
+fn a_small_buffer_past_the_last_is_refused() {
+    LIMITS.small(3);
+}
+
+#[test]
+#[should_panic(expected = "buf_pair needs two distinct pool buffers")]
+fn a_pair_of_the_same_buffer_is_refused() {
+    let mut pool = vec![0u8; LIMITS.pool_bytes()];
+    LIMITS.pair(&mut pool, BufId(1), BufId(1));
+}
+
+#[test]
+fn completions_report_full_and_empty_at_their_capacity() {
+    let mut c = Completions::new(2);
+    assert!(c.is_empty() && !c.is_full() && c.pop().is_none());
+    for t in [5, 6] {
+        c.push(Completion {
+            token: Token(t),
+            result: -(t as i32),
+        });
+    }
+    assert!(c.is_full() && c.len() == 2);
+    assert_eq!(c.pop().map(|x| (x.token.0, x.result)), Some((5, -5)));
+    assert_eq!(c.pop().map(|x| (x.token.0, x.result)), Some((6, -6)));
+    assert!(c.is_empty() && c.pop().is_none());
+    // No room at all is both full and empty.
+    let none = Completions::new(0);
+    assert!(none.is_full() && none.is_empty());
+}

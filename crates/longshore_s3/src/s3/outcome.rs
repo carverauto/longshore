@@ -26,10 +26,13 @@ impl S3 {
             let ours =
                 self.checksum_value(s.crc.expect("only completions with a checksum compare"));
             let class = classify(&result);
-            if matches!(class, Class::Retry | Class::RetryDelayed)
-                && s.attempts < self.cfg.attempts_max
-            {
-                return self.attempt(io, i);
+            if matches!(class, Class::Retry | Class::RetryDelayed) {
+                if s.attempts < self.cfg.attempts_max {
+                    return self.attempt(io, i);
+                }
+                // The comparison could not be made, so whether the upload
+                // completed is not known. A 404 would say it did not.
+                return finish(self, Outcome::Fatal(Fatal::RetriesExhausted));
             }
             let same = matches!(result, Ok(r) if r.status == 200
                 && self.stored_checksum(io, r.conn) == Some(ours));
@@ -116,12 +119,11 @@ impl S3 {
                 }
                 // Google Cloud Storage answers an erase of an absent object, or the
                 // retry of one whose response was lost, with 404 NoSuchKey.
+                // The code is read as the document's code: a store may
+                // repeat the key in the document, and a key can be called anything.
                 (Kind::Erase, 404)
-                    if self
-                        .client
-                        .discarded_body(io, r.conn)
-                        .windows(9)
-                        .any(|w| w == b"NoSuchKey") =>
+                    if multipart::error_code_in(self.client.discarded_body(io, r.conn))
+                        == Some(b"NoSuchKey") =>
                 {
                     return finish(self, Outcome::Erased)
                 }
@@ -287,10 +289,12 @@ impl S3 {
                     .filter(|v| v.len() == 12)?,
             ),
             Vendor::Gcs => {
-                // "crc32c=AAAAAA==,md5=...": the parts may come in either order.
-                let value = self.client.header(io, conn, "x-goog-hash")?;
-                let part = value
-                    .split(|b| *b == b',')
+                // "crc32c=AAAAAA==,md5=...": the parts may come in either
+                // order, on one line or on a line each.
+                let part = self
+                    .client
+                    .headers(io, conn, "x-goog-hash")
+                    .flat_map(|value| value.split(|b| *b == b','))
                     .map(|p| p.trim_ascii())
                     .find_map(|p| p.strip_prefix(b"crc32c="))?;
                 out[..8].copy_from_slice(Some(part).filter(|p| p.len() == 8)?);

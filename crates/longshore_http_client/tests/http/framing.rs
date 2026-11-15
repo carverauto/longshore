@@ -187,7 +187,8 @@ fn an_unexpected_response_body_is_discarded_and_the_connection_survives() {
         "discarding error bodies must not cost the connection"
     );
 
-    // Too large to discard: refused rather than read without bound.
+    // A body as large as a whole buffer is still discarded: the limit is
+    // 256 KiB. `framing_edges.rs` has the refusal just past it.
     w.server.script(Behavior::StatusWithBody(500, BUF));
     let req = Request {
         method: "PUT",
@@ -410,8 +411,8 @@ fn bytes_after_a_response_in_a_later_read_are_not_taken_for_the_next_response() 
     );
     w.server.script(Behavior::Raw(reply));
     ok(200, body_len as u32)(w.request("GET", "/k", None));
-    assert_ne!(
-        w.request("GET", "/missing", None).map(|r| r.status),
-        Ok(404)
+    assert_eq!(
+        w.request("GET", "/missing", None),
+        Err(Error::Io(longshore_common::io::EPIPE))
     );
 }

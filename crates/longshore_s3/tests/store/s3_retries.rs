@@ -193,3 +193,81 @@ fn conflict_and_request_timeout_answers_are_retried() {
         }
     );
 }
+
+/// The delay doubles from `backoff_ns` and stops growing at `backoff_max_ns`.
+#[test]
+fn the_backoff_doubles_up_to_its_limit_and_no_further() {
+    let mut w = world(26, Faults::default(), 7);
+    w.fill_tx(100, 0);
+    for status in [503, 429, 503, 429, 503, 503] {
+        w.server.script(Behavior::Status(status));
+    }
+    let t0 = w.io.now_ns();
+    w.s3.store(&mut w.io, 1, "k", TX, 100, Checksum::None)
+        .unwrap();
+    assert_eq!(
+        w.last(),
+        Done {
+            token: 1,
+            outcome: Outcome::Stored,
+            attempts: 7
+        }
+    );
+    let waited = (w.io.now_ns() - t0) / MS;
+    // 100, 200, 400, 800, 800 and 800 ms, each observed on a 10 ms tick.
+    assert!(
+        (3100..3200).contains(&waited),
+        "waited {waited} ms, expected about 3100"
+    );
+}
+
+/// Slow-down answers use up the budget like any other failure.
+#[test]
+fn slow_down_responses_give_up_at_the_budget() {
+    for status in [503u16, 429] {
+        let mut w = world(27, Faults::default(), 3);
+        w.fill_tx(100, 0);
+        for _ in 0..3 {
+            w.server.script(Behavior::Status(status));
+        }
+        w.s3.store(&mut w.io, 1, "k", TX, 100, Checksum::None)
+            .unwrap();
+        assert_eq!(
+            w.last(),
+            Done {
+                token: 1,
+                outcome: Outcome::Fatal(Fatal::RetriesExhausted),
+                attempts: 3
+            },
+            "status {status}"
+        );
+        assert_eq!(w.server.object_len("/k"), None);
+        assert_eq!(w.s3.in_progress(), 0);
+    }
+}
+
+/// The statuses that mean "try again now", each on its own.
+#[test]
+fn each_retryable_status_is_retried_at_once() {
+    for status in [408u16, 500, 502, 504] {
+        let mut w = world(28, Faults::default(), 3);
+        w.fill_tx(100, 0);
+        w.server.script(Behavior::Status(status));
+        let t0 = w.io.now_ns();
+        w.s3.store(&mut w.io, 1, "k", TX, 100, Checksum::None)
+            .unwrap();
+        assert_eq!(
+            w.last(),
+            Done {
+                token: 1,
+                outcome: Outcome::Stored,
+                attempts: 2
+            },
+            "status {status}"
+        );
+        assert!(
+            w.io.now_ns() - t0 < 100 * MS,
+            "status {status}: waited as if told to slow down"
+        );
+    }
+}
