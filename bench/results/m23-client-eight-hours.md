@@ -4,7 +4,7 @@ Measured 2026-11-14 against a general-purpose S3 bucket in us-east-1, from one `
 
 ## Eight hours with failures injected
 
-`client_s3 mix` ran for 28,800 s: four I/O threads with 64 connections each, four caller threads, the first thread on CPU 2 and the rest two CPUs apart. It fetches as fast as it can and stores 100 objects a second. Every object holds a pattern that names it, every fetch checks bytes of that pattern, and every store carries a CRC-64. While it ran, a script on the same machine:
+`client_s3 mix` ran for 28,800 s: four I/O threads with 64 connections each, four caller threads, the first thread on CPU 2 and the rest two CPUs apart. It fetches as fast as it can and stores 100 objects a second. Every object holds a pattern that names it, every fetch checks that pattern at 64 offsets spread evenly across the object, its first and last byte among them (not every byte), and every store carries a CRC-64. While it ran, a script on the same machine:
 
 - every 40 s closed every TCP connection to port 443 with `ss -K` (698 times),
 - after every fourth of those also dropped all outgoing packets to port 443 for 5 s with an `iptables` rule (174 times),
@@ -16,7 +16,7 @@ That `ss -K` aborts an open connection to S3 was checked on the same machine bef
 |---|---|
 | Requests | 23,231,394 |
 | Objects fetched | 20,351,688 |
-| Fetches whose bytes were not the object's pattern | 0 |
+| Fetches that differed from the object's pattern at any of 64 sampled offsets | 0 |
 | Objects stored | 2,881,080 |
 | Operations that returned an error to the caller | 0 |
 | Throughput, whole run | 6.77 GB/s on 3.14 cores |

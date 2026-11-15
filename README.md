@@ -375,10 +375,10 @@ In a 30 minute HTTPS upload on four I/O threads, with every connection to S3
 closed every 40 seconds and all traffic to it dropped for 5 seconds after
 every fourth of those, the client stored 3.4 million objects and returned no
 error to its callers. In an eight hour run of HTTPS fetches and stores
-with the same failures injected, it fetched 20.4 million objects, every one
-with the bytes it was stored with, stored 2.9 million, and returned no
-error. Its memory was the same at the end as at the start
-(`m23-client-eight-hours.md`). Multipart uploads through the client were
+with the same failures injected, it fetched 20.4 million objects, stored
+2.9 million, and returned no error. Every fetch was checked against the
+object's pattern at 64 sampled offsets, and none differed. Its memory was
+the same at the end as at the start (`m23-client-eight-hours.md`). Multipart uploads through the client were
 checked against S3 in the same milestone.
 
 Object size matters below about 4 MiB. On 128 connections one thread
