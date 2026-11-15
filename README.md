@@ -288,7 +288,8 @@ The second is locked memory. longshore registers its buffers with the
 kernel, which locks them in memory, and that is what lets a body go out
 without a copy. A process may lock only as much as its `RLIMIT_MEMLOCK`
 allows. The test pod had a limit of 8 MiB that it could not raise, and
-building the client failed with "Out of memory". The limit has to be raised
+building the client failed with "Out of memory". That error now goes on to
+say that `RLIMIT_MEMLOCK` is too low. The limit has to be raised
 on the node. A chart cannot do it, and the `IPC_LOCK` capability is not
 open to a pod under the `restricted` Pod Security level.
 
