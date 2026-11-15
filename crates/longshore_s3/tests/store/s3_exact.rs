@@ -249,6 +249,65 @@ fn reads_of_another_object_or_version_are_refused_not_served() {
 }
 
 #[test]
+fn a_version_id_of_the_longest_length_s3_gives_is_sent_back() {
+    let mut w = strict_world(13);
+    w.fill_tx(LEN, 9);
+    let options = archive(&mut w);
+    w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, ONCE)
+        .unwrap();
+    let stored = answer(&mut w);
+    // S3 version ids run to 1024 bytes, and '/' and '+' are percent-encoded.
+    let mut long = [b'a'; 1024];
+    for (i, b) in long.iter_mut().enumerate().filter(|(i, _)| i % 2 == 0) {
+        *b = if i % 4 == 0 { b'/' } else { b'+' };
+    }
+    let unknown = Expect {
+        etag: stored.etag,
+        version: Fixed::new(&long),
+    };
+    assert!(unknown.version.is_some());
+
+    w.s3.head(&mut w.io, 2, "k", &unknown, ONCE).unwrap();
+    let r = report(&mut w);
+    assert_eq!((r.sent, r.unanswered), (1, 0));
+    let End::Answered(a) = r.end else {
+        panic!("{r:?}")
+    };
+    // The store read the id and had no such version of the object.
+    assert_eq!(a.status, 404);
+    w.s3.get(&mut w.io, 3, "k", None, &unknown, RX, ONCE)
+        .unwrap();
+    assert_eq!(answer(&mut w).status, 404);
+    assert_eq!(w.server.requests, 3);
+}
+
+#[test]
+fn an_entity_tag_longer_than_the_one_stored_does_not_match_it() {
+    let mut w = strict_world(14);
+    w.fill_tx(LEN, 10);
+    let options = archive(&mut w);
+    w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, ONCE)
+        .unwrap();
+    let stored = answer(&mut w);
+    w.io.buf(RX)[..LEN as usize].fill(0xEE);
+    let mut tag = [b'7'; 200];
+    (tag[0], tag[199]) = (b'"', b'"');
+    let other_tag = Expect {
+        etag: Fixed::new(&tag),
+        version: stored.version,
+    };
+    assert!(other_tag.etag.is_some());
+
+    w.s3.head(&mut w.io, 2, "k", &other_tag, ONCE).unwrap();
+    assert_eq!(answer(&mut w).status, 412);
+    w.s3.get(&mut w.io, 3, "k", None, &other_tag, RX, ONCE)
+        .unwrap();
+    let a = answer(&mut w);
+    assert_eq!((a.status, a.body_len), (412, 0));
+    assert!(w.io.buf(RX)[..LEN as usize].iter().all(|b| *b == 0xEE));
+}
+
+#[test]
 fn a_range_the_store_cuts_short_is_reported_as_served() {
     let mut w = strict_world(6);
     w.fill_tx(LEN, 9);

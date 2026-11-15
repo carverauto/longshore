@@ -11,8 +11,9 @@ use super::*;
 
 /// A SHA-256 checksum header's value: forty-four base64 characters.
 pub(super) const SHA256_LEN: usize = 44;
-/// Room for an `If-Match` value.
-const IF_MATCH_MAX: usize = 64;
+/// Room for an `If-Match` value: an entity tag of up to 256 characters
+/// and its quotes.
+const IF_MATCH_MAX: usize = 258;
 
 /// Maps a body to the value its `x-amz-checksum-sha256` header must have.
 pub type Sha256Fn = fn(&[u8]) -> [u8; SHA256_LEN];
@@ -45,22 +46,19 @@ impl Asked {
 
     /// Read the request's identity headers, and take a `versionId` query
     /// off `target`. Returns the target's length without it.
-    pub(super) fn read(
-        header: impl Fn(&str) -> Option<[u8; IF_MATCH_MAX + 1]>,
+    pub(super) fn read<'a>(
+        header: impl Fn(&str) -> Option<&'a [u8]>,
         target: &[u8],
     ) -> (Asked, usize) {
         let mut asked = Asked::NOTHING;
-        let text = |v: &[u8; IF_MATCH_MAX + 1]| v.iter().position(|b| *b == 0).unwrap_or(v.len());
         if let Some(v) = header("if-match") {
-            let n = text(&v).min(IF_MATCH_MAX);
-            asked.if_match.0[..n].copy_from_slice(&v[..n]);
+            let n = v.len().min(IF_MATCH_MAX + 1);
+            let kept = v.len().min(IF_MATCH_MAX);
+            asked.if_match.0[..kept].copy_from_slice(&v[..kept]);
             asked.if_match.1 = n;
         }
-        asked.encrypt =
-            header("x-amz-server-side-encryption").is_some_and(|v| &v[..text(&v)] == b"AES256");
-        asked.sha256 = header("x-amz-checksum-sha256")
-            .filter(|v| text(v) == SHA256_LEN)
-            .map(|v| v[..SHA256_LEN].try_into().expect("checked"));
+        asked.encrypt = header("x-amz-server-side-encryption") == Some(b"AES256");
+        asked.sha256 = header("x-amz-checksum-sha256").and_then(|v| v.try_into().ok());
         let name = b"?versionId=";
         let Some(at) = target.windows(name.len()).position(|w| w == name) else {
             return (asked, target.len());
@@ -130,7 +128,7 @@ impl Server {
             return Some((404, "Not Found"));
         }
         let (tag, n) = asked.if_match;
-        (n > 0 && tag[..n] != multipart::tag(&o.data[..o.len as usize]))
+        (n > 0 && tag.get(..n) != Some(&multipart::tag(&o.data[..o.len as usize])[..]))
             .then_some((412, "Precondition Failed"))
     }
 

@@ -187,7 +187,7 @@ impl S3 {
             query[..name.len()].copy_from_slice(name);
             query_len = name.len()
                 + uri_encode(version.as_bytes(), true, &mut query[name.len()..])
-                    .ok_or(SubmitError::BadKey)?;
+                    .expect("QUERY_MAX holds any version id encoded");
         }
         let query = &query[..query_len];
         let i = self.prepare(io, token, key, kind, body, response_buf, checksum, query)?;

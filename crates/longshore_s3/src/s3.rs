@@ -17,7 +17,7 @@
 use crate::creds::{Credentials, TOKEN_MAX};
 use crate::multipart::{self, PartTag, UploadId, PART_NUMBER_MAX, UPLOAD_ID_MAX};
 use crate::options::{Options, NAME_MAX, OPTIONS_MAX};
-use crate::report::Report;
+use crate::report::{Report, VERSION_ID_MAX};
 use crate::retry::{classify, Class, STATUS_PRECONDITION_FAILED};
 use crate::sigv4::{self, authorization, uri_encode, EMPTY_SHA256, UNSIGNED_PAYLOAD};
 use crate::stat::Stat;
@@ -36,9 +36,17 @@ const PATH_MAX: usize = 1 + BUCKET_MAX + KEY_ENCODED_MAX;
 pub const LIST_TOKEN_ENCODED_MAX: usize = 1024;
 /// A slot's request target: a path, or a listing's query with a token.
 const TARGET_MAX: usize = PATH_MAX + b"continuation-token=&".len() + LIST_TOKEN_ENCODED_MAX;
-/// Room for a multipart query: `partNumber=10000&uploadId=` and an upload
-/// id with every byte percent-encoded.
-const QUERY_MAX: usize = 32 + 3 * UPLOAD_ID_MAX;
+/// Room for a slot's query: `partNumber=10000&uploadId=` and an upload id,
+/// or `versionId=` and a version id, with every byte percent-encoded.
+const QUERY_MAX: usize = {
+    let multipart = 32 + 3 * UPLOAD_ID_MAX;
+    let version = b"versionId=".len() + 3 * VERSION_ID_MAX;
+    if multipart > version {
+        multipart
+    } else {
+        version
+    }
+};
 /// A credentials file must be smaller than this and than the HTTP buffer
 /// size; a larger one is refused rather than read in part.
 pub const CREDENTIALS_FILE_MAX: u32 = 8192;
