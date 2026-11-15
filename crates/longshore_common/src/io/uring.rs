@@ -163,7 +163,20 @@ impl UringIo {
                 }
             })
             .collect();
-        ring.register_buffers(&iov)?;
+        ring.register_buffers(&iov).map_err(|e| {
+            // Registered buffers are locked memory. Where the limit on that
+            // is too low the kernel answers ENOMEM, which reads as if the
+            // machine were out of memory, so name the limit.
+            if e.raw_os_error() == Some(12) {
+                io::Error::new(
+                    e.kind(),
+                    "registering buffers with io_uring failed: the locked-memory \
+                     limit (RLIMIT_MEMLOCK) is too low for the buffer pool",
+                )
+            } else {
+                e
+            }
+        })?;
         ring.register_files(&vec![-1i32; limits.sockets_max as usize])?;
         let slot = Slot {
             cancel_requested: false,
