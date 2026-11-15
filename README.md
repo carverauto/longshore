@@ -20,8 +20,8 @@
 
 longshore is an object storage client written in Rust. It is built to move a
 lot of data with little CPU: one thread on Linux `io_uring`, all memory
-allocated at start-up, and object bodies sent to the network without being
-copied.
+allocated at start-up, and no copy of an upload's body made by the client,
+which hands large sends to the kernel as zero-copy sends.
 
 It talks to:
 
@@ -78,8 +78,8 @@ settings.port = 443;
 settings.threads = 4; // four independent I/O threads
 let client = settings.build().unwrap();
 
-// A body lives in a registered buffer borrowed from the client, so it is
-// never copied. The operation takes the buffer and hands it back.
+// A body lives in a registered buffer borrowed from the client, so the
+// client never copies it. The operation takes the buffer and hands it back.
 let mut body = client.buffer_blocking();
 body.as_mut_slice()[..5].copy_from_slice(b"hello");
 let (stored, body) = client.store("greeting", body, 5).wait();
