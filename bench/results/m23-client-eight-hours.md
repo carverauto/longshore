@@ -25,7 +25,7 @@ That `ss -K` aborts an open connection to S3 was checked on the same machine bef
 | Open file descriptors, sampled every 60 s | 16 to 19 at 474 of 480 samples. Six samples read 79 to 122, and the sample after each read 16 |
 | Credentials adopted from the file | 32 across the four I/O threads. No reload failed |
 
-Five of the six high descriptor samples are 660 s apart, in the first hour. The cause was not looked for.
+The six high samples are not a leak. The run had the preference for large-segment addresses on, and with it a connect opens its socket with `socket(2)` and holds that descriptor until the connection is up and its segment size has been read. All six samples fall at the same point in the failure script, to within 5 s: just after every connection was closed and while packets were being dropped, so the reconnects were waiting with their descriptors open. Samples are 60 s apart and that point comes round every 165 s, which is why five of the six are 660 s apart. The most seen at once is 106 above the usual 16, of 256 connections. With the preference off, which is the default, sockets are made by the ring and have no descriptor.
 
 ## Multipart uploads through the client
 
