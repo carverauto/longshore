@@ -129,11 +129,11 @@ impl Cipher {
     }
 }
 
-fn filled(len: usize, salt: u32) -> Vec<u8> {
+fn filled(len: usize, pattern: u32) -> Vec<u8> {
     (0..len)
         .map(|i| {
             (i as u32)
-                .wrapping_add(salt)
+                .wrapping_add(pattern)
                 .wrapping_mul(2654435761)
                 .to_le_bytes()[1]
         })
