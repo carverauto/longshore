@@ -81,7 +81,7 @@ fn main() {
     tx.set_keys(s, &k, &iv, tx_seq).unwrap();
     let (s, k, iv) = keys(&rx_secret);
     rx.set_keys(s, &k, &iv, rx_seq).unwrap();
-    println!("keys extracted: tx sequence {tx_seq}, rx sequence {rx_seq}");
+    println!("keys extracted");
 
     let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     let mut record = vec![0u8; request.len() + OVERHEAD];

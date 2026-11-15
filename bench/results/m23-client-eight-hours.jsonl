@@ -1,0 +1,5 @@
+{"cmd":"client-mix","arch":"aarch64","threads":4,"callers":4,"checksums":true,"conns":64,"size":8388608,"secs":28800.12,"requests":23231394,"failed":0,"puts":2881080,"gets":20351688,"wrong":0,"gb_per_s":6.767,"process_cpu_cores":3.14,"gb_per_cpu_s":2.16}
+{"cmd":"client-multipart","arch":"aarch64","threads":1,"objects":4,"parts":4,"size":8388608,"object_bytes":33554432,"secs":11.06,"verified_parts":16,"aborted_upload_refused":true,"tls":false}
+{"cmd":"client-multipart","arch":"aarch64","threads":2,"objects":4,"parts":8,"size":8388608,"object_bytes":67108864,"secs":13.17,"verified_parts":32,"aborted_upload_refused":true,"tls":false}
+{"cmd":"client-multipart","arch":"aarch64","threads":2,"objects":4,"parts":8,"size":8388608,"object_bytes":67108864,"secs":60.96,"verified_parts":32,"aborted_upload_refused":true,"tls":true}
+{"cmd":"client-multipart","arch":"aarch64","threads":4,"objects":3,"parts":16,"size":8388608,"object_bytes":134217728,"secs":25.39,"verified_parts":48,"aborted_upload_refused":true,"tls":true}
