@@ -31,8 +31,8 @@ impl World {
         self.last().outcome
     }
 
-    fn put(&mut self, token: u64, key: &str, salt: u8) {
-        self.fill_tx(LEN, salt);
+    fn put(&mut self, token: u64, key: &str, pattern: u8) {
+        self.fill_tx(LEN, pattern);
         self.s3
             .store(&mut self.io, token, key, TX, LEN, Checksum::Compute)
             .unwrap();

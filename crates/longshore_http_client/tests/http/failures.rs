@@ -298,20 +298,20 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
     let mut exists_for_sure = false;
     for (step, op) in ops.into_iter().enumerate() {
         let (kind, len) = (op / (BUF + 1), op % (BUF + 1));
-        let salt = step as u8;
+        let pattern = step as u8;
         match kind {
             0 => {
-                w.fill_tx(len, salt);
+                w.fill_tx(len, pattern);
                 match w.request("PUT", "/k", Some(len)) {
                     Ok(r) => {
                         assert_eq!(r.status, 200, "seed {seed} step {step}");
-                        known = Some((len, salt));
+                        known = Some((len, pattern));
                         maybe.clear();
                         exists_for_sure = true;
                     }
                     // The server may or may not have stored it.
                     Err(Error::Io(_) | Error::Closed { .. } | Error::Timeout) => {
-                        maybe.push((len, salt))
+                        maybe.push((len, pattern))
                     }
                     Err(e) => panic!("seed {seed} step {step}: PUT failed with {e:?}"),
                 }
@@ -319,8 +319,8 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
             1 => match w.request("GET", "/k", None) {
                 Ok(r) if r.status == 200 => {
                     let got = w.io.buf(RX)[..r.body_len as usize].to_vec();
-                    let matches = |(len, salt): (u32, u8), w: &mut World| {
-                        w.fill_tx(len, salt);
+                    let matches = |(len, pattern): (u32, u8), w: &mut World| {
+                        w.fill_tx(len, pattern);
                         len == r.body_len && w.io.buf(TX)[..len as usize] == got[..]
                     };
                     let candidates: Vec<(u32, u8)> =
