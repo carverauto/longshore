@@ -257,19 +257,31 @@ fn a_version_id_of_the_longest_length_s3_gives_is_sent_back() {
         .unwrap();
     let stored = answer(&mut w);
     // S3 version ids run to 1024 bytes, and '/' and '+' are percent-encoded.
-    let mut long = [b'a'; 1024];
-    for (i, b) in long.iter_mut().enumerate().filter(|(i, _)| i % 2 == 0) {
-        *b = if i % 4 == 0 { b'/' } else { b'+' };
-    }
+    let long = "/a+a".repeat(256);
     let unknown = Expect {
         etag: stored.etag,
-        version: Fixed::new(&long),
+        version: Fixed::new(long.as_bytes()),
     };
     assert!(unknown.version.is_some());
 
     w.s3.head(&mut w.io, 2, "k", &unknown, ONCE).unwrap();
     let r = report(&mut w);
     assert_eq!((r.sent, r.unanswered), (1, 0));
+    // The whole id went out encoded as SigV4 asks: written out by hand here.
+    let signed = r.request.expect("a request was sent");
+    let names = "host;if-match;x-amz-checksum-mode;x-amz-content-sha256;x-amz-date";
+    let canonical = format!(
+        "HEAD\n/k\nversionId={}\nhost:bucket.objects.test\nif-match:{}\n\
+         x-amz-checksum-mode:ENABLED\nx-amz-content-sha256:{EMPTY}\nx-amz-date:{}\n\n{names}\n{EMPTY}",
+        "%2Fa%2Ba".repeat(256),
+        core::str::from_utf8(stored.etag.unwrap().as_bytes()).unwrap(),
+        core::str::from_utf8(&signed.date).unwrap(),
+    );
+    assert_eq!(signed.signed_headers.as_bytes(), names.as_bytes());
+    assert_eq!(
+        signed.canonical_request_sha256,
+        sha256(canonical.as_bytes())
+    );
     let End::Answered(a) = r.end else {
         panic!("{r:?}")
     };
