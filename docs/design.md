@@ -10,8 +10,11 @@ after that, and the tests run under an allocator that aborts if something
 is. The TLS handshake is the exception, because `rustls` allocates.
 
 An object body goes from the caller's registered buffer to the network card
-with `SEND_ZC`. Requests are signed over the head only, so a body is never
-run through a cryptographic hash.
+with `SEND_ZC`. Over HTTPS the body is encrypted from that buffer into a
+send buffer in one pass, with no copy before it, and the records go out
+with `SEND_ZC` too. A send smaller than 64 KiB is an ordinary send, which
+the kernel copies. Requests are signed over the head only, so a body is
+never run through a cryptographic hash.
 
 DNS, HTTP, the TLS record layer and the store's retry logic are written
 against an `Io` trait and do no I/O themselves. The same code runs on the

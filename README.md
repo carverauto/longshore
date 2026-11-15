@@ -20,8 +20,8 @@
 
 longshore is an object storage client written in Rust. It is built to move a
 lot of data with little CPU: one thread on Linux `io_uring`, all memory
-allocated at start-up, and object bodies sent to the network without being
-copied.
+allocated at start-up, and an upload's body never copied on its way to the
+network. Over HTTPS the only pass over it is the encryption.
 
 It talks to:
 

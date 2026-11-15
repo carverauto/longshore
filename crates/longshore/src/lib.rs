@@ -7,16 +7,18 @@
 //!
 //! longshore moves a lot of data with little CPU. One thread drives
 //! everything from `io_uring` completions. Buffers, connection slots and
-//! operation slots are allocated when the client is built, and over plain
-//! HTTP an upload's body goes to the network from the caller's registered
-//! buffer without being copied.
+//! operation slots are allocated when the client is built, and the client
+//! never copies an upload's body.
 //!
 //! # Highlights
 //!
 //! - One handle, [`client::Client`], that any thread can share, with calls
 //!   that are futures and can also block.
-//! - Over plain HTTP, an upload's body goes from the caller's buffer to the
-//!   network card without being copied.
+//! - The client never copies an upload's body. Over plain HTTP the kernel
+//!   sends it from the caller's registered buffer, without a copy of its own
+//!   when the body is 64 KiB or more. Over HTTPS the only pass over it is
+//!   the encryption, which reads the caller's buffer and writes the records
+//!   that are sent.
 //! - No allocation after the client is built, apart from the TLS handshake.
 //! - By default a checksum goes with every upload for the store to verify,
 //!   and a download is checked against the checksum the store returns.
