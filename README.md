@@ -29,8 +29,7 @@ The design follows the TigerBeetle talk
 
 ## Status
 
-This is a library under development. It is not published as a crate, and it
-is meant to become part of a larger project.
+This is a library under development and not yet published on crates.io.
 
 | Area | State |
 |---|---|
