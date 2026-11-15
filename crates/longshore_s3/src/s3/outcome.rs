@@ -13,8 +13,12 @@ impl S3 {
         io: &mut IO,
         i: usize,
         result: Result<client::Response, Error>,
+        sent: bool,
     ) {
         let s = self.slots[i];
+        if s.exact.is_some() {
+            return self.on_exact_done(io, i, result, sent);
+        }
         let finish = |me: &mut S3, o: Outcome| me.finish(i, o);
         // A completion's response was lost and the retry found the upload
         // gone. The object at the key decides: ours if its checksum is.

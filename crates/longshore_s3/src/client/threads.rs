@@ -280,6 +280,8 @@ impl Drop for Threads {
                 len: 0,
                 upload: None,
                 number: 0,
+                expect: Default::default(),
+                budget: super::Budget::UNLIMITED,
             });
             lane.wake.wake();
         }

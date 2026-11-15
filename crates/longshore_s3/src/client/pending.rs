@@ -116,6 +116,15 @@ impl<T: Output> Pending<T> {
         self
     }
 
+    /// Give the request its limits and the object it must find.
+    pub(super) fn within(mut self, budget: super::Budget, expect: &crate::report::Expect) -> Self {
+        if let Some(r) = &mut self.request {
+            r.budget = budget;
+            r.expect = *expect;
+        }
+        self
+    }
+
     /// Let the operation run on whichever of `lanes` is open when it is sent.
     pub(super) fn on_any(mut self, lanes: Arc<[Arc<Lane>]>) -> Self {
         self.any = Some(AnyLane::new(lanes, |l| &l.ops));

@@ -236,28 +236,85 @@ impl Client {
                 self.submit(io, i, K_CLOSE, Op::Close { sock: self.sock(i) });
                 continue;
             }
-            let c = &mut self.conns[i];
-            let kinds: &[u64] = match c.state {
-                State::Connecting => &[K_CONNECT],
-                State::SendHead { .. } | State::SendBody { .. } => &[K_SEND],
-                State::RecvHead { .. }
-                | State::RecvBody { .. }
-                | State::Drain { .. }
-                | State::RecvChunked { .. }
-                | State::RecvChunkedTail
-                | State::CheckIdle => &[K_RECV],
-                // Either may be outstanding; cancelling the other finds nothing.
-                State::TlsHandshake => &[K_SEND, K_RECV],
-                _ => continue,
-            };
+            let c = &self.conns[i];
+            if matches!(c.state, State::Closed | State::Idle | State::Closing { .. }) {
+                continue;
+            }
             if c.timed_out || now.saturating_sub(c.started_at) < self.cfg.request_timeout_ns {
                 continue;
             }
-            c.timed_out = true;
-            for kind in kinds {
-                let target = self.token(i, *kind);
-                self.submit(io, i, K_CANCEL, Op::Cancel { target });
-            }
+            self.cancel_ops(io, i);
         }
+    }
+
+    /// Submit cancels for whatever connection `i`'s request has outstanding.
+    /// The request then ends with [`Error::Timeout`] when one completes.
+    fn cancel_ops<IO: Io>(&mut self, io: &mut IO, i: usize) {
+        let c = &mut self.conns[i];
+        let kinds: &[u64] = match c.state {
+            State::Connecting => &[K_CONNECT],
+            State::SendHead { .. } | State::SendBody { .. } => &[K_SEND],
+            // Either may be outstanding; cancelling the other finds nothing.
+            State::TlsHandshake => &[K_SEND, K_RECV],
+            _ => &[K_RECV],
+        };
+        c.timed_out = true;
+        for kind in kinds {
+            let target = self.token(i, *kind);
+            self.submit(io, i, K_CANCEL, Op::Cancel { target });
+        }
+    }
+
+    /// The connection carrying the request started with `token`, if it is
+    /// still in progress.
+    fn request_conn(&self, token: u64) -> Option<usize> {
+        self.conns.iter().position(|c| {
+            c.token == token
+                && !matches!(
+                    c.state,
+                    State::Closed
+                        | State::Idle
+                        | State::Closing {
+                            then_connect: false
+                        }
+                )
+        })
+    }
+
+    /// Whether the head of the request in progress under `token` has been
+    /// handed to the `Io` for sending. False if there is no such request.
+    pub fn sent(&self, token: u64) -> bool {
+        self.request_conn(token).is_some_and(|i| self.conns[i].sent)
+    }
+
+    /// Stop the request in progress under `token` before its own timeout.
+    ///
+    /// [`Handled::NotMine`] if there is no such request. [`Handled::Done`]
+    /// if it ended here, which happens only when nothing of it was in the
+    /// kernel yet. Otherwise [`Handled::Pending`]: its operations have been
+    /// asked to stop, and the request ends through [`Client::on_completion`]
+    /// with [`Error::Timeout`] once the kernel has let go of them. If the
+    /// response completes first, that completion still reports
+    /// [`Error::Timeout`]: a cancelled request has no result.
+    pub fn cancel<IO: Io>(&mut self, io: &mut IO, token: u64) -> Handled {
+        let Some(i) = self.request_conn(token) else {
+            return Handled::NotMine;
+        };
+        if self.conns[i].state == (State::Closing { then_connect: true }) {
+            // Only the old connection's close is outstanding: the request
+            // has not begun, and now never will.
+            self.conns[i].state = State::Closing {
+                then_connect: false,
+            };
+            return Handled::Done(Done {
+                token,
+                result: Err(Error::Timeout),
+                sent: false,
+            });
+        }
+        if !self.conns[i].timed_out {
+            self.cancel_ops(io, i);
+        }
+        Handled::Pending
     }
 }

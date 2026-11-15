@@ -14,6 +14,7 @@ pub mod list;
 pub mod multipart;
 pub mod options;
 pub mod presign;
+pub mod report;
 pub mod retry;
 pub mod s3;
 pub mod sharedkey;
