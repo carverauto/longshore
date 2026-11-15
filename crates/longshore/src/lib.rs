@@ -7,9 +7,9 @@
 //!
 //! longshore moves a lot of data with little CPU. One thread drives
 //! everything from `io_uring` completions. Buffers, connection slots and
-//! operation slots are allocated when the client is built, and object bodies
-//! go to the network from the caller's registered buffers without being
-//! copied.
+//! operation slots are allocated when the client is built, and over plain
+//! HTTP an upload's body goes to the network from the caller's registered
+//! buffer without being copied.
 //!
 //! # Highlights
 //!

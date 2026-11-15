@@ -55,6 +55,9 @@ jobs:
             '<title>longshore</title>' \
             '<a href="longshore/index.html">longshore documentation</a>' \
             > target/doc/index.html
+          # rustdoc leaves target/doc/.lock behind with mode 0600, and
+          # deploy-pages rejects an artifact holding a file others cannot read.
+          rm -f target/doc/.lock
       - uses: actions/upload-pages-artifact@v3
         with:
           path: target/doc
