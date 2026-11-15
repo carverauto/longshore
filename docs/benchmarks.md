@@ -146,6 +146,14 @@ about half in AES-GCM with large segments, and mostly in the kernel's
 transmit path with mixed addresses. HTTPS upload has not been measured
 end to end on the Intel processor.
 
+The figures in that table are with the cipher's output in the processor's
+cache. Inside the client the output is megabytes of send buffer, and source
+and destination are both out of the cache. On the fast x86 processors the
+cipher then runs at about half that speed: 13.8 GiB/s on the Zen 5 instance
+against 25.7. On Arm it makes no difference. Sealing a body over itself
+instead of into a separate buffer is 1.2 to 1.6 times faster on x86, and
+the client does not do that (`m25-aes-gcm-memory.md`).
+
 ## Compared with the talk
 
 The talk's figures are from its slides. Its hardware differs from ours and

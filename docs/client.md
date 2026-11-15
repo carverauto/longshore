@@ -19,8 +19,8 @@ settings.port = 443;
 settings.threads = 4; // four independent I/O threads
 let client = settings.build().unwrap();
 
-// A body lives in a registered buffer borrowed from the client, so it is
-// never copied. The operation takes the buffer and hands it back.
+// A body lives in a registered buffer borrowed from the client, so the
+// client never copies it. The operation takes the buffer and hands it back.
 let mut body = client.buffer_blocking();
 body.as_mut_slice()[..5].copy_from_slice(b"hello");
 let (stored, body) = client.store("greeting", body, 5).wait();
