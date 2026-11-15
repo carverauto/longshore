@@ -7,8 +7,10 @@
 //! pools of operation slots and lent buffers, and the request queue. All of
 //! it is allocated when the lane is built.
 
+use super::exact::Budget;
 use super::sync::{current, park, AtomicBool, AtomicU32, AtomicU64, Condvar, Mutex, Thread};
 use crate::multipart::UploadId;
+use crate::report::{Expect, Put};
 use crate::s3::{Checksum, Outcome, SubmitError};
 use std::collections::VecDeque;
 use std::future::Future;
@@ -46,6 +48,10 @@ pub(super) struct Request {
     /// The multipart upload the request belongs to, and its part number.
     pub upload: Option<UploadId>,
     pub number: u32,
+    /// For `head` and `get`: the object that must be found.
+    pub expect: Expect,
+    /// For `put`, `head` and `get`: how far the operation may go.
+    pub budget: Budget,
 }
 
 #[derive(Clone, Copy)]
@@ -69,6 +75,14 @@ pub(super) enum Kind {
     /// The lent buffer holds the list of parts.
     Complete,
     Abort,
+    /// The three that end with a report of what the store answered.
+    Put {
+        options: Put,
+    },
+    Head,
+    Get {
+        range: Option<(u64, u64)>,
+    },
     /// Finish what is in progress, then stop.
     Shutdown,
 }

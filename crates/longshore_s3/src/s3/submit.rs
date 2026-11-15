@@ -47,6 +47,7 @@ impl S3 {
         let s = &mut self.slots[i];
         s.candidate = false;
         s.comparing = false;
+        (s.sha256, s.exact) = (None, None);
         if key.is_empty() {
             return Err(SubmitError::BadKey);
         }
@@ -66,6 +67,12 @@ impl S3 {
         s.attempts = 0;
         s.address_waits = 0;
         s.delays = 0;
+        if let Checksum::Sha256(digest) = checksum {
+            if self.cfg.vendor != Vendor::S3 || !matches!(kind, Kind::Store { .. }) {
+                return Err(SubmitError::Unsupported);
+            }
+            s.sha256 = Some(digest);
+        }
         s.crc = match (checksum, body) {
             (Checksum::Provided(crc), _) => Some(crc),
             (Checksum::Compute, Some((buf, len))) if kind.stores_bytes() => {
@@ -266,6 +273,7 @@ impl S3 {
         s.body = None;
         s.response_buf = Some(into);
         (s.attempts, s.delays, s.address_waits, s.crc) = (0, 0, 0, None);
+        (s.sha256, s.exact) = (None, None);
         self.attempt(io, i);
         Ok(())
     }

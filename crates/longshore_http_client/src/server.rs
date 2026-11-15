@@ -148,6 +148,8 @@ struct Conn {
     copy_source_len: usize,
     /// The object whose tag, date and describing headers go on the response.
     reply_object: Option<u32>,
+    /// What the request asked about the object's identity.
+    asked: identity::Asked,
 }
 
 struct Object {
@@ -160,6 +162,8 @@ struct Object {
     /// Content type and metadata headers it was stored with, as raw lines.
     describing: [u8; DESCRIBING_MAX],
     describing_len: usize,
+    /// Its version, encryption and SHA-256.
+    kept: identity::Kept,
 }
 
 const K_RECV: u64 = 0;
@@ -193,6 +197,12 @@ pub struct Server {
     allowed_count: usize,
     /// With a non-zero length, the session token every request must carry.
     session_token: ([u8; 64], usize),
+    /// The last version id given out, if objects are given them.
+    versions: Option<u32>,
+    /// Objects are encrypted when a request asks for it.
+    encrypts: bool,
+    /// With `Some`, the SHA-256 header value a stored body must carry.
+    sha256: Option<identity::Sha256Fn>,
     /// Connections accepted so far.
     pub accepted: u64,
     /// Complete requests received so far.
@@ -203,6 +213,8 @@ pub struct Server {
 
 mod describing;
 mod events;
+mod identity;
+pub use identity::Sha256Fn;
 mod listing;
 mod multipart;
 mod objects;
@@ -246,6 +258,7 @@ impl Server {
             copy_source: [0; TARGET_MAX],
             copy_source_len: 0,
             reply_object: None,
+            asked: identity::Asked::NOTHING,
         };
         let objects = (0..cfg.objects_max)
             .map(|_| Object {
@@ -257,6 +270,7 @@ impl Server {
                 checksum: None,
                 describing: [0; DESCRIBING_MAX],
                 describing_len: 0,
+                kept: Default::default(),
             })
             .collect();
         let first_tls_buf = tls.as_ref().map(|t| t.1);
@@ -294,6 +308,9 @@ impl Server {
             allowed_keys: [([0; 64], 0); 2],
             allowed_count: 0,
             session_token: ([0; 64], 0),
+            versions: None,
+            encrypts: true,
+            sha256: None,
             accepted: 0,
             requests: 0,
             closed: 0,

@@ -119,6 +119,10 @@ pub enum Error {
 pub struct Done {
     pub token: u64,
     pub result: Result<Response, Error>,
+    /// The request head was handed to the `Io` for sending. False means no
+    /// byte of the request left this client, so the server cannot have
+    /// acted on it. True does not prove the server received it.
+    pub sent: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,6 +194,8 @@ struct Conn {
     response_buf: Option<BufId>,
     is_head: bool,
     timed_out: bool,
+    /// The head of the current request was handed to the `Io` for sending.
+    sent: bool,
     status: u16,
     body_len: u32,
     fields: Option<Fields>,
@@ -273,6 +279,7 @@ impl Client {
             response_buf: None,
             is_head: false,
             timed_out: false,
+            sent: false,
             status: 0,
             body_len: 0,
             fields: None,

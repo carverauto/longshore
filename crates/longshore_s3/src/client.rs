@@ -39,11 +39,17 @@
 //! assert_eq!(&body.as_slice()[..5], b"hello");
 //! ```
 //!
+//! [`Client::put`], [`Client::head`] and [`Client::get`] are for a caller
+//! that must know exactly what happened: they take a limit of attempts and
+//! time, and report what the store answered instead of deciding what it
+//! means. See [`crate::report`].
+//!
 //! [`Worker`] is one I/O thread's logic with no thread around it, for a
 //! caller that drives the I/O itself: the simulator in tests, or an event
 //! loop that already owns the core.
 
 mod buffer;
+mod exact;
 mod lane;
 mod multipart;
 mod pending;
@@ -52,11 +58,13 @@ mod threads;
 mod worker;
 
 pub use buffer::Buffer;
+pub use exact::Budget;
 pub use lane::{Lane, KEY_MAX};
 pub use pending::{Output, Pending};
 pub use threads::{BuildError, Builder};
 pub use worker::{Layout, Worker};
 
+use crate::report::Expect;
 use crate::s3::{Checksum, Fatal, Outcome, SubmitError};
 use buffer::Borrow;
 use lane::{Finished, Kind, Request};
@@ -67,7 +75,8 @@ use std::sync::Arc;
 /// Why an operation did not do what was asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// The key is empty, or longer than [`KEY_MAX`] or than the store allows.
+    /// The key is empty, or longer than [`KEY_MAX`] or than the store allows,
+    /// or an expected `ETag` holds a byte that is not visible ASCII.
     BadKey,
     /// The byte range ends before it starts, or the parts of an upload are
     /// not in ascending order.
@@ -337,6 +346,8 @@ fn request(op: u32, key: &str, kind: Kind, buf: u32, len: u32) -> Result<Request
         len,
         upload: None,
         number: 0,
+        expect: Expect::default(),
+        budget: Budget::UNLIMITED,
     };
     r.key[..key.len()].copy_from_slice(key.as_bytes());
     Ok(r)

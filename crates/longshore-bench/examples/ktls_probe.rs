@@ -123,7 +123,7 @@ mod linux {
         if args.len() < 4 {
             die("usage: ktls_probe ADDR:PORT CERT.der write|sendfile [SECS] [CPU]");
         }
-        let (addr, cert, mode) = (&args[1], &args[2], args[3].as_str());
+        let (addr, der_path, mode) = (&args[1], &args[2], args[3].as_str());
         let secs: f64 = args.get(4).and_then(|v| v.parse().ok()).unwrap_or(5.0);
         if let Some(cpu) = args.get(5).and_then(|v| v.parse::<usize>().ok()) {
             let mut mask = [0u64; 16];
@@ -132,7 +132,7 @@ mod linux {
         }
 
         // Handshake in user space, AES-128-GCM only so the key layout is fixed.
-        let der = std::fs::read(cert).unwrap_or_else(|e| die(&format!("{cert}: {e}")));
+        let der = std::fs::read(der_path).unwrap_or_else(|e| die(&format!("{der_path}: {e}")));
         let mut roots = rustls::RootCertStore::empty();
         roots
             .add(CertificateDer::from(der))

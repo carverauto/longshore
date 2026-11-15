@@ -187,6 +187,18 @@ impl Worker {
                     .multipart_complete(io, token, key, upload, buf, r.len, None),
                 None => Err(crate::s3::SubmitError::BadPart),
             },
+            Kind::Put { options } => {
+                let limit = r.budget.limit(io);
+                self.s3.put(io, token, key, buf, r.len, &options, limit)
+            }
+            Kind::Head => {
+                let limit = r.budget.limit(io);
+                self.s3.head(io, token, key, &r.expect, limit)
+            }
+            Kind::Get { range } => {
+                let limit = r.budget.limit(io);
+                self.s3.get(io, token, key, range, &r.expect, buf, limit)
+            }
             Kind::Abort => match &r.upload {
                 Some(upload) => self.s3.multipart_abort(io, token, key, upload),
                 None => Err(crate::s3::SubmitError::BadPart),
@@ -230,7 +242,13 @@ impl Worker {
         self.close();
         for op in 0..self.running.len() {
             if core::mem::take(&mut self.running[op]) {
-                self.lane.finish(op as u32, Finished::Closed);
+                // An operation that reports what was sent says so here too:
+                // its request may have reached the store.
+                let finished = match self.s3.abandoned(op as u64) {
+                    Some(report) => Finished::Outcome(crate::s3::Outcome::Report(report)),
+                    None => Finished::Closed,
+                };
+                self.lane.finish(op as u32, finished);
             }
         }
     }
