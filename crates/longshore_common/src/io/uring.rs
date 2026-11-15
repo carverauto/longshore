@@ -143,6 +143,22 @@ impl Drop for UringIo {
     }
 }
 
+/// Registered buffers are locked memory. Where the limit on that is too low
+/// the kernel answers ENOMEM, which reads as if the machine were out of
+/// memory, so name the limit.
+fn name_memlock_limit(e: io::Error) -> io::Error {
+    if e.kind() != io::ErrorKind::OutOfMemory {
+        return e;
+    }
+    io::Error::new(
+        e.kind(),
+        format!(
+            "{e}: the locked-memory limit (RLIMIT_MEMLOCK) is too low for \
+             the registered buffer pool"
+        ),
+    )
+}
+
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
     pub fn new(limits: Limits) -> io::Result<UringIo> {
@@ -163,7 +179,7 @@ impl UringIo {
                 }
             })
             .collect();
-        ring.register_buffers(&iov)?;
+        ring.register_buffers(&iov).map_err(name_memlock_limit)?;
         ring.register_files(&vec![-1i32; limits.sockets_max as usize])?;
         let slot = Slot {
             cancel_requested: false,
@@ -328,5 +344,39 @@ impl UringIo {
             .push(sqe)
             .expect("submission queue sized for ops_max");
         self.in_flight += 1;
+    }
+}
+
+#[cfg(test)]
+mod memlock_tests {
+    use super::name_memlock_limit;
+    use std::io;
+
+    const ENOMEM: i32 = 12;
+    const EINVAL: i32 = 22;
+
+    fn as_ring_reports(errno: i32) -> io::Error {
+        let e = io::Error::from_raw_os_error(errno);
+        io::Error::new(
+            e.kind(),
+            format!("io_uring_register(op=0, n=4) failed: {e}"),
+        )
+    }
+
+    #[test]
+    fn enomem_from_registration_names_the_limit_and_keeps_the_call() {
+        let e = name_memlock_limit(as_ring_reports(ENOMEM));
+        assert_eq!(e.kind(), io::ErrorKind::OutOfMemory);
+        let text = e.to_string();
+        assert!(text.contains("RLIMIT_MEMLOCK"), "{text}");
+        assert!(text.contains("io_uring_register(op=0, n=4)"), "{text}");
+    }
+
+    #[test]
+    fn other_errors_pass_through_unchanged() {
+        let before = as_ring_reports(EINVAL).to_string();
+        let e = name_memlock_limit(as_ring_reports(EINVAL));
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(e.to_string(), before);
     }
 }
