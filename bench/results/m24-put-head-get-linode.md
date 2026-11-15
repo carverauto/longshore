@@ -61,6 +61,24 @@ Every answer carried a request id. No answer carried a version id.
   `body_len` was 267 with status 412. The bytes in the buffer are the
   object's only when the status is 200 or 206.
 
+## Run again after the fix
+
+After the fix the program was run again at commit `81238a9`, once from
+host A and once from host B (x86-64, Linux 6.8), over HTTPS to a second
+bucket in the same Linode region: a longshore test bucket, not the one
+used by the first run. Both ended `ok exact_s3` with exit status 0. Every
+line each printed is in `m24-put-head-get-linode-fixed-aarch64.txt` and
+`m24-put-head-get-linode-fixed-x86_64.txt`.
+
+The store gave the same answers as in the first run, with two differences:
+
+- **The write with the SHA-256 of other bytes now sends the test
+  pattern**, and its `ETag` is the same as the other four objects'. That
+  shows directly that the store kept the pattern although the
+  `x-amz-checksum-sha256` header was the hash of other bytes.
+- **The error document of a refused request was 262 bytes** there, not
+  267, on the refused `put`, `head` and `get`.
+
 ## What this does not tell us
 
 - Anything about Amazon S3, MinIO or Ceph. Amazon S3 is expected to refuse
@@ -69,6 +87,6 @@ Every answer carried a request id. No answer carried a version id.
 - A deadline that cancels a request in flight against a real store, a lost
   answer, or more than one attempt. Those are covered in the simulator and,
   for the cancel, on real rings against an address that does not answer.
-- x86-64 against this store. The run was on AArch64 only.
 - Other Linode regions or endpoint generations, which may differ.
-- Repeatability: one run.
+- Repeatability beyond three runs over two buckets, two from AArch64 and
+  one from x86-64.
