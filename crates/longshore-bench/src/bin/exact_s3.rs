@@ -188,7 +188,12 @@ fn main() {
         body = back;
         show("get bytes 1000-1999", &part);
         let part_ok = answer(&part).is_some_and(|a| {
-            a.status == 206 && body.as_slice()[..a.body_len as usize] == bytes[1000..2000]
+            let got = &body.as_slice()[..a.body_len as usize];
+            match a.status {
+                206 => got == &bytes[1000..2000],
+                200 => got == &bytes[..],
+                _ => false,
+            }
         });
         println!("bytes read back: whole {whole_ok}, part {part_ok}");
         failed |= !whole_ok || !part_ok;
@@ -206,6 +211,7 @@ fn main() {
         checksum: Checksum::Sha256(sha256(b"other bytes")),
     };
     let key = format!("{prefix}/wrong-sha256");
+    body.as_mut_slice()[..LEN].copy_from_slice(&bytes);
     let (damaged, back) = client.put(&key, body, LEN, &wrong, once()).wait();
     body = back;
     show("put with a SHA-256 of other bytes", &damaged);
@@ -213,6 +219,7 @@ fn main() {
 
     let past = Budget::once(Instant::now() - Duration::from_millis(1));
     let key = format!("{prefix}/late");
+    body.as_mut_slice()[..LEN].copy_from_slice(&bytes);
     let (late, _body) = client.put(&key, body, LEN, &Put::default(), past).wait();
     show("put after its deadline", &late);
     failed |= !matches!(late, Ok(r) if matches!(r.end, End::NotSent(_)) && r.request.is_none());

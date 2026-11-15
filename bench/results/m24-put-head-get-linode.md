@@ -23,7 +23,7 @@ Each operation was one request (`Budget::once`), 300,000 bytes per object.
 | `get` with the returned `ETag` | 200, 300,000 bytes, equal to the bytes written |
 | `get` of bytes 1000 to 1999 with the returned `ETag` | 206, `Content-Range: bytes 1000-1999/300000`, equal to those bytes |
 | `get` with another `ETag` | 412, and a 267-byte error document as the body |
-| `put` with the SHA-256 of other bytes | **200. The object was stored** |
+| `put` with the SHA-256 of other bytes | **200. The object was stored** (its body was not the test pattern: see below) |
 | `put` after its deadline | Not sent |
 
 Every answer carried a request id. No answer carried a version id.
@@ -45,8 +45,17 @@ Every answer carried a request id. No answer carried a version id.
   checksum sent with a write protects nothing. What protects the body in
   transit is TLS, and what proves the stored bytes is reading them back and
   hashing them, which the caller has to do.
-- **The `ETag` is 32 hex digits and changed with the body**, as an MD5 of
-  the content would. That was not checked against an MD5 computed here.
+- **In this run the body of that write was not the test pattern.** At
+  commit `0ff93e8` the program reused the buffer the preceding `get`s had
+  written into, so the 300,000 bytes sent began with the 267-byte error
+  document of the refused `get` and the range bytes left before it. Its
+  `ETag` differs from the other four objects' for that reason. The
+  conclusion stands: the store accepted a body whose
+  `x-amz-checksum-sha256` was the hash of other bytes. The program now
+  restores the pattern before that write and before the late one.
+- **The `ETag` is 32 hex digits**, and the four writes of the same bytes
+  got the same one, as an MD5 of the content would. That was not checked
+  against an MD5 computed here.
 - **Ranges are served exactly**, with the object's length in `Content-Range`.
 - **A refused `get` writes the error document into the caller's buffer.**
   `body_len` was 267 with status 412. The bytes in the buffer are the
