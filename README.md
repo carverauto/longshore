@@ -40,7 +40,7 @@ This is a library under development and not yet published on crates.io.
 | Azure Blob Storage | Request signing only, checked against the Azurite emulator. The store cannot use it yet |
 | Bucket addressing | The bucket goes in the host name by default, or in the path when configured, as self-hosted S3-compatible stores commonly expect. Both forms run against Linode Object Storage. Not yet run against MinIO or Ceph |
 | Shareable client | `longshore::client`: a handle usable from any thread over one or more independent I/O threads, with async and blocking calls and lent buffers. Store, conditional store, fetch, ranged fetch, erase and multipart upload. Run on Linux 6.8 and 6.14 against the in-tree server, and measured against Amazon S3 |
-| `put`, `head`, `get`: one request within a deadline, reported as the store answered it | In the shareable client and the low-level API. Tested in the simulator and on real rings against the in-tree server. Not yet run against a real store |
+| `put`, `head`, `get`: one request within a deadline, reported as the store answered it | In the shareable client and the low-level API. Tested in the simulator and on real rings against the in-tree server, and run once against Linode Object Storage over HTTPS (`m24-put-head-get-linode.md`). Not yet run against Amazon S3 |
 | IPv4 and IPv6 | The resolver asks for A records, AAAA records or both, and prefers the family the configuration names. When connections to that family fail and the name has addresses in the other, it uses the other. Run over IPv6 against Linode Object Storage |
 | Large-segment addresses | Optional, off by default. A store's name can resolve to addresses whose connections get different TCP segment sizes, and on a network card that does not segment in hardware the small ones cost several times more CPU per byte. With the setting on, the client measures each new connection, keeps its connections on the addresses with large segments, and asks DNS again sooner when every address is small. It can be switched while the store runs. Works on Linux 6.1 and later |
 | TLS 1.3 | `rustls` does the handshake. After that, records are sealed and opened in this repository with AES-GCM from AWS-LC |
@@ -159,6 +159,8 @@ s3_uring put --conns 128 --threads 4 --cpu 2 --cpu-step 2   # four independent c
 s3_uring multipart                        # three 8 MiB parts in parallel, then an abort
 s3_uring objects                          # stat, metadata, copy, delimiter listing, batch erase
 s3_uring list some/prefix/
+
+exact_s3                                  # put, head and get: what the store honours and returns
 ```
 
 For Google Cloud Storage, set `S3_VENDOR=gcs` and
@@ -599,10 +601,13 @@ the client is mostly idle.
   signed with them stops working when they do, whatever its own expiry.
 - A multipart upload that is neither completed nor aborted keeps its parts
   in the store. A bucket rule that expires incomplete uploads is the backstop.
-- `put`, `head` and `get` have been run against the in-tree server only,
-  in the simulator and on real rings. Which of `If-None-Match`, the
-  encryption header and the SHA-256 checksum a given S3-compatible store
-  honours and returns has not been checked against any real store.
+- `put`, `head` and `get` have been run against one real store, Linode
+  Object Storage, once (`m24-put-head-get-linode.md`). It honours
+  `If-None-Match` and `If-Match` and serves ranges exactly. It reports
+  every object as encrypted whether or not that was asked for, and it
+  neither checks nor returns the SHA-256 or the CRC-64 sent with a write:
+  a body sent with the SHA-256 of other bytes was stored. On such a store
+  only reading the bytes back proves them. Amazon S3 has not been run.
 - A request counts as sent once its head is handed to the kernel. That does
   not prove the store received it, so some requests reported as of unknown
   outcome never arrived. "Not sent" is certain.
