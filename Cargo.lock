@@ -668,7 +668,6 @@ dependencies = [
 name = "longshore_crc"
 version = "0.0.0"
 dependencies = [
- "crc-fast",
  "hegeltest",
  "longshore_common",
 ]

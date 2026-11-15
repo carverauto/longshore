@@ -3,37 +3,47 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! Integrity checksums behind in-tree interfaces: CRC-64/NVME (AWS, Azure)
-//! and CRC-32C (Google Cloud Storage). Neither allocates.
+//! Integrity checksums: CRC-64/NVME (AWS, Azure) and CRC-32C (Google Cloud
+//! Storage). Neither allocates.
+//!
+//! Both are computed in this crate. When the program runs, the fastest
+//! kernel the processor supports is chosen: carry-less multiplication on
+//! x86-64 (`VPCLMULQDQ` with AVX-512 or AVX2, else `PCLMULQDQ`) and on
+//! AArch64 (`PMULL`), and a lookup table on anything else.
 
-use crc_fast::{CrcAlgorithm, Digest};
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+mod fold;
+#[doc(hidden)]
+pub mod kernels;
+mod keys;
+mod table;
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
 
 /// CRC-64/NVME of `data`.
 pub fn crc64_nvme(data: &[u8]) -> u64 {
-    let mut d = Crc64Nvme::new();
-    d.update(data);
-    d.finish()
+    !kernels::crc64(!0, data)
 }
 
 /// CRC-32C (Castagnoli) of `data`.
 pub fn crc32c(data: &[u8]) -> u32 {
-    let mut d = Crc32c::new();
-    d.update(data);
-    d.finish()
+    !kernels::crc32c(!0, data)
 }
 
 /// Incremental CRC-64/NVME, for data that arrives in pieces.
-pub struct Crc64Nvme(Digest);
+pub struct Crc64Nvme(u64);
 
 impl Crc64Nvme {
     pub fn new() -> Crc64Nvme {
-        Crc64Nvme(Digest::new(CrcAlgorithm::Crc64Nvme))
+        Crc64Nvme(!0)
     }
     pub fn update(&mut self, data: &[u8]) {
-        self.0.update(data);
+        self.0 = kernels::crc64(self.0, data);
     }
     pub fn finish(&self) -> u64 {
-        self.0.finalize()
+        !self.0
     }
 }
 
@@ -44,17 +54,17 @@ impl Default for Crc64Nvme {
 }
 
 /// Incremental CRC-32C.
-pub struct Crc32c(Digest);
+pub struct Crc32c(u32);
 
 impl Crc32c {
     pub fn new() -> Crc32c {
-        Crc32c(Digest::new(CrcAlgorithm::Crc32Iscsi))
+        Crc32c(!0)
     }
     pub fn update(&mut self, data: &[u8]) {
-        self.0.update(data);
+        self.0 = kernels::crc32c(self.0, data);
     }
     pub fn finish(&self) -> u32 {
-        self.0.finalize() as u32
+        !self.0
     }
 }
 

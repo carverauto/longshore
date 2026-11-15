@@ -3,52 +3,24 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! Property tests (Hegel) and an allocation check for the checksum wrappers.
+//! Property tests (Hegel) and an allocation check for the checksums.
+
+mod reference;
 
 use hegel::generators as gs;
 use hegel::TestCase;
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_crc::{base64, crc32c, crc64_nvme, Crc32c, Crc64Nvme};
+use reference::{crc32c as crc32c_reference, crc64_nvme as crc64_nvme_reference};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
-/// Bit-at-a-time reference implementations, straight from the definitions.
-fn crc64_nvme_reference(data: &[u8]) -> u64 {
-    let mut crc = !0u64;
-    for &b in data {
-        crc ^= b as u64;
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0x9a6c_9329_ac4b_c9b5
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
-}
-
-fn crc32c_reference(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0x82f6_3b78
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
-}
-
-/// The accelerated library agrees with an independent bitwise implementation
+/// The selected kernel agrees with an independent bitwise implementation
 /// for every input, at every length and alignment.
 #[hegel::test]
 fn accelerated_matches_bitwise_reference(tc: TestCase) {
-    let data = tc.draw(gs::binary().max_size(700));
+    let data = tc.draw(gs::binary().max_size(3000));
     let skip = tc.draw(
         gs::integers::<usize>()
             .min_value(0)
