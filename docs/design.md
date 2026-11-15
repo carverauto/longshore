@@ -9,12 +9,19 @@ configuration and allocated when the client is built. Nothing is allocated
 after that, and the tests run under an allocator that aborts if something
 is. The TLS handshake is the exception, because `rustls` allocates.
 
-An object body goes from the caller's registered buffer to the network card
-with `SEND_ZC`. Over HTTPS the body is encrypted from that buffer into a
-send buffer in one pass, with no copy before it, and the records go out
-with `SEND_ZC` too. A send smaller than 64 KiB is an ordinary send, which
-the kernel copies. Requests are signed over the head only, so a body is
-never run through a cryptographic hash.
+The client makes no copy of an upload's body. By default it reads the body
+once, from the caller's registered buffer, to compute the checksum that goes
+with the upload; `checksums = false` turns that pass off. Over plain HTTP the
+body is then sent from that buffer. Over HTTPS sealing reads the body once
+more and writes the records into the connection's send buffer, and those
+records are what is sent. Whether a send is zero-copy is decided for each
+send, not for the body. A send of 64 KiB or more is submitted with `SEND_ZC`,
+and a smaller one is an ordinary send that the kernel copies. When a send
+completes short, the rest is sent again. Over plain HTTP that remainder is a
+zero-copy send only if it is still 64 KiB or more. Over HTTPS the remainder
+is always an ordinary send that the kernel copies, however large it is.
+Requests are signed over the head only, so a body is never run through a
+cryptographic hash.
 
 DNS, HTTP, the TLS record layer and the store's retry logic are written
 against an `Io` trait and do no I/O themselves. The same code runs on the

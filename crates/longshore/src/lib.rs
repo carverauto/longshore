@@ -8,17 +8,18 @@
 //! longshore moves a lot of data with little CPU. One thread drives
 //! everything from `io_uring` completions. Buffers, connection slots and
 //! operation slots are allocated when the client is built, and the client
-//! never copies an upload's body.
+//! makes no copy of an upload's body.
 //!
 //! # Highlights
 //!
 //! - One handle, [`client::Client`], that any thread can share, with calls
 //!   that are futures and can also block.
-//! - The client never copies an upload's body. Over plain HTTP the kernel
-//!   sends it from the caller's registered buffer, without a copy of its own
-//!   when the body is 64 KiB or more. Over HTTPS the only pass over it is
-//!   the encryption, which reads the caller's buffer and writes the records
-//!   that are sent.
+//! - The client makes no copy of an upload's body. By default it reads the
+//!   body once to compute its checksum (off with `checksums = false`), and
+//!   over HTTPS sealing reads it once more and writes the records that are
+//!   sent. A send of 64 KiB or more is submitted as a zero-copy send. A
+//!   smaller send, and what remains after a short send over HTTPS, is an
+//!   ordinary send that the kernel copies.
 //! - No allocation after the client is built, apart from the TLS handshake.
 //! - By default a checksum goes with every upload for the store to verify,
 //!   and a download is checked against the checksum the store returns.
