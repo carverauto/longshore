@@ -23,3 +23,9 @@ longshore_dns.workspace = true
 longshore_http_client.workspace = true
 longshore_s3.workspace = true
 longshore_tls.workspace = true
+
+[package.metadata.docs.rs]
+# io_uring is Linux only, and the simulator is part of the documented API.
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+features = ["sim"]
