@@ -125,10 +125,11 @@ fn bench(c: &mut Criterion) {
         longshore::checksum::kernels::selected().name
     );
 
-    // 64 B and 1 KiB show the cost of a call; 64 KiB is the zero-copy
+    // 64 B, 256 B and 1 KiB show the cost of a call and of the stages that
+    // handle what the main loop leaves; 64 KiB is the zero-copy
     // threshold; 8 MiB is the talk's object size and does not fit in L2, so
     // memory bandwidth shows up.
-    for size in [64usize, 1024, 64 * 1024, 8 << 20] {
+    for size in [64usize, 256, 1024, 64 * 1024, 8 << 20] {
         let data: Vec<u8> = (0..size)
             .map(|i| (i as u32).wrapping_mul(2654435761).to_le_bytes()[1])
             .collect();

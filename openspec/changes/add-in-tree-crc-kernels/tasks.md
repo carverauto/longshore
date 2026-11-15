@@ -14,13 +14,15 @@
 - [x] 3.4 CRC-32C finish with the SSE4.2 CRC instruction
 
 ## 4. Proof
-- [ ] 4.1 Each kernel against the reference: every length to 4,096 bytes at 16 offsets and to 8,200 across the change of method, every alignment to 64 for lengths to 640, split points; published check values. Done on AArch64 (Apple M3 Max); the x86-64 kernels have been compiled and linted but not run
+- [x] 4.1 Each kernel against the reference: every length to 4,096 bytes at 16 offsets and to 8,200 across the change of method, every alignment to 64 for lengths to 640, split points; published check values. Run on thirteen processors, x86-64 and AArch64 (`bench/results/m23-crc-kernels.md`)
 - [x] 4.2 Hegel property tests and the allocation guard over the new kernels
-- [ ] 4.3 Benchmark every kernel against `crc-fast` on Cortex-X925 (DGX Spark) and EPYC 7713, at 64 B, 1 KiB, 64 KiB and 8 MiB; record in `bench/results/`. The benchmark first runs the checks of 4.1 on that machine
-- [ ] 4.6 Run the 512-bit kernel on a processor with AVX-512 (Xeon 8358P) before it is relied on
+- [x] 4.3 Benchmark every kernel against `crc-fast` at 64 B, 1 KiB, 64 KiB and 8 MiB; record in `bench/results/`. Done on eleven processors at commit `dffc639`: `bench/results/m23-crc-kernels.md`. The gate is not met for either checksum
+- [x] 4.6 Run the 512-bit kernel on a processor with AVX-512: passed on five
+- [ ] 4.7 Repeat 4.1 and 4.3 after the changes made in answer to the first results (`bench/results/m23-crc-kernels.md`); the 256-bit and 512-bit kernels have not run since they were rewritten
+- [ ] 4.8 From 4.7: confirm the interleaved 512-bit CRC-32C on Sapphire Rapids, choose the lane count for Neoverse cores, and decide whether the 256-bit tier interleaves
 - [ ] 4.4 Set lane counts and the order of preference between 256-bit and 512-bit from 4.3
 - [ ] 4.5 End-to-end PUT with checksums against a real store, CPU per GB before and after
 
 ## 5. Adoption
-- [ ] 5.1 Switch each algorithm that passed 4.3; move `crc-fast` to development dependencies. Switched on the branch ahead of 4.3; to be confirmed or reverted per algorithm by its result
+- [ ] 5.1 Switch each algorithm that passes 4.3 and 4.7; move `crc-fast` to development dependencies. Switched on the branch ahead of the gate. On the first results neither checksum passes, so merging as it stands would be against this change's own rule
 - [ ] 5.2 README and crate documentation: dependencies, supported processors

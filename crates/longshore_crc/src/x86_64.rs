@@ -6,7 +6,7 @@
 //! x86-64 kernels: `VPCLMULQDQ` on 512-bit and on 256-bit registers, and
 //! `PCLMULQDQ` on 128-bit ones.
 
-use crate::fold::{self, Bulk, Clmul, Lanes};
+use crate::fold::{self, Clmul, Lanes, One, Reg, Wide};
 use crate::kernels::Kernel;
 use crate::keys::Keys;
 use core::arch::x86_64::*;
@@ -66,99 +66,93 @@ impl Clmul for Sse {
     }
 }
 
-/// `M` registers of 256 bits, two blocks each.
-struct Ymm<const M: usize>;
+/// A 256-bit register: two blocks.
+struct Ymm;
 
-impl<const M: usize> Bulk for Ymm<M> {
+// SAFETY (all methods): as for `Sse`.
+impl Reg for Ymm {
     type C = Sse;
+    type R = __m256i;
+    const BLOCKS: usize = 2;
 
     #[inline(always)]
-    unsafe fn bulk<'a>(acc: __m128i, rest: &'a [u8], keys: &Keys) -> (__m128i, &'a [u8]) {
-        const W: usize = 32;
-        if rest.len() < 2 * M * W {
-            return (acc, rest);
-        }
-        // SAFETY: every read is below `rest.len()`: the first `M` registers
-        // by the check above, later ones by the loop condition.
+    unsafe fn load(p: *const u8) -> __m256i {
+        unsafe { _mm256_loadu_si256(p.cast()) }
+    }
+    #[inline(always)]
+    unsafe fn key(keys: &Keys, blocks: usize) -> __m256i {
+        unsafe { _mm256_broadcastsi128_si256(Sse::set(keys[blocks][0], keys[blocks][1])) }
+    }
+    #[inline(always)]
+    unsafe fn fold(v: __m256i, k: __m256i, add: __m256i) -> __m256i {
         unsafe {
-            let p = rest.as_ptr();
-            let key = |j: usize| _mm256_broadcastsi128_si256(Sse::set(keys[j][0], keys[j][1]));
-            let (k1, kw, km) = (Sse::set(keys[1][0], keys[1][1]), key(2), key(2 * M));
-            let fold = |v: __m256i, k: __m256i, add: __m256i| {
-                let lo = _mm256_clmulepi64_epi128::<0x00>(v, k);
-                let hi = _mm256_clmulepi64_epi128::<0x11>(v, k);
-                _mm256_xor_si256(_mm256_xor_si256(lo, hi), add)
-            };
-            let mut v = [_mm256_setzero_si256(); M];
-            for (i, r) in v.iter_mut().enumerate() {
-                *r = _mm256_loadu_si256(p.add(i * W).cast());
-            }
-            // One block further along, `acc` lines up with the first block.
-            let first = Sse::fold(acc, k1, _mm256_castsi256_si128(v[0]));
-            v[0] = _mm256_inserti128_si256::<0>(v[0], first);
-            let mut at = M * W;
-            while rest.len() - at >= M * W {
-                for (i, r) in v.iter_mut().enumerate() {
-                    *r = fold(*r, km, _mm256_loadu_si256(p.add(at + i * W).cast()));
-                }
-                at += M * W;
-            }
-            let mut x = v[0];
-            for r in &v[1..] {
-                x = fold(x, kw, *r);
-            }
-            let acc = _mm256_castsi256_si128(x);
-            let acc = Sse::fold(acc, k1, _mm256_extracti128_si256::<1>(x));
-            (acc, &rest[at..])
+            let lo = _mm256_clmulepi64_epi128::<0x00>(v, k);
+            let hi = _mm256_clmulepi64_epi128::<0x11>(v, k);
+            _mm256_xor_si256(_mm256_xor_si256(lo, hi), add)
+        }
+    }
+    #[inline(always)]
+    unsafe fn enter(acc: __m128i, v: __m256i, keys: &Keys) -> __m256i {
+        unsafe {
+            let k1 = Sse::set(keys[1][0], keys[1][1]);
+            let first = Sse::fold(acc, k1, _mm256_castsi256_si128(v));
+            _mm256_inserti128_si256::<0>(v, first)
+        }
+    }
+    #[inline(always)]
+    unsafe fn narrow(v: __m256i, keys: &Keys) -> __m128i {
+        unsafe {
+            let k1 = Sse::set(keys[1][0], keys[1][1]);
+            let last = _mm256_extracti128_si256::<1>(v);
+            Sse::fold(_mm256_castsi256_si128(v), k1, last)
         }
     }
 }
 
-/// `M` registers of 512 bits, four blocks each.
-struct Zmm<const M: usize>;
+/// A 512-bit register: four blocks.
+struct Zmm;
 
-impl<const M: usize> Bulk for Zmm<M> {
+// SAFETY (all methods): as for `Sse`.
+impl Reg for Zmm {
     type C = Sse;
+    type R = __m512i;
+    const BLOCKS: usize = 4;
 
     #[inline(always)]
-    unsafe fn bulk<'a>(acc: __m128i, rest: &'a [u8], keys: &Keys) -> (__m128i, &'a [u8]) {
-        const W: usize = 64;
-        if rest.len() < 2 * M * W {
-            return (acc, rest);
-        }
-        // SAFETY: as for `Ymm`.
+    unsafe fn load(p: *const u8) -> __m512i {
+        unsafe { _mm512_loadu_si512(p.cast()) }
+    }
+    #[inline(always)]
+    unsafe fn key(keys: &Keys, blocks: usize) -> __m512i {
+        unsafe { _mm512_broadcast_i32x4(Sse::set(keys[blocks][0], keys[blocks][1])) }
+    }
+    #[inline(always)]
+    unsafe fn fold(v: __m512i, k: __m512i, add: __m512i) -> __m512i {
         unsafe {
-            let p = rest.as_ptr();
-            let key = |j: usize| _mm512_broadcast_i32x4(Sse::set(keys[j][0], keys[j][1]));
-            let (k1, kw, km) = (Sse::set(keys[1][0], keys[1][1]), key(4), key(4 * M));
-            let fold = |v: __m512i, k: __m512i, add: __m512i| {
-                let lo = _mm512_clmulepi64_epi128::<0x00>(v, k);
-                let hi = _mm512_clmulepi64_epi128::<0x11>(v, k);
-                // 0x96 is the three-way exclusive or.
-                _mm512_ternarylogic_epi64::<0x96>(lo, hi, add)
-            };
-            let mut v = [_mm512_setzero_si512(); M];
-            for (i, r) in v.iter_mut().enumerate() {
-                *r = _mm512_loadu_si512(p.add(i * W).cast());
-            }
-            let first = Sse::fold(acc, k1, _mm512_castsi512_si128(v[0]));
-            v[0] = _mm512_inserti32x4::<0>(v[0], first);
-            let mut at = M * W;
-            while rest.len() - at >= M * W {
-                for (i, r) in v.iter_mut().enumerate() {
-                    *r = fold(*r, km, _mm512_loadu_si512(p.add(at + i * W).cast()));
-                }
-                at += M * W;
-            }
-            let mut x = v[0];
-            for r in &v[1..] {
-                x = fold(x, kw, *r);
-            }
-            let acc = _mm512_castsi512_si128(x);
-            let acc = Sse::fold(acc, k1, _mm512_extracti32x4_epi32::<1>(x));
-            let acc = Sse::fold(acc, k1, _mm512_extracti32x4_epi32::<2>(x));
-            let acc = Sse::fold(acc, k1, _mm512_extracti32x4_epi32::<3>(x));
-            (acc, &rest[at..])
+            let lo = _mm512_clmulepi64_epi128::<0x00>(v, k);
+            let hi = _mm512_clmulepi64_epi128::<0x11>(v, k);
+            // 0x96 is the three-way exclusive or.
+            _mm512_ternarylogic_epi64::<0x96>(lo, hi, add)
+        }
+    }
+    #[inline(always)]
+    unsafe fn enter(acc: __m128i, v: __m512i, keys: &Keys) -> __m512i {
+        unsafe {
+            let k1 = Sse::set(keys[1][0], keys[1][1]);
+            let first = Sse::fold(acc, k1, _mm512_castsi512_si128(v));
+            _mm512_inserti32x4::<0>(v, first)
+        }
+    }
+    /// Each block but the last moves to the last one's place by a constant
+    /// of its own, so the three multiplications run side by side.
+    #[inline(always)]
+    unsafe fn narrow(v: __m512i, keys: &Keys) -> __m128i {
+        unsafe {
+            let key = |j: usize| Sse::set(keys[j][0], keys[j][1]);
+            let acc = _mm512_extracti32x4_epi32::<3>(v);
+            let acc = Sse::fold(_mm512_castsi512_si128(v), key(3), acc);
+            let acc = Sse::fold(_mm512_extracti32x4_epi32::<1>(v), key(2), acc);
+            Sse::fold(_mm512_extracti32x4_epi32::<2>(v), key(1), acc)
         }
     }
 }
@@ -175,43 +169,56 @@ macro_rules! kernel {
         }
     };
 }
-kernel!(
-    zmm4_crc64,
-    zmm4_crc32c,
-    Zmm<4>,
-    "avx512f,avx512vl,vpclmulqdq,avx2,pclmulqdq,sse4.2"
-);
-kernel!(
-    zmm8_crc64,
-    zmm8_crc32c,
-    Zmm<8>,
-    "avx512f,avx512vl,vpclmulqdq,avx2,pclmulqdq,sse4.2"
-);
-kernel!(
-    ymm4_crc64,
-    ymm4_crc32c,
-    Ymm<4>,
-    "avx2,vpclmulqdq,pclmulqdq,sse4.2"
-);
-kernel!(
-    ymm8_crc64,
-    ymm8_crc32c,
-    Ymm<8>,
-    "avx2,vpclmulqdq,pclmulqdq,sse4.2"
-);
+kernel!(zmm4_crc64, zmm4_crc32c, Wide<Zmm, 4>, "avx512f,avx512vl,vpclmulqdq,avx2,pclmulqdq,sse4.2");
+kernel!(zmm8_crc64, zmm8_crc32c, Wide<Zmm, 8>, "avx512f,avx512vl,vpclmulqdq,avx2,pclmulqdq,sse4.2");
+kernel!(ymm4_crc64, ymm4_crc32c, Wide<Ymm, 4>, "avx2,vpclmulqdq,pclmulqdq,sse4.2");
+kernel!(ymm8_crc64, ymm8_crc32c, Wide<Ymm, 8>, "avx2,vpclmulqdq,pclmulqdq,sse4.2");
 kernel!(sse8_crc64, sse8_crc32c, Lanes<Sse, 8>, "pclmulqdq,sse4.2");
 kernel!(sse4_crc64, sse4_crc32c, Lanes<Sse, 4>, "pclmulqdq,sse4.2");
 
+/// CRC-32C with three CRC instruction streams beside `$m` registers of
+/// kind `$reg`, each stream reading `$words` words a round.
 macro_rules! fused {
-    ($crc32c:ident, $lanes:literal, $words:literal) => {
-        #[target_feature(enable = "pclmulqdq,sse4.2")]
+    ($crc32c:ident, $reg:ty, $m:literal, $words:literal, $features:literal) => {
+        #[target_feature(enable = $features)]
         unsafe fn $crc32c(state: u32, data: &[u8]) -> u32 {
-            unsafe { fold::crc32c_fused::<Sse, $lanes, $words>(state, data) }
+            unsafe { fold::crc32c_fused::<$reg, $m, $words>(state, data) }
         }
     };
 }
-fused!(sse8_fused2, 8, 2);
-fused!(sse4_fused3, 4, 3);
+fused!(
+    zmm4_fused3,
+    Zmm,
+    4,
+    3,
+    "avx512f,avx512vl,vpclmulqdq,avx2,pclmulqdq,sse4.2"
+);
+fused!(
+    zmm4_fused6,
+    Zmm,
+    4,
+    6,
+    "avx512f,avx512vl,vpclmulqdq,avx2,pclmulqdq,sse4.2"
+);
+fused!(ymm8_fused3, Ymm, 8, 3, "avx2,vpclmulqdq,pclmulqdq,sse4.2");
+fused!(ymm4_fused2, Ymm, 4, 2, "avx2,vpclmulqdq,pclmulqdq,sse4.2");
+fused!(sse8_fused2, One<Sse>, 8, 2, "pclmulqdq,sse4.2");
+fused!(sse4_fused3, One<Sse>, 4, 3, "pclmulqdq,sse4.2");
+
+/// CRC-32C for processors with the 128-bit multiply only. Their CRC
+/// instruction is strong beside it, so long inputs go to four lanes with
+/// three CRC streams: measured on Cascade Lake at 64 KiB, 42.8 GiB/s
+/// against 26.2 for eight lanes alone. Short inputs keep eight lanes.
+#[target_feature(enable = "pclmulqdq,sse4.2")]
+unsafe fn sse_crc32c(state: u32, data: &[u8]) -> u32 {
+    unsafe {
+        if data.len() < fold::fused_min(4 * 16, 3) {
+            fold::crc32c::<Lanes<Sse, 8>>(state, data)
+        } else {
+            fold::crc32c_fused::<One<Sse>, 4, 3>(state, data)
+        }
+    }
+}
 
 fn has_128() -> bool {
     is_x86_feature_detected!("pclmulqdq") && is_x86_feature_detected!("sse4.2")
@@ -223,30 +230,53 @@ fn has_512() -> bool {
     has_256() && is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512vl")
 }
 
-/// In order of preference within each width; the table kernel is last. A
-/// name gives the registers folded side by side, then for CRC-32C the words
-/// each of three CRC instruction streams reads beside them ("+3xS"), if any.
-pub(crate) static KERNELS: [Kernel; 9] = [
+/// The table kernel is last. A name gives the registers folded side by
+/// side, then for CRC-32C the words each of three CRC instruction streams
+/// reads beside them ("+3xS"), if any. `PICK_*` name the ones selected.
+pub(crate) static KERNELS: [Kernel; 14] = [
+    Kernel::new(
+        "avx512-vpclmulqdq x4 +3x3",
+        has_512,
+        zmm4_crc64,
+        zmm4_fused3,
+    ),
+    Kernel::new(
+        "avx512-vpclmulqdq x4 +3x6",
+        has_512,
+        zmm4_crc64,
+        zmm4_fused6,
+    ),
     Kernel::new("avx512-vpclmulqdq x4", has_512, zmm4_crc64, zmm4_crc32c),
     Kernel::new("avx512-vpclmulqdq x8", has_512, zmm8_crc64, zmm8_crc32c),
     Kernel::new("avx2-vpclmulqdq x4", has_256, ymm4_crc64, ymm4_crc32c),
     Kernel::new("avx2-vpclmulqdq x8", has_256, ymm8_crc64, ymm8_crc32c),
+    Kernel::new("avx2-vpclmulqdq x8 +3x3", has_256, ymm8_crc64, ymm8_fused3),
+    Kernel::new("avx2-vpclmulqdq x4 +3x2", has_256, ymm4_crc64, ymm4_fused2),
+    Kernel::new(
+        "sse-pclmulqdq x8, long +3x3 on x4",
+        has_128,
+        sse8_crc64,
+        sse_crc32c,
+    ),
     Kernel::new("sse-pclmulqdq x8", has_128, sse8_crc64, sse8_crc32c),
     Kernel::new("sse-pclmulqdq x4", has_128, sse4_crc64, sse4_crc32c),
     Kernel::new("sse-pclmulqdq x8 +3x2", has_128, sse8_crc64, sse8_fused2),
     Kernel::new("sse-pclmulqdq x4 +3x3", has_128, sse4_crc64, sse4_fused3),
     Kernel::TABLE,
 ];
+const PICK_512: usize = 0;
+const PICK_256: usize = 4;
+const PICK_128: usize = 8;
 
 /// The index in `KERNELS` of the kernel to use on this processor.
 #[inline]
 pub(crate) fn pick() -> usize {
     if has_512() {
-        0
+        PICK_512
     } else if has_256() {
-        2
+        PICK_256
     } else if has_128() {
-        4
+        PICK_128
     } else {
         KERNELS.len() - 1
     }

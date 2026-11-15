@@ -5,7 +5,7 @@
 
 //! AArch64 kernels: `PMULL`, with `EOR3` where the processor has it.
 
-use crate::fold::{self, Clmul, Lanes};
+use crate::fold::{self, Clmul, Lanes, One};
 use crate::kernels::Kernel;
 use core::arch::aarch64::*;
 use std::arch::is_aarch64_feature_detected;
@@ -81,7 +81,7 @@ macro_rules! kernel {
     ($fused:ident, $lanes:literal, $words:literal, $eor3:literal, $features:literal) => {
         #[target_feature(enable = $features)]
         unsafe fn $fused(state: u32, data: &[u8]) -> u32 {
-            unsafe { fold::crc32c_fused::<Pmull<$eor3>, $lanes, $words>(state, data) }
+            unsafe { fold::crc32c_fused::<One<Pmull<$eor3>>, $lanes, $words>(state, data) }
         }
     };
 }
@@ -89,6 +89,8 @@ kernel!(e12_64, e12_32, e12_fused, 12, true, "neon,aes,crc,sha3");
 kernel!(e8_64, e8_32, e8_fused, 8, true, "neon,aes,crc,sha3");
 kernel!(p12_64, p12_32, p12_fused, 12, false, "neon,aes,crc");
 kernel!(p8_64, p8_32, p8_fused, 8, false, "neon,aes,crc");
+kernel!(e6_64, e6_32, e6_fused, 6, true, "neon,aes,crc,sha3");
+kernel!(e4_64, e4_32, e4_fused, 4, true, "neon,aes,crc,sha3");
 kernel!(e12_fused3, 12, 3, true, "neon,aes,crc,sha3");
 kernel!(e9_fused2, 9, 2, true, "neon,aes,crc,sha3");
 kernel!(p12_fused3, 12, 3, false, "neon,aes,crc");
@@ -103,7 +105,7 @@ fn has_eor3() -> bool {
 /// In order of preference; the table kernel is last. A name gives the
 /// folding lanes, then for CRC-32C the words each of the three CRC
 /// instruction streams reads beside them ("+3xS"), if any.
-pub(crate) static KERNELS: [Kernel; 12] = [
+pub(crate) static KERNELS: [Kernel; 16] = [
     Kernel::new("pmull-eor3 x12 +3x3", has_eor3, e12_64, e12_fused3),
     Kernel::new("pmull x12 +3x3", has_pmull, p12_64, p12_fused3),
     Kernel::new("pmull-eor3 x12 +3x2", has_eor3, e12_64, e12_fused),
@@ -111,10 +113,14 @@ pub(crate) static KERNELS: [Kernel; 12] = [
     Kernel::new("pmull-eor3 x9 +3x2", has_eor3, e12_64, e9_fused2),
     Kernel::new("pmull-eor3 x8 +3x2", has_eor3, e8_64, e8_fused),
     Kernel::new("pmull x8 +3x2", has_pmull, p8_64, p8_fused),
+    Kernel::new("pmull-eor3 x6 +3x2", has_eor3, e6_64, e6_fused),
+    Kernel::new("pmull-eor3 x4 +3x2", has_eor3, e4_64, e4_fused),
     Kernel::new("pmull-eor3 x12", has_eor3, e12_64, e12_32),
     Kernel::new("pmull x12", has_pmull, p12_64, p12_32),
     Kernel::new("pmull-eor3 x8", has_eor3, e8_64, e8_32),
     Kernel::new("pmull x8", has_pmull, p8_64, p8_32),
+    Kernel::new("pmull-eor3 x6", has_eor3, e6_64, e6_32),
+    Kernel::new("pmull-eor3 x4", has_eor3, e4_64, e4_32),
     Kernel::TABLE,
 ];
 

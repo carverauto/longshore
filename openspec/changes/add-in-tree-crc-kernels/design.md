@@ -78,6 +78,6 @@ No interface changes. Rollback is restoring the `crc-fast` call in
 ## Open Questions
 - Lane count per processor family: twelve won on Apple silicon; Cortex-X925,
   Ice Lake and Zen 3 are to be measured
-- The 512-bit kernel has run on no processor yet. Neither requested
-  benchmark machine has AVX-512. Until it passes the tests on one that
-  does, it is not proven
+- The first results (`bench/results/m23-crc-kernels.md`) leave both
+  checksums behind `crc-fast` on some machines at the sizes the gate
+  names. Two changes were made in answer and are not yet measured there
