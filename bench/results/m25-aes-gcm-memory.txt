@@ -1,0 +1,387 @@
+===== AWS m8azn.24xlarge
+model name	: AMD EPYC 9R05
+7.0.0-1014-aws
+96
+mem_gib 370
+L2 cache: 96 MiB (96 instances)
+L3 cache: 512 MiB (16 instances)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [25.600 GiB/s 25.605 GiB/s 25.610 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [24.347 GiB/s 24.354 GiB/s 24.359 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [13.712 GiB/s 13.722 GiB/s 13.731 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [21.199 GiB/s 21.217 GiB/s 21.236 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [25.763 GiB/s 25.768 GiB/s 25.772 GiB/s]
+                        thrpt:  [+0.6360% +0.6662% +0.6918%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [24.303 GiB/s 24.327 GiB/s 24.349 GiB/s]
+                        thrpt:  [−0.3090% −0.2482% −0.1952%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [13.746 GiB/s 13.753 GiB/s 13.759 GiB/s]
+                        thrpt:  [+0.0735% +0.1603% +0.2422%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [21.601 GiB/s 21.619 GiB/s 21.637 GiB/s]
+                        thrpt:  [+1.8241% +2.0316% +2.2168%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [25.697 GiB/s 25.704 GiB/s 25.709 GiB/s]
+                        thrpt:  [−0.2689% −0.2425% −0.2110%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [23.717 GiB/s 23.724 GiB/s 23.730 GiB/s]
+                        thrpt:  [−2.3654% −2.3077% −2.2508%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [13.830 GiB/s 13.837 GiB/s 13.843 GiB/s]
+                        thrpt:  [+0.5010% +0.5796% +0.6646%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [21.452 GiB/s 21.466 GiB/s 21.478 GiB/s]
+                        thrpt:  [−0.9958% −0.8124% −0.6264%]
+### end
+===== AWS m8azn.large
+model name	: AMD EPYC 9R05
+7.0.0-1014-aws
+2
+mem_gib 7
+L2 cache: 2 MiB (2 instances)
+L3 cache: 10 MiB (1 instance)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [25.618 GiB/s 25.622 GiB/s 25.626 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [23.812 GiB/s 23.815 GiB/s 23.819 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [13.585 GiB/s 13.598 GiB/s 13.610 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [20.190 GiB/s 20.203 GiB/s 20.215 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [25.362 GiB/s 25.367 GiB/s 25.373 GiB/s]
+                        thrpt:  [−1.0104% −0.9774% −0.9446%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [23.718 GiB/s 23.723 GiB/s 23.727 GiB/s]
+                        thrpt:  [−0.4247% −0.4071% −0.3901%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [13.603 GiB/s 13.612 GiB/s 13.622 GiB/s]
+                        thrpt:  [−0.0015% +0.1042% +0.2071%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [20.651 GiB/s 20.687 GiB/s 20.726 GiB/s]
+                        thrpt:  [+1.7217% +2.1904% +2.4945%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [25.598 GiB/s 25.603 GiB/s 25.608 GiB/s]
+                        thrpt:  [+0.8835% +0.9197% +0.9577%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [23.884 GiB/s 23.889 GiB/s 23.893 GiB/s]
+                        thrpt:  [+0.6881% +0.7111% +0.7330%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [13.633 GiB/s 13.641 GiB/s 13.650 GiB/s]
+                        thrpt:  [+0.0736% +0.1639% +0.2548%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [20.658 GiB/s 20.674 GiB/s 20.688 GiB/s]
+                        thrpt:  [−0.4134% −0.0904% +0.2936%]
+### end
+===== AWS m8a.large
+model name	: AMD EPYC 9R45
+7.0.0-1014-aws
+2
+mem_gib 7
+L2 cache: 2 MiB (2 instances)
+L3 cache: 8 MiB (1 instance)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [22.867 GiB/s 22.872 GiB/s 22.876 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [21.246 GiB/s 21.249 GiB/s 21.253 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [13.032 GiB/s 13.071 GiB/s 13.104 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [18.875 GiB/s 18.892 GiB/s 18.909 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [22.737 GiB/s 22.753 GiB/s 22.773 GiB/s]
+                        thrpt:  [−0.3103% −0.2262% −0.1439%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [21.111 GiB/s 21.121 GiB/s 21.135 GiB/s]
+                        thrpt:  [−0.2919% −0.1914% −0.0826%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [12.843 GiB/s 12.948 GiB/s 13.025 GiB/s]
+                        thrpt:  [−1.1807% −0.6955% −0.3227%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [19.000 GiB/s 19.114 GiB/s 19.213 GiB/s]
+                        thrpt:  [−0.2346% +0.2499% +0.6590%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [22.638 GiB/s 22.670 GiB/s 22.708 GiB/s]
+                        thrpt:  [−0.4376% −0.3026% −0.1831%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [21.084 GiB/s 21.095 GiB/s 21.109 GiB/s]
+                        thrpt:  [−0.4239% −0.2945% −0.1636%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [12.471 GiB/s 12.497 GiB/s 12.519 GiB/s]
+                        thrpt:  [−4.2458% −3.9084% −3.4756%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [18.330 GiB/s 18.371 GiB/s 18.405 GiB/s]
+                        thrpt:  [−3.0477% −2.5873% −2.1031%]
+### end
+===== AWS c7a.large
+model name	: AMD EPYC 9R14
+7.0.0-1014-aws
+2
+mem_gib 3
+L2 cache: 2 MiB (2 instances)
+L3 cache: 8 MiB (1 instance)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [10.462 GiB/s 10.468 GiB/s 10.473 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [10.288 GiB/s 10.293 GiB/s 10.297 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [8.8827 GiB/s 8.8952 GiB/s 8.9069 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [10.365 GiB/s 10.373 GiB/s 10.380 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [10.431 GiB/s 10.436 GiB/s 10.440 GiB/s]
+                        thrpt:  [−0.5026% −0.4424% −0.3848%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [10.298 GiB/s 10.303 GiB/s 10.308 GiB/s]
+                        thrpt:  [−0.0429% +0.0200% +0.0770%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [8.7973 GiB/s 8.8126 GiB/s 8.8270 GiB/s]
+                        thrpt:  [−1.0208% −0.7220% −0.4286%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [10.354 GiB/s 10.361 GiB/s 10.368 GiB/s]
+                        thrpt:  [−0.4300% −0.3001% −0.1884%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [10.451 GiB/s 10.454 GiB/s 10.458 GiB/s]
+                        thrpt:  [+0.2097% +0.2632% +0.3213%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [10.302 GiB/s 10.306 GiB/s 10.310 GiB/s]
+                        thrpt:  [−0.0419% +0.0190% +0.0855%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [8.7129 GiB/s 8.7238 GiB/s 8.7351 GiB/s]
+                        thrpt:  [−1.2723% −0.9913% −0.7006%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [10.379 GiB/s 10.385 GiB/s 10.390 GiB/s]
+                        thrpt:  [+0.2617% +0.3745% +0.4957%]
+### end
+===== AWS c8i.large
+model name	: Intel(R) Xeon(R) 6975P-C
+7.0.0-1014-aws
+2
+mem_gib 3
+L2 cache: 2 MiB (1 instance)
+L3 cache: 480 MiB (1 instance)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [16.252 GiB/s 16.264 GiB/s 16.274 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [13.092 GiB/s 13.094 GiB/s 13.097 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [6.9426 GiB/s 6.9608 GiB/s 6.9776 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [8.3543 GiB/s 8.3791 GiB/s 8.4017 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [16.177 GiB/s 16.180 GiB/s 16.184 GiB/s]
+                        thrpt:  [−0.5848% −0.5128% −0.4342%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [13.053 GiB/s 13.056 GiB/s 13.059 GiB/s]
+                        thrpt:  [−0.3022% −0.2621% −0.2185%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [7.1160 GiB/s 7.1406 GiB/s 7.1638 GiB/s]
+                        thrpt:  [+2.6742% +3.1910% +3.7685%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [8.8979 GiB/s 8.9201 GiB/s 8.9418 GiB/s]
+                        thrpt:  [+5.9140% +6.3297% +6.7318%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [16.107 GiB/s 16.111 GiB/s 16.115 GiB/s]
+                        thrpt:  [−0.5091% −0.4382% −0.3841%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [13.105 GiB/s 13.110 GiB/s 13.113 GiB/s]
+                        thrpt:  [+0.3255% +0.3706% +0.4127%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [7.1267 GiB/s 7.1438 GiB/s 7.1595 GiB/s]
+                        thrpt:  [−0.6538% −0.0965% +0.4810%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [8.9142 GiB/s 8.9331 GiB/s 8.9520 GiB/s]
+                        thrpt:  [−0.6971% −0.2059% +0.3828%]
+### end
+===== AWS c7i.large
+model name	: Intel(R) Xeon(R) Platinum 8488C
+7.0.0-1014-aws
+2
+mem_gib 3
+L2 cache: 2 MiB (1 instance)
+L3 cache: 105 MiB (1 instance)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [12.729 GiB/s 12.753 GiB/s 12.777 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [10.756 GiB/s 10.772 GiB/s 10.789 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [4.9411 GiB/s 4.9476 GiB/s 4.9541 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [7.0960 GiB/s 7.1239 GiB/s 7.1491 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [12.778 GiB/s 12.798 GiB/s 12.817 GiB/s]
+                        thrpt:  [+0.0722% +0.3734% +0.6751%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [10.575 GiB/s 10.589 GiB/s 10.605 GiB/s]
+                        thrpt:  [−1.6302% −1.4458% −1.2421%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [4.9555 GiB/s 4.9628 GiB/s 4.9703 GiB/s]
+                        thrpt:  [+0.1091% +0.3062% +0.5159%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [7.0975 GiB/s 7.1246 GiB/s 7.1510 GiB/s]
+                        thrpt:  [−0.6227% −0.1239% +0.3657%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [12.676 GiB/s 12.697 GiB/s 12.718 GiB/s]
+                        thrpt:  [−0.8433% −0.5401% −0.2619%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [10.825 GiB/s 10.945 GiB/s 11.064 GiB/s]
+                        thrpt:  [+1.9119% +2.6050% +3.3926%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [4.9561 GiB/s 4.9678 GiB/s 4.9794 GiB/s]
+                        thrpt:  [−0.1922% +0.1005% +0.3922%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [7.0440 GiB/s 7.0734 GiB/s 7.1011 GiB/s]
+                        thrpt:  [−1.1425% −0.6539% −0.1801%]
+### end
+===== AWS c8gn.24xlarge
+Model name:                              Neoverse-V2
+7.0.0-1014-aws
+96
+mem_gib 185
+L2 cache: 192 MiB (96 instances)
+L3 cache: 36 MiB (1 instance)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [6.7427 GiB/s 6.7444 GiB/s 6.7459 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [6.7033 GiB/s 6.7045 GiB/s 6.7058 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [6.3721 GiB/s 6.3801 GiB/s 6.3889 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [6.4424 GiB/s 6.4454 GiB/s 6.4486 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [6.7404 GiB/s 6.7415 GiB/s 6.7428 GiB/s]
+                        thrpt:  [−0.0525% −0.0261% +0.0018%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [6.6998 GiB/s 6.7019 GiB/s 6.7037 GiB/s]
+                        thrpt:  [−0.0904% −0.0527% −0.0217%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [6.4530 GiB/s 6.4631 GiB/s 6.4739 GiB/s]
+                        thrpt:  [+1.0956% +1.3005% +1.5215%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [6.4657 GiB/s 6.4746 GiB/s 6.4839 GiB/s]
+                        thrpt:  [+0.0517% +0.2481% +0.4317%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [6.7421 GiB/s 6.7447 GiB/s 6.7469 GiB/s]
+                        thrpt:  [+0.0048% +0.0353% +0.0655%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [6.7006 GiB/s 6.7021 GiB/s 6.7038 GiB/s]
+                        thrpt:  [−0.0201% +0.0114% +0.0465%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [6.4410 GiB/s 6.4489 GiB/s 6.4574 GiB/s]
+                        thrpt:  [−0.4250% −0.2196% −0.0137%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [6.4778 GiB/s 6.4829 GiB/s 6.4879 GiB/s]
+                        thrpt:  [−0.0300% +0.1280% +0.2888%]
+### end
+===== AWS c8g.large
+Model name:                              Neoverse-V2
+7.0.0-1014-aws
+2
+mem_gib 3
+L2 cache: 4 MiB (2 instances)
+L3 cache: 36 MiB (1 instance)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [6.1597 GiB/s 6.1627 GiB/s 6.1651 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [6.0063 GiB/s 6.0122 GiB/s 6.0175 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [5.8254 GiB/s 5.8352 GiB/s 5.8451 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [5.8898 GiB/s 5.8952 GiB/s 5.9005 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [6.1598 GiB/s 6.1620 GiB/s 6.1640 GiB/s]
+                        thrpt:  [−0.0623% −0.0113% +0.0499%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [6.0112 GiB/s 6.0153 GiB/s 6.0194 GiB/s]
+                        thrpt:  [−0.0567% +0.0516% +0.1724%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [5.8853 GiB/s 5.8976 GiB/s 5.9093 GiB/s]
+                        thrpt:  [+0.7813% +1.0701% +1.3269%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [5.9034 GiB/s 5.9065 GiB/s 5.9098 GiB/s]
+                        thrpt:  [+0.0877% +0.1927% +0.3003%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [6.1193 GiB/s 6.1266 GiB/s 6.1341 GiB/s]
+                        thrpt:  [−0.6942% −0.5733% −0.4489%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [5.9905 GiB/s 5.9953 GiB/s 6.0001 GiB/s]
+                        thrpt:  [−0.4419% −0.3324% −0.2286%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [5.8631 GiB/s 5.8720 GiB/s 5.8807 GiB/s]
+                        thrpt:  [−0.6817% −0.4342% −0.1704%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [5.9071 GiB/s 5.9100 GiB/s 5.9131 GiB/s]
+                        thrpt:  [−0.0177% +0.0596% +0.1343%]
+### end
+===== local Cortex-X925
+Model name:                              Cortex-X925
+6.14.0-1015-nvidia
+20
+mem_gib 119
+L2 cache: 25 MiB (20 instances)
+L3 cache: 24 MiB (2 instances)
+### run 1
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [7.7373 GiB/s 7.7471 GiB/s 7.7566 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [7.6216 GiB/s 7.6321 GiB/s 7.6418 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [7.3618 GiB/s 7.3701 GiB/s 7.3782 GiB/s]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [7.3899 GiB/s 7.3997 GiB/s 7.4090 GiB/s]
+### run 2
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [7.7486 GiB/s 7.7592 GiB/s 7.7696 GiB/s]
+                        thrpt:  [−0.0707% +0.1008% +0.2705%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [7.6133 GiB/s 7.6215 GiB/s 7.6292 GiB/s]
+                        thrpt:  [−0.2540% −0.1053% +0.0502%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [7.3516 GiB/s 7.3606 GiB/s 7.3693 GiB/s]
+                        thrpt:  [−0.1844% −0.0091% +0.1703%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [7.3765 GiB/s 7.3855 GiB/s 7.3940 GiB/s]
+                        thrpt:  [−0.3285% −0.1364% +0.0563%]
+### run 3
+aes128gcm_tls13_record_seal_memory/8MiB/hot: 16 KiB destination reused
+                        thrpt:  [7.7361 GiB/s 7.7461 GiB/s 7.7560 GiB/s]
+                        thrpt:  [−0.2978% −0.1311% +0.0434%]
+aes128gcm_tls13_record_seal_memory/8MiB/batch: 8 MiB destination reused
+                        thrpt:  [7.6111 GiB/s 7.6200 GiB/s 7.6287 GiB/s]
+                        thrpt:  [+0.0044% +0.1716% +0.3346%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold: 32 sources, 32 destinations
+                        thrpt:  [7.3120 GiB/s 7.3214 GiB/s 7.3311 GiB/s]
+                        thrpt:  [−0.5475% −0.3901% −0.2253%]
+aes128gcm_tls13_record_seal_memory/8MiB/cold, in place: 32 bodies
+                        thrpt:  [7.3548 GiB/s 7.3657 GiB/s 7.3758 GiB/s]
+                        thrpt:  [−0.5282% −0.3592% −0.1824%]
+### end
