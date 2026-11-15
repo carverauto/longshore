@@ -246,8 +246,8 @@ thread has failed every call still returns. It also builds and drops 2,000
 clients with work in flight. After both, the I/O threads and their
 descriptors are gone. The hand-offs between callers and I/O threads are
 model checked. Those failures are ones a test causes. A ring failing by
-itself has not been seen. The client's longest run against a store is 30
-minutes (`m22-client-and-soak.md`).
+itself has not been seen. The client's longest run against a store is
+eight hours (`m23-client-eight-hours.md`).
 
 ## Running in containers
 
@@ -374,7 +374,12 @@ directly and is up to 7% above it. One I/O thread with checksums off stores
 In a 30 minute HTTPS upload on four I/O threads, with every connection to S3
 closed every 40 seconds and all traffic to it dropped for 5 seconds after
 every fourth of those, the client stored 3.4 million objects and returned no
-error to its callers.
+error to its callers. In an eight hour run of HTTPS fetches and stores
+with the same failures injected, it fetched 20.4 million objects, every one
+with the bytes it was stored with, stored 2.9 million, and returned no
+error. Its memory was the same at the end as at the start
+(`m23-client-eight-hours.md`). Multipart uploads through the client were
+checked against S3 in the same milestone.
 
 Object size matters below about 4 MiB. On 128 connections one thread
 stores 2.9 GB/s of 1 MiB objects and 13.9 GB/s of 64 MiB objects. The time
@@ -495,10 +500,10 @@ the client is mostly idle.
   core. With several clients the network card becomes the limit: eight
   Graviton4 HTTPS PUT clients, four AMD HTTPS PUT clients and eight AMD GET
   clients.
-- The shareable client was run against S3 for 30 minutes with connections
+- The shareable client was run against S3 for eight hours with connections
   being broken, not for days. The failure of an I/O thread itself is made
   to happen by a test, in the simulator and on Linux 6.8 and 6.14. It has
-  not been seen to happen by itself, and was not part of that 30 minute run.
+  not been seen to happen by itself, and was not part of that run.
 - The model checker runs the client's hand-offs with at most two forced
   thread switches, and one in the tests of four threads. An order that
   needs more is not reached.
