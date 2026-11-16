@@ -3,7 +3,6 @@ name = "longshore"
 description = "Object storage client for Linux io_uring: one thread, memory allocated at start-up, object bodies sent without copying"
 edition.workspace = true
 version.workspace = true
-publish.workspace = true
 license.workspace = true
 repository = "https://github.com/carverauto/longshore"
 readme = "../../README.md"

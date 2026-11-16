@@ -3,9 +3,9 @@ name = "longshore_crc"
 description = "CRC-64/NVME and CRC-32C for object storage checksums"
 edition.workspace = true
 version.workspace = true
-publish.workspace = true
 license.workspace = true
 repository = "https://github.com/carverauto/longshore"
+readme = "README.md"
 autotests = false
 
 [dev-dependencies]
