@@ -19,8 +19,10 @@ storage.
 - Goals: every way a disk fails that a log or block store must survive;
   the same seed gives the same disk; files and sockets under one clock;
   nothing a real device or Linux could not do; no allocation after setup
-- Non-Goals: one machine losing power while its peers in the same
-  simulator keep running; a file system's journal or a device's wear;
+- Non-Goals: simulating several machines, with one losing power while its
+  peers run or with messages dropped, duplicated and reordered between
+  them, which is UltraGraphDB's own simulation and stays there; a file
+  system's journal or a device's wear;
   performance; faults on the portable backend's real files
 
 ## Decisions
@@ -104,6 +106,26 @@ storage.
 - A counter per fault kind tells a test how often each was injected.
 
 ### From UltraGraphDB
+- The source is the crate `ultragraphdb_transactions_log`, in
+  UltraGraphDB's `ultragraphdb_transactions/` directory. Paths below are
+  inside that crate.
+
+  | File | Lines | Holds | Here |
+  |---|---|---|---|
+  | `src/types/sim_storage/sim_state.rs` | 378 | The model: two views per file and directory, sync, power loss, fault injection | Rules carried over, code written anew |
+  | `src/types/sim_storage/mod.rs` | 133 | The calls a test makes: power loss, a fault at an operation, random faults, corruption, a refused preallocation | Written anew as setup calls on the simulator |
+  | `src/types/sim_storage/sim_inode.rs` | 47 | A file that outlives its name | Rule carried over |
+  | `src/types/sim_storage/sim_tear.rs` | 12 | Where a torn write is cut | Carried over |
+  | `src/types/fault_mode.rs` | 25 | The fault modes | Mapped onto the faults of this design |
+  | `src/types/storage_operation.rs` | 35 | The kinds of operation a fault is placed on | Replaced by `Io`'s operations |
+  | `tests/types/sim_storage/sim_storage_tests.rs` | 672 | About thirty tests of the model | Written again against `Io` |
+
+- Not taken: the glue to UltraGraphDB's storage traits
+  (`sim_storage_durable_storage.rs`, `src/types/sim_file/`), its aligned
+  buffer, the traits themselves, and its tests of the log. Those stay in
+  UltraGraphDB, which later puts an implementation over `Io` in their
+  place. The crate `ultragraphdb_store_sim` simulates the key-value store
+  above the disk and is not part of this.
 - What carries over is the rules: two states, a sync that joins them,
   names durable only through a directory sync, a file outliving its name,
   and the tear arithmetic. The code is written anew.

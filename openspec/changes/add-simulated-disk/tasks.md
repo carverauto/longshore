@@ -20,8 +20,8 @@
 - [ ] 3.8 Each fault's comment names the real failure it stands for
 
 ## 4. From UltraGraphDB
-- [ ] 4.1 The rules of `SimStorage` carried over, with the table of differences from the design in the module's comments
-- [ ] 4.2 Its tests written again against `Io`; those with no counterpart listed in the pull request
+- [ ] 4.1 The rules of `SimStorage` carried over from the files the design lists, with the table of differences from the design in the module's comments
+- [ ] 4.2 The tests of `tests/types/sim_storage/sim_storage_tests.rs` written again against `Io`; those with no counterpart listed in the pull request
 - [ ] 4.3 A write-ahead log test in this repository: append, sync, power loss, recover, under every fault, across a range of seeds
 - [ ] 4.4 This project's header on the new files; the origin recorded in their comments and in `NOTICE`
 
