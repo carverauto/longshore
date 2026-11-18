@@ -68,10 +68,19 @@ seed, and on a developer's Mac.
   by slot. In the ring they are registered files, so the process holds no
   descriptor for them.
 
-The contract (#41): every accepted operation gets exactly one final
-completion; a cancel names the operation in flight under its token at the
-moment the cancel is submitted; an operation that stays armed (#44) marks
-each completion but its last as "more will follow".
+The contract (#41):
+
+- Every accepted operation gets exactly one final completion.
+- A cancel names the operation in flight under its token at the moment the
+  cancel is submitted.
+- A close gives every other operation in flight on its socket its final
+  completion, without waiting for the peer.
+- An operation that stays armed (#44) marks each completion but its last
+  as "more will follow". It can end at any time, and its last completion
+  may still carry a result, so a caller handles the result and then arms
+  again.
+
+One set of tests of this contract runs against every backend.
 
 ## The turn
 
@@ -112,8 +121,9 @@ because the published figures would stop applying unnoticed.
 
 **The engine and its worlds** (#41). The simulator is split in two. The
 engine holds what the contract describes: pending operations, cancellation,
-timers, back pressure, completion order. A world attempts one operation and
-waits for something to become ready.
+timers, back pressure, completion order. A world attempts one operation,
+holds whatever is drawn from the seed, tells the time, and waits for
+something to become ready.
 
 - The *virtual world* is the simulator: sockets, files, faults and time
   that exist only in memory, all decided by one seed.
@@ -135,29 +145,39 @@ it.
   for receives.
 - Pools are registered with the kernel as a few large ranges (#42), so the
   kernel pins them once and no operation pays for it again.
-- Registered memory is locked memory. The size is known when the `Io` is
-  built, so building checks it against the locked-memory limit and fails
-  with both numbers if the limit is too low (#42).
+- Registered memory is locked memory, charged to a limit that every ring
+  of one user shares. The kernel is the judge of it. When it refuses,
+  building the `Io` fails and reports the pool's size and the limit (#42).
 - A body is not copied. It goes from the caller's registered buffer to the
   socket or the disk, and from them into a registered buffer (*today* for
   sockets, #42 for files).
-- An idle connection holds no buffer. A receive that stays armed takes one
-  from the buffer ring only when bytes arrive (#44).
+- An idle plain connection holds no buffer. A receive that stays armed
+  takes one from the buffer ring only when bytes arrive (#44). A TLS
+  stream keeps two record buffers for as long as it lives.
 
 ## Files
 
 (#42.)
 
 - A file is opened into a slot and read and written at an offset, between
-  the file and a registered buffer.
-- Operations submitted as a chain run in order, and the rest are cancelled
-  when one fails. A log's write and its sync are one chain in the same
-  submission as the turn's socket sends.
+  the file and a registered buffer. The backend tracks which slots are in
+  use, because the kernel would replace a file in an occupied slot without
+  a word.
+- File operations submitted as a chain run in order. The chain ends at the
+  first member that fails or moves fewer bytes than asked, and the rest
+  are cancelled. A log's write and its sync are one chain in the same
+  submission as the turn's socket sends; after a short write the log
+  finishes the write and submits the sync again.
 - A file opened for direct I/O takes only aligned buffers, offsets and
-  lengths. The engine refuses anything else before it reaches a world or
-  the ring, so a mistake is caught in the simulator on any host.
+  lengths. One check, which the ring backend and the engine both call,
+  refuses anything else before the kernel or a world sees it, so a mistake
+  is caught in the simulator on any host.
 - Space is reserved when a file is made and given back by punching holes.
-  There is no truncate.
+  A file can be emptied when it is opened. There is no truncate and no
+  directory listing; a caller names the files it opens.
+- On Linux 6.1 the kernel runs sync, reserve, punch, rename, unlink and an
+  open that creates on its own worker threads. Their results still arrive
+  through the one queue, but their latency is the workers'.
 
 ## Networking
 
@@ -182,6 +202,9 @@ slots. A core that needs something from another sends it a message.
   taken in the receiver's next turn, without a timer.
 - A send to a full mailbox is refused. The sender decides what to do,
   which is the same back pressure `submit` gives.
+- A mailbox ends in one of two ways. A sender asks the receiver to stop,
+  and what was queued before is still handled. Or the receiver closes, and
+  every message is either taken or refused to its sender.
 - A caller outside the core threads may wait for an answer, by blocking or
   by a future. That is how the S3 client is called from other threads
   *today*, and the mailbox is that mechanism made general.
@@ -200,11 +223,15 @@ independent clients side by side carried 34.5 GB/s of HTTPS upload against
 - A run is identified by a hash of every completion it delivered. The same
   seed gives the same hash.
 - The disk keeps what was written apart from what is durable. Power can be
-  lost, leaving each unsynced write whole, absent or torn. Writes can be
-  lost or land in the wrong place, reads can fail, syncs can fail (#43).
-  This model is donated from UltraGraphDB's `SimStorage` and extended here.
-- Files, sockets, mailboxes and time share the one seed and the one clock,
-  so a whole turn of a core, and several cores together, replay exactly.
+  lost, for the whole simulated machine, leaving each unsynced write whole,
+  absent or torn. Writes can be lost or land in the wrong place, reads can
+  fail, syncs can fail (#43). The model's rules are donated from
+  UltraGraphDB's `SimStorage` and extended here.
+- Within a simulated backend, files, sockets and time share one seed and
+  one clock, so a whole turn of a core replays exactly.
+- Several cores are several simulated backends on one thread, joined by
+  mailboxes. Each has its own seed and clock. A run replays from those
+  seeds and the order in which the test ticks them (#45).
 - Hand-offs between real threads cannot be replayed. They are checked with
   loom, which explores their interleavings.
 - The tests run under an allocator that aborts when anything allocates
@@ -219,6 +246,8 @@ independent clients side by side carried 34.5 GB/s of HTTPS upload against
 | A ring shared by threads | It brings locks and shared state, and the simulator could no longer replay a run. |
 | Integration with another runtime's reactor | It ties the layer to that runtime and puts its scheduler on the data path. |
 | Truncate | On the ring only from Linux 6.9. The alternatives were a higher kernel floor or a blocking call on the I/O thread. |
+| Directory listing | No kernel has it on the ring. A caller names its files, by probing fixed names or keeping a list of its own. |
+| A bound that refuses a waiting caller | The client's calls could not report it without a change to its API. The waiter queue is preallocated and grows beyond that. |
 | A silent fallback from the ring | The published figures would stop applying without anyone noticing. |
 | HTTP/2 | Object stores gain nothing from it over pooled HTTP/1.1. |
 
@@ -233,6 +262,8 @@ What a service built on this layer does, with UltraGraphDB as the example.
 - A partition's turn takes its requests from sockets, writes its log and
   syncs it as one chain, reads its blocks with direct I/O, fetches from the
   object store through the same `Io`, and answers, all on its thread.
+- It names its own files. Its log finds its segments by probing their
+  fixed names, where it listed a directory before.
 - Partitions speak to each other through mailboxes.
 - Its tests run the same code in the virtual world, with network and disk
   faults from one seed.
