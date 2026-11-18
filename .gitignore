@@ -1,6 +1,8 @@
 /target
 *.webm
 
+ctx/
+
 # Local tooling, not part of the project
 /CLAUDE.md
 /AGENTS.md
