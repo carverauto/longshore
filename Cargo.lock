@@ -634,6 +634,7 @@ dependencies = [
  "longshore_crc",
  "longshore_dns",
  "longshore_http_client",
+ "longshore_mailbox",
  "longshore_s3",
  "longshore_stream",
  "longshore_tls",
@@ -694,6 +695,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "longshore_mailbox"
+version = "0.1.1"
+dependencies = [
+ "longshore_common",
+ "loom",
+]
+
+[[package]]
 name = "longshore_s3"
 version = "0.1.1"
 dependencies = [
@@ -702,6 +711,7 @@ dependencies = [
  "longshore_crc",
  "longshore_dns",
  "longshore_http_client",
+ "longshore_mailbox",
  "longshore_stream",
  "longshore_tls",
  "loom",

@@ -15,5 +15,9 @@ set -eu
 cd "$(dirname "$0")/.."
 
 RUSTFLAGS="${RUSTFLAGS:-} --cfg longshore_model" \
+    cargo test -p longshore_mailbox --release --target-dir target/model \
+    --test mailbox_model -- --nocapture
+
+RUSTFLAGS="${RUSTFLAGS:-} --cfg longshore_model" \
     cargo test -p longshore_s3 --release --target-dir target/model \
     --test client_model -- --nocapture

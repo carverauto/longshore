@@ -53,7 +53,7 @@ mod exact;
 mod lane;
 mod multipart;
 mod pending;
-mod sync;
+use longshore_mailbox::sync;
 mod threads;
 mod worker;
 

@@ -28,6 +28,7 @@ longshore_common.workspace = true
 longshore_crc.workspace = true
 longshore_dns.workspace = true
 longshore_http_client.workspace = true
+longshore_mailbox.workspace = true
 longshore_s3.workspace = true
 longshore_stream.workspace = true
 longshore_tls = { workspace = true, optional = true }

@@ -246,6 +246,8 @@
 //! - [`io`], from `longshore_common`: the [`io::Io`] trait every layer is
 //!   written against, the `io_uring` backend, and the portable POSIX
 //!   (`kqueue`/`epoll`) backend.
+//! - [`mailbox`], from `longshore_mailbox`: bounded lock-free mailboxes
+//!   between I/O cores and caller waiter slots.
 //! - [`dns`], [`stream`], [`http`]: the protocols, from `longshore_dns`,
 //!   `longshore_stream` and `longshore_http_client`.
 //! - `tls` (feature `tls`), from `longshore_tls`: TLS 1.3 handshake and
@@ -265,6 +267,7 @@ pub use longshore_common::sim;
 pub use longshore_crc as checksum;
 pub use longshore_dns as dns;
 pub use longshore_http_client as http;
+pub use longshore_mailbox as mailbox;
 pub use longshore_s3 as store;
 pub use longshore_s3::{client, crypto};
 pub use longshore_stream as stream;
