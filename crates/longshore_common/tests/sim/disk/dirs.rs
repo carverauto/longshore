@@ -16,6 +16,8 @@ use longshore_common::sim::{DiskFaults, SimIo};
 
 #[path = "dirs_overflow.rs"]
 mod overflow;
+#[path = "dirs_reclaim.rs"]
+mod reclaim;
 #[path = "dirs_sync_fail.rs"]
 mod sync_fail;
 

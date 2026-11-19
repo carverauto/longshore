@@ -8,6 +8,19 @@
 use super::dirs::DirChangeKind;
 use super::{SimDisk, SimName};
 
+#[derive(Clone, Copy)]
+pub(super) struct ApplyReclaim {
+    pub(super) overwritten: Option<usize>,
+    pub(super) scan_all: bool,
+}
+
+impl ApplyReclaim {
+    const NONE: Self = Self {
+        overwritten: None,
+        scan_all: false,
+    };
+}
+
 fn durable_slice<'a>(
     names: &[SimName],
     name_bytes: &'a [u8],
@@ -70,11 +83,26 @@ impl SimDisk {
         })
     }
 
-    pub(super) fn apply_dir_change_to_durable(&mut self, idx: usize) {
+    pub(super) fn reclaim_dir_inodes(&mut self, cands: [Option<usize>; 2], reclaim: ApplyReclaim) {
+        if reclaim.scan_all {
+            for ii in 0..self.inodes.len() {
+                self.free_inode_if_dead(ii);
+            }
+            return;
+        }
+        for c in cands.into_iter().flatten() {
+            self.free_inode_if_dead(c);
+        }
+        if let Some(ii) = reclaim.overwritten {
+            self.free_inode_if_dead(ii);
+        }
+    }
+
+    pub(super) fn apply_dir_change_to_durable(&mut self, idx: usize) -> ApplyReclaim {
         let e = self.dir_log[idx];
         let base_off = e.arena_slot as usize * 2 * self.max_name_len;
         match e.kind {
-            DirChangeKind::Empty => {}
+            DirChangeKind::Empty => ApplyReclaim::NONE,
             DirChangeKind::Create {
                 parent,
                 child,
@@ -94,16 +122,29 @@ impl SimDisk {
                     base,
                     &mut self.durable_scratch_a,
                 ) else {
-                    return;
+                    return ApplyReclaim::NONE;
                 };
-                if self
-                    .find_durable_name(&self.durable_scratch_a[..full_len])
-                    .is_some()
-                {
-                    return;
+                if let Some(old_ni) = self.find_durable_name(&self.durable_scratch_a[..full_len]) {
+                    let old_ii = self.durable_names[old_ni].inode as usize;
+                    if old_ii == child as usize {
+                        return ApplyReclaim::NONE;
+                    }
+                    let scan_all = if self.inodes[old_ii].is_dir {
+                        self.clear_durable_descendants_a(old_ni, full_len)
+                    } else {
+                        false
+                    };
+                    self.inodes[old_ii].durable_links =
+                        self.inodes[old_ii].durable_links.saturating_sub(1);
+                    self.durable_names[old_ni].inode = child;
+                    self.inodes[child as usize].durable_links += 1;
+                    return ApplyReclaim {
+                        overwritten: Some(old_ii),
+                        scan_all,
+                    };
                 }
                 let Some(ni) = self.durable_names.iter().position(|n| !n.used) else {
-                    return;
+                    return ApplyReclaim::NONE;
                 };
                 let dst = ni * self.max_name_len;
                 self.durable_name_bytes[dst..dst + full_len]
@@ -114,6 +155,7 @@ impl SimDisk {
                     inode: child,
                 };
                 self.inodes[child as usize].durable_links += 1;
+                ApplyReclaim::NONE
             }
             DirChangeKind::Unlink {
                 parent,
@@ -129,16 +171,17 @@ impl SimDisk {
                     base,
                     &mut self.durable_scratch_a,
                 ) else {
-                    return;
+                    return ApplyReclaim::NONE;
                 };
                 let Some(ni) = self.find_durable_name(&self.durable_scratch_a[..full_len]) else {
-                    return;
+                    return ApplyReclaim::NONE;
                 };
                 if self.durable_names[ni].inode == child {
                     self.durable_names[ni].used = false;
                     self.inodes[child as usize].durable_links =
                         self.inodes[child as usize].durable_links.saturating_sub(1);
                 }
+                ApplyReclaim::NONE
             }
             DirChangeKind::Rename {
                 old_parent,
@@ -159,7 +202,7 @@ impl SimDisk {
                     old_base,
                     &mut self.durable_scratch_a,
                 ) else {
-                    return;
+                    return ApplyReclaim::NONE;
                 };
                 let Some(new_full_len) = build_durable_path(
                     &self.durable_names,
@@ -169,24 +212,29 @@ impl SimDisk {
                     new_base,
                     &mut self.durable_scratch_b,
                 ) else {
-                    return;
+                    return ApplyReclaim::NONE;
                 };
-                self.apply_durable_rename(moved, old_full_len, new_full_len);
+                self.apply_durable_rename(moved, old_full_len, new_full_len)
             }
         }
     }
 
-    fn apply_durable_rename(&mut self, moved: u32, old_full_len: usize, new_full_len: usize) {
+    fn apply_durable_rename(
+        &mut self,
+        moved: u32,
+        old_full_len: usize,
+        new_full_len: usize,
+    ) -> ApplyReclaim {
         let old_full = &self.durable_scratch_a[..old_full_len];
         let new_full = &self.durable_scratch_b[..new_full_len];
         if old_full == new_full {
-            return;
+            return ApplyReclaim::NONE;
         }
         let Some(old_ni) = self.find_durable_name(old_full) else {
-            return;
+            return ApplyReclaim::NONE;
         };
         if self.durable_names[old_ni].inode != moved {
-            return;
+            return ApplyReclaim::NONE;
         }
         let moved_is_dir = self.inodes[moved as usize].is_dir;
         if moved_is_dir
@@ -194,26 +242,27 @@ impl SimDisk {
             && &new_full[..old_full_len] == old_full
             && new_full[old_full_len] == b'/'
         {
-            return;
-        }
-        let dst = self.find_durable_name(new_full);
-        if let Some(dst_ni) = dst {
-            let dst_ii = self.durable_names[dst_ni].inode as usize;
-            let dst_is_dir = self.inodes[dst_ii].is_dir;
-            if moved_is_dir != dst_is_dir {
-                return;
-            }
-            if dst_is_dir && self.durable_dir_has_child(new_full) {
-                return;
-            }
+            return ApplyReclaim::NONE;
         }
         if moved_is_dir && self.durable_children_exceed_len(old_full_len, new_full_len) {
-            return;
+            return ApplyReclaim::NONE;
         }
+        let dst = self.find_durable_name(new_full);
+        let mut reclaim = ApplyReclaim::NONE;
         if let Some(dst_ni) = dst {
             let dst_ii = self.durable_names[dst_ni].inode as usize;
             self.durable_names[dst_ni].used = false;
             self.inodes[dst_ii].durable_links = self.inodes[dst_ii].durable_links.saturating_sub(1);
+            reclaim.overwritten = Some(dst_ii);
+            if self.inodes[dst_ii].is_dir {
+                reclaim.scan_all = self.clear_durable_descendants_b(
+                    dst_ni,
+                    old_ni,
+                    old_full_len,
+                    new_full_len,
+                    moved_is_dir,
+                );
+            }
         }
         if moved_is_dir {
             self.rewrite_durable_children(old_ni, old_full_len, new_full_len);
@@ -222,23 +271,67 @@ impl SimDisk {
         self.durable_name_bytes[d_off..d_off + new_full_len]
             .copy_from_slice(&self.durable_scratch_b[..new_full_len]);
         self.durable_names[old_ni].len = new_full_len as u16;
+        reclaim
     }
 
-    fn durable_dir_has_child(&self, dir_path: &[u8]) -> bool {
-        (0..self.durable_names.len()).any(|k| {
-            if !self.durable_names[k].used {
-                return false;
+    fn clear_durable_descendants_a(&mut self, dir_ni: usize, dir_len: usize) -> bool {
+        let mut cleared = false;
+        for k in 0..self.durable_names.len() {
+            if !self.durable_names[k].used || k == dir_ni {
+                continue;
             }
-            let s = durable_slice(
-                &self.durable_names,
-                &self.durable_name_bytes,
-                self.max_name_len,
-                k,
-            );
-            s.len() > dir_path.len()
-                && &s[..dir_path.len()] == dir_path
-                && s[dir_path.len()] == b'/'
-        })
+            let s_len = self.durable_names[k].len as usize;
+            let base = k * self.max_name_len;
+            let is_child = s_len > dir_len
+                && self.durable_name_bytes[base..base + dir_len]
+                    == self.durable_scratch_a[..dir_len]
+                && self.durable_name_bytes[base + dir_len] == b'/';
+            if is_child {
+                let ii = self.durable_names[k].inode as usize;
+                self.durable_names[k].used = false;
+                self.inodes[ii].durable_links = self.inodes[ii].durable_links.saturating_sub(1);
+                cleared = true;
+            }
+        }
+        cleared
+    }
+
+    fn clear_durable_descendants_b(
+        &mut self,
+        dst_ni: usize,
+        old_ni: usize,
+        old_len: usize,
+        new_len: usize,
+        moved_is_dir: bool,
+    ) -> bool {
+        let mut cleared = false;
+        for k in 0..self.durable_names.len() {
+            if !self.durable_names[k].used || k == dst_ni || k == old_ni {
+                continue;
+            }
+            let s_len = self.durable_names[k].len as usize;
+            let base = k * self.max_name_len;
+            let in_dst = s_len > new_len
+                && self.durable_name_bytes[base..base + new_len]
+                    == self.durable_scratch_b[..new_len]
+                && self.durable_name_bytes[base + new_len] == b'/';
+            if !in_dst {
+                continue;
+            }
+            let in_old = moved_is_dir
+                && s_len > old_len
+                && self.durable_name_bytes[base..base + old_len]
+                    == self.durable_scratch_a[..old_len]
+                && self.durable_name_bytes[base + old_len] == b'/';
+            if in_old {
+                continue;
+            }
+            let ii = self.durable_names[k].inode as usize;
+            self.durable_names[k].used = false;
+            self.inodes[ii].durable_links = self.inodes[ii].durable_links.saturating_sub(1);
+            cleared = true;
+        }
+        cleared
     }
 
     fn durable_children_exceed_len(&self, old_len: usize, new_len: usize) -> bool {

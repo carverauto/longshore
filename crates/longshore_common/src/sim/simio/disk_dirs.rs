@@ -170,11 +170,9 @@ impl SimDisk {
                 && self.dir_parents_durable(self.dir_log[i].kind)
         }) {
             let cands = self.dir_log[idx].kind.unlinked_candidates();
-            self.apply_dir_change_to_durable(idx);
+            let reclaim = self.apply_dir_change_to_durable(idx);
             self.remove_dir_entry(idx);
-            for c in cands.into_iter().flatten() {
-                self.free_inode_if_dead(c);
-            }
+            self.reclaim_dir_inodes(cands, reclaim);
         } else if self.dir_log_len > 0 {
             let cands = self.dir_log[0].kind.unlinked_candidates();
             self.remove_dir_entry(0);
@@ -325,11 +323,9 @@ impl SimDisk {
                 && self.dir_parents_durable(e.kind)
             {
                 let cands = e.kind.unlinked_candidates();
-                self.apply_dir_change_to_durable(i);
+                let reclaim = self.apply_dir_change_to_durable(i);
                 self.remove_dir_entry(i);
-                for c in cands.into_iter().flatten() {
-                    self.free_inode_if_dead(c);
-                }
+                self.reclaim_dir_inodes(cands, reclaim);
             } else {
                 i += 1;
             }
