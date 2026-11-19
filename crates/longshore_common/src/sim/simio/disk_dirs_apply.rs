@@ -92,12 +92,12 @@ impl SimDisk {
                     self.max_name_len,
                     parent,
                     base,
-                    &mut self.scratch_a,
+                    &mut self.durable_scratch_a,
                 ) else {
                     return;
                 };
                 if self
-                    .find_durable_name(&self.scratch_a[..full_len])
+                    .find_durable_name(&self.durable_scratch_a[..full_len])
                     .is_some()
                 {
                     return;
@@ -107,7 +107,7 @@ impl SimDisk {
                 };
                 let dst = ni * self.max_name_len;
                 self.durable_name_bytes[dst..dst + full_len]
-                    .copy_from_slice(&self.scratch_a[..full_len]);
+                    .copy_from_slice(&self.durable_scratch_a[..full_len]);
                 self.durable_names[ni] = SimName {
                     used: true,
                     len: full_len as u16,
@@ -127,11 +127,11 @@ impl SimDisk {
                     self.max_name_len,
                     parent,
                     base,
-                    &mut self.scratch_a,
+                    &mut self.durable_scratch_a,
                 ) else {
                     return;
                 };
-                let Some(ni) = self.find_durable_name(&self.scratch_a[..full_len]) else {
+                let Some(ni) = self.find_durable_name(&self.durable_scratch_a[..full_len]) else {
                     return;
                 };
                 if self.durable_names[ni].inode == child {
@@ -157,7 +157,7 @@ impl SimDisk {
                     self.max_name_len,
                     old_parent,
                     old_base,
-                    &mut self.scratch_a,
+                    &mut self.durable_scratch_a,
                 ) else {
                     return;
                 };
@@ -167,7 +167,7 @@ impl SimDisk {
                     self.max_name_len,
                     new_parent,
                     new_base,
-                    &mut self.scratch_b,
+                    &mut self.durable_scratch_b,
                 ) else {
                     return;
                 };
@@ -177,8 +177,8 @@ impl SimDisk {
     }
 
     fn apply_durable_rename(&mut self, moved: u32, old_full_len: usize, new_full_len: usize) {
-        let old_full = &self.scratch_a[..old_full_len];
-        let new_full = &self.scratch_b[..new_full_len];
+        let old_full = &self.durable_scratch_a[..old_full_len];
+        let new_full = &self.durable_scratch_b[..new_full_len];
         if old_full == new_full {
             return;
         }
@@ -220,7 +220,7 @@ impl SimDisk {
         }
         let d_off = old_ni * self.max_name_len;
         self.durable_name_bytes[d_off..d_off + new_full_len]
-            .copy_from_slice(&self.scratch_b[..new_full_len]);
+            .copy_from_slice(&self.durable_scratch_b[..new_full_len]);
         self.durable_names[old_ni].len = new_full_len as u16;
     }
 
@@ -249,7 +249,8 @@ impl SimDisk {
             let s_len = self.durable_names[k].len as usize;
             let base = k * self.max_name_len;
             let is_child = s_len > old_len
-                && self.durable_name_bytes[base..base + old_len] == self.scratch_a[..old_len]
+                && self.durable_name_bytes[base..base + old_len]
+                    == self.durable_scratch_a[..old_len]
                 && self.durable_name_bytes[base + old_len] == b'/';
             if is_child && new_len + (s_len - old_len) > self.max_name_len {
                 return true;
@@ -266,14 +267,15 @@ impl SimDisk {
             let s_len = self.durable_names[k].len as usize;
             let base = k * self.max_name_len;
             let is_child = s_len > old_len
-                && self.durable_name_bytes[base..base + old_len] == self.scratch_a[..old_len]
+                && self.durable_name_bytes[base..base + old_len]
+                    == self.durable_scratch_a[..old_len]
                 && self.durable_name_bytes[base + old_len] == b'/';
             if is_child {
                 let tail = s_len - old_len;
                 self.durable_name_bytes
                     .copy_within(base + old_len..base + s_len, base + new_len);
                 self.durable_name_bytes[base..base + new_len]
-                    .copy_from_slice(&self.scratch_b[..new_len]);
+                    .copy_from_slice(&self.durable_scratch_b[..new_len]);
                 self.durable_names[k].len = (new_len + tail) as u16;
             }
         }

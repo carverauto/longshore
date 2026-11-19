@@ -104,12 +104,16 @@ pub(super) struct SimOpenFile {
 
 pub(in crate::sim::simio) struct SimDisk {
     pub(super) max_bytes_per_file: usize,
+    pub(super) mask_stride: usize,
     pub(super) max_name_len: usize,
     pub(super) sector_size: u32,
     pub(super) max_log_entries: usize,
     pub(super) inodes: Box<[SimInode]>,
     pub(super) data_used: Box<[bool]>,
     pub(super) durable_data: Box<[u8]>,
+    pub(super) poisoned_data: Box<[u8]>,
+    pub(super) poisoned_mask: Box<[u8]>,
+    pub(super) poisoned_eof: Box<[Option<u64>]>,
     pub(super) names: Box<[SimName]>,
     pub(super) name_bytes: Box<[u8]>,
     pub(super) durable_names: Box<[SimName]>,
@@ -127,6 +131,8 @@ pub(in crate::sim::simio) struct SimDisk {
     read_errors: Box<[ReadErrorSector]>,
     pub(super) scratch_a: Box<[u8]>,
     pub(super) scratch_b: Box<[u8]>,
+    pub(super) durable_scratch_a: Box<[u8]>,
+    pub(super) durable_scratch_b: Box<[u8]>,
     pub(super) next_ino: u64,
 }
 
@@ -136,22 +142,26 @@ impl SimDisk {
         let total_inodes = cfg.max_files as usize + cfg.max_dirs as usize + 1;
         let max_files = cfg.max_files as usize;
         let max_log_entries = cfg.write_log_entries as usize;
-        let log_cap = max_log_entries.saturating_mul(2);
+        let mask_stride = cfg.max_bytes_per_file.div_ceil(8);
         let dir_cap = (total_inodes * 4).max(64);
         let mut disk = Self {
             max_bytes_per_file: cfg.max_bytes_per_file,
+            mask_stride,
             max_name_len: cfg.max_name_len,
             sector_size: cfg.sector_size,
             max_log_entries,
             inodes: vec![SimInode::EMPTY; total_inodes].into_boxed_slice(),
             data_used: vec![false; max_files].into_boxed_slice(),
             durable_data: vec![0u8; max_files * cfg.max_bytes_per_file].into_boxed_slice(),
+            poisoned_data: vec![0u8; max_files * cfg.max_bytes_per_file].into_boxed_slice(),
+            poisoned_mask: vec![0u8; max_files * mask_stride].into_boxed_slice(),
+            poisoned_eof: vec![None; max_files].into_boxed_slice(),
             names: vec![SimName::EMPTY; total_inodes].into_boxed_slice(),
             name_bytes: vec![0u8; total_inodes * cfg.max_name_len].into_boxed_slice(),
             durable_names: vec![SimName::EMPTY; total_inodes].into_boxed_slice(),
             durable_name_bytes: vec![0u8; total_inodes * cfg.max_name_len].into_boxed_slice(),
             open_slots: vec![None; files_max as usize].into_boxed_slice(),
-            log_entries: vec![WriteLogEntry::EMPTY; log_cap].into_boxed_slice(),
+            log_entries: vec![WriteLogEntry::EMPTY; max_log_entries].into_boxed_slice(),
             log_len: 0,
             log_bytes: vec![0u8; cfg.write_log_bytes].into_boxed_slice(),
             log_bytes_used: 0,
@@ -164,6 +174,8 @@ impl SimDisk {
                 .into_boxed_slice(),
             scratch_a: vec![0u8; cfg.max_name_len].into_boxed_slice(),
             scratch_b: vec![0u8; cfg.max_name_len].into_boxed_slice(),
+            durable_scratch_a: vec![0u8; cfg.max_name_len].into_boxed_slice(),
+            durable_scratch_b: vec![0u8; cfg.max_name_len].into_boxed_slice(),
             next_ino: 1,
         };
         if total_inodes > 0 && cfg.max_name_len > 0 {

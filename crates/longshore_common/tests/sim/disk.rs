@@ -7,7 +7,9 @@
 //! 11 [`DiskFaults`] / [`PlacedFault`] behaviors under `alloc_guard`.
 
 use longshore_common::io::alloc_guard::{sealed, Guard};
-use longshore_common::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
+use longshore_common::io::{
+    file_size, BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token,
+};
 use longshore_common::sim::{DiskConfig, Faults, SimIo};
 
 #[global_allocator]
@@ -17,6 +19,8 @@ static ALLOC: Guard = Guard;
 mod dirs;
 #[path = "disk/faults.rs"]
 mod faults;
+#[path = "disk/faults_placed.rs"]
+mod faults_placed;
 #[path = "disk/faults_sync.rs"]
 mod faults_sync;
 #[path = "disk/power_loss.rs"]
@@ -141,6 +145,84 @@ pub(crate) fn sync_dir_path(sim: &mut SimIo, out: &mut Completions, tok: u64, pa
         drive(sim, out, tok + 2, Op::FileClose { slot: FileSlot(3) }),
         0
     );
+}
+
+pub(crate) fn write_fill(
+    sim: &mut SimIo,
+    out: &mut Completions,
+    tok: u64,
+    slot: FileSlot,
+    file_off: u64,
+    len: u32,
+    byte: u8,
+) -> i32 {
+    sim.buf(BufId(1))[..len as usize].fill(byte);
+    drive(
+        sim,
+        out,
+        tok,
+        Op::FileWrite {
+            slot,
+            buf: BufId(1),
+            off: 0,
+            len,
+            file_off,
+        },
+    )
+}
+
+pub(crate) fn read_at(
+    sim: &mut SimIo,
+    out: &mut Completions,
+    tok: u64,
+    slot: FileSlot,
+    file_off: u64,
+    len: u32,
+) -> i32 {
+    drive(
+        sim,
+        out,
+        tok,
+        Op::FileRead {
+            slot,
+            buf: BufId(2),
+            off: 0,
+            len,
+            file_off,
+        },
+    )
+}
+
+pub(crate) fn sync_slot(sim: &mut SimIo, out: &mut Completions, tok: u64, slot: FileSlot) -> i32 {
+    drive(
+        sim,
+        out,
+        tok,
+        Op::FileSync {
+            slot,
+            datasync: false,
+        },
+    )
+}
+
+pub(crate) fn stat_size(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) -> u64 {
+    let len = put_path(sim, BufId(0), path);
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok,
+            Op::FileStatus {
+                path_buf: BufId(0),
+                path_off: 0,
+                path_len: len,
+                out_buf: BufId(2),
+                out_off: 0,
+            },
+        ),
+        0
+    );
+    file_size(sim.buf(BufId(2)))
 }
 
 #[test]

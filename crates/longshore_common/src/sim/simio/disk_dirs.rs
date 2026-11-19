@@ -53,6 +53,40 @@ impl DirChangeKind {
         }
     }
 
+    fn parents(self) -> [Option<u32>; 2] {
+        match self {
+            Self::Empty => [None, None],
+            Self::Create { parent, .. }
+            | Self::Mkdir { parent, .. }
+            | Self::Unlink { parent, .. } => [Some(parent), None],
+            Self::Rename {
+                old_parent,
+                new_parent,
+                ..
+            } => [Some(old_parent), Some(new_parent)],
+        }
+    }
+
+    fn subjects(self) -> [Option<u32>; 2] {
+        match self {
+            Self::Empty => [None, None],
+            Self::Create { child, .. } | Self::Mkdir { child, .. } | Self::Unlink { child, .. } => {
+                [Some(child), None]
+            }
+            Self::Rename {
+                moved, replaced, ..
+            } => [Some(moved), replaced],
+        }
+    }
+
+    fn created_or_moved_dir(self, inodes: &[super::SimInode]) -> Option<u32> {
+        match self {
+            Self::Mkdir { child, .. } => Some(child),
+            Self::Rename { moved, .. } if inodes[moved as usize].is_dir => Some(moved),
+            _ => None,
+        }
+    }
+
     fn unlinked_candidates(self) -> [Option<usize>; 2] {
         match self {
             Self::Unlink { child, .. } => [Some(child as usize), None],
@@ -130,9 +164,11 @@ impl SimDisk {
     }
 
     fn evict_one_dir_change(&mut self) {
-        if let Some(idx) = (0..self.dir_log_len)
-            .find(|&i| !self.dir_log[i].poisoned && self.dir_parents_durable(self.dir_log[i].kind))
-        {
+        if let Some(idx) = (0..self.dir_log_len).find(|&i| {
+            !self.dir_log[i].poisoned
+                && !self.dir_entry_blocked_by_earlier(i)
+                && self.dir_parents_durable(self.dir_log[i].kind)
+        }) {
             let cands = self.dir_log[idx].kind.unlinked_candidates();
             self.apply_dir_change_to_durable(idx);
             self.remove_dir_entry(idx);
@@ -176,14 +212,75 @@ impl SimDisk {
         self.dir_log_len -= 1;
     }
 
+    fn dir_entry_names(&self, idx: usize) -> [Option<(u32, &[u8])>; 2] {
+        let e = self.dir_log[idx];
+        let base_off = e.arena_slot as usize * 2 * self.max_name_len;
+        match e.kind {
+            DirChangeKind::Empty => [None, None],
+            DirChangeKind::Create {
+                parent, name_len, ..
+            }
+            | DirChangeKind::Mkdir {
+                parent, name_len, ..
+            }
+            | DirChangeKind::Unlink {
+                parent, name_len, ..
+            } => [
+                Some((
+                    parent,
+                    &self.dir_name_arena[base_off..base_off + name_len as usize],
+                )),
+                None,
+            ],
+            DirChangeKind::Rename {
+                old_parent,
+                new_parent,
+                old_len,
+                new_len,
+                ..
+            } => {
+                let new_off = base_off + self.max_name_len;
+                [
+                    Some((
+                        old_parent,
+                        &self.dir_name_arena[base_off..base_off + old_len as usize],
+                    )),
+                    Some((
+                        new_parent,
+                        &self.dir_name_arena[new_off..new_off + new_len as usize],
+                    )),
+                ]
+            }
+        }
+    }
+
     fn dir_entry_blocked_by_earlier(&self, idx: usize) -> bool {
-        let refs = self.dir_log[idx].kind.refs();
+        let kind = self.dir_log[idx].kind;
+        let parents = kind.parents();
+        let subjects = kind.subjects();
+        let names = self.dir_entry_names(idx);
         for j in 0..idx {
-            let earlier = self.dir_log[j].kind.refs();
-            for a in refs.into_iter().flatten() {
-                if earlier.into_iter().flatten().any(|b| b == a) {
+            let ej = self.dir_log[j].kind;
+            if let Some(d) = ej.created_or_moved_dir(&self.inodes) {
+                if parents.into_iter().flatten().any(|p| p == d) {
                     return true;
                 }
+            }
+            let ej_subjects = ej.subjects();
+            if subjects
+                .into_iter()
+                .flatten()
+                .any(|s| ej_subjects.into_iter().flatten().any(|es| es == s))
+            {
+                return true;
+            }
+            let ej_names = self.dir_entry_names(j);
+            if names
+                .into_iter()
+                .flatten()
+                .any(|n| ej_names.into_iter().flatten().any(|en| en == n))
+            {
+                return true;
             }
         }
         false

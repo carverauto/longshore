@@ -224,6 +224,8 @@ fn random_rates_replay_zero_stops_and_tear_invariants() {
                 &[0x55; 1024],
             ));
         }
+        let c = sim.disk_fault_counters();
+        assert!(c.short_write > 0 && c.torn_reported > 0);
         sim.set_disk_faults(DiskFaults::default());
         for i in 0..20u64 {
             assert_eq!(

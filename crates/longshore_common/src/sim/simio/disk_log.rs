@@ -28,14 +28,12 @@ pub(super) enum LogKind {
 #[derive(Clone, Copy)]
 pub(super) struct WriteLogEntry {
     pub(super) inode: u32,
-    pub(super) poisoned: bool,
     pub(super) kind: LogKind,
 }
 
 impl WriteLogEntry {
     pub(super) const EMPTY: Self = Self {
         inode: 0,
-        poisoned: false,
         kind: LogKind::Empty,
     };
 
@@ -49,7 +47,8 @@ impl WriteLogEntry {
 
 impl SimDisk {
     pub(super) fn live_size(&self, ii: usize) -> u64 {
-        let mut sz = self.inodes[ii].durable_size;
+        let di = self.inodes[ii].data_idx as usize;
+        let mut sz = self.poisoned_eof[di].unwrap_or(self.inodes[ii].durable_size);
         for entry in &self.log_entries[..self.log_len] {
             if entry.inode as usize != ii {
                 continue;
@@ -87,12 +86,7 @@ impl SimDisk {
             return;
         }
         while self.log_len >= self.max_log_entries || self.log_bytes_used + need > cap_bytes {
-            if let Some(k) = (0..self.log_len).find(|&i| !self.log_entries[i].poisoned) {
-                self.evict_log_entry(k);
-            } else {
-                self.apply_direct_to_durable(ii, kind, bytes);
-                return;
-            }
+            self.evict_log_entry(0);
         }
         let buf_off = if need > 0 {
             if self.log_arena_tail + need > cap_bytes {
@@ -116,7 +110,6 @@ impl SimDisk {
         };
         self.log_entries[self.log_len] = WriteLogEntry {
             inode: ii as u32,
-            poisoned: false,
             kind: stored_kind,
         };
         self.log_len += 1;
@@ -125,8 +118,7 @@ impl SimDisk {
     pub(super) fn flush_clean_entries_for_inode(&mut self, ii: usize) {
         let mut i = 0;
         while i < self.log_len {
-            let e = self.log_entries[i];
-            if e.inode as usize == ii && !e.poisoned {
+            if self.log_entries[i].inode as usize == ii {
                 self.evict_log_entry(i);
             } else {
                 i += 1;
@@ -139,7 +131,6 @@ impl SimDisk {
         let ii = entry.inode as usize;
         self.apply_kind_to_durable(ii, entry.kind);
         self.remove_log_entry(idx);
-        self.trim_poisoned(ii, idx, entry.kind);
     }
 
     fn apply_direct_to_durable(&mut self, ii: usize, kind: LogKind, bytes: &[u8]) {
@@ -149,7 +140,6 @@ impl SimDisk {
             }
             other => self.apply_kind_to_durable(ii, other),
         }
-        self.trim_poisoned(ii, self.log_len, kind);
     }
 
     pub(super) fn remove_log_entry(&mut self, idx: usize) {
@@ -176,7 +166,8 @@ impl SimDisk {
     }
 
     fn write_bytes_to_durable(&mut self, ii: usize, file_off: u64, bytes: &[u8]) {
-        let d_base = self.inodes[ii].data_idx as usize * self.max_bytes_per_file;
+        let di = self.inodes[ii].data_idx as usize;
+        let d_base = di * self.max_bytes_per_file;
         let old_sz = self.inodes[ii].durable_size;
         if !bytes.is_empty() && file_off > old_sz {
             self.durable_data[d_base + old_sz as usize..d_base + file_off as usize].fill(0);
@@ -187,10 +178,17 @@ impl SimDisk {
         if end > old_sz {
             self.inodes[ii].durable_size = end;
         }
+        if !bytes.is_empty() {
+            self.clear_poisoned_range(di, file_off as usize, end as usize);
+            if let Some(pe) = self.poisoned_eof[di] {
+                self.poisoned_eof[di] = Some(pe.max(end));
+            }
+        }
     }
 
     pub(super) fn apply_kind_to_durable(&mut self, ii: usize, kind: LogKind) {
-        let d_base = self.inodes[ii].data_idx as usize * self.max_bytes_per_file;
+        let di = self.inodes[ii].data_idx as usize;
+        let d_base = di * self.max_bytes_per_file;
         match kind {
             LogKind::Write {
                 file_off,
@@ -209,6 +207,12 @@ impl SimDisk {
                 if end > old_sz {
                     self.inodes[ii].durable_size = end;
                 }
+                if n > 0 {
+                    self.clear_poisoned_range(di, file_off as usize, end as usize);
+                    if let Some(pe) = self.poisoned_eof[di] {
+                        self.poisoned_eof[di] = Some(pe.max(end));
+                    }
+                }
             }
             LogKind::Punch { file_off, len } => {
                 let sz = self.inodes[ii].durable_size;
@@ -217,6 +221,11 @@ impl SimDisk {
                 if e > s {
                     self.durable_data[d_base + s..d_base + e].fill(0);
                 }
+                let p_end = file_off
+                    .saturating_add(len)
+                    .min(self.max_bytes_per_file as u64) as usize;
+                let p_start = file_off.min(p_end as u64) as usize;
+                self.clear_poisoned_range(di, p_start, p_end);
             }
             LogKind::Truncate => {
                 let sz = self.inodes[ii].durable_size as usize;
@@ -224,12 +233,16 @@ impl SimDisk {
                     self.durable_data[d_base..d_base + sz].fill(0);
                 }
                 self.inodes[ii].durable_size = 0;
+                self.clear_poisoned_inode(di);
             }
             LogKind::Extend { end } => {
                 let sz = self.inodes[ii].durable_size;
                 if end > sz {
                     self.durable_data[d_base + sz as usize..d_base + end as usize].fill(0);
                     self.inodes[ii].durable_size = end;
+                }
+                if let Some(pe) = self.poisoned_eof[di] {
+                    self.poisoned_eof[di] = Some(pe.max(end));
                 }
             }
             LogKind::Empty => {}
@@ -241,9 +254,15 @@ impl SimDisk {
     }
 
     pub(super) fn poison_file(&mut self, ii: usize) {
-        for entry in &mut self.log_entries[..self.log_len] {
-            if entry.inode as usize == ii && !entry.poisoned {
-                entry.poisoned = true;
+        let di = self.inodes[ii].data_idx as usize;
+        let mut i = 0;
+        while i < self.log_len {
+            let entry = self.log_entries[i];
+            if entry.inode as usize == ii {
+                self.fold_entry_to_poisoned(di, ii, entry.kind);
+                self.remove_log_entry(i);
+            } else {
+                i += 1;
             }
         }
     }

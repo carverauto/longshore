@@ -75,6 +75,7 @@ impl SimDisk {
         self.data_used[di] = true;
         let d_off = di * self.max_bytes_per_file;
         self.durable_data[d_off..d_off + self.max_bytes_per_file].fill(0);
+        self.clear_poisoned_inode(di);
         let ino = self.next_ino;
         self.next_ino += 1;
         self.inodes[ii] = SimInode {
@@ -118,10 +119,15 @@ impl SimDisk {
             && ino.dir_log_refs == 0
         {
             let ino_num = ino.ino;
-            if !ino.is_dir {
-                self.data_used[ino.data_idx as usize] = false;
+            let is_dir = ino.is_dir;
+            let di = ino.data_idx as usize;
+            if !is_dir {
+                self.data_used[di] = false;
             }
             *ino = SimInode::EMPTY;
+            if !is_dir {
+                self.clear_poisoned_inode(di);
+            }
             self.purge_inode_log(ii);
             self.clear_read_errors_for_inode(ino_num);
         }

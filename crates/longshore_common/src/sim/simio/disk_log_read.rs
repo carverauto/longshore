@@ -3,117 +3,108 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! Write-log overlay reads, poisoned-write trimming, medium bit flips, and
-//! crash write settlement for [`SimDisk`].
+//! Poisoned per-inode overlay helpers, write-log overlay reads, medium bit
+//! flips, and crash write settlement for [`SimDisk`].
 
 use super::faults::sector_cut_bounds;
-use super::log::{LogKind, WriteLogEntry};
+use super::log::LogKind;
 use super::{Prng, SimDisk};
 use crate::io::posix::errno::linux::{EINVAL, EISDIR, ENOENT};
 
 impl SimDisk {
-    pub(super) fn trim_poisoned(&mut self, ii: usize, limit_idx: usize, kind: LogKind) {
-        let (w_start, w_end, is_trunc) = match kind {
-            LogKind::Write { file_off, len, .. } => (file_off, file_off + len as u64, false),
-            LogKind::Punch { file_off, len } => (file_off, file_off.saturating_add(len), false),
-            LogKind::Truncate => (0, 0, true),
-            LogKind::Extend { .. } | LogKind::Empty => return,
-        };
-        if !is_trunc && w_start == w_end {
+    pub(super) fn poisoned_bit(&self, di: usize, off: usize) -> bool {
+        let idx = di * self.mask_stride + (off >> 3);
+        (self.poisoned_mask[idx] >> (off & 7)) & 1 != 0
+    }
+
+    fn set_poisoned_mask(&mut self, di: usize, start: usize, end: usize, val: bool) {
+        if end <= start {
             return;
         }
-        let mut p_idx = 0usize;
-        let mut end = limit_idx.min(self.log_len);
-        while p_idx < end {
-            let p = self.log_entries[p_idx];
-            if p.inode as usize != ii || !p.poisoned {
-                p_idx += 1;
-                continue;
+        let base = di * self.mask_stride;
+        for off in start..end {
+            let slot = &mut self.poisoned_mask[base + (off >> 3)];
+            let bit = 1u8 << (off & 7);
+            if val {
+                *slot |= bit;
+            } else {
+                *slot &= !bit;
             }
-            if is_trunc {
-                self.remove_log_entry(p_idx);
-                end -= 1;
-                continue;
-            }
-            match p.kind {
-                LogKind::Write {
-                    file_off: p_off,
-                    len: p_len,
-                    buf_off,
-                } => {
-                    let p_start = p_off;
-                    let p_end = p_off + p_len as u64;
-                    if w_end <= p_start || p_end <= w_start {
-                        p_idx += 1;
-                    } else if w_start <= p_start && p_end <= w_end {
-                        self.remove_log_entry(p_idx);
-                        end -= 1;
-                    } else if w_start <= p_start {
-                        let cut = (w_end - p_start) as usize;
-                        self.log_entries[p_idx].kind = LogKind::Write {
-                            file_off: w_end,
-                            len: p_len - cut as u32,
-                            buf_off: buf_off + cut,
-                        };
-                        self.log_bytes_used -= cut;
-                        p_idx += 1;
-                    } else if p_end <= w_end {
-                        let cut = (p_end - w_start) as usize;
-                        self.log_entries[p_idx].kind = LogKind::Write {
-                            file_off: p_start,
-                            len: p_len - cut as u32,
-                            buf_off,
-                        };
-                        self.log_bytes_used -= cut;
-                        p_idx += 1;
-                    } else {
-                        let left_len = (w_start - p_start) as usize;
-                        let mid_len = (w_end - w_start) as usize;
-                        let right_len = (p_end - w_end) as usize;
-                        self.log_entries[p_idx].kind = LogKind::Write {
-                            file_off: p_start,
-                            len: left_len as u32,
-                            buf_off,
-                        };
-                        self.log_bytes_used -= mid_len;
-                        if self.log_len < self.log_entries.len() {
-                            self.log_entries
-                                .copy_within(p_idx + 1..self.log_len, p_idx + 2);
-                            self.log_entries[p_idx + 1] = WriteLogEntry {
-                                inode: ii as u32,
-                                poisoned: true,
-                                kind: LogKind::Write {
-                                    file_off: w_end,
-                                    len: right_len as u32,
-                                    buf_off: buf_off + left_len + mid_len,
-                                },
-                            };
-                            self.log_len += 1;
-                            end += 1;
-                            p_idx += 2;
-                        } else {
-                            p_idx += 1;
-                        }
+        }
+    }
+
+    fn set_poisoned_zero(&mut self, di: usize, start: usize, end: usize) {
+        if end <= start {
+            return;
+        }
+        let p_base = di * self.max_bytes_per_file;
+        self.poisoned_data[p_base + start..p_base + end].fill(0);
+        self.set_poisoned_mask(di, start, end, true);
+    }
+
+    pub(super) fn clear_poisoned_range(&mut self, di: usize, start: usize, end: usize) {
+        self.set_poisoned_mask(di, start, end, false);
+    }
+
+    pub(super) fn clear_poisoned_inode(&mut self, di: usize) {
+        if self.mask_stride > 0 {
+            let base = di * self.mask_stride;
+            self.poisoned_mask[base..base + self.mask_stride].fill(0);
+        }
+        if di < self.poisoned_eof.len() {
+            self.poisoned_eof[di] = None;
+        }
+    }
+
+    pub(super) fn fold_entry_to_poisoned(&mut self, di: usize, ii: usize, kind: LogKind) {
+        let cur_sz = self.poisoned_eof[di].unwrap_or(self.inodes[ii].durable_size);
+        match kind {
+            LogKind::Write {
+                file_off,
+                len,
+                buf_off,
+            } => {
+                let n = len as usize;
+                if n > 0 {
+                    if file_off > cur_sz {
+                        self.set_poisoned_zero(di, cur_sz as usize, file_off as usize);
                     }
+                    let p_base = di * self.max_bytes_per_file + file_off as usize;
+                    self.poisoned_data[p_base..p_base + n]
+                        .copy_from_slice(&self.log_bytes[buf_off..buf_off + n]);
+                    self.set_poisoned_mask(di, file_off as usize, file_off as usize + n, true);
+                    self.poisoned_eof[di] = Some(cur_sz.max(file_off + n as u64));
                 }
-                LogKind::Punch { file_off, len } => {
-                    let p_end = file_off.saturating_add(len);
-                    if w_start <= file_off && p_end <= w_end {
-                        self.remove_log_entry(p_idx);
-                        end -= 1;
-                    } else {
-                        p_idx += 1;
-                    }
-                }
-                LogKind::Truncate | LogKind::Extend { .. } | LogKind::Empty => p_idx += 1,
             }
+            LogKind::Punch { file_off, len } => {
+                let s = file_off.min(cur_sz) as usize;
+                let e = file_off.saturating_add(len).min(cur_sz) as usize;
+                if e > s {
+                    self.set_poisoned_zero(di, s, e);
+                    self.poisoned_eof[di] = Some(cur_sz);
+                }
+            }
+            LogKind::Truncate => {
+                if cur_sz > 0 {
+                    self.set_poisoned_zero(di, 0, cur_sz as usize);
+                }
+                self.poisoned_eof[di] = Some(0);
+            }
+            LogKind::Extend { end } => {
+                if end > cur_sz {
+                    self.set_poisoned_zero(di, cur_sz as usize, end as usize);
+                    self.poisoned_eof[di] = Some(end);
+                }
+            }
+            LogKind::Empty => {}
         }
     }
 
     pub(super) fn read_overlay(&self, ii: usize, dst: &mut [u8], file_off: u64) {
         let n = dst.len();
+        let di = self.inodes[ii].data_idx as usize;
         let ds = self.inodes[ii].durable_size;
-        let d_base = self.inodes[ii].data_idx as usize * self.max_bytes_per_file;
+        let d_base = di * self.max_bytes_per_file;
         let durable_avail = ds.saturating_sub(file_off).min(n as u64) as usize;
         if durable_avail > 0 {
             let src = d_base + file_off as usize;
@@ -121,6 +112,16 @@ impl SimDisk {
         }
         if durable_avail < n {
             dst[durable_avail..].fill(0);
+        }
+        if self.poisoned_eof[di].is_some() {
+            let p_base = di * self.max_bytes_per_file;
+            let off = file_off as usize;
+            let limit = self.max_bytes_per_file.saturating_sub(off).min(n);
+            for (k, byte) in dst[..limit].iter_mut().enumerate() {
+                if self.poisoned_bit(di, off + k) {
+                    *byte = self.poisoned_data[p_base + off + k];
+                }
+            }
         }
         let read_end = file_off + n as u64;
         for entry in &self.log_entries[..self.log_len] {
@@ -180,10 +181,14 @@ impl SimDisk {
             return Err(-EINVAL);
         }
         let mask = 1u8 << bit;
+        let di = self.inodes[ii].data_idx as usize;
         if file_off < self.inodes[ii].durable_size {
-            let d_idx =
-                self.inodes[ii].data_idx as usize * self.max_bytes_per_file + file_off as usize;
+            let d_idx = di * self.max_bytes_per_file + file_off as usize;
             self.durable_data[d_idx] ^= mask;
+        }
+        if self.poisoned_eof[di].is_some() && self.poisoned_bit(di, file_off as usize) {
+            let p_idx = di * self.max_bytes_per_file + file_off as usize;
+            self.poisoned_data[p_idx] ^= mask;
         }
         for entry in &self.log_entries[..self.log_len] {
             if entry.inode as usize != ii {
@@ -207,9 +212,6 @@ impl SimDisk {
         let s = self.sector_size as u64;
         for idx in 0..self.log_len {
             let entry = self.log_entries[idx];
-            if entry.poisoned {
-                continue;
-            }
             let ii = entry.inode as usize;
             match entry.kind {
                 LogKind::Write {
@@ -255,5 +257,7 @@ impl SimDisk {
         self.log_len = 0;
         self.log_bytes_used = 0;
         self.log_arena_tail = 0;
+        self.poisoned_mask.fill(0);
+        self.poisoned_eof.fill(None);
     }
 }

@@ -135,7 +135,7 @@ impl Virtual {
             files: Vec::new(),
             disk: None,
             disk_faults: DiskFaults::default(),
-            placed_faults: Vec::new(),
+            placed_faults: Vec::with_capacity(64),
             file_op_seq: 0,
             disk_counters: DiskFaultCounters::default(),
             routes: Vec::new(),
