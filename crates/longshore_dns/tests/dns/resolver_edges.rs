@@ -19,10 +19,7 @@ const K_SEND: u64 = BASE + 16;
 const NOWHERE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 99)), 53);
 
 fn completion(token: u64, result: i32) -> Completion {
-    Completion {
-        token: Token(token),
-        result,
-    }
+    Completion::new(Token(token), result)
 }
 
 /// On a real kernel an answer can be reaped before the completion of the

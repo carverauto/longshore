@@ -51,7 +51,16 @@ jobs:
       - name: Lint
         run: |
           cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --exclude longshore-bench --all-targets --no-default-features -- -D warnings
           cargo clippy -p longshore_common --all-targets --features fault-injection -- -D warnings
+      - name: Plain build excludes TLS and AWS-LC
+        run: |
+          tree=$(cargo tree -p longshore --no-default-features -e normal)
+          echo "$tree"
+          if echo "$tree" | grep -Eq '(^|[[:space:]])(longshore_tls|aws-lc-sys)[[:space:]]'; then
+            echo "ERROR: longshore --no-default-features depends on longshore_tls or aws-lc-sys" >&2
+            exit 1
+          fi
       - name: Documentation
         # What docs.rs would build. A broken link or a doc example that no
         # longer compiles fails here, not after a release.
@@ -61,6 +70,7 @@ jobs:
       - name: Test
         run: |
           cargo test --workspace
+          cargo test --workspace --exclude longshore-bench --no-default-features
           cargo test -p longshore_common --features fault-injection
       - name: Model-checked client hand-offs
         run: ./scripts/test-model.sh

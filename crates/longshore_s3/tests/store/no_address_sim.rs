@@ -79,6 +79,7 @@ fn operations_end_when_the_name_never_resolves() {
         backoff_max_ns: 800 * MS,
         require_checksums: false,
         http,
+        #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Resolved(resolver),
     });

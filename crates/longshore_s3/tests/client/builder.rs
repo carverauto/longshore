@@ -86,3 +86,16 @@ fn a_bucket_in_the_path_must_be_a_bucket_name() {
     b.bucket_in_path = Some("my.bucket-1".into());
     assert!(!refused(b));
 }
+
+#[cfg(not(feature = "tls"))]
+#[test]
+fn tls_without_the_feature_is_refused_with_a_setting_error_naming_tls() {
+    let mut b = settings("bucket.s3.example.com");
+    b.tls = true;
+    match b.build() {
+        Err(BuildError::Setting(msg)) => {
+            assert!(msg.contains("tls"), "setting error must name tls: {msg}");
+        }
+        _ => panic!("expected BuildError::Setting when tls feature is off"),
+    }
+}

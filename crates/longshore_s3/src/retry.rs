@@ -6,7 +6,7 @@
 //! Classifies the outcome of one attempt. Pure, so it is tested exhaustively.
 
 use longshore_http_client::client::{Error, Response};
-use longshore_tls::handshake::TlsError;
+use longshore_stream::TlsError;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Class {

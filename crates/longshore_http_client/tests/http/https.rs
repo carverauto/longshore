@@ -8,12 +8,15 @@
 //! opened by `longshore_tls`. Allocation is forbidden throughout, except inside
 //! the handshake's own scoped exception.
 
+#![cfg(feature = "tls")]
+
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_http_client::client::{self, Client, Done, Error, Handled, Request, Response};
 use longshore_http_client::server::{self, Behavior, Server};
-use longshore_tls::handshake::{ClientSetup, ServerSetup, TlsError};
+use longshore_stream::TlsError;
+use longshore_tls::handshake::{ClientSetup, ServerSetup};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]

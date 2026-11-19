@@ -50,6 +50,7 @@ impl Io for UringIo {
     }
 
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
+        self.sock_stream[sock.0 as usize] = false;
         let l = TcpListener::bind(addr)?;
         let bound = l.local_addr()?;
         let fd = l.into_raw_fd();
@@ -65,13 +66,7 @@ impl Io for UringIo {
             let pool = &self.bufs[self.pool_base..];
             if let Err(errno) = self.files_table.check_op(&op, pool, &self.limits) {
                 self.slots[i as usize].state = State::Free;
-                self.ready.push(
-                    i,
-                    Completion {
-                        token,
-                        result: errno,
-                    },
-                );
+                self.ready.push(i, Completion::new(token, errno));
                 return Ok(());
             }
         }
@@ -96,10 +91,7 @@ impl Io for UringIo {
                 self.slots[i as usize].state = State::Free;
                 self.ready.push(
                     i,
-                    Completion {
-                        token,
-                        result: if idx == bad_idx { errno } else { -ECANCELED },
-                    },
+                    Completion::new(token, if idx == bad_idx { errno } else { -ECANCELED }),
                 );
             }
             return Ok(());
@@ -160,6 +152,7 @@ impl UringIo {
         let s = &mut self.slots[i as usize];
         s.token = token.0;
         s.state = State::InFlight;
+        s.is_stream = false;
         s.phase = 0;
         s.op_sock = None;
         s.sock_closed = false;

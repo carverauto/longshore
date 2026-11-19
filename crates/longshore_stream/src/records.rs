@@ -5,7 +5,13 @@
 
 //! Sealing outgoing bytes into records and opening received records into the destination.
 
-use super::*;
+use crate::stream::{Step, Tls};
+use crate::TlsError;
+use longshore_common::io::{Io, Op, Sock, Token};
+use longshore_tls::record::{
+    record_len, CONTENT_ALERT, CONTENT_APPLICATION_DATA, CONTENT_HANDSHAKE, FRAGMENT_MAX,
+    HEADER_LEN, OVERHEAD, TAG_LEN,
+};
 
 impl Tls {
     /// Seal as many records as fit in the send buffer and submit them.
@@ -107,7 +113,7 @@ impl Tls {
             }
             let (ctype, n) = match opened {
                 Ok(v) => v,
-                Err(e) => return Step::Tls(TlsError::Record(e)),
+                Err(_) => return Step::Tls(TlsError::Record),
             };
             // An alert is two bytes: level, then description.
             let alert = (ctype == CONTENT_ALERT && n == 2).then(|| {

@@ -49,10 +49,7 @@ impl<W: World> Io for Engine<W> {
         if op.is_file_op() {
             let pool = &self.bufs[self.pool_base..];
             if let Err(errno) = self.files.check_op(&op, pool, &self.limits) {
-                self.ready.push(Completion {
-                    token,
-                    result: errno,
-                });
+                self.ready.push(Completion::new(token, errno));
                 return Ok(());
             }
         }
@@ -91,6 +88,7 @@ impl<W: World> Io for Engine<W> {
             chain_active: true,
             chain_aborted: false,
             world_tag,
+            last_delivered_step: 0,
         });
         Ok(())
     }
@@ -105,10 +103,10 @@ impl<W: World> Io for Engine<W> {
         let pool = &self.bufs[self.pool_base..];
         if let Err((bad_idx, errno)) = self.files.check_chain(ops, pool, &self.limits) {
             for (idx, &(token, _)) in ops.iter().enumerate() {
-                self.ready.push(Completion {
+                self.ready.push(Completion::new(
                     token,
-                    result: if idx == bad_idx { errno } else { -ECANCELED },
-                });
+                    if idx == bad_idx { errno } else { -ECANCELED },
+                ));
             }
             return Ok(());
         }
@@ -131,6 +129,7 @@ impl<W: World> Io for Engine<W> {
                 chain_active: pos == 0,
                 chain_aborted: false,
                 world_tag,
+                last_delivered_step: 0,
             });
         }
         Ok(())
@@ -141,7 +140,7 @@ impl<W: World> Io for Engine<W> {
         loop {
             while !out.is_full() {
                 let Some(c) = self.ready.pop() else { break };
-                self.record_trace(c.token, c.result);
+                self.record_trace(c);
                 out.push(c);
             }
             if !self.ready.is_empty() {

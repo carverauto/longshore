@@ -72,6 +72,7 @@ pub const O_DIRECT: u32 = 0o0200000;
 pub const O_RDONLY_CLOEXEC: u32 = 0o2000000;
 pub const IORING_OP_SEND: u8 = 26;
 pub const IORING_OP_RECV: u8 = 27;
+pub const IORING_OP_SHUTDOWN: u8 = 34; // 5.11
 pub const IORING_OP_RENAMEAT: u8 = 35;
 pub const IORING_OP_UNLINKAT: u8 = 36;
 pub const IORING_OP_MKDIRAT: u8 = 37;
@@ -80,6 +81,8 @@ pub const IORING_OP_SEND_ZC: u8 = 47; // 6.0
 
 pub const IOSQE_FIXED_FILE: u8 = 1 << 0;
 pub const IOSQE_IO_LINK: u8 = 1 << 2;
+pub const IOSQE_IO_HARDLINK: u8 = 1 << 3;
+pub const SHUT_RDWR: u32 = 2;
 
 pub const IORING_FSYNC_DATASYNC: u32 = 1 << 0;
 pub const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
@@ -101,8 +104,10 @@ pub struct rlimit {
 pub const IORING_RECVSEND_FIXED_BUF: u16 = 1 << 2; // 6.0
 pub const IORING_SEND_ZC_REPORT_USAGE: u16 = 1 << 3; // 6.2
 
+pub const IORING_CQE_F_BUFFER: u32 = 1 << 0;
 pub const IORING_CQE_F_MORE: u32 = 1 << 1;
 pub const IORING_CQE_F_NOTIF: u32 = 1 << 3;
+pub const IORING_CQE_BUFFER_SHIFT: u32 = 16;
 /// Set in `cqe.res` of a notification CQE when the kernel copied the data
 /// instead of sending it zero-copy (requires `IORING_SEND_ZC_REPORT_USAGE`).
 pub const IORING_NOTIF_USAGE_ZC_COPIED: u32 = 1 << 31;

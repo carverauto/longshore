@@ -129,10 +129,7 @@ fn completions_report_full_and_empty_at_their_capacity() {
     let mut c = Completions::new(2);
     assert!(c.is_empty() && !c.is_full() && c.pop().is_none());
     for t in [5, 6] {
-        c.push(Completion {
-            token: Token(t),
-            result: -(t as i32),
-        });
+        c.push(Completion::new(Token(t), -(t as i32)));
     }
     assert!(c.is_full() && c.len() == 2);
     assert_eq!(c.pop().map(|x| (x.token.0, x.result)), Some((5, -5)));
@@ -141,4 +138,13 @@ fn completions_report_full_and_empty_at_their_capacity() {
     // No room at all is both full and empty.
     let none = Completions::new(0);
     assert!(none.is_full() && none.is_empty());
+}
+
+#[test]
+fn completion_new_sets_final_with_no_buffer() {
+    let c = Completion::new(Token(42), 17);
+    assert_eq!(c.token, Token(42));
+    assert_eq!(c.result, 17);
+    assert!(!c.more);
+    assert_eq!(c.buf, None);
 }

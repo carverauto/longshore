@@ -5,7 +5,9 @@
 
 //! Driving the TLS handshake over the stream until traffic keys are installed.
 
-use super::*;
+use crate::stream::{Step, Stream};
+use longshore_common::io::{Io, Op, ECONNRESET};
+use longshore_tls::handshake::Handshake;
 
 impl Stream {
     // ---- handshake -------------------------------------------------------
@@ -48,12 +50,12 @@ impl Stream {
                 let hs = t.handshake.take().expect("checked above");
                 return match hs.finish(&mut t.tx, &mut t.rx) {
                     Ok(()) => Step::Done(0),
-                    Err(e) => Step::Tls(e),
+                    Err(e) => Step::Tls(e.into()),
                 };
             }
             let used = match hs.read(&io.buf(t.rx_buf)[t.rx_start as usize..t.rx_end as usize]) {
                 Ok(n) => n as u32,
-                Err(e) => return Step::Tls(e),
+                Err(e) => return Step::Tls(e.into()),
             };
             t.rx_start += used;
             if used > 0 {
@@ -85,11 +87,7 @@ impl Stream {
         let t = self.tls.as_mut().expect("handshake state");
         if result <= 0 {
             // A negative errno, or the peer closed mid-handshake.
-            return Step::Done(if result == 0 {
-                -longshore_common::io::ECONNRESET
-            } else {
-                result
-            });
+            return Step::Done(if result == 0 { -ECONNRESET } else { result });
         }
         if sent {
             t.cipher_sent += result as u32;

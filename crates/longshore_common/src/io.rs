@@ -195,6 +195,22 @@ pub enum Op {
 pub struct Completion {
     pub token: Token,
     pub result: i32,
+    /// Whether more completions will follow for `token`.
+    pub more: bool,
+    /// Buffer selected for this completion by an armed receive, if any.
+    pub buf: Option<BufId>,
+}
+
+impl Completion {
+    /// A single final completion carrying no selected buffer.
+    pub const fn new(token: Token, result: i32) -> Self {
+        Self {
+            token,
+            result,
+            more: false,
+            buf: None,
+        }
+    }
 }
 
 pub const ECONNRESET: i32 = 104;
@@ -217,14 +233,7 @@ pub struct Completions {
 impl Completions {
     pub fn new(capacity: usize) -> Completions {
         Completions {
-            items: vec![
-                Completion {
-                    token: Token(0),
-                    result: 0
-                };
-                capacity
-            ]
-            .into_boxed_slice(),
+            items: vec![Completion::new(Token(0), 0); capacity].into_boxed_slice(),
             len: 0,
         }
     }

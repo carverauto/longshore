@@ -104,6 +104,35 @@ fn register_pool_ranges(
     Ok(buf_range)
 }
 
+pub(super) fn cq_size(
+    sq_entries: u32,
+    ops_max: u32,
+    ring_bufs: u32,
+    accept_slots: u32,
+) -> io::Result<u32> {
+    let need = (ops_max as u64) * 2 + ring_bufs as u64 + accept_slots as u64;
+    let min = need.max(sq_entries as u64);
+    u32::try_from(min)
+        .ok()
+        .and_then(|n| n.checked_next_power_of_two())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("completion queue size {min} exceeds u32 power-of-two limit"),
+            )
+        })
+}
+
+pub(super) fn check_features(features: u32) -> io::Result<()> {
+    if features & IORING_FEAT_NODROP == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "kernel io_uring lacks IORING_FEAT_NODROP",
+        ));
+    }
+    Ok(())
+}
+
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
     pub fn new(limits: Limits) -> io::Result<UringIo> {
@@ -111,10 +140,13 @@ impl UringIo {
         let table_len = check_nofile_limit(&limits)?;
         // Room for one SQE + one internal cancel SQE per operation, and `quiesce`'s two SQEs.
         let entries = (limits.ops_max * 2 + 2).next_power_of_two().max(8);
-        let mut ring = Ring::new(
+        let cq_entries = cq_size(entries, limits.ops_max, 0, 0)?;
+        let mut ring = Ring::with_cq(
             entries,
+            cq_entries,
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_SUBMIT_ALL,
         )?;
+        check_features(ring.params.features)?;
         let mut bufs = vec![0u8; limits.pool_bytes()].into_boxed_slice();
         let pool_base = limits.pool_base(bufs.as_ptr() as usize);
         let buf_range = register_pool_ranges(&mut ring, &limits, &mut bufs, pool_base)?;
@@ -127,6 +159,7 @@ impl UringIo {
             state: State::Free,
             result: 0,
             sock: 0,
+            is_stream: false,
             file_slot: FileSlot(0),
             file_direct: false,
             op_sock: None,
@@ -148,6 +181,7 @@ impl UringIo {
             pool_base,
             buf_range,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
+            sock_stream: vec![false; limits.sockets_max as usize].into_boxed_slice(),
             in_flight: 0,
             quiet_ts: Box::new(timespec {
                 sec: 0,
@@ -166,8 +200,10 @@ impl UringIo {
 }
 
 #[cfg(test)]
-mod memlock_tests {
-    use super::name_memlock_limit;
+mod setup_tests {
+    use super::{
+        check_features, cq_size, name_memlock_limit, IORING_FEAT_NODROP, IORING_FEAT_SINGLE_MMAP,
+    };
     use std::io;
 
     const ENOMEM: i32 = 12;
@@ -198,5 +234,25 @@ mod memlock_tests {
         let e = name_memlock_limit(as_ring_reports(EINVAL), 65536);
         assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(e.to_string(), before);
+    }
+
+    #[test]
+    fn cq_size_covers_ops_ring_bufs_accept_slots_and_sq_floor() {
+        assert_eq!(cq_size(16, 4, 0, 0).unwrap(), 16);
+        assert_eq!(cq_size(16, 10, 0, 0).unwrap(), 32);
+        assert_eq!(cq_size(16, 8, 16, 8).unwrap(), 64);
+        assert_eq!(cq_size(16, 8, 1000, 1000).unwrap(), 2048);
+        assert_eq!(
+            cq_size(16, u32::MAX, 0, 0).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn check_features_requires_nodrop() {
+        assert!(check_features(IORING_FEAT_NODROP | IORING_FEAT_SINGLE_MMAP).is_ok());
+        let err = check_features(IORING_FEAT_SINGLE_MMAP).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert!(err.to_string().contains("IORING_FEAT_NODROP"));
     }
 }

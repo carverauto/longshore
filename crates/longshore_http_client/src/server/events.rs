@@ -165,6 +165,9 @@ impl Server {
                 self.conns[i].state = State::Free;
             } else {
                 self.accepted += 1;
+                #[cfg(not(feature = "tls"))]
+                self.recv_head(io, i, 0);
+                #[cfg(feature = "tls")]
                 match &self.tls {
                     None => self.recv_head(io, i, 0),
                     Some(setup) => {
@@ -186,6 +189,7 @@ impl Server {
             return true;
         }
         // Sends and receives go through the stream.
+        #[cfg(feature = "tls")]
         if self.conns[i].state == State::Handshake {
             match self.streams[i].on_handshake(io, kind == K_SEND, c.result) {
                 Step::Pending => {}
@@ -209,10 +213,7 @@ impl Server {
 
     /// Handle a completion in plaintext terms.
     pub(super) fn on_plain<IO: Io>(&mut self, io: &mut IO, i: usize, kind: u64, result: i32) {
-        let c = Completion {
-            token: Token(0),
-            result,
-        };
+        let c = Completion::new(Token(0), result);
         match (kind, self.conns[i].state) {
             (K_CLOSE, _) => {
                 self.closed += 1;

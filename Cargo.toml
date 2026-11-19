@@ -7,6 +7,7 @@ members = [
     "crates/longshore_dns",
     "crates/longshore_http_client",
     "crates/longshore_s3",
+    "crates/longshore_stream",
     "crates/longshore_tls",
     "crates/longshore-bench",
 ]
@@ -19,13 +20,14 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # Internal Dependencies. The crates are released together, so each names
 # the others at exactly its own version.
-longshore = { path = "crates/longshore", version = "=0.1.1" }
-longshore_common = { path = "crates/longshore_common", version = "=0.1.1" }
-longshore_crc = { path = "crates/longshore_crc", version = "=0.1.1" }
-longshore_dns = { path = "crates/longshore_dns", version = "=0.1.1" }
-longshore_http_client = { path = "crates/longshore_http_client", version = "=0.1.1" }
-longshore_s3 = { path = "crates/longshore_s3", version = "=0.1.1" }
-longshore_tls = { path = "crates/longshore_tls", version = "=0.1.1" }
+longshore = { path = "crates/longshore", version = "=0.1.1", default-features = false }
+longshore_common = { path = "crates/longshore_common", version = "=0.1.1", default-features = false }
+longshore_crc = { path = "crates/longshore_crc", version = "=0.1.1", default-features = false }
+longshore_dns = { path = "crates/longshore_dns", version = "=0.1.1", default-features = false }
+longshore_http_client = { path = "crates/longshore_http_client", version = "=0.1.1", default-features = false }
+longshore_s3 = { path = "crates/longshore_s3", version = "=0.1.1", default-features = false }
+longshore_stream = { path = "crates/longshore_stream", version = "=0.1.1", default-features = false }
+longshore_tls = { path = "crates/longshore_tls", version = "=0.1.1", default-features = false }
 
 # External Dependencies
 aws-lc-sys = "0.47"

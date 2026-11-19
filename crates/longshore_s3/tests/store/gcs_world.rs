@@ -112,6 +112,7 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
         backoff_max_ns: 400 * MS,
         require_checksums: true,
         http,
+        #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Fixed(ADDR),
     });

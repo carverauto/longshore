@@ -8,27 +8,41 @@
 use super::*;
 
 impl<W: World> Engine<W> {
-    pub(super) fn record_trace(&mut self, token: Token, result: i32) {
+    pub(super) fn record_trace(&mut self, c: Completion) {
         let now = self.world.now_ns();
-        for v in [token.0, result as u32 as u64, now] {
+        for v in [c.token.0, c.result as u32 as u64, now] {
             self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        if c.more || c.buf.is_some() {
+            let buf = c.buf.map_or(u64::MAX, |b| b.0 as u64);
+            for v in [c.more as u64, buf] {
+                self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+            }
         }
     }
 
-    fn resolve_or_attempt(&mut self, p: &Pending) -> Option<i32> {
+    fn resolve_or_attempt(&mut self, p: &Pending) -> Option<Attempt> {
         match p.op {
-            Op::Timeout { .. } => (self.world.now_ns() >= p.deadline).then_some(0),
-            Op::AwaitWake => self.woken.swap(false, Ordering::AcqRel).then_some(0),
+            Op::Timeout { .. } => (self.world.now_ns() >= p.deadline)
+                .then_some(0)
+                .map(Attempt::single),
+            Op::AwaitWake => self
+                .woken
+                .swap(false, Ordering::AcqRel)
+                .then_some(0)
+                .map(Attempt::single),
             Op::Cancel { .. } => {
                 let target = p.cancel_target;
                 match self.pending.iter_mut().find(|q| target == Some(q.id)) {
                     Some(q) => {
-                        q.cancelled = true;
-                        let op = q.op;
-                        self.world.on_cancel(&op);
-                        Some(0)
+                        if !q.cancelled {
+                            q.cancelled = true;
+                            let op = q.op;
+                            self.world.on_cancel(&op);
+                        }
+                        Some(Attempt::single(0))
                     }
-                    None => Some(-ENOENT),
+                    None => Some(Attempt::single(-ENOENT)),
                 }
             }
             Op::FileRead { slot, .. }
@@ -44,16 +58,16 @@ impl<W: World> Engine<W> {
                     if earlier_open {
                         return None;
                     }
-                    return Some(-EBADF);
+                    return Some(Attempt::single(-EBADF));
                 }
-                self.world.attempt_tagged(
+                self.world.attempt_completion(
                     &p.op,
                     &mut self.bufs[self.pool_base..],
                     &self.limits,
                     p.world_tag,
                 )
             }
-            _ => self.world.attempt_tagged(
+            _ => self.world.attempt_completion(
                 &p.op,
                 &mut self.bufs[self.pool_base..],
                 &self.limits,
@@ -68,12 +82,23 @@ impl<W: World> Engine<W> {
         if n == 0 {
             return;
         }
+        self.step_seq += 1;
         let start = self.world.first(n);
         let mut visited = 0;
+        let mut skipped = 0;
         let mut i = start;
         while visited < n && !out.is_full() && !self.pending.is_empty() {
-            visited += 1;
             let idx = i % self.pending.len();
+            if self.pending[idx].last_delivered_step == self.step_seq {
+                skipped += 1;
+                if skipped >= self.pending.len() {
+                    break;
+                }
+                i = idx + 1;
+                continue;
+            }
+            skipped = 0;
+            visited += 1;
             let p = self.pending[idx];
             if p.chain_id != 0 && !p.chain_active {
                 i = idx + 1;
@@ -83,7 +108,7 @@ impl<W: World> Engine<W> {
                 if p.attached {
                     self.world.release(&p.op);
                 }
-                Some(-ECANCELED)
+                Some(Attempt::single(-ECANCELED))
             } else {
                 let visit = p.fresh
                     || matches!(p.op, Op::Timeout { .. } | Op::Cancel { .. } | Op::AwaitWake)
@@ -100,15 +125,25 @@ impl<W: World> Engine<W> {
                 }
             };
             match ready {
-                Some(result) => {
-                    self.pending.swap_remove(idx);
-                    self.finish_op(p, result);
-                    self.record_trace(p.token, result);
-                    out.push(Completion {
+                Some(Attempt { result, more, buf }) => {
+                    let c = Completion {
                         token: p.token,
                         result,
-                    });
-                    // `swap_remove` moved another entry into `idx`; visit it next.
+                        more,
+                        buf,
+                    };
+                    if more {
+                        self.pending[idx].last_delivered_step = self.step_seq;
+                        self.record_trace(c);
+                        out.push(c);
+                        i = idx + 1;
+                    } else {
+                        self.pending.swap_remove(idx);
+                        self.finish_op(p, result);
+                        self.record_trace(c);
+                        out.push(c);
+                        // `swap_remove` moved another entry into `idx`; visit it next.
+                    }
                 }
                 None => {
                     if self.world.claimed(&p.op) {

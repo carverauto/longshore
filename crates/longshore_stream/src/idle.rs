@@ -5,8 +5,14 @@
 
 //! Checking a connection that has been idle, before it carries another request.
 
-use super::*;
-use longshore_common::io::EAGAIN;
+use crate::stream::Stream;
+#[cfg(feature = "tls")]
+use crate::stream::Tls;
+use longshore_common::io::{BufId, Io, Op, EAGAIN};
+#[cfg(feature = "tls")]
+use longshore_common::io::{Sock, Token};
+#[cfg(feature = "tls")]
+use longshore_tls::record::{record_len, CONTENT_APPLICATION_DATA, CONTENT_HANDSHAKE};
 
 /// What a connection that should be silent turned out to hold.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -29,51 +35,63 @@ impl Stream {
     /// byte of `scratch` at `off` is used as the place to read into.
     pub fn check_idle<IO: Io>(&mut self, io: &mut IO, scratch: BufId, off: u32) -> IdleCheck {
         let (sock, token) = (self.sock, self.recv_token);
-        match self.tls.as_mut().filter(|t| t.active) {
-            None => {
-                Self::submit(
-                    io,
-                    token,
-                    Op::RecvNow {
-                        sock,
-                        buf: scratch,
-                        off,
-                        len: 1,
-                    },
-                );
-                IdleCheck::Pending
-            }
-            Some(t) => t.idle_step(io, sock, token),
+        #[cfg(feature = "tls")]
+        if let Some(t) = self.tls.as_mut().filter(|t| t.active) {
+            return t.idle_step(io, sock, token);
         }
+        Self::submit(
+            io,
+            token,
+            Op::RecvNow {
+                sock,
+                buf: scratch,
+                off,
+                len: 1,
+            },
+        );
+        IdleCheck::Pending
     }
 
     /// The read submitted by [`Stream::check_idle`] completed with `result`.
     pub fn on_idle_check<IO: Io>(&mut self, io: &mut IO, result: i32) -> IdleCheck {
-        let (sock, token) = (self.sock, self.recv_token);
-        let Some(t) = self.tls.as_mut().filter(|t| t.active) else {
-            return match result {
+        #[cfg(not(feature = "tls"))]
+        {
+            let _ = io;
+            match result {
                 r if r == -EAGAIN => IdleCheck::Clean,
                 r if r > 0 => IdleCheck::Dirty,
                 _ => IdleCheck::Closed,
-            };
-        };
-        if result == -EAGAIN {
-            // Nothing more has arrived. Part of a record left waiting is not
-            // silence: what it will turn out to be is unknown.
-            return if t.rx_start == t.rx_end {
-                IdleCheck::Clean
-            } else {
-                IdleCheck::Closed
-            };
+            }
         }
-        if result <= 0 {
-            return IdleCheck::Closed;
+        #[cfg(feature = "tls")]
+        {
+            let (sock, token) = (self.sock, self.recv_token);
+            let Some(t) = self.tls.as_mut().filter(|t| t.active) else {
+                return match result {
+                    r if r == -EAGAIN => IdleCheck::Clean,
+                    r if r > 0 => IdleCheck::Dirty,
+                    _ => IdleCheck::Closed,
+                };
+            };
+            if result == -EAGAIN {
+                // Nothing more has arrived. Part of a record left waiting is not
+                // silence: what it will turn out to be is unknown.
+                return if t.rx_start == t.rx_end {
+                    IdleCheck::Clean
+                } else {
+                    IdleCheck::Closed
+                };
+            }
+            if result <= 0 {
+                return IdleCheck::Closed;
+            }
+            t.rx_end += result as u32;
+            t.idle_step(io, sock, token)
         }
-        t.rx_end += result as u32;
-        t.idle_step(io, sock, token)
     }
 }
 
+#[cfg(feature = "tls")]
 impl Tls {
     /// Open every complete record already received, then read again without
     /// waiting. Session tickets are expected at any time and are skipped.

@@ -68,9 +68,12 @@ impl Client {
         c.sent = false;
         // The name the certificate must match is the host alone: a Host value
         // may carry a port, a server name may not.
-        let name = req.host.split(':').next().unwrap_or(req.host);
-        c.name[..name.len()].copy_from_slice(name.as_bytes());
-        c.name_len = name.len() as u8;
+        #[cfg(feature = "tls")]
+        {
+            let name = req.host.split(':').next().unwrap_or(req.host);
+            c.name[..name.len()].copy_from_slice(name.as_bytes());
+            c.name_len = name.len() as u8;
+        }
         if reuse {
             // If the idle check finds this connection dead, its replacement
             // is a new connection and goes where this request says. The

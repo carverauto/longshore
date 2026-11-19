@@ -174,6 +174,7 @@ pub fn s3_config(attempts_max: u32, enforce: bool) -> Config {
         backoff_max_ns: 800 * MS,
         require_checksums: enforce,
         http,
+        #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Fixed(ADDR),
     }

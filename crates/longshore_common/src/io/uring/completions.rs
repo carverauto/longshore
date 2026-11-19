@@ -101,29 +101,88 @@ impl UringIo {
 
     pub(super) fn finish(&mut self, i: u32, result: i32, out: &mut Completions) {
         let s = &mut self.slots[i as usize];
-        out.push(Completion {
-            token: Token(s.token),
-            result,
-        });
+        out.push(Completion::new(Token(s.token), result));
         s.state = State::Free;
         self.free.push(i);
     }
 
+    fn push_armed(
+        &mut self,
+        i: u32,
+        result: i32,
+        more: bool,
+        buf: Option<BufId>,
+        out: &mut Completions,
+    ) {
+        let s = &mut self.slots[i as usize];
+        out.push(Completion {
+            token: Token(s.token),
+            result,
+            more,
+            buf,
+        });
+        if !more {
+            s.state = State::Free;
+            self.free.push(i);
+        }
+    }
+
+    fn decode_cqe_buf(&mut self, c: &io_uring_cqe) -> Option<BufId> {
+        let base = self.limits.buffers + self.limits.small_buffers + self.limits.aligned_buffers;
+        let mut empty = None;
+        let buf = decode_ring_buf(c.flags, c.res, base, |id| empty = Some(id));
+        if let Some(id) = empty {
+            self.return_ring_buf(id);
+        }
+        buf
+    }
+
+    fn return_ring_buf(&mut self, _ring_id: u16) {}
+
     pub(super) fn on_cqe(&mut self, c: io_uring_cqe, out: &mut Completions) {
-        if c.user_data == INTERNAL_CANCEL || c.user_data == QUIESCE {
+        if matches!(c.user_data, INTERNAL_CANCEL | INTERNAL_SHUTDOWN | QUIESCE) {
             return;
         }
         let i = c.user_data as u32;
         let state = self.slots[i as usize].state;
-        if c.flags & IORING_CQE_F_NOTIF != 0 {
-            match state {
-                State::AwaitNotif => {
-                    let r = self.slots[i as usize].result;
-                    self.finish(i, r, out)
+        match dispatch_cqe(state, c.flags) {
+            CqeDispatch::SendZc => {
+                if c.flags & IORING_CQE_F_NOTIF != 0 {
+                    if state == State::AwaitNotif {
+                        let r = self.slots[i as usize].result;
+                        self.finish(i, r, out);
+                    } else {
+                        self.slots[i as usize].state = State::AwaitResult;
+                    }
+                    return;
                 }
-                _ => self.slots[i as usize].state = State::AwaitResult,
+                if c.flags & IORING_CQE_F_MORE != 0 {
+                    let s = &mut self.slots[i as usize];
+                    if s.state == State::AwaitResult {
+                        return self.finish(i, c.res, out);
+                    }
+                    s.result = c.res;
+                    s.state = State::AwaitNotif;
+                    return;
+                }
+                return self.finish(i, c.res, out);
             }
-            return;
+            CqeDispatch::Armed { more, read_buf } => {
+                let buf = if read_buf {
+                    self.decode_cqe_buf(&c)
+                } else {
+                    if c.res >= 0
+                        && !self.slots[i as usize].sock_closed
+                        && (c.res as u32) < self.limits.sockets_max
+                    {
+                        self.sock_stream[c.res as usize] = true;
+                    }
+                    None
+                };
+                self.push_armed(i, c.res, more, buf, out);
+                return;
+            }
+            CqeDispatch::Single => {}
         }
         match c.user_data & (7 << 32) {
             PHASE_FILE_OPEN => {
@@ -194,22 +253,22 @@ impl UringIo {
             let sqe = self.connect_sqe(i);
             return self.push(sqe);
         }
-        if c.flags & IORING_CQE_F_MORE != 0 {
-            // First half of a zero-copy send; the buffer is still pinned.
-            let s = &mut self.slots[i as usize];
-            if s.state == State::AwaitResult {
-                return self.finish(i, c.res, out);
-            }
-            s.result = c.res;
-            s.state = State::AwaitNotif;
-            return;
-        }
         if state == State::ConnectStep {
             let r = self.end_measure(i, c.res);
-            if r < 0 && !self.slots[i as usize].sock_closed {
+            let s = self.slots[i as usize];
+            if r < 0 && !s.sock_closed {
                 return self.release_socket(i, r);
             }
+            if r >= 0 && !s.sock_closed && s.is_stream {
+                self.sock_stream[s.sock as usize] = true;
+            }
             return self.finish(i, r, out);
+        }
+        if state == State::Accept {
+            let s = self.slots[i as usize];
+            if c.res >= 0 && !s.sock_closed {
+                self.sock_stream[s.sock as usize] = true;
+            }
         }
         if state == State::FileSlotOpen {
             let s = &self.slots[i as usize];
@@ -229,4 +288,43 @@ impl UringIo {
             };
         self.finish(i, r, out)
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum CqeDispatch {
+    SendZc,
+    Armed { more: bool, read_buf: bool },
+    Single,
+}
+
+pub(super) fn dispatch_cqe(state: State, flags: u32) -> CqeDispatch {
+    match state {
+        State::SendZc | State::AwaitNotif | State::AwaitResult => CqeDispatch::SendZc,
+        State::ArmedAccept => CqeDispatch::Armed {
+            more: flags & IORING_CQE_F_MORE != 0,
+            read_buf: false,
+        },
+        State::ArmedRecv => CqeDispatch::Armed {
+            more: flags & IORING_CQE_F_MORE != 0,
+            read_buf: true,
+        },
+        _ => CqeDispatch::Single,
+    }
+}
+
+pub(super) fn decode_ring_buf(
+    flags: u32,
+    res: i32,
+    base: u32,
+    on_empty: impl FnOnce(u16),
+) -> Option<BufId> {
+    if flags & IORING_CQE_F_BUFFER == 0 {
+        return None;
+    }
+    let ring_id = (flags >> IORING_CQE_BUFFER_SHIFT) as u16;
+    if res <= 0 {
+        on_empty(ring_id);
+        return None;
+    }
+    Some(BufId(base + ring_id as u32))
 }

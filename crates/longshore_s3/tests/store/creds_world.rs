@@ -116,6 +116,7 @@ pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: Validate)
         backoff_max_ns: 400 * MS,
         require_checksums: false,
         http,
+        #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Fixed(ADDR),
     });

@@ -11,7 +11,7 @@
 
 use crate::io::files::FileTable;
 use crate::io::{
-    Completion, Completions, FileId, Limits, Op, Sock, Token, Wake, EBADF, ECANCELED, ENOENT,
+    BufId, Completion, Completions, FileId, Limits, Op, Sock, Token, Wake, EBADF, ECANCELED, ENOENT,
 };
 use std::io;
 use std::net::SocketAddr;
@@ -20,6 +20,27 @@ use std::sync::Arc;
 
 mod backend;
 mod step;
+#[cfg(test)]
+mod tests;
+
+/// Result of attempting a pending operation in a [`World`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Attempt {
+    pub result: i32,
+    pub more: bool,
+    pub buf: Option<BufId>,
+}
+
+impl Attempt {
+    /// A single final completion carrying no selected buffer.
+    pub const fn single(result: i32) -> Self {
+        Self {
+            result,
+            more: false,
+            buf: None,
+        }
+    }
+}
 
 /// What a concrete backend provides to [`Engine`].
 pub trait World {
@@ -79,6 +100,18 @@ pub trait World {
     ) -> Option<i32> {
         self.attempt(op, pool, limits)
     }
+    /// Attempt an operation with its submission tag, returning completion
+    /// metadata (`more`, `buf`). Defaults to [`World::attempt_tagged`].
+    fn attempt_completion(
+        &mut self,
+        op: &Op,
+        pool: &mut [u8],
+        limits: &Limits,
+        tag: u64,
+    ) -> Option<Attempt> {
+        self.attempt_tagged(op, pool, limits, tag)
+            .map(Attempt::single)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -96,6 +129,7 @@ pub(crate) struct Pending {
     pub(crate) chain_active: bool,
     pub(crate) chain_aborted: bool,
     pub(crate) world_tag: u64,
+    pub(crate) last_delivered_step: u64,
 }
 
 /// [`crate::io::Io`] implementation backed by a [`World`].
@@ -109,6 +143,7 @@ pub struct Engine<W> {
     pub(crate) files: FileTable,
     pub(crate) next_op_id: u64,
     pub(crate) next_chain_id: u64,
+    pub(crate) step_seq: u64,
     pub(crate) trace: u64,
     pub(crate) woken: Arc<AtomicBool>,
 }
@@ -129,6 +164,7 @@ impl<W: World> Engine<W> {
             files: FileTable::new(limits.files_max),
             next_op_id: 0,
             next_chain_id: 0,
+            step_seq: 0,
             trace: 0xcbf2_9ce4_8422_2325,
             woken: Arc::new(AtomicBool::new(false)),
         }

@@ -76,6 +76,7 @@ pub struct Config {
     pub http: client::Config,
     /// With `Some`, connections use TLS: the handshake setup, and the first
     /// of the `2 * http.connections_max` pool buffers the record layer uses.
+    #[cfg(feature = "tls")]
     pub tls: Option<(longshore_tls::handshake::ClientSetup, u32)>,
     /// Where the store is. With `Resolved`, host index 0 of the resolver is used.
     pub endpoint: Endpoint,

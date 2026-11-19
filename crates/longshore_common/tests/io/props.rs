@@ -79,6 +79,8 @@ fn completions_come_out_in_the_order_they_went_in(tc: TestCase) {
             let c = Completion {
                 token: Token(tc.draw(gs::integers::<u64>())),
                 result: tc.draw(gs::integers::<i32>()),
+                more: tc.draw(gs::booleans()),
+                buf: tc.draw(gs::optional(gs::integers::<u32>())).map(BufId),
             };
             buf.push(c);
             model.push_back(c);

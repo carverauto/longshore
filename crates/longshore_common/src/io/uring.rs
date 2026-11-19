@@ -25,7 +25,10 @@ mod fault;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
 mod ops;
+mod ops_file;
 mod setup;
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -38,6 +41,16 @@ enum State {
     /// The connect failed; the socket it created is being closed so that
     /// its slot is free again before the failure is reported.
     ConnectRelease,
+    /// Single-shot accept in flight.
+    Accept,
+    /// Armed multishot accept in flight.
+    #[allow(dead_code)] // Wired in M4b.
+    ArmedAccept,
+    /// Armed multishot receive in flight.
+    #[allow(dead_code)] // Wired in M4b.
+    ArmedRecv,
+    /// Zero-copy send in flight (waiting for send result and/or notif).
+    SendZc,
     /// A timer. Its normal expiry arrives as `-ETIME`.
     Timer,
     /// Waiting on the wake-up eventfd. A read of its 8 bytes is a wake.
@@ -64,6 +77,7 @@ struct Slot {
     state: State,
     result: i32,
     sock: u32,
+    is_stream: bool,
     file_slot: FileSlot,
     file_direct: bool,
     /// The socket slot this operation is in flight on, if any (`Accept` uses
@@ -100,17 +114,7 @@ pub(super) struct ReadyQueue {
 impl ReadyQueue {
     pub(super) fn new(capacity: usize) -> Self {
         Self {
-            items: vec![
-                (
-                    0,
-                    Completion {
-                        token: Token(0),
-                        result: 0
-                    }
-                );
-                capacity
-            ]
-            .into_boxed_slice(),
+            items: vec![(0, Completion::new(Token(0), 0)); capacity].into_boxed_slice(),
             head: 0,
             len: 0,
         }
@@ -159,6 +163,7 @@ pub struct UringIo {
     pool_base: usize,
     buf_range: Box<[u16]>,
     slots: Box<[Slot]>,
+    sock_stream: Box<[bool]>,
     /// Completions the kernel still owes: one per SQE pushed, and one more
     /// after each that says more follow (a zero-copy send's notification).
     in_flight: u32,
@@ -187,6 +192,8 @@ const PHASE_SOCK_RELEASE: u64 = 5 << 32;
 const QUIESCE: u64 = 6 << 32;
 /// Internal cancel submitted by `Op::Close` for sibling ops on the socket.
 const INTERNAL_CANCEL: u64 = 7 << 32;
+/// Internal shutdown submitted by `Op::Close` before closing a connected stream socket.
+const INTERNAL_SHUTDOWN: u64 = 8 << 32;
 
 /// The other threads' end of the wake-up eventfd.
 struct EventFd(i32);
@@ -280,7 +287,7 @@ impl UringIo {
             }
             while let Some(c) = self.reap() {
                 match c.user_data {
-                    QUIESCE | INTERNAL_CANCEL => {}
+                    QUIESCE | INTERNAL_CANCEL | INTERNAL_SHUTDOWN => {}
                     t if t == QUIESCE | 1 => timing = false,
                     _ => {
                         self.on_cqe(c, &mut out);

@@ -14,6 +14,7 @@ use longshore_common::io::uring::UringIo;
 use longshore_common::io::{BufId, Completions, Io, Limits, Sock};
 use longshore_dns::Resolver;
 use longshore_http_client::client as http;
+#[cfg(feature = "tls")]
 use longshore_tls::handshake::ClientSetup;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -85,8 +86,16 @@ pub fn run<B: Backend>(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lan
     // Large buffers: two per connection for TLS records, then the lent
     // ones. Small buffers: one head per connection, three for DNS, one for
     // rereading the credentials file.
-    let tls_buffers = if b.tls { 2 * conns } else { 0 };
-    let buffer_size = b.buffer_size.max(if b.tls { 256 * 1024 } else { 8192 });
+    let tls_buffers = if cfg!(feature = "tls") && b.tls {
+        2 * conns
+    } else {
+        0
+    };
+    let buffer_size = b.buffer_size.max(if cfg!(feature = "tls") && b.tls {
+        256 * 1024
+    } else {
+        8192
+    });
     #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: conns + 2,
@@ -167,6 +176,7 @@ pub fn run<B: Backend>(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lan
             tls_records_max: http::TLS_RECORDS_MAX,
             check_idle: true,
         },
+        #[cfg(feature = "tls")]
         tls: b.tls.then(|| (ClientSetup::with_public_roots(), 0)),
         endpoint,
     });

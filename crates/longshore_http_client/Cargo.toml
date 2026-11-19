@@ -8,9 +8,14 @@ repository = "https://github.com/carverauto/longshore"
 readme = "README.md"
 autotests = false
 
+[features]
+default = ["tls"]
+tls = ["longshore_stream/tls", "dep:longshore_tls"]
+
 [dependencies]
 longshore_common.workspace = true
-longshore_tls.workspace = true
+longshore_stream.workspace = true
+longshore_tls = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Turns the simulator on for this crate's own tests.

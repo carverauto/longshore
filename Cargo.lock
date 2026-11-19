@@ -635,6 +635,7 @@ dependencies = [
  "longshore_dns",
  "longshore_http_client",
  "longshore_s3",
+ "longshore_stream",
  "longshore_tls",
 ]
 
@@ -687,6 +688,7 @@ version = "0.1.1"
 dependencies = [
  "hegeltest",
  "longshore_common",
+ "longshore_stream",
  "longshore_tls",
  "rcgen",
 ]
@@ -700,10 +702,20 @@ dependencies = [
  "longshore_crc",
  "longshore_dns",
  "longshore_http_client",
+ "longshore_stream",
  "longshore_tls",
  "loom",
  "rcgen",
  "ring",
+]
+
+[[package]]
+name = "longshore_stream"
+version = "0.1.1"
+dependencies = [
+ "longshore_common",
+ "longshore_tls",
+ "rcgen",
 ]
 
 [[package]]

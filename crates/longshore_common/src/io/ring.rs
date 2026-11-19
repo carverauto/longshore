@@ -77,8 +77,18 @@ impl Ring {
     /// Create a ring. Must be called on the thread that will submit when
     /// `IORING_SETUP_SINGLE_ISSUER` is set.
     pub fn new(entries: u32, flags: u32) -> io::Result<Ring> {
+        Self::setup(entries, None, flags)
+    }
+
+    /// Create a ring with an explicit completion queue size (`IORING_SETUP_CQSIZE`).
+    pub fn with_cq(entries: u32, cq_entries: u32, flags: u32) -> io::Result<Ring> {
+        Self::setup(entries, Some(cq_entries), flags | IORING_SETUP_CQSIZE)
+    }
+
+    fn setup(entries: u32, cq_entries: Option<u32>, flags: u32) -> io::Result<Ring> {
         let mut p = io_uring_params {
             flags,
+            cq_entries: cq_entries.unwrap_or(0),
             ..Default::default()
         };
         let fd = unsafe { syscall(SYS_IO_URING_SETUP, entries, &mut p as *mut io_uring_params) }
@@ -88,7 +98,8 @@ impl Ring {
             return Err(io::Error::new(
                 e.kind(),
                 format!(
-                    "io_uring_setup(entries={entries}, flags={flags:#x}) failed: {e}; {}",
+                    "io_uring_setup(entries={entries}, cq_entries={}, flags={flags:#x}) failed: {e}; {}",
+                    cq_entries.unwrap_or(0),
                     setup_hint(&e)
                 ),
             ));

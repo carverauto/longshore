@@ -232,6 +232,8 @@
 //!
 //! # Features
 //!
+//! - `tls` (default): TLS 1.3 via `longshore_tls`. Without it `longshore`
+//!   depends on neither `longshore_tls` nor `aws-lc-sys`.
 //! - `sim`: the deterministic simulator, for tests.
 //! - `fault-injection`: lets a test break a running client's ring. Off
 //!   everywhere else.
@@ -244,8 +246,10 @@
 //! - [`io`], from `longshore_common`: the [`io::Io`] trait every layer is
 //!   written against, the `io_uring` backend, and the portable POSIX
 //!   (`kqueue`/`epoll`) backend.
-//! - [`dns`], [`http`], [`tls`]: the protocols, from `longshore_dns`,
-//!   `longshore_http_client` and `longshore_tls`.
+//! - [`dns`], [`stream`], [`http`]: the protocols, from `longshore_dns`,
+//!   `longshore_stream` and `longshore_http_client`.
+//! - `tls` (feature `tls`), from `longshore_tls`: TLS 1.3 handshake and
+//!   record layer.
 //! - [`checksum`], from `longshore_crc`.
 //! - [`store`], from `longshore_s3`: the object store API: operations,
 //!   signing, retries, listing and credentials.
@@ -263,4 +267,6 @@ pub use longshore_dns as dns;
 pub use longshore_http_client as http;
 pub use longshore_s3 as store;
 pub use longshore_s3::{client, crypto};
+pub use longshore_stream as stream;
+#[cfg(feature = "tls")]
 pub use longshore_tls as tls;

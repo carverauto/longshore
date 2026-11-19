@@ -138,6 +138,10 @@ impl Builder {
 
     fn check(&self) -> Result<(), BuildError> {
         let bad = |what| Err(BuildError::Setting(what));
+        #[cfg(not(feature = "tls"))]
+        if self.tls {
+            return bad("TLS requires the `tls` feature");
+        }
         #[cfg(target_os = "macos")]
         if self.pin.is_some() {
             return bad("pinning threads to cores is not supported on macOS");
