@@ -49,6 +49,10 @@ name = "io_posix_files"
 path = "tests/io/posix_files.rs"
 
 [[test]]
+name = "io_uring_faults"
+path = "tests/io/uring_faults.rs"
+
+[[test]]
 name = "guard_death"
 path = "tests/guard/death.rs"
 

@@ -20,6 +20,10 @@ fault-injection = ["longshore/fault-injection"]
 name = "client_faults"
 required-features = ["fault-injection"]
 
+[[bin]]
+name = "uring_faults"
+required-features = ["fault-injection"]
+
 [dev-dependencies]
 aes-gcm.workspace = true
 aws-lc-rs.workspace = true

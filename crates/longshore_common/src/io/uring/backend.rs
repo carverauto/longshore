@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::io::files::check_unix_path;
-use crate::io::{EINVAL, ENAMETOOLONG};
+use crate::io::{EINVAL, ENAMETOOLONG, ENFILE};
 use core::ffi::c_int;
 
 impl Io for UringIo {
@@ -121,6 +121,11 @@ impl Io for UringIo {
                     listener.0 < self.limits.sockets_max,
                     "socket slot out of range"
                 );
+                if self.limits.accept_range_len == 0 {
+                    self.slots[i as usize].state = State::Free;
+                    self.ready.push(i, Completion::new(token, -ENFILE));
+                    return Ok(());
+                }
             }
             Op::ArmedRecv { sock } => {
                 assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");

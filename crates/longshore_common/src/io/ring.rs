@@ -280,23 +280,39 @@ impl Ring {
 
     /// Install `fd` at index `slot` of the registered file table.
     pub fn update_file(&mut self, slot: u32, fd: i32) -> io::Result<()> {
+        self.update_file_raw(slot, fd)
+            .map_err(io::Error::from_raw_os_error)
+    }
+
+    /// Install `fd` at index `slot` of the registered file table, returning the
+    /// raw OS errno without heap allocation on error.
+    pub fn update_file_raw(&mut self, slot: u32, fd: i32) -> Result<(), i32> {
         let fds = [fd];
         let up = io_uring_files_update {
             offset: slot,
             resv: 0,
             fds: fds.as_ptr() as u64,
         };
-        self.register(
+        self.register_raw(
             IORING_REGISTER_FILES_UPDATE,
             (&up as *const io_uring_files_update).cast(),
             1,
         )
     }
 
-    fn register(&mut self, op: u32, arg: *const c_void, n: u32) -> io::Result<()> {
+    fn register_raw(&mut self, op: u32, arg: *const c_void, n: u32) -> Result<(), i32> {
         let r = unsafe { syscall(SYS_IO_URING_REGISTER, self.fd, op, arg, n) };
         if r < 0 {
-            let e = io::Error::last_os_error();
+            return Err(io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(crate::io::EINVAL));
+        }
+        Ok(())
+    }
+
+    fn register(&mut self, op: u32, arg: *const c_void, n: u32) -> io::Result<()> {
+        if let Err(errno) = self.register_raw(op, arg, n) {
+            let e = io::Error::from_raw_os_error(errno);
             return Err(io::Error::new(
                 e.kind(),
                 format!("io_uring_register(op={op}, n={n}) failed: {e}"),

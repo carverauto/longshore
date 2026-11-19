@@ -46,10 +46,10 @@ while read -r target dest <&3; do
     cargo build --release --quiet --target "$target" -p longshore-bench --bin contract_uring --bin server_uring --bin file_uring --bin echo_uring --bin http_uring --bin dns_uring --bin client_uring
     # Built apart from the rest: its feature lets a test break a ring, and
     # no other program is built with that in it.
-    cargo build --release --quiet --target "$target" -p longshore-bench --features fault-injection --bin client_faults
+    cargo build --release --quiet --target "$target" -p longshore-bench --features fault-injection --bin client_faults --bin uring_faults
     bin="target/$target/release"
     $SSH "$dest" "mkdir -p longshore-bench/$ID"
-    scp -q -o BatchMode=yes "$bin/contract_uring" "$bin/server_uring" "$bin/file_uring" "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$dest:longshore-bench/$ID/" </dev/null
+    scp -q -o BatchMode=yes "$bin/contract_uring" "$bin/server_uring" "$bin/file_uring" "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$bin/uring_faults" "$dest:longshore-bench/$ID/" </dev/null
     # Each check seals the heap after setup and exits non-zero on any failure.
     if $SSH "$dest" "cd longshore-bench/$ID && set -e
         file_dir=.
@@ -89,6 +89,7 @@ while read -r target dest <&3; do
         timeout 250 ./client_faults break tick --threads 4
         timeout 250 ./client_faults break ring --threads 4
         timeout 250 ./client_faults churn
+        timeout 60 ./uring_faults
         timeout 30 ./dns_uring example.com
         DNS_FAMILY=prefer6 timeout 30 ./dns_uring example.com"; then
         echo "== $target on $dest: ok"

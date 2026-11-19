@@ -54,10 +54,9 @@ impl UringIo {
                 return None;
             }
         }
-        if let Err(e) = self.ring.update_file(sock.0, fd) {
+        if let Err(errno) = self.ring.update_file_raw(sock.0, fd) {
             unsafe { close(fd) };
             if opts {
-                let errno = e.raw_os_error().unwrap_or(crate::io::EINVAL);
                 self.slots[i as usize].state = State::Free;
                 self.ready.push(i, Completion::new(token, -errno));
             }

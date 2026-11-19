@@ -126,11 +126,12 @@ jobs:
       - name: Client I/O threads failing and torn down under load
         run: |
           sudo prlimit --pid $$ --memlock=unlimited:unlimited
-          cargo build --release -p longshore-bench --features fault-injection --bin client_faults
+          cargo build --release -p longshore-bench --features fault-injection --bin client_faults --bin uring_faults
           cd target/release
           timeout 250 ./client_faults break tick
           timeout 250 ./client_faults break ring
           timeout 250 ./client_faults churn
+          timeout 60 ./uring_faults
 
   sanitizers:
     name: Client teardown under the address and thread sanitizers
