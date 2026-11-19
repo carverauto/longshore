@@ -630,6 +630,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 name = "longshore"
 version = "0.1.1"
 dependencies = [
+ "longshore",
  "longshore_common",
  "longshore_crc",
  "longshore_dns",
@@ -638,6 +639,7 @@ dependencies = [
  "longshore_s3",
  "longshore_stream",
  "longshore_tls",
+ "rcgen",
 ]
 
 [[package]]

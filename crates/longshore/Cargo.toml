@@ -8,6 +8,7 @@ repository = "https://github.com/carverauto/longshore"
 readme = "../../README.md"
 keywords = ["s3", "object-storage", "io-uring", "gcs"]
 categories = ["network-programming", "web-programming::http-client"]
+autotests = false
 
 [features]
 default = ["tls"]
@@ -32,6 +33,17 @@ longshore_mailbox.workspace = true
 longshore_s3.workspace = true
 longshore_stream.workspace = true
 longshore_tls = { workspace = true, optional = true }
+
+[dev-dependencies]
+# By path only, with no version: cargo leaves such a development dependency
+# out of the published crate, and turns `sim` on for `tests/e2e` without
+# enabling default `tls` under `--no-default-features`.
+longshore = { path = ".", default-features = false, features = ["sim"] }
+rcgen.workspace = true
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
 
 [package.metadata.docs.rs]
 # io_uring is Linux only, and the simulator is part of the documented API.
