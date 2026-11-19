@@ -61,6 +61,10 @@ name = "sim_faults"
 path = "tests/sim/faults.rs"
 
 [[test]]
+name = "sim_armed_faults"
+path = "tests/sim/armed_faults.rs"
+
+[[test]]
 name = "sim_sockets"
 path = "tests/sim/sockets.rs"
 

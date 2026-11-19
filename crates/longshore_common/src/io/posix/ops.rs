@@ -10,7 +10,7 @@ use super::abi_linux::*;
 #[cfg(target_os = "macos")]
 use super::abi_macos::*;
 use super::errno::{self, to_linux_errno};
-use super::sock::{accept_socket, open_socket, sockaddr_from};
+use super::sock::{accept_socket, apply_tcp_options, open_socket, sockaddr_from};
 use super::{Posix, SockKind};
 use crate::io::{Limits, Op, Sock};
 use core::ffi::{c_int, c_void};
@@ -48,6 +48,9 @@ impl Posix {
             Op::Close { sock } => {
                 let s = &mut self.socks[sock.0 as usize];
                 if s.fd >= 0 {
+                    if s.kind == SockKind::Open {
+                        unsafe { shutdown(s.fd, SHUT_RDWR) };
+                    }
                     self.poller.before_close(s);
                     unsafe { close(s.fd) };
                     s.reset();
@@ -65,48 +68,50 @@ impl Posix {
         }
     }
 
-    fn attempt_connect(&mut self, sock: Sock, addr: SocketAddr) -> Option<i32> {
-        let idx = sock.0 as usize;
-        if self.socks[idx].kind == SockKind::Connecting {
-            let fd = self.socks[idx].fd;
-            let mut err: c_int = 0;
-            let mut elen = size_of::<c_int>() as u32;
-            if unsafe {
-                getsockopt(
-                    fd,
-                    SOL_SOCKET,
-                    SO_ERROR,
-                    (&mut err as *mut c_int).cast(),
-                    &mut elen,
-                )
-            } < 0
-            {
-                err = os_errno();
-            }
-            if err != 0 {
-                self.poller.before_close(&mut self.socks[idx]);
-                unsafe { close(fd) };
-                self.socks[idx].reset();
-                return Some(to_linux_errno(err));
-            }
-            let mut peer = sockaddr_storage::default();
-            let mut plen = size_of::<sockaddr_storage>() as u32;
-            if unsafe { getpeername(fd, (&mut peer as *mut sockaddr_storage).cast(), &mut plen) }
-                == 0
-            {
-                self.socks[idx].kind = SockKind::Open;
-                return Some(0);
-            }
-            let e = os_errno();
-            if e == OS_ENOTCONN {
-                self.socks[idx].write_ready = false;
-                self.poller.arm_write(idx, &mut self.socks[idx]);
-                return None;
-            }
+    pub(super) fn finish_connecting(&mut self, idx: usize) -> Option<i32> {
+        let fd = self.socks[idx].fd;
+        let mut err: c_int = 0;
+        let mut elen = size_of::<c_int>() as u32;
+        if unsafe {
+            getsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_ERROR,
+                (&mut err as *mut c_int).cast(),
+                &mut elen,
+            )
+        } < 0
+        {
+            err = os_errno();
+        }
+        if err != 0 {
             self.poller.before_close(&mut self.socks[idx]);
             unsafe { close(fd) };
             self.socks[idx].reset();
-            return Some(to_linux_errno(e));
+            return Some(to_linux_errno(err));
+        }
+        let mut peer = sockaddr_storage::default();
+        let mut plen = size_of::<sockaddr_storage>() as u32;
+        if unsafe { getpeername(fd, (&mut peer as *mut sockaddr_storage).cast(), &mut plen) } == 0 {
+            self.socks[idx].kind = SockKind::Open;
+            return Some(0);
+        }
+        let e = os_errno();
+        if e == OS_ENOTCONN {
+            self.socks[idx].write_ready = false;
+            self.poller.arm_write(idx, &mut self.socks[idx]);
+            return None;
+        }
+        self.poller.before_close(&mut self.socks[idx]);
+        unsafe { close(fd) };
+        self.socks[idx].reset();
+        Some(to_linux_errno(e))
+    }
+
+    fn attempt_connect(&mut self, sock: Sock, addr: SocketAddr) -> Option<i32> {
+        let idx = sock.0 as usize;
+        if self.socks[idx].kind == SockKind::Connecting {
+            return self.finish_connecting(idx);
         }
 
         let domain = match addr {
@@ -117,6 +122,12 @@ impl Posix {
             Ok(fd) => fd,
             Err(e) => return Some(to_linux_errno(e)),
         };
+        if self.no_delay || self.keep_alive {
+            if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
+                unsafe { close(fd) };
+                return Some(to_linux_errno(e));
+            }
+        }
         let (sa, sa_len) = sockaddr_from(addr);
         if unsafe { connect(fd, (&sa as *const sockaddr_storage).cast(), sa_len) } == 0 {
             self.socks[idx].reset();

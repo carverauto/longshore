@@ -67,6 +67,10 @@ impl<W: World> Engine<W> {
                     p.world_tag,
                 )
             }
+            Op::ConnectUnix { sock, .. } => self
+                .world
+                .attempt_connect_unix(sock, &p.unix_path[..p.unix_len as usize])
+                .map(Attempt::single),
             _ => self.world.attempt_completion(
                 &p.op,
                 &mut self.bufs[self.pool_base..],
@@ -162,11 +166,14 @@ impl<W: World> Engine<W> {
                 for q in self.pending.iter_mut() {
                     let on_sock = match q.op {
                         Op::Connect { sock: s, .. }
+                        | Op::ConnectUnix { sock: s, .. }
                         | Op::ConnectUdp { sock: s, .. }
                         | Op::Accept { listener: s, .. }
+                        | Op::ArmedAccept { listener: s }
                         | Op::Send { sock: s, .. }
                         | Op::Recv { sock: s, .. }
-                        | Op::RecvNow { sock: s, .. } => s == sock,
+                        | Op::RecvNow { sock: s, .. }
+                        | Op::ArmedRecv { sock: s } => s == sock,
                         _ => false,
                     };
                     if on_sock {

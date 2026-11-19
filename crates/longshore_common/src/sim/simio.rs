@@ -5,8 +5,11 @@
 
 //! Deterministic virtual world ([`Virtual`]) and its [`SimIo`] engine alias.
 
-use crate::io::engine::{Engine, World};
-use crate::io::{FileId, Limits, Op, Sock, Wake, EAGAIN, ECONNREFUSED, ECONNRESET, ENOENT, EPIPE};
+use crate::io::engine::{Attempt, Engine, World};
+use crate::io::{
+    BufId, FileId, Limits, Op, Sock, Wake, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET, ENAMETOOLONG,
+    ENFILE, ENOBUFS, ENOENT, EPIPE,
+};
 use crate::sim::prng::Prng;
 use std::io;
 use std::net::SocketAddr;
@@ -16,6 +19,7 @@ use std::sync::Arc;
 mod disk;
 pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
 mod ops;
+mod ops_armed;
 mod world;
 
 /// Fault probabilities, in parts per million, evaluated per attempt.
@@ -51,9 +55,15 @@ pub(super) enum SockState {
     UdpConnected,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SimAddr {
+    Ip(SocketAddr),
+    Unix([u8; 108], u8),
+}
+
 pub(super) struct SimSock {
     pub(super) state: SockState,
-    pub(super) addr: Option<SocketAddr>,
+    pub(super) addr: Option<SimAddr>,
     pub(super) peer: u32,
     /// Bytes in flight towards this socket.
     pub(super) rx: Box<[u8]>,
@@ -111,6 +121,14 @@ pub struct Virtual {
     pub(super) routes: Vec<Route>,
     /// The path limit connects to routed addresses report with their size.
     pub(super) path_limit: u32,
+    pub(super) ring_base: u32,
+    pub(super) ring_free: Box<[u16]>,
+    pub(super) ring_free_len: usize,
+    pub(super) ring_in_free: Box<[bool]>,
+    pub(super) accept_start: u32,
+    pub(super) accept_len: u32,
+    pub(super) no_delay: bool,
+    pub(super) keep_alive: bool,
 }
 
 impl Virtual {
@@ -127,6 +145,7 @@ impl Virtual {
             has_peer: false,
             segment: 0,
         };
+        let ring_count = limits.ring_buffers as usize;
         Self {
             faults,
             rng: Prng::new(seed),
@@ -140,6 +159,14 @@ impl Virtual {
             disk_counters: DiskFaultCounters::default(),
             routes: Vec::new(),
             path_limit: 0,
+            ring_base: limits.ring_base(),
+            ring_free: (0..limits.ring_buffers as u16).rev().collect(),
+            ring_free_len: ring_count,
+            ring_in_free: vec![true; ring_count].into_boxed_slice(),
+            accept_start: limits.accept_range_start,
+            accept_len: limits.accept_range_len,
+            no_delay: false,
+            keep_alive: false,
         }
     }
 
@@ -155,6 +182,12 @@ impl Virtual {
             s.has_peer = false;
             s.segment = 0;
         }
+        let n = self.ring_free.len();
+        for (i, slot) in self.ring_free.iter_mut().enumerate() {
+            *slot = (n - 1 - i) as u16;
+        }
+        self.ring_free_len = n;
+        self.ring_in_free.fill(true);
         if let Some(disk) = self.disk.as_mut() {
             disk.power_loss(&mut self.rng);
         }
@@ -266,7 +299,7 @@ impl SimIo {
     pub fn bind_udp(&mut self, sock: Sock, addr: SocketAddr) {
         let s = &mut self.world_mut().socks[sock.0 as usize];
         s.state = SockState::UdpBound;
-        s.addr = Some(addr);
+        s.addr = Some(SimAddr::Ip(addr));
         s.has_peer = false;
         s.rx_head = 0;
         s.rx_len = 0;

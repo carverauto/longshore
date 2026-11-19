@@ -148,3 +148,68 @@ fn completion_new_sets_final_with_no_buffer() {
     assert!(!c.more);
     assert_eq!(c.buf, None);
 }
+
+#[test]
+fn ring_buffers_tile_after_aligned_and_validate_invariants() {
+    let l = Limits {
+        sockets_max: 8,
+        accept_range_start: 2,
+        accept_range_len: 6,
+        buffers: 1,
+        buffer_size: 1000,
+        small_buffers: 1,
+        small_buffer_size: 10,
+        aligned_buffers: 1,
+        aligned_buffer_size: 4096,
+        block_size: 4096,
+        ring_buffers: 2,
+        ring_buffer_size: 256,
+        ops_max: 1,
+        ..Limits::BASE
+    };
+    assert_eq!(l.ring_base(), 3);
+    assert_eq!(l.buffer_count(), 5);
+    assert_eq!(l.ring(0), BufId(3));
+    assert_eq!(l.ring(1), BufId(4));
+    assert!(!l.is_ring_buf(BufId(2)));
+    assert!(l.is_ring_buf(BufId(3)));
+    assert!(l.is_ring_buf(BufId(4)));
+    assert!(!l.is_ring_buf(BufId(5)));
+    assert_eq!(l.span(l.ring(0)), (8192, 256));
+    assert_eq!(l.span(l.ring(1)), (8192 + 256, 256));
+    assert_eq!(l.pool_bytes(), 8192 + 512 + 4096);
+}
+
+#[test]
+#[should_panic(expected = "ring_buffers must be <= 32_768")]
+fn ring_buffers_above_32768_are_refused() {
+    let l = Limits {
+        ring_buffers: 32_769,
+        ring_buffer_size: 64,
+        ..Limits::BASE
+    };
+    l.validate();
+}
+
+#[test]
+#[should_panic(expected = "ring_buffer_size must be > 0")]
+fn zero_ring_buffer_size_is_refused() {
+    let l = Limits {
+        ring_buffers: 1,
+        ring_buffer_size: 0,
+        ..Limits::BASE
+    };
+    l.validate();
+}
+
+#[test]
+#[should_panic(expected = "accept_range_start + accept_range_len must be <= sockets_max")]
+fn accept_range_past_sockets_max_is_refused() {
+    let l = Limits {
+        sockets_max: 4,
+        accept_range_start: 2,
+        accept_range_len: 3,
+        ..Limits::BASE
+    };
+    l.validate();
+}

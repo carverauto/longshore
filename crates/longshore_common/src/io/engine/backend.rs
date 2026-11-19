@@ -34,6 +34,27 @@ impl<W: World> Io for Engine<W> {
         self.world.listen(sock, addr)
     }
 
+    fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.world.listen_unix(sock, path)
+    }
+
+    fn no_delay(&mut self, on: bool) {
+        self.world.no_delay(on);
+    }
+
+    fn keep_alive(&mut self, on: bool) {
+        self.world.keep_alive(on);
+    }
+
+    fn give_back(&mut self, id: BufId) {
+        assert!(
+            self.limits.is_ring_buf(id),
+            "give_back requires a ring buffer"
+        );
+        self.world.give_back(id);
+    }
+
     fn measure_segment_sizes(&mut self, on: bool) {
         self.world.measure_segment_sizes(on);
     }
@@ -53,6 +74,51 @@ impl<W: World> Io for Engine<W> {
                 return Ok(());
             }
         }
+        let (unix_path, unix_len) = match op {
+            Op::ArmedAccept { listener } => {
+                assert!(
+                    listener.0 < self.limits.sockets_max,
+                    "socket slot out of range"
+                );
+                ([0u8; 108], 0)
+            }
+            Op::ArmedRecv { sock } => {
+                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                if self.limits.ring_buffers == 0 {
+                    self.ready.push(Completion::new(token, -ENOBUFS));
+                    return Ok(());
+                }
+                ([0u8; 108], 0)
+            }
+            Op::ConnectUnix {
+                sock,
+                path_buf,
+                path_off,
+                path_len,
+            } => {
+                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                let pool = &self.bufs[self.pool_base..];
+                match crate::io::files::check_unix_path(
+                    pool,
+                    &self.limits,
+                    path_buf,
+                    path_off,
+                    path_len,
+                    108,
+                ) {
+                    Ok(slice) => {
+                        let mut buf = [0u8; 108];
+                        buf[..slice.len()].copy_from_slice(slice);
+                        (buf, slice.len() as u8)
+                    }
+                    Err(errno) => {
+                        self.ready.push(Completion::new(token, errno));
+                        return Ok(());
+                    }
+                }
+            }
+            _ => ([0u8; 108], 0),
+        };
         let deadline = match op {
             Op::Timeout { nanos } => self.world.now_ns() + nanos,
             _ => 0,
@@ -89,6 +155,8 @@ impl<W: World> Io for Engine<W> {
             chain_aborted: false,
             world_tag,
             last_delivered_step: 0,
+            unix_path,
+            unix_len,
         });
         Ok(())
     }
@@ -130,6 +198,8 @@ impl<W: World> Io for Engine<W> {
                 chain_aborted: false,
                 world_tag,
                 last_delivered_step: 0,
+                unix_path: [0u8; 108],
+                unix_len: 0,
             });
         }
         Ok(())

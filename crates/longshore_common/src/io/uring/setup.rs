@@ -140,7 +140,12 @@ impl UringIo {
         let table_len = check_nofile_limit(&limits)?;
         // Room for one SQE + one internal cancel SQE per operation, and `quiesce`'s two SQEs.
         let entries = (limits.ops_max * 2 + 2).next_power_of_two().max(8);
-        let cq_entries = cq_size(entries, limits.ops_max, 0, 0)?;
+        let cq_entries = cq_size(
+            entries,
+            limits.ops_max,
+            limits.ring_buffers,
+            limits.accept_range_len,
+        )?;
         let mut ring = Ring::with_cq(
             entries,
             cq_entries,
@@ -153,6 +158,18 @@ impl UringIo {
         if table_len > 0 {
             ring.register_files(&vec![-1i32; table_len as usize])?;
         }
+        if limits.accept_range_len > 0 {
+            ring.register_file_alloc_range(limits.accept_range_start, limits.accept_range_len)?;
+        }
+        let buf_ring = if limits.ring_buffers > 0 {
+            Some(
+                BufRing::new(&mut ring, &limits, &bufs, pool_base)
+                    .map_err(|e| name_memlock_limit(e, limits.pool_bytes()))?,
+            )
+        } else {
+            None
+        };
+        let ring_in_ring = vec![true; limits.ring_buffers as usize].into_boxed_slice();
         let slot = Slot {
             cancel_requested: false,
             token: 0,
@@ -180,6 +197,8 @@ impl UringIo {
             bufs,
             pool_base,
             buf_range,
+            buf_ring,
+            ring_in_ring,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
             sock_stream: vec![false; limits.sockets_max as usize].into_boxed_slice(),
             in_flight: 0,
@@ -193,6 +212,10 @@ impl UringIo {
             files: Vec::new(),
             wake_fd: -1,
             measure_segments: false,
+            no_delay: false,
+            keep_alive: false,
+            last_listen_opts: None,
+            last_connect_opts: None,
             #[cfg(feature = "fault-injection")]
             fail_tick: false,
         })

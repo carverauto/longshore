@@ -6,11 +6,11 @@
 //! [`Io`] on io_uring: one ring, one thread, registered buffers and files.
 
 use crate::io::files::FileTable;
-use crate::io::ring::Ring;
+use crate::io::ring::{buf_ring::BufRing, Ring};
 use crate::io::sys::*;
 use crate::io::{
     BufId, Busy, Completion, Completions, FileId, FileSlot, Io, Limits, Op, Sock, Token, ECANCELED,
-    ETIME,
+    ENOBUFS, ETIME,
 };
 use core::mem::ManuallyDrop;
 use std::ffi::CString;
@@ -44,10 +44,8 @@ enum State {
     /// Single-shot accept in flight.
     Accept,
     /// Armed multishot accept in flight.
-    #[allow(dead_code)] // Wired in M4b.
     ArmedAccept,
     /// Armed multishot receive in flight.
-    #[allow(dead_code)] // Wired in M4b.
     ArmedRecv,
     /// Zero-copy send in flight (waiting for send result and/or notif).
     SendZc,
@@ -162,6 +160,8 @@ pub struct UringIo {
     bufs: Box<[u8]>,
     pool_base: usize,
     buf_range: Box<[u16]>,
+    buf_ring: Option<BufRing>,
+    ring_in_ring: Box<[bool]>,
     slots: Box<[Slot]>,
     sock_stream: Box<[bool]>,
     /// Completions the kernel still owes: one per SQE pushed, and one more
@@ -177,6 +177,10 @@ pub struct UringIo {
     /// The eventfd behind `Io::waker`, or -1 before it is asked for.
     wake_fd: i32,
     measure_segments: bool,
+    no_delay: bool,
+    keep_alive: bool,
+    last_listen_opts: Option<(bool, bool)>,
+    last_connect_opts: Option<(bool, bool)>,
     /// The next `tick` reports a failure. See [`Fault::TickFails`].
     #[cfg(feature = "fault-injection")]
     fail_tick: bool,
@@ -306,6 +310,8 @@ impl UringIo {
         Box::leak(core::mem::take(&mut self.bufs));
         Box::leak(core::mem::take(&mut self.quiet_ts));
         Box::leak(core::mem::take(&mut self.buf_range));
+        core::mem::forget(self.buf_ring.take());
+        Box::leak(core::mem::take(&mut self.ring_in_ring));
         Box::leak(core::mem::take(&mut self.ready.items));
         core::mem::forget(core::mem::take(&mut self.files));
     }

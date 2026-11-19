@@ -19,23 +19,48 @@ impl UringIo {
         sqe
     }
 
-    /// Open the socket of a connect with a descriptor of our own, so its
-    /// segment size can be read later, and register it in the slot. Returns
-    /// the connect to submit, or None if the socket could not be opened or
-    /// registered: the caller then creates it through the ring.
-    pub(super) fn connect_measured(
+    /// Open the socket of a connect with a descriptor of our own, so socket
+    /// options can be set and segment sizes can be read later, and register
+    /// it in the slot. When `no_delay` or `keep_alive` is configured, failure
+    /// completes with the negative errno instead of falling back to
+    /// `IORING_OP_SOCKET`.
+    pub(super) fn connect_with_fd(
         &mut self,
         i: u32,
         sock: Sock,
         family: u16,
+        token: Token,
     ) -> Option<io_uring_sqe> {
+        let opts = self.no_delay || self.keep_alive;
         let kind = (SOCK_STREAM | SOCK_CLOEXEC) as i32;
         let fd = unsafe { socket(family as i32, kind, 0) };
         if fd < 0 {
+            if opts {
+                let errno = io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(crate::io::EINVAL);
+                self.slots[i as usize].state = State::Free;
+                self.ready.push(i, Completion::new(token, -errno));
+            }
             return None;
         }
-        if self.ring.update_file(sock.0, fd).is_err() {
+        if opts {
+            if let Err(errno) =
+                super::backend::apply_tcp_options(fd, self.no_delay, self.keep_alive)
+            {
+                unsafe { close(fd) };
+                self.slots[i as usize].state = State::Free;
+                self.ready.push(i, Completion::new(token, -errno));
+                return None;
+            }
+        }
+        if let Err(e) = self.ring.update_file(sock.0, fd) {
             unsafe { close(fd) };
+            if opts {
+                let errno = e.raw_os_error().unwrap_or(crate::io::EINVAL);
+                self.slots[i as usize].state = State::Free;
+                self.ready.push(i, Completion::new(token, -errno));
+            }
             return None;
         }
         let s = &mut self.slots[i as usize];
@@ -45,38 +70,41 @@ impl UringIo {
         Some(self.connect_sqe(i))
     }
 
-    /// The connect of a measured socket has ended. Read the segment sizes if
-    /// it succeeded, and close our descriptor either way: the registered
-    /// table keeps the socket. Returns the connect's result, with the
-    /// encoded sizes in place of 0.
+    /// The connect of a measured/optioned socket has ended. Read the socket
+    /// options (and segment sizes if asked) if it succeeded, and close our
+    /// descriptor either way: the registered table keeps the socket.
     fn end_measure(&mut self, i: u32, result: i32) -> i32 {
         let s = &mut self.slots[i as usize];
         let fd = core::mem::replace(&mut s.probe_fd, -1);
         if fd < 0 {
             return result;
         }
-        let option = |level, name| {
-            let mut value: i32 = 0;
-            let mut len = core::mem::size_of::<i32>() as u32;
-            let r =
-                unsafe { getsockopt(fd, level, name, (&mut value as *mut i32).cast(), &mut len) };
-            if r == 0 && value > 0 {
-                value as u32
-            } else {
-                0
-            }
-        };
         let mut measured = result;
         if result == 0 {
-            let size = option(IPPROTO_TCP, TCP_MAXSEG);
-            // The path's MTU less the IP and TCP headers.
-            let path_limit = if s.addr.family == AF_INET6 {
-                option(IPPROTO_IPV6, IPV6_MTU).saturating_sub(60)
-            } else {
-                option(IPPROTO_IP, IP_MTU).saturating_sub(40)
-            };
-            if size > 0 {
-                measured = Segment { size, path_limit }.encode();
+            self.last_connect_opts = Some(super::backend::read_tcp_options(fd));
+            if self.measure_segments {
+                let option = |level, name| {
+                    let mut value: i32 = 0;
+                    let mut len = core::mem::size_of::<i32>() as u32;
+                    let r = unsafe {
+                        getsockopt(fd, level, name, (&mut value as *mut i32).cast(), &mut len)
+                    };
+                    if r == 0 && value > 0 {
+                        value as u32
+                    } else {
+                        0
+                    }
+                };
+                let size = option(IPPROTO_TCP, TCP_MAXSEG);
+                // The path's MTU less the IP and TCP headers.
+                let path_limit = if s.addr.family == AF_INET6 {
+                    option(IPPROTO_IPV6, IPV6_MTU).saturating_sub(60)
+                } else {
+                    option(IPPROTO_IP, IP_MTU).saturating_sub(40)
+                };
+                if size > 0 {
+                    measured = Segment { size, path_limit }.encode();
+                }
             }
         }
         unsafe { close(fd) };
@@ -128,16 +156,26 @@ impl UringIo {
     }
 
     fn decode_cqe_buf(&mut self, c: &io_uring_cqe) -> Option<BufId> {
-        let base = self.limits.buffers + self.limits.small_buffers + self.limits.aligned_buffers;
+        let base = self.limits.ring_base();
         let mut empty = None;
         let buf = decode_ring_buf(c.flags, c.res, base, |id| empty = Some(id));
         if let Some(id) = empty {
             self.return_ring_buf(id);
+        } else if let Some(id) = buf {
+            self.ring_in_ring[(id.0 - base) as usize] = false;
         }
         buf
     }
 
-    fn return_ring_buf(&mut self, _ring_id: u16) {}
+    pub(super) fn return_ring_buf(&mut self, ring_id: u16) {
+        let id = BufId(self.limits.ring_base() + ring_id as u32);
+        let len = self.limits.ring_buffer_size;
+        let addr = self.buf_ptr(id, 0, len);
+        self.ring_in_ring[ring_id as usize] = true;
+        if let Some(br) = self.buf_ring.as_mut() {
+            br.push_buf(addr, len, ring_id);
+        }
+    }
 
     pub(super) fn on_cqe(&mut self, c: io_uring_cqe, out: &mut Completions) {
         if matches!(c.user_data, INTERNAL_CANCEL | INTERNAL_SHUTDOWN | QUIESCE) {
@@ -171,10 +209,7 @@ impl UringIo {
                 let buf = if read_buf {
                     self.decode_cqe_buf(&c)
                 } else {
-                    if c.res >= 0
-                        && !self.slots[i as usize].sock_closed
-                        && (c.res as u32) < self.limits.sockets_max
-                    {
+                    if c.res >= 0 && (c.res as u32) < self.limits.sockets_max {
                         self.sock_stream[c.res as usize] = true;
                     }
                     None
@@ -266,7 +301,7 @@ impl UringIo {
         }
         if state == State::Accept {
             let s = self.slots[i as usize];
-            if c.res >= 0 && !s.sock_closed {
+            if c.res >= 0 {
                 self.sock_stream[s.sock as usize] = true;
             }
         }

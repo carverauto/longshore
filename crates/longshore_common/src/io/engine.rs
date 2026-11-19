@@ -11,7 +11,8 @@
 
 use crate::io::files::FileTable;
 use crate::io::{
-    BufId, Completion, Completions, FileId, Limits, Op, Sock, Token, Wake, EBADF, ECANCELED, ENOENT,
+    BufId, Completion, Completions, FileId, Limits, Op, Sock, Token, Wake, EBADF, ECANCELED,
+    ENOBUFS, ENOENT,
 };
 use std::io;
 use std::net::SocketAddr;
@@ -52,6 +53,14 @@ pub trait World {
     fn register_file(&mut self, path: &str) -> io::Result<FileId>;
     /// Bind and listen on `sock` at `addr`, returning the bound address.
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// Bind and listen on a Unix-domain stream socket at `path` in `sock`.
+    fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
+    /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected from now on.
+    fn no_delay(&mut self, _on: bool) {}
+    /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected from now on.
+    fn keep_alive(&mut self, _on: bool) {}
+    /// Return a buffer-ring buffer back to the world's ring.
+    fn give_back(&mut self, _id: BufId) {}
     /// Ask to measure TCP segment sizes on future connects, if supported.
     fn measure_segment_sizes(&mut self, _on: bool) {}
     /// Build a cross-thread wake handle tied to `woken`, if supported.
@@ -112,6 +121,10 @@ pub trait World {
         self.attempt_tagged(op, pool, limits, tag)
             .map(Attempt::single)
     }
+    /// Attempt a submitted `Op::ConnectUnix` using the path captured at submit time.
+    fn attempt_connect_unix(&mut self, _sock: Sock, _path_with_nul: &[u8]) -> Option<i32> {
+        None
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -130,6 +143,8 @@ pub(crate) struct Pending {
     pub(crate) chain_aborted: bool,
     pub(crate) world_tag: u64,
     pub(crate) last_delivered_step: u64,
+    pub(crate) unix_path: [u8; 108],
+    pub(crate) unix_len: u8,
 }
 
 /// [`crate::io::Io`] implementation backed by a [`World`].

@@ -16,6 +16,7 @@ mod files;
 #[cfg(target_os = "macos")]
 mod kqueue;
 mod ops;
+mod ops_armed;
 mod sock;
 
 #[cfg(target_os = "linux")]
@@ -27,8 +28,8 @@ use epoll::Poller;
 #[cfg(target_os = "macos")]
 use kqueue::Poller;
 
-use crate::io::engine::{Engine, World};
-use crate::io::{FileId, Limits, Op, Sock, Wake};
+use crate::io::engine::{Attempt, Engine, World};
+use crate::io::{BufId, FileId, Limits, Op, Sock, Wake};
 use std::ffi::CString;
 use std::io;
 use std::net::SocketAddr;
@@ -82,6 +83,14 @@ pub struct Posix {
     files: Vec<CString>,
     poller: Poller,
     cursor: usize,
+    ring_base: u32,
+    ring_free: Box<[u16]>,
+    ring_free_len: usize,
+    ring_in_free: Box<[bool]>,
+    accept_start: u32,
+    accept_len: u32,
+    no_delay: bool,
+    keep_alive: bool,
     #[cfg(feature = "fault-injection")]
     stale: [(Sock, bool); 64],
     #[cfg(feature = "fault-injection")]
@@ -90,12 +99,21 @@ pub struct Posix {
 
 impl Posix {
     pub fn new(limits: Limits) -> io::Result<Self> {
+        let ring_count = limits.ring_buffers as usize;
         Ok(Self {
             socks: (0..limits.sockets_max).map(|_| SockSlot::free()).collect(),
             file_fds: vec![-1; limits.files_max as usize].into_boxed_slice(),
             files: Vec::new(),
             poller: Poller::new()?,
             cursor: 0,
+            ring_base: limits.ring_base(),
+            ring_free: (0..limits.ring_buffers as u16).rev().collect(),
+            ring_free_len: ring_count,
+            ring_in_free: vec![true; ring_count].into_boxed_slice(),
+            accept_start: limits.accept_range_start,
+            accept_len: limits.accept_range_len,
+            no_delay: false,
+            keep_alive: false,
             #[cfg(feature = "fault-injection")]
             stale: [(Sock(0), false); 64],
             #[cfg(feature = "fault-injection")]
@@ -141,6 +159,19 @@ impl PosixIo {
             w.stale_len += 1;
         }
     }
+
+    /// Read `(TCP_NODELAY, SO_KEEPALIVE)` from the underlying descriptor of `sock`.
+    pub fn tcp_options(&self, sock: Sock) -> io::Result<(bool, bool)> {
+        let s = self
+            .world()
+            .socks
+            .get(sock.0 as usize)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        if s.fd < 0 {
+            return Err(io::Error::from(io::ErrorKind::NotConnected));
+        }
+        sock::read_tcp_options(s.fd)
+    }
 }
 
 pub(super) fn monotonic_ns() -> u64 {
@@ -170,21 +201,37 @@ impl World for Posix {
         self.listen_sock(sock, addr)
     }
 
+    fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {
+        self.listen_unix_sock(sock, path)
+    }
+
+    fn no_delay(&mut self, on: bool) {
+        self.no_delay = on;
+    }
+
+    fn keep_alive(&mut self, on: bool) {
+        self.keep_alive = on;
+    }
+
+    fn give_back(&mut self, id: BufId) {
+        self.give_back_ring(id);
+    }
+
     fn waker(&mut self, woken: Arc<AtomicBool>) -> Option<Arc<dyn Wake>> {
         self.poller.waker(woken)
     }
 
     fn is_ready(&self, op: &Op) -> bool {
         match *op {
-            Op::Connect { sock, .. } | Op::Send { sock, .. } => {
+            Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. } | Op::Send { sock, .. } => {
                 let s = &self.socks[sock.0 as usize];
                 s.fd < 0 || s.write_ready
             }
-            Op::Accept { listener, .. } => {
+            Op::Accept { listener, .. } | Op::ArmedAccept { listener } => {
                 let s = &self.socks[listener.0 as usize];
                 s.fd < 0 || s.read_ready
             }
-            Op::Recv { sock, .. } | Op::RecvNow { sock, .. } => {
+            Op::Recv { sock, .. } | Op::RecvNow { sock, .. } | Op::ArmedRecv { sock } => {
                 let s = &self.socks[sock.0 as usize];
                 s.fd < 0 || s.read_ready
             }
@@ -242,15 +289,34 @@ impl World for Posix {
         self.attempt_op(op, pool, limits)
     }
 
+    fn attempt_completion(
+        &mut self,
+        op: &Op,
+        pool: &mut [u8],
+        limits: &Limits,
+        _tag: u64,
+    ) -> Option<Attempt> {
+        match *op {
+            Op::ArmedAccept { listener } => self.attempt_accept_armed(listener),
+            Op::ArmedRecv { sock } => self.attempt_recv_armed(sock, pool, limits),
+            _ => self.attempt_op(op, pool, limits).map(Attempt::single),
+        }
+    }
+
+    fn attempt_connect_unix(&mut self, sock: Sock, path_with_nul: &[u8]) -> Option<i32> {
+        self.connect_unix(sock, path_with_nul)
+    }
+
     fn claimed(&self, op: &Op) -> bool {
         matches!(
             op,
-            Op::Connect { sock, .. } if self.socks[sock.0 as usize].kind == SockKind::Connecting
+            Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. }
+                if self.socks[sock.0 as usize].kind == SockKind::Connecting
         )
     }
 
     fn release(&mut self, op: &Op) {
-        if let Op::Connect { sock, .. } = op {
+        if let Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. } = op {
             let s = &mut self.socks[sock.0 as usize];
             if s.kind == SockKind::Connecting && s.fd >= 0 {
                 self.poller.before_close(s);
@@ -271,19 +337,19 @@ impl World for Posix {
 
     fn add_interest(&mut self, op: &Op) {
         match *op {
-            Op::Accept { listener, .. } => {
+            Op::Accept { listener, .. } | Op::ArmedAccept { listener } => {
                 let s = &mut self.socks[listener.0 as usize];
                 if s.fd >= 0 && !s.read_ready {
                     s.want_read = true;
                 }
             }
-            Op::Recv { sock, .. } => {
+            Op::Recv { sock, .. } | Op::ArmedRecv { sock } => {
                 let s = &mut self.socks[sock.0 as usize];
                 if s.fd >= 0 && !s.read_ready {
                     s.want_read = true;
                 }
             }
-            Op::Connect { sock, .. } | Op::Send { sock, .. } => {
+            Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. } | Op::Send { sock, .. } => {
                 let s = &mut self.socks[sock.0 as usize];
                 if s.fd >= 0 && !s.write_ready {
                     s.want_write = true;

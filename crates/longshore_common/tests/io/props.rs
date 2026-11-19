@@ -102,8 +102,16 @@ fn limits(tc: &TestCase) -> Limits {
     let block_size = 4096u32 << block_shift;
     let aligned_buffers = tc.draw(gs::integers::<u32>().max_value(6));
     let mult = tc.draw(gs::integers::<u32>().min_value(1).max_value(3));
+    let sockets_max = tc.draw(gs::integers::<u32>().min_value(1).max_value(8));
+    let accept_range_len = tc.draw(gs::integers::<u32>().max_value(sockets_max));
+    let accept_range_start =
+        tc.draw(gs::integers::<u32>().max_value(sockets_max - accept_range_len));
+    let ring_buffers = tc.draw(gs::integers::<u32>().max_value(6));
+    let ring_buffer_size = tc.draw(gs::integers::<u32>().min_value(1).max_value(700));
     Limits {
-        sockets_max: 1,
+        sockets_max,
+        accept_range_start,
+        accept_range_len,
         buffers: tc.draw(gs::integers::<u32>().max_value(6)),
         buffer_size: tc.draw(gs::integers::<u32>().min_value(1).max_value(5000)),
         small_buffers: tc.draw(gs::integers::<u32>().max_value(6)),
@@ -112,36 +120,43 @@ fn limits(tc: &TestCase) -> Limits {
         aligned_buffers,
         aligned_buffer_size: block_size * mult,
         block_size,
+        ring_buffers,
+        ring_buffer_size,
         ops_max: 1,
     }
 }
 
-/// Buffers of all three classes lie in order in the pool, with optional
+/// Buffers of all four classes lie in order in the pool, with optional
 /// alignment gap before the aligned class and `block_size` head padding.
 #[hegel::test]
 fn buffers_tile_the_pool_for_any_limits(tc: TestCase) {
     let l = limits(&tc);
     let mut at = 0usize;
+    let aligned_start = l.buffers + l.small_buffers;
+    let ring_start = l.ring_base();
     for id in 0..l.buffer_count() {
-        if id == l.buffers + l.small_buffers {
+        if id == aligned_start && l.aligned_buffers > 0 {
             at = at.next_multiple_of(l.block_size as usize);
         }
         let (start, len) = l.span(BufId(id));
         assert_eq!(start, at, "buffer {id} starts where expected");
         let want = if id < l.buffers {
             l.buffer_size
-        } else if id < l.buffers + l.small_buffers {
+        } else if id < aligned_start {
             l.small_buffer_size
-        } else {
+        } else if id < ring_start {
             assert_eq!(start % l.block_size as usize, 0);
             l.aligned_buffer_size
+        } else {
+            l.ring_buffer_size
         };
         assert_eq!(len, want as usize);
         assert_eq!(l.range(BufId(id), 0, want), start..start + len);
         assert_eq!(
             l.is_aligned_buf(BufId(id)),
-            id >= l.buffers + l.small_buffers
+            id >= aligned_start && id < ring_start
         );
+        assert_eq!(l.is_ring_buf(BufId(id)), id >= ring_start);
         at += len;
     }
     if l.buffer_count() == 0 {
@@ -154,6 +169,9 @@ fn buffers_tile_the_pool_for_any_limits(tc: TestCase) {
     }
     for i in 0..l.aligned_buffers {
         assert_eq!(l.aligned(i), BufId(l.buffers + l.small_buffers + i));
+    }
+    for i in 0..l.ring_buffers {
+        assert_eq!(l.ring(i), BufId(l.ring_base() + i));
     }
 }
 

@@ -24,11 +24,15 @@ fn run_backend<IO: longshore::io::Io>(
     addr: std::net::SocketAddr,
 ) {
     use longshore::io::alloc_guard::sealed;
-    use longshore::io::contract;
     use longshore::io::scenario::echo;
+    use longshore::io::{contract, contract_net};
     use longshore::io::{Completions, Limits, Op, Token};
 
     contract::run_all(make, addr);
+    let unix_path = format!("/tmp/longshore-contract-{}.sock", std::process::id());
+    let _ = std::fs::remove_file(&unix_path);
+    contract_net::run_all(make, addr, &unix_path);
+    let _ = std::fs::remove_file(&unix_path);
 
     // Cross-thread wake while `tick(true)` is blocked in the kernel.
     {

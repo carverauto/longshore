@@ -23,17 +23,53 @@ impl World for Virtual {
     }
 
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
+        let target = Some(SimAddr::Ip(addr));
         if self
             .socks
             .iter()
-            .any(|s| s.state == SockState::Listening && s.addr == Some(addr))
+            .any(|s| s.state == SockState::Listening && s.addr == target)
         {
             return Err(io::Error::from(io::ErrorKind::AddrInUse));
         }
         let s = &mut self.socks[sock.0 as usize];
         s.state = SockState::Listening;
-        s.addr = Some(addr);
+        s.addr = target;
         Ok(addr)
+    }
+
+    fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {
+        if path.is_empty() || path.as_bytes().contains(&0) {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        if path.len() >= 108 {
+            return Err(io::Error::from_raw_os_error(ENAMETOOLONG));
+        }
+        let mut buf = [0u8; 108];
+        buf[..path.len()].copy_from_slice(path.as_bytes());
+        let target = Some(SimAddr::Unix(buf, (path.len() + 1) as u8));
+        if self
+            .socks
+            .iter()
+            .any(|s| s.state == SockState::Listening && s.addr == target)
+        {
+            return Err(io::Error::from(io::ErrorKind::AddrInUse));
+        }
+        let s = &mut self.socks[sock.0 as usize];
+        s.state = SockState::Listening;
+        s.addr = target;
+        Ok(())
+    }
+
+    fn no_delay(&mut self, on: bool) {
+        self.no_delay = on;
+    }
+
+    fn keep_alive(&mut self, on: bool) {
+        self.keep_alive = on;
+    }
+
+    fn give_back(&mut self, id: BufId) {
+        self.give_back_ring(id);
     }
 
     fn waker(&mut self, woken: Arc<AtomicBool>) -> Option<Arc<dyn Wake>> {
@@ -79,15 +115,34 @@ impl World for Virtual {
         self.attempt_op(op, pool, limits, tag)
     }
 
+    fn attempt_completion(
+        &mut self,
+        op: &Op,
+        pool: &mut [u8],
+        limits: &Limits,
+        tag: u64,
+    ) -> Option<Attempt> {
+        match *op {
+            Op::ArmedAccept { listener } => self.attempt_accept_armed(listener),
+            Op::ArmedRecv { sock } => self.attempt_recv_armed(sock, pool, limits),
+            _ => self.attempt_op(op, pool, limits, tag).map(Attempt::single),
+        }
+    }
+
+    fn attempt_connect_unix(&mut self, sock: Sock, path_with_nul: &[u8]) -> Option<i32> {
+        self.connect_unix(sock, path_with_nul)
+    }
+
     fn claimed(&self, op: &Op) -> bool {
         matches!(
             op,
-            Op::Connect { sock, .. } if self.socks[sock.0 as usize].state == SockState::Connecting
+            Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. }
+                if self.socks[sock.0 as usize].state == SockState::Connecting
         )
     }
 
     fn release(&mut self, op: &Op) {
-        if let Op::Connect { sock, .. } = op {
+        if let Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. } = op {
             if self.socks[sock.0 as usize].state == SockState::Connecting {
                 self.socks[sock.0 as usize].state = SockState::Free;
             }

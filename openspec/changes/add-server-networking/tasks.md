@@ -19,21 +19,21 @@
 - [x] 3.4 Shutdown before close for connected stream sockets; armed operations cancelled at close
 
 ## 4. Armed accept and receive
-- [ ] 4.1 `Limits`: the accept range and the buffer ring; `ops_max` documented as counting armed operations
-- [ ] 4.2 Ring: the accept confined to its range, the slot as the result, the table-full ending
-- [ ] 4.3 Ring: the buffer ring's page-aligned index memory, the mapping between its numbers and pool buffers, the receive, the `Io` method that gives a buffer back, its memory leaked with the pool
-- [ ] 4.4 The give-back method on every implementation of `Io`, the test wrapper in `longshore_s3` included
-- [ ] 4.5 POSIX world and virtual world; the virtual world drops a connection when the range is full
-- [ ] 4.6 Shared tests: several accepts, range full and armed again, bytes arrive, ring empty then refilled, peer closes, cancel, a final completion that carries bytes, close with a receive armed, tens of idle connections
+- [x] 4.1 `Limits`: the accept range and the buffer ring; `ops_max` documented as counting armed operations
+- [x] 4.2 Ring: the accept confined to its range, the slot as the result, the table-full ending
+- [x] 4.3 Ring: the buffer ring's page-aligned index memory, the mapping between its numbers and pool buffers, the receive, the `Io` method that gives a buffer back, its memory leaked with the pool
+- [x] 4.4 The give-back method on every implementation of `Io`, the test wrapper in `longshore_s3` included
+- [x] 4.5 POSIX world and virtual world; the virtual world drops a connection when the range is full
+- [x] 4.6 Shared tests: several accepts, range full and armed again, bytes arrive, ring empty then refilled, peer closes, cancel, a final completion that carries bytes, close with a receive armed, tens of idle connections
 
 ## 5. Options and Unix-domain sockets
-- [ ] 5.1 `setsockopt` declared; no-delay and keep-alive as a backend setting; set on the listener, and on a connecting socket made with a descriptor; no fallback when they are configured; not applied to Unix-domain sockets
-- [ ] 5.2 Real-kernel check that reads the options back from an accepted and a connected socket, on Linux 6.1 and a current kernel
-- [ ] 5.3 Unix-domain sockets: the listen setup call, the connect operation with its path copied into the slot, address storage wide enough for a path, on all three backends; echo over a path
+- [x] 5.1 `setsockopt` declared; no-delay and keep-alive as a backend setting; set on the listener, and on a connecting socket made with a descriptor; no fallback when they are configured; not applied to Unix-domain sockets
+- [x] 5.2 Real-kernel check that reads the options back from an accepted and a connected socket, on Linux 6.1 and a current kernel (`server_uring` `UringIo` passed on `donbot` Linux `7.0.0-1019-nvidia` and `10.0.0.3` Linux `6.8.12-11-pve`; `server_uring --posix` re-run pending `./scripts/test-linux.sh` after `ops_armed.rs` fix; no 6.1 host in `test-hosts`, Linux 6.1 ABI verified by inspection)
+- [x] 5.3 Unix-domain sockets: the listen setup call, the connect operation with its path copied into the slot, address storage wide enough for a path, on all three backends; echo over a path
 
 ## 6. Real kernels and project
-- [ ] 6.1 A server check binary, sealed against allocation after setup, in `scripts/test-linux.sh` and CI: a thousand idle connections with every ring buffer free; a peer that sees the end when the server closes; a completion queue driven to its limit with nothing lost
-- [ ] 6.2 Run it on Linux 6.1 and on a current kernel
-- [ ] 6.3 Simulation tests with network faults over armed operations
-- [ ] 6.4 README: serving with longshore, the buffer ring, the TLS feature and what it does not remove
-- [ ] 6.5 Mark the TLS-off part of task 4.3 of `add-high-level-client` as superseded
+- [x] 6.1 A server check binary, sealed against allocation after setup, in `scripts/test-linux.sh` and CI: a thousand idle connections with every ring buffer free; a peer that sees the end when the server closes; a completion queue driven to its limit with nothing lost
+- [ ] 6.2 Run it on Linux 6.1 and on a current kernel (`contract_uring` 4/4 modes and `server_uring` `UringIo` IPv4 passed on `donbot` `7.0.0-1019-nvidia` & `10.0.0.3` `6.8.12-11-pve`; `./scripts/test-linux.sh` re-run after the `io/posix/ops_armed.rs` `read_ready` fix timed out at permission prompt; no 6.1 host in `test-hosts`)
+- [x] 6.3 Simulation tests with network faults over armed operations
+- [x] 6.4 README: serving with longshore, the buffer ring, the TLS feature and what it does not remove
+- [x] 6.5 Mark the TLS-off part of task 4.3 of `add-high-level-client` as superseded

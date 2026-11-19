@@ -40,6 +40,7 @@ pub(crate) fn base_limits() -> Limits {
         aligned_buffer_size: 4096,
         block_size: 4096,
         ops_max: 16,
+        ..Limits::BASE
     }
 }
 

@@ -13,6 +13,8 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::io;
 
+pub(crate) mod buf_ring;
+
 struct Map {
     ptr: *mut c_void,
     len: usize,
@@ -255,6 +257,25 @@ impl Ring {
     /// Register file descriptors; index `i` is then usable with `IOSQE_FIXED_FILE`.
     pub fn register_files(&mut self, fds: &[i32]) -> io::Result<()> {
         self.register(IORING_REGISTER_FILES, fds.as_ptr().cast(), fds.len() as u32)
+    }
+
+    /// Confine `IORING_FILE_INDEX_ALLOC` allocations to `off..off + len`.
+    pub fn register_file_alloc_range(&mut self, off: u32, len: u32) -> io::Result<()> {
+        let range = io_uring_file_index_range { off, len, resv: 0 };
+        self.register(
+            IORING_REGISTER_FILE_ALLOC_RANGE,
+            (&range as *const io_uring_file_index_range).cast(),
+            0,
+        )
+    }
+
+    /// Register a mapped buffer ring (`nr_args == 1` per Linux 6.1).
+    pub fn register_pbuf_ring(&mut self, reg: &io_uring_buf_reg) -> io::Result<()> {
+        self.register(
+            IORING_REGISTER_PBUF_RING,
+            (reg as *const io_uring_buf_reg).cast(),
+            1,
+        )
     }
 
     /// Install `fd` at index `slot` of the registered file table.

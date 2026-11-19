@@ -5,7 +5,7 @@
 
 //! Runs the shared `Io` contract suite against `SimIo`.
 
-use longshore_common::io::contract;
+use longshore_common::io::{contract, contract_net};
 use longshore_common::sim::{Faults, SimIo};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -13,6 +13,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 fn sim_keeps_the_shared_io_contract() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
     contract::run_all(&mut |limits| SimIo::new(limits, 1, Faults::default()), addr);
+    contract_net::run_all(
+        &mut |limits| SimIo::new(limits, 1, Faults::default()),
+        addr,
+        "/contract.sock",
+    );
 }
 
 #[test]
@@ -25,4 +30,9 @@ fn sim_keeps_the_shared_io_contract_under_delay() {
         ..Faults::default()
     };
     contract::run_all(&mut |limits| SimIo::new(limits, 42, faults), addr);
+    contract_net::run_all(
+        &mut |limits| SimIo::new(limits, 42, faults),
+        addr,
+        "/contract-delay.sock",
+    );
 }

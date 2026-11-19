@@ -19,6 +19,7 @@ pub mod alloc_guard;
 pub mod contract;
 pub mod contract_chains;
 pub mod contract_files;
+pub mod contract_net;
 pub mod engine;
 pub mod files;
 pub use files::{file_size, FileSlot, OpenFlags};
@@ -59,11 +60,33 @@ pub enum Op {
     /// succeeds completes with 0, or with what [`Segment::decode`] reads
     /// when the backend was asked to measure segment sizes.
     Connect { sock: Sock, addr: SocketAddr },
+    /// Open a Unix-domain stream socket in slot `sock` and connect it to the
+    /// NUL-terminated path in `path_buf[path_off..path_off + path_len]`, copied
+    /// at submission time. A connect that fails leaves the slot free.
+    ConnectUnix {
+        sock: Sock,
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+    },
     /// Open a UDP socket in slot `sock` connected to `addr`. `Send` and `Recv`
     /// then carry whole datagrams.
     ConnectUdp { sock: Sock, addr: SocketAddr },
     /// Accept one connection from `listener` into slot `sock`.
     Accept { listener: Sock, sock: Sock },
+    /// Accept connections on `listener`, placing each into a free slot of
+    /// `Limits::accept_range_start..accept_range_start + accept_range_len` and
+    /// reporting the slot index as `result` with `more: true`. Ends with
+    /// `-ENFILE` or `-EMFILE` (`more: false`) when the range is full. Counts
+    /// toward `Limits::ops_max` until its final completion.
+    ArmedAccept { listener: Sock },
+    /// Receive bytes on `sock`, taking a buffer from the registered buffer
+    /// ring only when bytes arrive. Each completion with bytes carries
+    /// `buf: Some(id)` and `result > 0` and remains owned by the caller until
+    /// [`Io::give_back`]. Ends with `-ENOBUFS` when the ring is empty or `0`
+    /// (`buf: None`) on peer EOF. Counts toward `Limits::ops_max` until its
+    /// final completion.
+    ArmedRecv { sock: Sock },
     /// Send `len` bytes of buffer `buf` starting at `off`. May complete short.
     Send {
         sock: Sock,
@@ -223,6 +246,10 @@ pub const EBADF: i32 = 9;
 pub const EAGAIN: i32 = 11;
 pub const EBUSY: i32 = 16;
 pub const EINVAL: i32 = 22;
+pub const ENFILE: i32 = 23;
+pub const EMFILE: i32 = 24;
+pub const ENAMETOOLONG: i32 = 36;
+pub const ENOBUFS: i32 = 105;
 
 /// Fixed-capacity completion buffer; `tick` never delivers more than fit.
 pub struct Completions {
@@ -294,6 +321,18 @@ pub trait Io {
     /// Bind and listen in slot `sock`. Initialization-time only; may block.
     /// Returns the bound address (useful with port 0).
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// Bind and listen on a Unix-domain stream socket at `path` in slot
+    /// `sock`. Initialization-time only; may block.
+    fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
+    /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected
+    /// from now on. Ignored for UDP and Unix-domain sockets.
+    fn no_delay(&mut self, _on: bool) {}
+    /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected
+    /// from now on. Ignored for UDP and Unix-domain sockets.
+    fn keep_alive(&mut self, _on: bool) {}
+    /// Return a buffer-ring buffer named in an [`Op::ArmedRecv`] completion
+    /// back to the backend's ring without submitting an operation.
+    fn give_back(&mut self, id: BufId);
     /// Ask for the segment sizes of each TCP connection opened from now on:
     /// a connect that succeeds then completes with an encoded [`Segment`]
     /// in place of 0. May be changed at any time. A backend that cannot measure

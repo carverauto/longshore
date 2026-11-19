@@ -11,6 +11,7 @@
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::mem::{align_of, offset_of, size_of};
 
+pub const AF_UNIX: c_int = 1;
 pub const AF_INET: c_int = 2;
 pub const AF_INET6: c_int = 10;
 pub const SOCK_STREAM: c_int = 1;
@@ -21,10 +22,16 @@ pub const SOCK_CLOEXEC: c_int = 0o200_0000;
 pub const SOL_SOCKET: c_int = 1;
 pub const SO_REUSEADDR: c_int = 2;
 pub const SO_ERROR: c_int = 4;
+pub const SO_KEEPALIVE: c_int = 9;
+pub const SO_LINGER: c_int = 13;
+pub const IPPROTO_TCP: c_int = 6;
+pub const TCP_NODELAY: c_int = 1;
 
+pub const MSG_PEEK: c_int = 0x2;
 pub const MSG_DONTWAIT: c_int = 0x40;
 pub const MSG_NOSIGNAL: c_int = 0x4000;
 pub const MSG_SEND_FLAGS: c_int = MSG_NOSIGNAL | MSG_DONTWAIT;
+pub const SHUT_RDWR: c_int = 2;
 
 pub const O_RDONLY: c_int = 0;
 pub const O_WRONLY: c_int = 1;
@@ -73,6 +80,7 @@ pub const CLOCK_MONOTONIC: c_int = 1;
 pub const OS_EINTR: c_int = 4;
 pub const OS_EAGAIN: c_int = 11;
 pub const OS_EWOULDBLOCK: c_int = 11;
+pub const OS_ENAMETOOLONG: c_int = 36;
 pub const OS_ENOTCONN: c_int = 107;
 pub const OS_EINPROGRESS: c_int = 115;
 
@@ -124,6 +132,20 @@ pub struct sockaddr_in6 {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct linger {
+    pub l_onoff: c_int,
+    pub l_linger: c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct sockaddr_un {
+    pub sun_family: u16,
+    pub sun_path: [u8; 108],
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct sockaddr_storage {
     pub ss_family: u16,
@@ -163,6 +185,9 @@ const _: () = {
     }
     assert!(size_of::<sockaddr_in>() == 16);
     assert!(size_of::<sockaddr_in6>() == 28);
+    assert!(size_of::<sockaddr_un>() == 110);
+    assert!(offset_of!(sockaddr_un, sun_path) == 2);
+    assert!(size_of::<linger>() == 8);
     assert!(size_of::<timespec>() == 16);
 };
 
@@ -187,6 +212,7 @@ extern "C" {
     pub fn accept4(fd: c_int, addr: *mut c_void, len: *mut u32, flags: c_int) -> c_int;
     pub fn send(fd: c_int, buf: *const c_void, len: usize, flags: c_int) -> isize;
     pub fn recv(fd: c_int, buf: *mut c_void, len: usize, flags: c_int) -> isize;
+    pub fn shutdown(fd: c_int, how: c_int) -> c_int;
     pub fn close(fd: c_int) -> c_int;
     pub fn setsockopt(fd: c_int, level: c_int, name: c_int, val: *const c_void, len: u32) -> c_int;
     pub fn getsockopt(

@@ -77,12 +77,12 @@ impl Virtual {
                 let listening = self
                     .socks
                     .iter()
-                    .any(|l| l.state == SockState::Listening && l.addr == Some(addr));
+                    .any(|l| l.state == SockState::Listening && l.addr == Some(SimAddr::Ip(addr)));
                 if !listening || self.rng.chance(self.faults.connect_refused) {
                     return Some(-ECONNREFUSED);
                 }
                 self.socks[s].state = SockState::Connecting;
-                self.socks[s].addr = Some(addr);
+                self.socks[s].addr = Some(SimAddr::Ip(addr));
                 self.socks[s].segment = segment;
                 if let Some(k) = route {
                     self.routes[k].connects += 1;
@@ -106,13 +106,12 @@ impl Virtual {
                 }
             }
             Op::ConnectUdp { sock, addr } => {
-                let server = self
-                    .socks
-                    .iter()
-                    .position(|l| l.state == SockState::UdpBound && l.addr == Some(addr));
+                let server = self.socks.iter().position(|l| {
+                    l.state == SockState::UdpBound && l.addr == Some(SimAddr::Ip(addr))
+                });
                 let s = &mut self.socks[sock.0 as usize];
                 s.state = SockState::UdpConnected;
-                s.addr = Some(addr);
+                s.addr = Some(SimAddr::Ip(addr));
                 s.has_peer = server.is_some();
                 s.peer = server.unwrap_or(0) as u32;
                 s.rx_head = 0;
@@ -121,7 +120,7 @@ impl Virtual {
             }
             Op::Accept { listener, sock } => {
                 if self.socks[listener.0 as usize].state != SockState::Listening {
-                    return Some(-crate::io::EBADF);
+                    return Some(-EBADF);
                 }
                 let addr = self.socks[listener.0 as usize].addr;
                 let c = self

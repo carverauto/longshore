@@ -7,10 +7,11 @@
 
 #![cfg(unix)]
 
-use longshore_common::io::contract;
 use longshore_common::io::posix::errno::{linux, to_linux_errno};
 use longshore_common::io::posix::PosixIo;
-use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
+use longshore_common::io::{
+    contract, contract_net, BufId, Completions, Io, Limits, Op, Sock, Token,
+};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -43,8 +44,28 @@ fn drain_n(io: &mut PosixIo, out: &mut Completions, want: usize) -> Vec<(u64, i3
 
 #[test]
 fn posix_keeps_the_shared_io_contract_v4_and_v6() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let p4 = std::env::temp_dir().join(format!("longshore-posix-v4-{unique}.sock"));
+    let p6 = std::env::temp_dir().join(format!("longshore-posix-v6-{unique}.sock"));
+    let _ = std::fs::remove_file(&p4);
+    let _ = std::fs::remove_file(&p6);
     contract::run_all(&mut |l| PosixIo::new(l).unwrap(), v4());
     contract::run_all(&mut |l| PosixIo::new(l).unwrap(), v6());
+    contract_net::run_all(
+        &mut |l| PosixIo::new(l).unwrap(),
+        v4(),
+        p4.to_str().unwrap(),
+    );
+    contract_net::run_all(
+        &mut |l| PosixIo::new(l).unwrap(),
+        v6(),
+        p6.to_str().unwrap(),
+    );
+    let _ = std::fs::remove_file(&p4);
+    let _ = std::fs::remove_file(&p6);
 }
 
 #[test]

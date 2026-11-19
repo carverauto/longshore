@@ -6,7 +6,7 @@
 //! Path, buffer, direct-I/O, and punch validation helpers for [`super`].
 
 use super::{FileSlot, SlotEntry, STATX_SIZE};
-use crate::io::{BufId, Limits, Op, EBADF, EINVAL};
+use crate::io::{BufId, Limits, Op, EBADF, EINVAL, ENAMETOOLONG};
 
 pub(super) fn check_non_lifecycle(
     slots: &[SlotEntry],
@@ -136,7 +136,7 @@ pub(super) fn check_buf_range(limits: &Limits, buf: BufId, off: u32, len: u32) -
     Ok(())
 }
 
-pub(super) fn check_path(
+pub(crate) fn check_path(
     pool: &[u8],
     limits: &Limits,
     buf: BufId,
@@ -156,4 +156,21 @@ pub(super) fn check_path(
         return Err(-EINVAL);
     }
     Ok(())
+}
+
+pub(crate) fn check_unix_path<'a>(
+    pool: &'a [u8],
+    limits: &Limits,
+    buf: BufId,
+    off: u32,
+    len: u32,
+    max_sun_path: usize,
+) -> Result<&'a [u8], i32> {
+    check_path(pool, limits, buf, off, len)?;
+    if len as usize > max_sun_path {
+        return Err(-ENAMETOOLONG);
+    }
+    let (base, _) = limits.span(buf);
+    let start = base + off as usize;
+    Ok(&pool[start..start + len as usize])
 }

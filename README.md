@@ -167,6 +167,59 @@ one virtual clock (zero heap allocation after setup):
   `Fail`, `FailAfter`, or any write fault, and `SimIo::disk_fault_counters`
   exposes zero-allocation per-fault counts.
 
+## Serving with longshore
+
+`longshore::io` and `longshore::stream` provide single-threaded server primitives
+across `UringIo`, `PosixIo`, and `SimIo`:
+
+- **TCP and Unix-domain listeners**: `Io::listen` binds a TCP listener, and
+  `Io::listen_unix` binds a Unix-domain stream socket by path.
+  `Op::ConnectUnix` copies a NUL-terminated path from a pool buffer at
+  submission time into slot storage.
+- **Armed accept (`Op::ArmedAccept`)**: accepts connections on a listener with
+  one submission, placing each accepted socket into a free slot inside the
+  reserved range `Limits::accept_range_start..accept_range_start +
+  accept_range_len` and reporting the slot index with `Completion::more ==
+  true`. When the range is full, the incoming connection is dropped and the
+  armed accept ends with `-ENFILE` (or `-EMFILE`).
+- **Socket options & shutdown-before-close**: `Io::no_delay` (`TCP_NODELAY`)
+  and `Io::keep_alive` (`SO_KEEPALIVE`) apply to TCP listeners and
+  descriptor-created TCP connects (failing the connect rather than falling back
+  if options cannot be set; ignored for UDP and Unix-domain sockets).
+  `Op::Close` cancels in-flight operations on the socket and submits `shutdown`
+  before `close` on connected stream sockets so peers observe the end.
+- **Byte stream (`longshore::stream::Stream`)**: plain-or-TLS stream wrapper
+  over `Io` with zero HTTP dependency, usable on both connecting and accepting
+  sides.
+
+## Buffer ring
+
+- **Configuration (`Limits`)**: set `Limits::ring_buffers` (up to `32_768`) and
+  `Limits::ring_buffer_size` to add a fourth buffer class in the pool backed on
+  Linux `io_uring` by page-aligned index memory (`IORING_REGISTER_PBUF_RING`).
+  If `UringIo` cannot quiesce cleanly on drop, buffer-ring index memory is
+  leaked alongside the pool.
+- **Armed receive (`Op::ArmedRecv`)**: takes a buffer from the ring only when
+  bytes arrive, so idle plain connections hold no buffer. Completions carrying
+  bytes set `Completion::buf` to `Some(id)` and `Completion::more`; callers
+  read bytes in place and return the buffer via `Io::give_back(id)` with no
+  system call. Empty completions (`result <= 0`) return their buffer
+  internally (`buf == None`), peer EOF ends with `0`, and an empty ring ends
+  with `-ENOBUFS` leaving unread bytes in the socket. Armed operations count
+  toward `Limits::ops_max` until their final (`more == false`) completion.
+
+## TLS feature
+
+- `tls` is a default-on Cargo feature across `longshore`, `longshore_s3`,
+  `longshore_http_client`, and `longshore_stream`.
+- Building `longshore` with `--no-default-features` excludes `longshore_tls`
+  and `aws-lc-sys` from its resolved dependencies (`Builder::build` returns
+  `BuildError::Setting` naming `tls` if TLS is requested).
+- **What it does not remove**: `longshore_s3` still compiles C via `ring` for
+  request signing, an active TLS `Stream` still keeps two TLS record buffers
+  per connection, and the workspace test and benchmark suites still enable
+  `tls`.
+
 ## Requirements
 
 - Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when

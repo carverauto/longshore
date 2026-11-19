@@ -103,6 +103,18 @@ impl Io for Woken {
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> std::io::Result<SocketAddr> {
         self.io.listen(sock, addr)
     }
+    fn listen_unix(&mut self, sock: Sock, path: &str) -> std::io::Result<()> {
+        self.io.listen_unix(sock, path)
+    }
+    fn no_delay(&mut self, on: bool) {
+        self.io.no_delay(on);
+    }
+    fn keep_alive(&mut self, on: bool) {
+        self.io.keep_alive(on);
+    }
+    fn give_back(&mut self, id: BufId) {
+        self.io.give_back(id);
+    }
     fn waker(&mut self) -> Option<Arc<dyn Wake>> {
         Some(self.signal.clone())
     }

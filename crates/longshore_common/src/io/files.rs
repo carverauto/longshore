@@ -8,6 +8,7 @@
 use crate::io::{Limits, Op, Token, EBADF, EBUSY, EINVAL};
 
 mod validate;
+pub(crate) use validate::check_unix_path;
 
 /// Index into the fixed file table (`0..limits.files_max`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

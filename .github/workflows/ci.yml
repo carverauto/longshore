@@ -111,10 +111,12 @@ jobs:
         run: |
           # http_uring registers buffers, which are pinned and count against RLIMIT_MEMLOCK (small on hosted runners).
           sudo prlimit --pid $$ --memlock=unlimited:unlimited
-          cargo build --release -p longshore-bench --bin contract_uring --bin file_uring --bin echo_uring --bin http_uring
+          cargo build --release -p longshore-bench --bin contract_uring --bin server_uring --bin file_uring --bin echo_uring --bin http_uring
           cd target/release
           timeout 60 ./contract_uring
           timeout 60 ./contract_uring --posix
+          timeout 60 ./server_uring
+          timeout 60 ./server_uring --posix
           timeout 60 ./file_uring
           timeout 60 ./file_uring --posix
           timeout 60 ./echo_uring

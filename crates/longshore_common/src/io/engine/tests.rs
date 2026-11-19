@@ -11,6 +11,7 @@ struct MockWorld {
     first_idx: usize,
     queues: [VecDeque<Attempt>; 8],
     closed_socks: Vec<Sock>,
+    returned_bufs: Vec<BufId>,
 }
 
 impl MockWorld {
@@ -19,6 +20,7 @@ impl MockWorld {
             first_idx,
             queues: std::array::from_fn(|_| VecDeque::new()),
             closed_socks: Vec::new(),
+            returned_bufs: Vec::new(),
         }
     }
 }
@@ -35,6 +37,12 @@ impl World for MockWorld {
     }
     fn listen(&mut self, _sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
         Ok(addr)
+    }
+    fn listen_unix(&mut self, _sock: Sock, _path: &str) -> io::Result<()> {
+        Ok(())
+    }
+    fn give_back(&mut self, id: BufId) {
+        self.returned_bufs.push(id);
     }
     fn is_ready(&self, op: &Op) -> bool {
         match op {
@@ -318,4 +326,45 @@ fn conditional_trace_hash_changes_only_when_more_or_buf_is_set() {
     assert_ne!(e1.trace_hash(), e2.trace_hash());
     assert_ne!(e1.trace_hash(), e3.trace_hash());
     assert_ne!(e2.trace_hash(), e3.trace_hash());
+}
+
+#[test]
+fn close_cancels_armed_accept_and_armed_recv_and_give_back_forwards() {
+    let l = Limits {
+        ring_buffers: 2,
+        ring_buffer_size: 64,
+        ..limits(8)
+    };
+    let mut engine = Engine::with_world(l, MockWorld::new(0));
+    engine
+        .submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
+        .unwrap();
+    engine
+        .submit(Token(2), Op::ArmedRecv { sock: Sock(1) })
+        .unwrap();
+    engine
+        .submit(Token(3), Op::Close { sock: Sock(0) })
+        .unwrap();
+    engine
+        .submit(Token(4), Op::Close { sock: Sock(1) })
+        .unwrap();
+
+    let mut out = Completions::new(8);
+    engine.tick(false, &mut out).unwrap();
+    let mut got = Vec::new();
+    while let Some(c) = out.pop() {
+        got.push((c.token.0, c.result, c.more, c.buf));
+    }
+    engine.tick(false, &mut out).unwrap();
+    while let Some(c) = out.pop() {
+        got.push((c.token.0, c.result, c.more, c.buf));
+    }
+    assert!(got.contains(&(1, -ECANCELED, false, None)), "{got:?}");
+    assert!(got.contains(&(2, -ECANCELED, false, None)), "{got:?}");
+    assert!(got.contains(&(3, 0, false, None)), "{got:?}");
+    assert!(got.contains(&(4, 0, false, None)), "{got:?}");
+
+    let rb = l.ring(1);
+    engine.give_back(rb);
+    assert_eq!(engine.world().returned_bufs, vec![rb]);
 }

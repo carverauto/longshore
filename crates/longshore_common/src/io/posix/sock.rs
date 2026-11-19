@@ -12,7 +12,7 @@ use super::abi_macos::*;
 use super::{Posix, SockKind};
 use crate::io::Sock;
 use core::ffi::c_int;
-use core::mem::size_of;
+use core::mem::{offset_of, size_of};
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
@@ -148,6 +148,90 @@ pub(super) fn accept_socket(listener_fd: c_int) -> Result<c_int, c_int> {
     }
 }
 
+pub(super) fn sockaddr_un_from(nul_terminated: &[u8]) -> Result<(sockaddr_storage, u32), c_int> {
+    let max_path = size_of::<sockaddr_un>() - offset_of!(sockaddr_un, sun_path);
+    if nul_terminated.len() > max_path {
+        return Err(OS_ENAMETOOLONG);
+    }
+    let mut sun_path = [0u8; 108];
+    sun_path[..nul_terminated.len()].copy_from_slice(nul_terminated);
+    let len = (offset_of!(sockaddr_un, sun_path) + nul_terminated.len()) as u32;
+    let sa = sockaddr_un {
+        #[cfg(target_os = "macos")]
+        sun_len: len as u8,
+        #[cfg(target_os = "macos")]
+        sun_family: AF_UNIX as u8,
+        #[cfg(target_os = "linux")]
+        sun_family: AF_UNIX as u16,
+        #[cfg(target_os = "macos")]
+        sun_path: {
+            let mut p = [0u8; 104];
+            p[..nul_terminated.len()].copy_from_slice(&sun_path[..nul_terminated.len()]);
+            p
+        },
+        #[cfg(target_os = "linux")]
+        sun_path,
+    };
+    let mut storage = sockaddr_storage::default();
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            (&sa as *const sockaddr_un).cast::<u8>(),
+            (&mut storage as *mut sockaddr_storage).cast::<u8>(),
+            size_of::<sockaddr_un>(),
+        );
+    }
+    Ok((storage, len))
+}
+
+pub(super) fn apply_tcp_options(fd: c_int, no_delay: bool, keep_alive: bool) -> Result<(), c_int> {
+    let on: c_int = 1;
+    let len = size_of::<c_int>() as u32;
+    if no_delay {
+        let r = unsafe {
+            setsockopt(
+                fd,
+                IPPROTO_TCP,
+                TCP_NODELAY,
+                (&on as *const c_int).cast(),
+                len,
+            )
+        };
+        if r < 0 {
+            return Err(os_errno());
+        }
+    }
+    if keep_alive {
+        let r = unsafe {
+            setsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_KEEPALIVE,
+                (&on as *const c_int).cast(),
+                len,
+            )
+        };
+        if r < 0 {
+            return Err(os_errno());
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn read_tcp_options(fd: c_int) -> io::Result<(bool, bool)> {
+    let read_one = |level: c_int, name: c_int| -> io::Result<bool> {
+        let mut val: c_int = 0;
+        let mut len = size_of::<c_int>() as u32;
+        if unsafe { getsockopt(fd, level, name, (&mut val as *mut c_int).cast(), &mut len) } < 0 {
+            return Err(io::Error::from_raw_os_error(os_errno()));
+        }
+        Ok(val != 0)
+    };
+    Ok((
+        read_one(IPPROTO_TCP, TCP_NODELAY)?,
+        read_one(SOL_SOCKET, SO_KEEPALIVE)?,
+    ))
+}
+
 impl Posix {
     pub(super) fn listen_sock(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
         let domain = match addr {
@@ -164,6 +248,12 @@ impl Posix {
                 (&on as *const c_int).cast(),
                 size_of::<c_int>() as u32,
             );
+        }
+        if self.no_delay || self.keep_alive {
+            if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
+                unsafe { close(fd) };
+                return Err(io::Error::from_raw_os_error(e));
+            }
         }
         let (sa, sa_len) = sockaddr_from(addr);
         if unsafe { bind(fd, (&sa as *const sockaddr_storage).cast(), sa_len) } < 0 {
@@ -206,6 +296,39 @@ impl Posix {
         slot.fd = fd;
         slot.kind = SockKind::Listening;
         Ok(local)
+    }
+
+    pub(super) fn listen_unix_sock(&mut self, sock: Sock, path: &str) -> io::Result<()> {
+        if path.is_empty() || path.as_bytes().contains(&0) {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        if path.len() >= 108 {
+            return Err(io::Error::from_raw_os_error(OS_ENAMETOOLONG));
+        }
+        let mut buf = [0u8; 108];
+        buf[..path.len()].copy_from_slice(path.as_bytes());
+        let (sa, sa_len) =
+            sockaddr_un_from(&buf[..path.len() + 1]).map_err(io::Error::from_raw_os_error)?;
+        let fd = open_socket(AF_UNIX, SOCK_STREAM).map_err(io::Error::from_raw_os_error)?;
+        if unsafe { bind(fd, (&sa as *const sockaddr_storage).cast(), sa_len) } < 0 {
+            let err = io::Error::from_raw_os_error(os_errno());
+            unsafe { close(fd) };
+            return Err(err);
+        }
+        if unsafe { listen(fd, 128) } < 0 {
+            let err = io::Error::from_raw_os_error(os_errno());
+            unsafe { close(fd) };
+            return Err(err);
+        }
+        let slot = &mut self.socks[sock.0 as usize];
+        if slot.fd >= 0 {
+            self.poller.before_close(slot);
+            unsafe { close(slot.fd) };
+        }
+        slot.reset();
+        slot.fd = fd;
+        slot.kind = SockKind::Listening;
+        Ok(())
     }
 }
 
