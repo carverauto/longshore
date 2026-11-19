@@ -48,11 +48,18 @@ impl SimDisk {
         for j in 0..idx {
             let ej = self.dir_log[j].kind;
             if let Some(d) = ej.created_or_moved_dir(&self.inodes) {
-                if parents.into_iter().flatten().any(|p| p == d) {
+                if parents
+                    .into_iter()
+                    .flatten()
+                    .any(|p| self.inode_is_same_or_descendant_at(j, d, p))
+                {
                     return true;
                 }
             }
-            if let DirChangeKind::Rename { moved, .. } = kind {
+            if let DirChangeKind::Rename {
+                moved, replaced, ..
+            } = kind
+            {
                 if self.inodes[moved as usize].is_dir {
                     let removed_parent = match ej {
                         DirChangeKind::Unlink { parent, .. } => Some(parent),
@@ -63,6 +70,17 @@ impl SimDisk {
                         if self.inode_is_same_or_descendant_at(j, moved, p) {
                             return true;
                         }
+                    }
+                }
+                if let Some(dst_ii) = replaced {
+                    if self.inodes[dst_ii as usize].is_dir
+                        && ej
+                            .parents()
+                            .into_iter()
+                            .flatten()
+                            .any(|p| self.inode_is_same_or_descendant_at(j, dst_ii, p))
+                    {
+                        return true;
                     }
                 }
             }
@@ -87,26 +105,11 @@ impl SimDisk {
     }
 
     fn inode_is_same_or_descendant_at(&self, j: usize, ancestor_ii: u32, node_ii: u32) -> bool {
-        if ancestor_ii == node_ii {
-            return true;
-        }
-        if inode_is_descendant_in_table(
-            &self.durable_names,
-            &self.durable_name_bytes,
-            self.max_name_len,
-            ancestor_ii,
-            node_ii,
-        ) || inode_is_descendant_in_table(
-            &self.names,
-            &self.name_bytes,
-            self.max_name_len,
-            ancestor_ii,
-            node_ii,
-        ) {
-            return true;
-        }
         let mut cur = node_ii;
         for _ in 0..=j {
+            if cur == ancestor_ii {
+                return true;
+            }
             let mut parent = None;
             for k in (0..j).rev() {
                 match self.dir_log[k].kind {
@@ -128,20 +131,14 @@ impl SimDisk {
                 }
             }
             let Some(p) = parent else {
-                break;
+                return inode_is_descendant_in_table(
+                    &self.durable_names,
+                    &self.durable_name_bytes,
+                    self.max_name_len,
+                    ancestor_ii,
+                    cur,
+                );
             };
-            if p == ancestor_ii {
-                return true;
-            }
-            if inode_is_descendant_in_table(
-                &self.durable_names,
-                &self.durable_name_bytes,
-                self.max_name_len,
-                ancestor_ii,
-                p,
-            ) {
-                return true;
-            }
             cur = p;
         }
         false

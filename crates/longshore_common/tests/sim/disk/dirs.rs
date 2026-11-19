@@ -14,6 +14,8 @@ use longshore_common::io::posix::errno::linux::{EIO, ENOENT};
 use longshore_common::io::{BufId, Completions, FileSlot, Io, Op};
 use longshore_common::sim::{DiskFaults, SimIo};
 
+#[path = "dirs_causal_order.rs"]
+mod causal_order;
 #[path = "dirs_enametoolong.rs"]
 mod enametoolong;
 #[path = "dirs_overflow.rs"]
