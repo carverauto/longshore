@@ -8,6 +8,9 @@
 
 use super::{Prng, SimDisk};
 
+#[path = "disk_dirs_block.rs"]
+mod block;
+
 #[derive(Clone, Copy)]
 pub(super) enum DirChangeKind {
     Empty,
@@ -86,14 +89,6 @@ impl DirChangeKind {
             _ => None,
         }
     }
-
-    fn unlinked_candidates(self) -> [Option<usize>; 2] {
-        match self {
-            Self::Unlink { child, .. } => [Some(child as usize), None],
-            Self::Rename { replaced, .. } => [replaced.map(|r| r as usize), None],
-            _ => [None, None],
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -169,15 +164,15 @@ impl SimDisk {
                 && !self.dir_entry_blocked_by_earlier(i)
                 && self.dir_parents_durable(self.dir_log[i].kind)
         }) {
-            let cands = self.dir_log[idx].kind.unlinked_candidates();
+            let refs = self.dir_log[idx].kind.refs();
             let reclaim = self.apply_dir_change_to_durable(idx);
             self.remove_dir_entry(idx);
-            self.reclaim_dir_inodes(cands, reclaim);
+            self.reclaim_dir_inodes(refs, reclaim);
         } else if self.dir_log_len > 0 {
-            let cands = self.dir_log[0].kind.unlinked_candidates();
+            let refs = self.dir_log[0].kind.refs();
             self.remove_dir_entry(0);
-            for c in cands.into_iter().flatten() {
-                self.free_inode_if_dead(c);
+            for r in refs.into_iter().flatten() {
+                self.free_inode_if_dead(r as usize);
             }
         }
     }
@@ -252,38 +247,6 @@ impl SimDisk {
         }
     }
 
-    fn dir_entry_blocked_by_earlier(&self, idx: usize) -> bool {
-        let kind = self.dir_log[idx].kind;
-        let parents = kind.parents();
-        let subjects = kind.subjects();
-        let names = self.dir_entry_names(idx);
-        for j in 0..idx {
-            let ej = self.dir_log[j].kind;
-            if let Some(d) = ej.created_or_moved_dir(&self.inodes) {
-                if parents.into_iter().flatten().any(|p| p == d) {
-                    return true;
-                }
-            }
-            let ej_subjects = ej.subjects();
-            if subjects
-                .into_iter()
-                .flatten()
-                .any(|s| ej_subjects.into_iter().flatten().any(|es| es == s))
-            {
-                return true;
-            }
-            let ej_names = self.dir_entry_names(j);
-            if names
-                .into_iter()
-                .flatten()
-                .any(|n| ej_names.into_iter().flatten().any(|en| en == n))
-            {
-                return true;
-            }
-        }
-        false
-    }
-
     pub(super) fn sync_dir(&mut self, dir_ii: usize) {
         let d = dir_ii as u32;
         for entry in &mut self.dir_log[..self.dir_log_len] {
@@ -322,10 +285,10 @@ impl SimDisk {
                 && !self.dir_entry_blocked_by_earlier(i)
                 && self.dir_parents_durable(e.kind)
             {
-                let cands = e.kind.unlinked_candidates();
+                let refs = e.kind.refs();
                 let reclaim = self.apply_dir_change_to_durable(i);
                 self.remove_dir_entry(i);
-                self.reclaim_dir_inodes(cands, reclaim);
+                self.reclaim_dir_inodes(refs, reclaim);
             } else {
                 i += 1;
             }
