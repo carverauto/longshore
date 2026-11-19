@@ -12,6 +12,7 @@ mod accept;
 mod recv;
 mod recv_idle;
 mod unix;
+mod unix_closed;
 
 pub(crate) fn net_limits() -> Limits {
     Limits {
@@ -226,4 +227,5 @@ pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr, un
     recv::run_all(make, addr);
     recv_idle::run_all(make, addr);
     unix::run_all(make, addr, unix_path);
+    unix_closed::run_all(make, unix_path);
 }

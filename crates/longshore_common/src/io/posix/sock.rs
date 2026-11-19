@@ -139,8 +139,7 @@ pub(super) fn accept_socket(listener_fd: c_int) -> Result<c_int, c_int> {
             return Err(e);
         }
         #[cfg(target_os = "macos")]
-        if !set_socket_flags(fd) {
-            let e = os_errno();
+        if let Err(e) = set_accepted_socket_flags(fd) {
             unsafe { close(fd) };
             return Err(e);
         }

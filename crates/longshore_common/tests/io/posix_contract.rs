@@ -174,3 +174,71 @@ fn udp_connect_send_and_recv() {
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(3, 4)]);
     assert_eq!(&io.buf(BufId(1))[..4], b"pong");
 }
+
+#[test]
+fn unix_closed_peer_accept_and_send_no_sigpipe() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("longshore-posix-closed-{unique}.sock"));
+    let _ = std::fs::remove_file(&path);
+    let limits = Limits {
+        accept_range_start: 2,
+        accept_range_len: 4,
+        ring_buffers: 2,
+        ring_buffer_size: 128,
+        ..LIMITS
+    };
+    let mut io = PosixIo::new(limits).unwrap();
+    let mut out = Completions::new(8);
+    io.listen_unix(Sock(0), path.to_str().unwrap()).unwrap();
+
+    let mut with_nul = path.to_str().unwrap().as_bytes().to_vec();
+    with_nul.push(0);
+    io.buf(BufId(0))[..with_nul.len()].copy_from_slice(&with_nul);
+
+    io.submit(
+        Token(1),
+        Op::ConnectUnix {
+            sock: Sock(1),
+            path_buf: BufId(0),
+            path_off: 0,
+            path_len: with_nul.len() as u32,
+        },
+    )
+    .unwrap();
+    assert_eq!(drain_n(&mut io, &mut out, 1), vec![(1, 0)]);
+    io.submit(Token(2), Op::Close { sock: Sock(1) }).unwrap();
+    assert_eq!(drain_n(&mut io, &mut out, 1), vec![(2, 0)]);
+
+    io.submit(Token(3), Op::ArmedAccept { listener: Sock(0) })
+        .unwrap();
+    io.tick(true, &mut out).unwrap();
+    let c = out.pop().expect("armed accept completion");
+    assert!(c.token.0 == 3 && c.result >= 0 && c.more, "{c:?}");
+    let accepted = Sock(c.result as u32);
+
+    // Send on the accepted closed-peer socket must return negative errno without SIGPIPE.
+    io.buf(BufId(1))[..4].copy_from_slice(b"test");
+    io.submit(
+        Token(4),
+        Op::Send {
+            sock: accepted,
+            buf: BufId(1),
+            off: 0,
+            len: 4,
+            zero_copy: false,
+        },
+    )
+    .unwrap();
+    let send_res = drain_n(&mut io, &mut out, 1)[0].1;
+    assert!(send_res < 0, "expected negative errno, got {send_res}");
+
+    io.submit(Token(5), Op::Close { sock: accepted }).unwrap();
+    io.submit(Token(6), Op::Cancel { target: Token(3) })
+        .unwrap();
+    io.submit(Token(7), Op::Close { sock: Sock(0) }).unwrap();
+    let _ = drain_n(&mut io, &mut out, 4);
+    let _ = std::fs::remove_file(&path);
+}

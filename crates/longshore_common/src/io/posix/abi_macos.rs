@@ -73,6 +73,7 @@ pub const CLOCK_REALTIME: c_int = 0;
 pub const CLOCK_MONOTONIC: c_int = 6;
 
 pub const OS_EINTR: c_int = 4;
+pub const OS_EINVAL: c_int = 22;
 pub const OS_EAGAIN: c_int = 35;
 pub const OS_EWOULDBLOCK: c_int = 35;
 pub const OS_EINPROGRESS: c_int = 36;
@@ -285,16 +286,25 @@ pub fn os_errno() -> c_int {
     unsafe { *__error() }
 }
 
-pub fn set_socket_flags(fd: c_int) -> bool {
+fn set_cloexec_nonblock(fd: c_int) -> Result<(), c_int> {
     unsafe {
         if fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 {
-            return false;
+            return Err(os_errno());
         }
         let fl = fcntl(fd, F_GETFL, 0);
         if fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0 {
-            return false;
+            return Err(os_errno());
         }
-        let on: c_int = 1;
+    }
+    Ok(())
+}
+
+pub fn set_socket_flags(fd: c_int) -> bool {
+    if set_cloexec_nonblock(fd).is_err() {
+        return false;
+    }
+    let on: c_int = 1;
+    unsafe {
         setsockopt(
             fd,
             SOL_SOCKET,
@@ -302,5 +312,43 @@ pub fn set_socket_flags(fd: c_int) -> bool {
             (&on as *const c_int).cast(),
             size_of::<c_int>() as u32,
         ) == 0
+    }
+}
+
+pub fn set_accepted_socket_flags(fd: c_int) -> Result<(), c_int> {
+    set_cloexec_nonblock(fd)?;
+    let on: c_int = 1;
+    unsafe {
+        if setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            (&on as *const c_int).cast(),
+            size_of::<c_int>() as u32,
+        ) == 0
+        {
+            return Ok(());
+        }
+        let err = os_errno();
+        if err != OS_EINVAL {
+            return Err(err);
+        }
+        // XNU returns EINVAL from setsockopt(SO_NOSIGPIPE) if an AF_UNIX peer
+        // closed before accept(); the socket already inherits SO_NOSIGPIPE from
+        // the listener opened via open_socket.
+        let mut val: c_int = 0;
+        let mut len = size_of::<c_int>() as u32;
+        if getsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            (&mut val as *mut c_int).cast(),
+            &mut len,
+        ) == 0
+            && val != 0
+        {
+            return Ok(());
+        }
+        Err(err)
     }
 }
