@@ -211,6 +211,14 @@ impl UringIo {
             }
             return self.finish(i, r, out);
         }
+        if state == State::FileSlotOpen {
+            let s = &self.slots[i as usize];
+            self.files_table
+                .on_open_done(s.file_slot, c.res >= 0, s.file_direct);
+        } else if state == State::FileSlotClose {
+            let slot = self.slots[i as usize].file_slot;
+            self.files_table.on_close_done(slot, c.res != -ECANCELED);
+        }
         // Only a timer's expiry is a success. The same code from any other
         // operation is a failure and is reported as one.
         let r =

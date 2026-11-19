@@ -13,6 +13,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+mod disk;
+pub use disk::DiskConfig;
 mod ops;
 mod world;
 
@@ -99,6 +101,8 @@ pub struct Virtual {
     pub(super) socks: Box<[SimSock]>,
     /// Registered files and their current contents; `None` means absent.
     pub(super) files: Vec<Option<Vec<u8>>>,
+    /// Preallocated simulated disk for `FileSlot` file ops.
+    pub(in crate::sim::simio) disk: Option<disk::SimDisk>,
     /// Extra addresses of listeners.
     pub(super) routes: Vec<Route>,
     /// The path limit connects to routed addresses report with their size.
@@ -125,6 +129,7 @@ impl Virtual {
             now: 0,
             socks: (0..limits.sockets_max).map(|_| sock()).collect(),
             files: Vec::new(),
+            disk: None,
             routes: Vec::new(),
             path_limit: 0,
         }
@@ -137,6 +142,12 @@ pub type SimIo = Engine<Virtual>;
 impl SimIo {
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
         Engine::with_world(limits, Virtual::new(limits, seed, faults))
+    }
+
+    /// Preallocate the virtual disk tables. Test setup, so it allocates once.
+    pub fn setup_disk(&mut self, cfg: DiskConfig) {
+        let files_max = self.limits.files_max;
+        self.world_mut().disk = Some(disk::SimDisk::new(cfg, files_max));
     }
 
     /// Set or remove the contents of a registered file, as an operator

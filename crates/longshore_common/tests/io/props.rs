@@ -96,39 +96,62 @@ fn completions_come_out_in_the_order_they_went_in(tc: TestCase) {
 }
 
 fn limits(tc: &TestCase) -> Limits {
-    #[allow(clippy::needless_update)]
+    let block_shift = tc.draw(gs::integers::<u32>().max_value(3));
+    let block_size = 4096u32 << block_shift;
+    let aligned_buffers = tc.draw(gs::integers::<u32>().max_value(6));
+    let mult = tc.draw(gs::integers::<u32>().min_value(1).max_value(3));
     Limits {
         sockets_max: 1,
         buffers: tc.draw(gs::integers::<u32>().max_value(6)),
         buffer_size: tc.draw(gs::integers::<u32>().min_value(1).max_value(5000)),
         small_buffers: tc.draw(gs::integers::<u32>().max_value(6)),
         small_buffer_size: tc.draw(gs::integers::<u32>().min_value(1).max_value(700)),
+        files_max: 0,
+        aligned_buffers,
+        aligned_buffer_size: block_size * mult,
+        block_size,
         ops_max: 1,
-        ..Limits::BASE
     }
 }
 
-/// Buffers of both sizes lie end to end in the pool, large ones first, with
-/// no gap and no overlap, whatever the counts and sizes.
+/// Buffers of all three classes lie in order in the pool, with optional
+/// alignment gap before the aligned class and `block_size` head padding.
 #[hegel::test]
 fn buffers_tile_the_pool_for_any_limits(tc: TestCase) {
     let l = limits(&tc);
-    let mut at = 0;
+    let mut at = 0usize;
     for id in 0..l.buffer_count() {
+        if id == l.buffers + l.small_buffers {
+            at = at.next_multiple_of(l.block_size as usize);
+        }
         let (start, len) = l.span(BufId(id));
-        assert_eq!(start, at, "buffer {id} starts where the last ended");
+        assert_eq!(start, at, "buffer {id} starts where expected");
         let want = if id < l.buffers {
             l.buffer_size
-        } else {
+        } else if id < l.buffers + l.small_buffers {
             l.small_buffer_size
+        } else {
+            assert_eq!(start % l.block_size as usize, 0);
+            l.aligned_buffer_size
         };
         assert_eq!(len, want as usize);
         assert_eq!(l.range(BufId(id), 0, want), start..start + len);
+        assert_eq!(
+            l.is_aligned_buf(BufId(id)),
+            id >= l.buffers + l.small_buffers
+        );
         at += len;
     }
-    assert_eq!(at, l.pool_bytes());
+    if l.buffer_count() == 0 {
+        assert_eq!(l.pool_bytes(), 0);
+    } else {
+        assert_eq!(at + l.block_size as usize, l.pool_bytes());
+    }
     for i in 0..l.small_buffers {
         assert_eq!(l.small(i), BufId(l.buffers + i));
+    }
+    for i in 0..l.aligned_buffers {
+        assert_eq!(l.aligned(i), BufId(l.buffers + l.small_buffers + i));
     }
 }
 

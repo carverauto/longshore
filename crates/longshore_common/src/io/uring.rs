@@ -5,10 +5,12 @@
 
 //! [`Io`] on io_uring: one ring, one thread, registered buffers and files.
 
+use crate::io::files::FileTable;
 use crate::io::ring::Ring;
 use crate::io::sys::*;
 use crate::io::{
-    BufId, Busy, Completion, Completions, FileId, Io, Limits, Op, Sock, Token, ECANCELED, ETIME,
+    BufId, Busy, Completion, Completions, FileId, FileSlot, Io, Limits, Op, Sock, Token, ECANCELED,
+    ETIME,
 };
 use core::mem::ManuallyDrop;
 use std::ffi::CString;
@@ -17,10 +19,13 @@ use std::net::{SocketAddr, TcpListener};
 use std::os::fd::IntoRawFd;
 
 mod backend;
+mod completions;
 #[cfg(feature = "fault-injection")]
 mod fault;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
+mod ops;
+mod setup;
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -41,10 +46,14 @@ enum State {
     AwaitNotif,
     /// Zero-copy send: release seen first, waiting for the result.
     AwaitResult,
-    /// Reading a file: the open, the read, then the close are in flight in turn.
+    /// Reading a legacy `FileId` file: the open, the read, then the close are in flight in turn.
     FileOpen,
     FileRead,
     FileClose,
+    /// New registered-slot file operations.
+    FileSlotOp,
+    FileSlotOpen,
+    FileSlotClose,
     /// Closing a socket slot.
     Close,
 }
@@ -55,6 +64,8 @@ struct Slot {
     state: State,
     result: i32,
     sock: u32,
+    file_slot: FileSlot,
+    file_direct: bool,
     /// The socket slot this operation is in flight on, if any (`Accept` uses
     /// `listener`; `Close` and non-socket ops leave this `None`).
     op_sock: Option<Sock>,
@@ -80,6 +91,60 @@ struct Slot {
     wake_count: u64,
 }
 
+pub(super) struct ReadyQueue {
+    items: Box<[(u32, Completion)]>,
+    head: usize,
+    len: usize,
+}
+
+impl ReadyQueue {
+    pub(super) fn new(capacity: usize) -> Self {
+        Self {
+            items: vec![
+                (
+                    0,
+                    Completion {
+                        token: Token(0),
+                        result: 0
+                    }
+                );
+                capacity
+            ]
+            .into_boxed_slice(),
+            head: 0,
+            len: 0,
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(super) fn push(&mut self, slot_idx: u32, c: Completion) {
+        let cap = self.items.len();
+        let tail = (self.head + self.len) % cap;
+        self.items[tail] = (slot_idx, c);
+        self.len += 1;
+    }
+
+    pub(super) fn pop(&mut self) -> Option<(u32, Completion)> {
+        if self.len == 0 {
+            return None;
+        }
+        let item = self.items[self.head];
+        self.head = (self.head + 1) % self.items.len();
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn clear(&mut self, slots: &mut [Slot], free: &mut Vec<u32>) {
+        while let Some((slot_i, _)) = self.pop() {
+            slots[slot_i as usize].state = State::Free;
+            free.push(slot_i);
+        }
+    }
+}
+
 /// The kernel holds pointers into memory this owns while operations are in
 /// flight (the fields `UringIo::leak` lists), and closing the ring does not
 /// wait for them to end. The rule: that memory is freed only when
@@ -91,6 +156,8 @@ pub struct UringIo {
     ring: ManuallyDrop<Ring>,
     limits: Limits,
     bufs: Box<[u8]>,
+    pool_base: usize,
+    buf_range: Box<[u16]>,
     slots: Box<[Slot]>,
     /// Completions the kernel still owes: one per SQE pushed, and one more
     /// after each that says more follow (a zero-copy send's notification).
@@ -98,6 +165,8 @@ pub struct UringIo {
     /// The wait bound of `quiesce`'s timer.
     quiet_ts: Box<timespec>,
     free: Vec<u32>,
+    ready: ReadyQueue,
+    files_table: FileTable,
     /// Paths registered for `Op::ReadFile`, NUL-terminated for the kernel.
     files: Vec<CString>,
     /// The eventfd behind `Io::waker`, or -1 before it is asked for.
@@ -119,16 +188,12 @@ const QUIESCE: u64 = 6 << 32;
 /// Internal cancel submitted by `Op::Close` for sibling ops on the socket.
 const INTERNAL_CANCEL: u64 = 7 << 32;
 
-mod completions;
-
 /// The other threads' end of the wake-up eventfd.
 struct EventFd(i32);
 
 impl crate::io::Wake for EventFd {
     fn wake(&self) {
         let one: u64 = 1;
-        // The counter cannot overflow in practice, and a failed write only
-        // means the reader is already due to wake.
         unsafe { write(self.0, (&one as *const u64).cast(), 8) };
     }
 }
@@ -152,87 +217,14 @@ impl Drop for UringIo {
     }
 }
 
-/// Registered buffers are locked memory. Where the limit on that is too low
-/// the kernel answers ENOMEM, which reads as if the machine were out of
-/// memory, so name the limit.
-fn name_memlock_limit(e: io::Error) -> io::Error {
-    if e.kind() != io::ErrorKind::OutOfMemory {
-        return e;
-    }
-    io::Error::new(
-        e.kind(),
-        format!(
-            "{e}: the locked-memory limit (RLIMIT_MEMLOCK) is too low for \
-             the registered buffer pool"
-        ),
-    )
-}
-
 impl UringIo {
-    /// Allocates and registers everything. Call on the thread that will use it.
-    pub fn new(limits: Limits) -> io::Result<UringIo> {
-        // Room for one SQE + one internal cancel SQE per operation, and `quiesce`'s two SQEs.
-        let entries = (limits.ops_max * 2 + 2).next_power_of_two().max(8);
-        let mut ring = Ring::new(
-            entries,
-            IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN,
-        )?;
-        let mut bufs = vec![0u8; limits.pool_bytes()].into_boxed_slice();
-        // One registered buffer per pool buffer, so a buffer's id is its registered index.
-        let iov: Vec<iovec> = (0..limits.buffer_count())
-            .map(|id| {
-                let (at, len) = limits.span(BufId(id));
-                iovec {
-                    iov_base: bufs[at..at + len].as_mut_ptr().cast(),
-                    iov_len: len,
-                }
-            })
-            .collect();
-        ring.register_buffers(&iov).map_err(name_memlock_limit)?;
-        ring.register_files(&vec![-1i32; limits.sockets_max as usize])?;
-        let slot = Slot {
-            cancel_requested: false,
-            token: 0,
-            state: State::Free,
-            result: 0,
-            sock: 0,
-            op_sock: None,
-            sock_closed: false,
-            fd: -1,
-            file_addr: 0,
-            file_len: 0,
-            phase: 0,
-            addr: sockaddr_any::default(),
-            addr_len: 0,
-            probe_fd: -1,
-            ts: timespec::default(),
-            wake_count: 0,
-        };
-        Ok(UringIo {
-            ring: ManuallyDrop::new(ring),
-            limits,
-            bufs,
-            slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
-            in_flight: 0,
-            quiet_ts: Box::new(timespec {
-                sec: 0,
-                nsec: 100_000_000,
-            }),
-            free: (0..limits.ops_max).rev().collect(),
-            files: Vec::new(),
-            wake_fd: -1,
-            measure_segments: false,
-            #[cfg(feature = "fault-injection")]
-            fail_tick: false,
-        })
-    }
-
     /// Cancel every operation in flight and reap it, so the kernel touches
     /// no buffer or slot afterwards. Completions are discarded. True once
     /// nothing is in flight; false if the ring fails or something has not
     /// ended within five seconds (a zero-copy send whose data the peer never
     /// acknowledges can hold its buffer that long). Dropping calls this.
     pub fn quiesce(&mut self) -> bool {
+        self.ready.clear(&mut self.slots, &mut self.free);
         if self.in_flight == 0 {
             return true;
         }
@@ -241,9 +233,6 @@ impl UringIo {
         for s in self.slots.iter_mut() {
             s.cancel_requested = true;
         }
-        // Each round cancels every operation still in flight by its own
-        // identity, then waits for one completion or 100 ms and reaps what
-        // came, so operations of several steps advance as they normally do.
         let mut timing = false;
         let mut out = Completions::new(8);
         while self.in_flight > 0 {
@@ -253,11 +242,10 @@ impl UringIo {
             for k in 0..self.slots.len() {
                 let s = &self.slots[k];
                 let opcode = match s.state {
-                    // A close is never cancelled, and a zero-copy send whose
-                    // result is in only waits for its notification.
                     State::Free
                     | State::Close
                     | State::FileClose
+                    | State::FileSlotClose
                     | State::ConnectRelease
                     | State::AwaitNotif => continue,
                     State::Timer => IORING_OP_TIMEOUT_REMOVE,
@@ -310,6 +298,8 @@ impl UringIo {
         Box::leak(core::mem::take(&mut self.slots));
         Box::leak(core::mem::take(&mut self.bufs));
         Box::leak(core::mem::take(&mut self.quiet_ts));
+        Box::leak(core::mem::take(&mut self.buf_range));
+        Box::leak(core::mem::take(&mut self.ready.items));
         core::mem::forget(core::mem::take(&mut self.files));
     }
 
@@ -338,7 +328,9 @@ impl UringIo {
     }
 
     fn buf_ptr(&self, buf: BufId, off: u32, len: u32) -> u64 {
-        self.bufs.as_ptr() as u64 + self.limits.range(buf, off, len).start as u64
+        self.bufs.as_ptr() as u64
+            + self.pool_base as u64
+            + self.limits.range(buf, off, len).start as u64
     }
 
     fn fixed(&self, sock: Sock) -> io_uring_sqe {
@@ -350,46 +342,19 @@ impl UringIo {
         }
     }
 
+    fn fixed_file(&self, slot: FileSlot) -> io_uring_sqe {
+        assert!(slot.0 < self.limits.files_max, "file slot out of range");
+        io_uring_sqe {
+            fd: (self.limits.sockets_max + slot.0) as i32,
+            flags: IOSQE_FIXED_FILE,
+            ..Default::default()
+        }
+    }
+
     fn push(&mut self, sqe: io_uring_sqe) {
-        // The SQ has at least `ops_max` entries and each slot has at most one
-        // SQE outstanding, so this cannot fail.
         self.ring
             .push(sqe)
             .expect("submission queue sized for ops_max");
         self.in_flight += 1;
-    }
-}
-
-#[cfg(test)]
-mod memlock_tests {
-    use super::name_memlock_limit;
-    use std::io;
-
-    const ENOMEM: i32 = 12;
-    const EINVAL: i32 = 22;
-
-    fn as_ring_reports(errno: i32) -> io::Error {
-        let e = io::Error::from_raw_os_error(errno);
-        io::Error::new(
-            e.kind(),
-            format!("io_uring_register(op=0, n=4) failed: {e}"),
-        )
-    }
-
-    #[test]
-    fn enomem_from_registration_names_the_limit_and_keeps_the_call() {
-        let e = name_memlock_limit(as_ring_reports(ENOMEM));
-        assert_eq!(e.kind(), io::ErrorKind::OutOfMemory);
-        let text = e.to_string();
-        assert!(text.contains("RLIMIT_MEMLOCK"), "{text}");
-        assert!(text.contains("io_uring_register(op=0, n=4)"), "{text}");
-    }
-
-    #[test]
-    fn other_errors_pass_through_unchanged() {
-        let before = as_ring_reports(EINVAL).to_string();
-        let e = name_memlock_limit(as_ring_reports(EINVAL));
-        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
-        assert_eq!(e.to_string(), before);
     }
 }

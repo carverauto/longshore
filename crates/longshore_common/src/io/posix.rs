@@ -12,6 +12,7 @@ mod abi_macos;
 #[cfg(target_os = "linux")]
 mod epoll;
 pub mod errno;
+mod files;
 #[cfg(target_os = "macos")]
 mod kqueue;
 mod ops;
@@ -77,6 +78,7 @@ impl SockSlot {
 /// Non-blocking POSIX I/O world backed by `kqueue` (macOS) or `epoll` (Linux).
 pub struct Posix {
     socks: Box<[SockSlot]>,
+    file_fds: Box<[i32]>,
     files: Vec<CString>,
     poller: Poller,
     cursor: usize,
@@ -90,6 +92,7 @@ impl Posix {
     pub fn new(limits: Limits) -> io::Result<Self> {
         Ok(Self {
             socks: (0..limits.sockets_max).map(|_| SockSlot::free()).collect(),
+            file_fds: vec![-1; limits.files_max as usize].into_boxed_slice(),
             files: Vec::new(),
             poller: Poller::new()?,
             cursor: 0,
@@ -108,6 +111,12 @@ impl Drop for Posix {
                 self.poller.before_close(s);
                 unsafe { close(s.fd) };
                 s.reset();
+            }
+        }
+        for fd in self.file_fds.iter_mut() {
+            if *fd >= 0 {
+                unsafe { close(*fd) };
+                *fd = -1;
             }
         }
     }
@@ -184,7 +193,18 @@ impl World for Posix {
             | Op::ReadFile { .. }
             | Op::Timeout { .. }
             | Op::AwaitWake
-            | Op::Cancel { .. } => true,
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => true,
         }
     }
 

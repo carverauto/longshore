@@ -18,7 +18,10 @@ const LIMITS: Limits = Limits {
 
 #[test]
 fn buffers_of_both_sizes_tile_the_pool() {
-    assert_eq!((LIMITS.buffer_count(), LIMITS.pool_bytes()), (5, 2030));
+    assert_eq!(
+        (LIMITS.buffer_count(), LIMITS.pool_bytes()),
+        (5, 2030 + 4096)
+    );
     let spans: Vec<_> = (0..5).map(|i| LIMITS.span(BufId(i))).collect();
     assert_eq!(
         spans,
@@ -26,6 +29,45 @@ fn buffers_of_both_sizes_tile_the_pool() {
     );
     assert_eq!(LIMITS.small(2), BufId(4));
     assert_eq!(LIMITS.range(BufId(3), 4, 6), 2014..2020);
+}
+
+#[test]
+fn aligned_buffers_start_on_block_boundary_with_head_padding() {
+    let l = Limits {
+        buffers: 1,
+        buffer_size: 1000,
+        small_buffers: 1,
+        small_buffer_size: 10,
+        aligned_buffers: 2,
+        aligned_buffer_size: 8192,
+        block_size: 4096,
+        ops_max: 1,
+        ..Limits::BASE
+    };
+    assert_eq!(l.buffer_count(), 4);
+    assert_eq!(l.aligned_start(), 4096);
+    assert_eq!(l.pool_bytes(), 4096 + 2 * 8192 + 4096);
+    assert_eq!(l.aligned(0), BufId(2));
+    assert_eq!(l.aligned(1), BufId(3));
+    assert!(!l.is_aligned_buf(BufId(0)));
+    assert!(!l.is_aligned_buf(BufId(1)));
+    assert!(l.is_aligned_buf(BufId(2)));
+    assert!(l.is_aligned_buf(BufId(3)));
+    assert_eq!(l.span(l.aligned(0)), (4096, 8192));
+    assert_eq!(l.span(l.aligned(1)), (4096 + 8192, 8192));
+    assert_eq!(Limits::BASE.pool_bytes(), 0);
+}
+
+#[test]
+#[should_panic(expected = "block_size must be a power of two >= 4096")]
+fn invalid_block_size_panics_when_aligned_buffers_present() {
+    let l = Limits {
+        aligned_buffers: 1,
+        aligned_buffer_size: 4096,
+        block_size: 2048,
+        ..Limits::BASE
+    };
+    let _ = l.pool_bytes();
 }
 
 #[test]

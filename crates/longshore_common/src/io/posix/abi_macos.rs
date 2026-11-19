@@ -25,14 +25,28 @@ pub const MSG_DONTWAIT: c_int = 0x80;
 pub const MSG_SEND_FLAGS: c_int = MSG_DONTWAIT;
 
 pub const O_RDONLY: c_int = 0x0000;
+pub const O_WRONLY: c_int = 0x0001;
+pub const O_RDWR: c_int = 0x0002;
 pub const O_NONBLOCK: c_int = 0x0004;
+pub const O_CREAT: c_int = 0x0200;
+pub const O_TRUNC: c_int = 0x0400;
+pub const O_EXCL: c_int = 0x0800;
+pub const O_DIRECTORY: c_int = 0x0010_0000;
 pub const O_CLOEXEC: c_int = 0x0100_0000;
 
 pub const F_SETFD: c_int = 2;
 pub const F_GETFL: c_int = 3;
 pub const F_SETFL: c_int = 4;
+pub const F_PREALLOCATE: c_int = 42;
+pub const F_NOCACHE: c_int = 48;
+pub const F_FULLFSYNC: c_int = 51;
 pub const F_DUPFD_CLOEXEC: c_int = 67;
+pub const F_PUNCHHOLE: c_int = 99;
 pub const FD_CLOEXEC: c_int = 1;
+
+pub const F_ALLOCATECONTIG: u32 = 0x2;
+pub const F_ALLOCATEALL: u32 = 0x4;
+pub const F_PEOFPOSMODE: c_int = 3;
 
 pub const EVFILT_READ: i16 = -1;
 pub const EVFILT_WRITE: i16 = -2;
@@ -127,6 +141,49 @@ pub struct timespec {
     pub tv_nsec: i64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct fstore_t {
+    pub fst_flags: u32,
+    pub fst_posmode: c_int,
+    pub fst_offset: i64,
+    pub fst_length: i64,
+    pub fst_bytesalloc: i64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct fpunchhole_t {
+    pub fp_flags: u32,
+    pub reserved: u32,
+    pub fp_offset: i64,
+    pub fp_length: i64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct stat {
+    pub st_dev: i32,
+    pub st_mode: u16,
+    pub st_nlink: u16,
+    pub st_ino: u64,
+    pub st_uid: u32,
+    pub st_gid: u32,
+    pub st_rdev: i32,
+    pub _pad0: i32,
+    pub st_atime: timespec,
+    pub st_mtime: timespec,
+    pub st_ctime: timespec,
+    pub st_birthtime: timespec,
+    pub st_size: i64,
+    pub st_blocks: i64,
+    pub st_blksize: i32,
+    pub st_flags: u32,
+    pub st_gen: u32,
+    pub st_lspare: i32,
+    pub st_qspare: [i64; 2],
+}
+
 const _: () = {
     assert!(size_of::<kevent>() == 32);
     assert!(align_of::<kevent>() == 4);
@@ -139,6 +196,17 @@ const _: () = {
     assert!(size_of::<sockaddr_in>() == 16);
     assert!(size_of::<sockaddr_in6>() == 28);
     assert!(size_of::<timespec>() == 16);
+    assert!(size_of::<fstore_t>() == 32);
+    assert!(size_of::<fpunchhole_t>() == 24);
+    assert!(size_of::<stat>() == 144);
+    assert!(offset_of!(stat, st_mode) == 4);
+    assert!(offset_of!(stat, st_nlink) == 6);
+    assert!(offset_of!(stat, st_ino) == 8);
+    assert!(offset_of!(stat, st_uid) == 16);
+    assert!(offset_of!(stat, st_gid) == 20);
+    assert!(offset_of!(stat, st_size) == 96);
+    assert!(offset_of!(stat, st_blocks) == 104);
+    assert!(offset_of!(stat, st_blksize) == 112);
 };
 
 extern "C" {
@@ -173,6 +241,15 @@ extern "C" {
     pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
     pub fn open(path: *const c_char, oflag: c_int, ...) -> c_int;
     pub fn pread(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize;
+    pub fn pwrite(fd: c_int, buf: *const c_void, count: usize, offset: i64) -> isize;
+    pub fn ftruncate(fd: c_int, length: i64) -> c_int;
+    pub fn rename(old: *const c_char, new: *const c_char) -> c_int;
+    pub fn unlink(path: *const c_char) -> c_int;
+    pub fn mkdir(path: *const c_char, mode: u16) -> c_int;
+    #[cfg_attr(target_arch = "x86_64", link_name = "stat$INODE64")]
+    pub fn stat(path: *const c_char, buf: *mut stat) -> c_int;
+    #[cfg_attr(target_arch = "x86_64", link_name = "fstat$INODE64")]
+    pub fn fstat(fd: c_int, buf: *mut stat) -> c_int;
     pub fn clock_gettime(clock_id: c_int, tp: *mut timespec) -> c_int;
 }
 

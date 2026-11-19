@@ -17,7 +17,13 @@ use std::net::SocketAddr;
 
 pub mod alloc_guard;
 pub mod contract;
+pub mod contract_chains;
+pub mod contract_files;
 pub mod engine;
+pub mod files;
+pub use files::{file_size, FileSlot, OpenFlags};
+pub mod limits;
+pub use limits::Limits;
 #[cfg(unix)]
 pub mod posix;
 pub mod scenario;
@@ -111,6 +117,77 @@ pub enum Op {
     /// it finished first. The cancel itself completes with 0 if found, or a
     /// negative errno if no such operation was in flight.
     Cancel { target: Token },
+    /// Open the NUL-terminated path in `path_buf[path_off..path_off + path_len]`
+    /// into fixed file slot `slot`. Completes with 0 or a negative errno.
+    FileOpen {
+        slot: FileSlot,
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+        flags: OpenFlags,
+    },
+    /// Close the file in `slot`, freeing the slot on completion.
+    FileClose { slot: FileSlot },
+    /// Read up to `len` bytes at `file_off` from `slot` into `buf[off..off + len]`.
+    FileRead {
+        slot: FileSlot,
+        buf: BufId,
+        off: u32,
+        len: u32,
+        file_off: u64,
+    },
+    /// Write up to `len` bytes from `buf[off..off + len]` to `slot` at `file_off`.
+    FileWrite {
+        slot: FileSlot,
+        buf: BufId,
+        off: u32,
+        len: u32,
+        file_off: u64,
+    },
+    /// Flush dirty data (and metadata unless `datasync`) for `slot`.
+    FileSync { slot: FileSlot, datasync: bool },
+    /// Reserve space for `[file_off, file_off + len)` on `slot`.
+    FileReserve {
+        slot: FileSlot,
+        file_off: u64,
+        len: u64,
+        keep_size: bool,
+    },
+    /// Deallocate `[file_off, file_off + len)` on `slot`, leaving file size unchanged.
+    FilePunch {
+        slot: FileSlot,
+        file_off: u64,
+        len: u64,
+    },
+    /// Read file status by path into `out_buf[out_off..]` in 256-byte Linux `statx` layout.
+    FileStatus {
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+        out_buf: BufId,
+        out_off: u32,
+    },
+    /// Rename a path (overwriting an existing non-directory target).
+    FileRename {
+        old_buf: BufId,
+        old_off: u32,
+        old_len: u32,
+        new_buf: BufId,
+        new_off: u32,
+        new_len: u32,
+    },
+    /// Unlink a non-directory path.
+    FileUnlink {
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+    },
+    /// Create a directory at the given path.
+    FileMkdir {
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+    },
 }
 
 /// `result` is a byte count or 0 on success, or a negated Linux errno.
@@ -128,6 +205,8 @@ pub const ECANCELED: i32 = 125;
 pub const ENOENT: i32 = 2;
 pub const EBADF: i32 = 9;
 pub const EAGAIN: i32 = 11;
+pub const EBUSY: i32 = 16;
+pub const EINVAL: i32 = 22;
 
 /// Fixed-capacity completion buffer; `tick` never delivers more than fit.
 pub struct Completions {
@@ -181,96 +260,6 @@ pub trait Wake: Send + Sync {
     fn wake(&self);
 }
 
-/// Everything the I/O layer allocates is sized from these, once.
-#[derive(Clone, Copy, Debug)]
-pub struct Limits {
-    pub sockets_max: u32,
-    /// Large buffers, sized for object bodies: ids `0..buffers`.
-    pub buffers: u32,
-    pub buffer_size: u32,
-    /// Small buffers, sized for request and response heads and datagrams:
-    /// ids `buffers..buffers + small_buffers`. May be zero.
-    pub small_buffers: u32,
-    pub small_buffer_size: u32,
-    /// Maximum operations in flight.
-    pub ops_max: u32,
-}
-
-impl Limits {
-    /// Zeroed base value for struct-update construction (`Limits { ..Limits::BASE }`).
-    pub const BASE: Self = Self {
-        sockets_max: 0,
-        buffers: 0,
-        buffer_size: 0,
-        small_buffers: 0,
-        small_buffer_size: 0,
-        ops_max: 0,
-    };
-
-    /// Buffers of both sizes.
-    pub fn buffer_count(&self) -> u32 {
-        self.buffers + self.small_buffers
-    }
-
-    /// The id of small buffer `i`.
-    pub fn small(&self, i: u32) -> BufId {
-        assert!(i < self.small_buffers, "small buffer out of range");
-        BufId(self.buffers + i)
-    }
-
-    /// Bytes in the one pool that holds every buffer, large ones first.
-    pub fn pool_bytes(&self) -> usize {
-        self.buffers as usize * self.buffer_size as usize
-            + self.small_buffers as usize * self.small_buffer_size as usize
-    }
-
-    /// Where buffer `id` lies in the pool: its offset and its length.
-    pub fn span(&self, id: BufId) -> (usize, usize) {
-        assert!(id.0 < self.buffer_count(), "buffer out of range");
-        if id.0 < self.buffers {
-            (
-                id.0 as usize * self.buffer_size as usize,
-                self.buffer_size as usize,
-            )
-        } else {
-            let large = self.buffers as usize * self.buffer_size as usize;
-            (
-                large + (id.0 - self.buffers) as usize * self.small_buffer_size as usize,
-                self.small_buffer_size as usize,
-            )
-        }
-    }
-
-    /// Like [`Limits::span`] for the range `off..off + len` of the buffer.
-    pub fn range(&self, id: BufId, off: u32, len: u32) -> core::ops::Range<usize> {
-        let (base, size) = self.span(id);
-        assert!(
-            off as u64 + len as u64 <= size as u64,
-            "buffer range out of bounds"
-        );
-        base + off as usize..base + off as usize + len as usize
-    }
-
-    /// Two distinct buffers of the pool, borrowed at once.
-    pub fn pair<'a>(&self, pool: &'a mut [u8], a: BufId, b: BufId) -> (&'a mut [u8], &'a mut [u8]) {
-        assert!(a != b, "buf_pair needs two distinct pool buffers");
-        let ((a_at, a_len), (b_at, b_len)) = (self.span(a), self.span(b));
-        if a_at < b_at {
-            let (left, right) = pool.split_at_mut(b_at);
-            (&mut left[a_at..a_at + a_len], &mut right[..b_len])
-        } else {
-            let (left, right) = pool.split_at_mut(a_at);
-            (&mut right[..a_len], &mut left[b_at..b_at + b_len])
-        }
-    }
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self::BASE
-    }
-}
-
 /// All operation slots are in use.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Busy;
@@ -307,6 +296,9 @@ pub trait Io {
     }
     /// Queue an operation. Performs no system call.
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy>;
+    /// Queue a linked chain of file operations atomically. Refuses with
+    /// [`Busy`] if fewer than `ops.len()` operation slots are free.
+    fn submit_chain(&mut self, ops: &[(Token, Op)]) -> Result<(), Busy>;
     /// Hand queued operations to the kernel and collect completions, in one
     /// system call. With `wait`, blocks until at least one completion.
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()>;

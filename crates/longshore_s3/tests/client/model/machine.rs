@@ -109,6 +109,9 @@ impl Io for Woken {
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy> {
         self.io.submit(token, op)
     }
+    fn submit_chain(&mut self, ops: &[(Token, Op)]) -> Result<(), Busy> {
+        self.io.submit_chain(ops)
+    }
     fn tick(&mut self, wait: bool, out: &mut Completions) -> std::io::Result<()> {
         self.io.tick(wait, out)
     }

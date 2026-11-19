@@ -301,6 +301,11 @@ impl Virtual {
                 self.socks[s].addr = None;
                 Some(0)
             }
+            _ if op.is_file_op() => match self.disk.as_mut() {
+                Some(disk) => Some(disk.attempt(op, pool, limits)),
+                None => Some(-ENOENT),
+            },
+            _ => unreachable!("handled above"),
         }
     }
 }

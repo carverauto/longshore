@@ -43,19 +43,31 @@ failed=0
 while read -r target dest <&3; do
     case "$target" in ''|\#*) continue ;; esac
     echo "== $target on $dest"
-    cargo build --release --quiet --target "$target" -p longshore-bench --bin contract_uring --bin echo_uring --bin http_uring --bin dns_uring --bin client_uring
+    cargo build --release --quiet --target "$target" -p longshore-bench --bin contract_uring --bin file_uring --bin echo_uring --bin http_uring --bin dns_uring --bin client_uring
     # Built apart from the rest: its feature lets a test break a ring, and
     # no other program is built with that in it.
     cargo build --release --quiet --target "$target" -p longshore-bench --features fault-injection --bin client_faults
     bin="target/$target/release"
     $SSH "$dest" "mkdir -p longshore-bench/$ID"
-    scp -q -o BatchMode=yes "$bin/contract_uring" "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$dest:longshore-bench/$ID/" </dev/null
+    scp -q -o BatchMode=yes "$bin/contract_uring" "$bin/file_uring" "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$dest:longshore-bench/$ID/" </dev/null
     # Each check seals the heap after setup and exits non-zero on any failure.
     if $SSH "$dest" "cd longshore-bench/$ID && set -e
+        file_dir=.
+        fs_type=\$(df -T . | awk 'NR==2 {print \$2}')
+        if [ \"\$fs_type\" = zfs ] || [ \"\$fs_type\" = tmpfs ]; then
+            if [ -d /mnt/storage-pve02 ] && [ -w /mnt/storage-pve02 ]; then
+                file_dir=/mnt/storage-pve02/longshore-test-$ID
+                mkdir -p \"\$file_dir\"
+            fi
+        fi
+        trap 'if [ \"\$file_dir\" != . ]; then rm -rf \"\$file_dir\"; fi' EXIT
         timeout 60 ./contract_uring
         timeout 60 ./contract_uring --v6
         timeout 60 ./contract_uring --posix
         timeout 60 ./contract_uring --posix --v6
+        timeout 60 ./file_uring --dir \"\$file_dir\"
+        timeout 60 ./file_uring --dir \"\$file_dir\" --posix
+        timeout 60 ./file_uring --dir \"\$file_dir\" --bench --iters 200
         timeout 60 ./echo_uring
         timeout 60 ./echo_uring --zc
         timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc

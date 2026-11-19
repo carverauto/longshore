@@ -8,7 +8,7 @@
 #![cfg(target_os = "linux")]
 #![allow(non_camel_case_types, dead_code)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_long, c_void};
 use core::mem::{align_of, offset_of, size_of};
 
 pub const AF_INET: c_int = 2;
@@ -27,7 +27,29 @@ pub const MSG_NOSIGNAL: c_int = 0x4000;
 pub const MSG_SEND_FLAGS: c_int = MSG_NOSIGNAL | MSG_DONTWAIT;
 
 pub const O_RDONLY: c_int = 0;
+pub const O_WRONLY: c_int = 1;
+pub const O_RDWR: c_int = 2;
+pub const O_CREAT: c_int = 0o100;
+pub const O_EXCL: c_int = 0o200;
+pub const O_TRUNC: c_int = 0o1000;
 pub const O_CLOEXEC: c_int = 0o200_0000;
+#[cfg(target_arch = "x86_64")]
+pub const O_DIRECT: c_int = 0o0040000;
+#[cfg(target_arch = "x86_64")]
+pub const O_DIRECTORY: c_int = 0o0200000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECTORY: c_int = 0o0040000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECT: c_int = 0o0200000;
+
+pub const AT_FDCWD: c_int = -100;
+pub const FALLOC_FL_KEEP_SIZE: c_int = 0x01;
+pub const FALLOC_FL_PUNCH_HOLE: c_int = 0x02;
+pub const STATX_BASIC_STATS: u32 = 0x07ff;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_STATX: c_long = 332;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_STATX: c_long = 291;
 
 pub const F_DUPFD_CLOEXEC: c_int = 1030;
 
@@ -177,7 +199,21 @@ extern "C" {
     pub fn getpeername(fd: c_int, addr: *mut c_void, len: *mut u32) -> c_int;
     pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
     pub fn open(path: *const c_char, oflag: c_int, ...) -> c_int;
+    pub fn openat(dirfd: c_int, pathname: *const c_char, flags: c_int, ...) -> c_int;
     pub fn pread(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize;
+    pub fn pwrite(fd: c_int, buf: *const c_void, count: usize, offset: i64) -> isize;
+    pub fn fsync(fd: c_int) -> c_int;
+    pub fn fdatasync(fd: c_int) -> c_int;
+    pub fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64) -> c_int;
+    pub fn renameat(
+        olddirfd: c_int,
+        oldpath: *const c_char,
+        newdirfd: c_int,
+        newpath: *const c_char,
+    ) -> c_int;
+    pub fn unlinkat(dirfd: c_int, pathname: *const c_char, flags: c_int) -> c_int;
+    pub fn mkdirat(dirfd: c_int, pathname: *const c_char, mode: u32) -> c_int;
+    pub fn syscall(num: c_long, ...) -> c_long;
     pub fn clock_gettime(clock_id: c_int, tp: *mut timespec) -> c_int;
 }
 

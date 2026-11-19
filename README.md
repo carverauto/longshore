@@ -109,12 +109,52 @@ how it is tested. The store's own API is lower level:
 [Building, testing and running against a store][testing] shows how
 to drive it.
 
+## File operations
+
+`longshore::io` also supports local file I/O through fixed `FileSlot`s on the
+same single-threaded `Io` queue (`UringIo`, `PosixIo`, and `SimIo`):
+
+- **11 file operations**: `FileOpen` (with `read`, `write`, `create`,
+  `exclusive`, `empty`, `direct`, and `directory` flags), `FileClose`,
+  `FileRead`, `FileWrite` (64-bit offsets into registered buffers), `FileSync`
+  (`datasync` or full sync), `FileReserve` (extend or keep size), `FilePunch`
+  (block-aligned hole punching), `FileStatus` (256-byte Linux `statx` layout
+  with `files::file_size`), `FileRename`, `FileUnlink`, and `FileMkdir`.
+- **No truncate or directory listing**: reopen with `OpenFlags::empty` to reset
+  a file from its start, and probe fixed names or keep an index file rather
+  than listing a directory.
+- **Linked chains (`Io::submit_chain`)**: submits file operations atomically
+  (`IOSQE_IO_LINK` on `io_uring`), such as write-then-sync in one submission.
+  A chain stops at the first failure or short read/write, completing later
+  members with `-ECANCELED`.
+- **Aligned pool**: set `Limits::aligned_buffers`,
+  `Limits::aligned_buffer_size`, and `Limits::block_size` (a power of two
+  `>= 4096` matching the storage device's sector/block size for `O_DIRECT` and
+  `FilePunch`). Pools are registered with the kernel as `<= 1 GiB` contiguous
+  ranges of whole buffers, removing the 16,384-buffer limit.
+
 ## Requirements
 
 - Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when
   `Builder::portable` is set), or macOS for the portable `kqueue` backend
   (without core pinning). Other targets build the crate and run the simulator.
 - A recent stable Rust toolchain.
+- **`RLIMIT_MEMLOCK` and `RLIMIT_NOFILE`**: `UringIo` registers its buffer pool
+  as locked memory (charged against `RLIMIT_MEMLOCK`, summed across all rings
+  owned by the user; processes with `CAP_IPC_LOCK` are exempt) and sizes the
+  fixed file table to `sockets_max + files_max` (which must not exceed
+  `RLIMIT_NOFILE`).
+- **Platform notes**:
+  - On Linux 6.1 `io_uring`, `FileSync`, `FileReserve`, `FilePunch`,
+    `FileRename`, `FileUnlink`, `FileMkdir`, and creating/emptying `FileOpen`
+    execute on kernel `io-wq` worker threads and still report through the
+    ring's completion queue.
+  - On macOS (`PosixIo`), file operations block the calling thread:
+    `OpenFlags::direct` uses `F_NOCACHE` (with alignment enforced by
+    `io::files`), both `FileSync` modes use `F_FULLFSYNC`, `FileReserve` uses
+    `F_PREALLOCATE` (which may set aside less space than requested), and
+    `FilePunch` uses `F_PUNCHHOLE` (returning `-EOPNOTSUPP` on filesystems
+    without support).
 
 The simulator, unit, property, and portable `kqueue` backend and client tests
 run directly on macOS. Anything that uses `io_uring` (and Linux `epoll`) has to

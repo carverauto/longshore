@@ -6,9 +6,15 @@
 //! Scheduling pass (`step`) and engine-resolved ops (`Timeout`, `AwaitWake`, `Cancel`).
 
 use super::*;
-use crate::io::Completion;
 
 impl<W: World> Engine<W> {
+    pub(super) fn record_trace(&mut self, token: Token, result: i32) {
+        let now = self.world.now_ns();
+        for v in [token.0, result as u32 as u64, now] {
+            self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+
     fn resolve_or_attempt(&mut self, p: &Pending) -> Option<i32> {
         match p.op {
             Op::Timeout { .. } => (self.world.now_ns() >= p.deadline).then_some(0),
@@ -25,7 +31,27 @@ impl<W: World> Engine<W> {
                     None => Some(-ENOENT),
                 }
             }
-            _ => self.world.attempt(&p.op, &mut self.bufs, &self.limits),
+            Op::FileRead { slot, .. }
+            | Op::FileWrite { slot, .. }
+            | Op::FileSync { slot, .. }
+            | Op::FileReserve { slot, .. }
+            | Op::FilePunch { slot, .. }
+            | Op::FileClose { slot } => {
+                if !self.files.has_file(slot) {
+                    let earlier_open = self.pending.iter().any(|q| {
+                        q.id < p.id && matches!(q.op, Op::FileOpen { slot: s, .. } if s == slot)
+                    });
+                    if earlier_open {
+                        return None;
+                    }
+                    return Some(-EBADF);
+                }
+                self.world
+                    .attempt(&p.op, &mut self.bufs[self.pool_base..], &self.limits)
+            }
+            _ => self
+                .world
+                .attempt(&p.op, &mut self.bufs[self.pool_base..], &self.limits),
         }
     }
 
@@ -42,7 +68,11 @@ impl<W: World> Engine<W> {
             visited += 1;
             let idx = i % self.pending.len();
             let p = self.pending[idx];
-            let ready = if p.cancelled {
+            if p.chain_id != 0 && !p.chain_active {
+                i = idx + 1;
+                continue;
+            }
+            let ready = if p.cancelled || p.chain_aborted {
                 if p.attached {
                     self.world.release(&p.op);
                 }
@@ -65,41 +95,8 @@ impl<W: World> Engine<W> {
             match ready {
                 Some(result) => {
                     self.pending.swap_remove(idx);
-                    if let Op::Close { sock } = p.op {
-                        if !p.cancelled {
-                            self.world.closed(sock);
-                            for q in self.pending.iter_mut() {
-                                let on_sock = match q.op {
-                                    Op::Connect { sock: s, .. }
-                                    | Op::ConnectUdp { sock: s, .. }
-                                    | Op::Accept { listener: s, .. }
-                                    | Op::Send { sock: s, .. }
-                                    | Op::Recv { sock: s, .. }
-                                    | Op::RecvNow { sock: s, .. } => s == sock,
-                                    Op::Close { .. }
-                                    | Op::AwaitWake
-                                    | Op::ReadFile { .. }
-                                    | Op::Timeout { .. }
-                                    | Op::Cancel { .. } => false,
-                                };
-                                if on_sock {
-                                    if q.attached {
-                                        self.world.release(&q.op);
-                                        q.attached = false;
-                                    }
-                                    if !q.cancelled {
-                                        q.cancelled = true;
-                                        let op = q.op;
-                                        self.world.on_cancel(&op);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let now = self.world.now_ns();
-                    for v in [p.token.0, result as u32 as u64, now] {
-                        self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
-                    }
+                    self.finish_op(p, result);
+                    self.record_trace(p.token, result);
                     out.push(Completion {
                         token: p.token,
                         result,
@@ -111,6 +108,61 @@ impl<W: World> Engine<W> {
                         self.pending[idx].attached = true;
                     }
                     i = idx + 1;
+                }
+            }
+        }
+    }
+
+    fn finish_op(&mut self, p: Pending, result: i32) {
+        match p.op {
+            Op::Close { sock } if !p.cancelled => {
+                self.world.closed(sock);
+                for q in self.pending.iter_mut() {
+                    let on_sock = match q.op {
+                        Op::Connect { sock: s, .. }
+                        | Op::ConnectUdp { sock: s, .. }
+                        | Op::Accept { listener: s, .. }
+                        | Op::Send { sock: s, .. }
+                        | Op::Recv { sock: s, .. }
+                        | Op::RecvNow { sock: s, .. } => s == sock,
+                        _ => false,
+                    };
+                    if on_sock {
+                        if q.attached {
+                            self.world.release(&q.op);
+                            q.attached = false;
+                        }
+                        if !q.cancelled {
+                            q.cancelled = true;
+                            let op = q.op;
+                            self.world.on_cancel(&op);
+                        }
+                    }
+                }
+            }
+            Op::FileOpen { slot, flags, .. } => {
+                self.files.on_open_done(slot, result >= 0, flags.direct)
+            }
+            Op::FileClose { slot } => self.files.on_close_done(slot, result != -ECANCELED),
+            _ => {}
+        }
+        if p.chain_id != 0 {
+            let short_rw = match p.op {
+                Op::FileRead { len, .. } | Op::FileWrite { len, .. } => {
+                    result >= 0 && (result as u32) < len
+                }
+                _ => false,
+            };
+            let abort_tail = result < 0 || short_rw;
+            for q in self.pending.iter_mut() {
+                if q.chain_id == p.chain_id && q.chain_pos > p.chain_pos {
+                    if abort_tail {
+                        q.chain_aborted = true;
+                    }
+                    if q.chain_pos == p.chain_pos + 1 {
+                        q.chain_active = true;
+                        q.fresh = true;
+                    }
                 }
             }
         }

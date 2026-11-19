@@ -9,7 +9,10 @@
 //! identifiers, waker flag, and completion trace. A [`World`] supplies the
 //! clock, seeded or rotating scheduling, operation attempts, and waiting.
 
-use crate::io::{Completions, FileId, Limits, Op, Sock, Token, Wake, ECANCELED, ENOENT};
+use crate::io::files::FileTable;
+use crate::io::{
+    Completion, Completions, FileId, Limits, Op, Sock, Token, Wake, EBADF, ECANCELED, ENOENT,
+};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,6 +76,10 @@ pub(crate) struct Pending {
     pub(crate) cancel_target: Option<u64>,
     pub(crate) attached: bool,
     pub(crate) fresh: bool,
+    pub(crate) chain_id: u64,
+    pub(crate) chain_pos: u32,
+    pub(crate) chain_active: bool,
+    pub(crate) chain_aborted: bool,
 }
 
 /// [`crate::io::Io`] implementation backed by a [`World`].
@@ -80,8 +87,12 @@ pub struct Engine<W> {
     pub(crate) limits: Limits,
     pub(crate) world: W,
     pub(crate) bufs: Box<[u8]>,
+    pub(crate) pool_base: usize,
     pub(crate) pending: Vec<Pending>,
+    pub(crate) ready: Completions,
+    pub(crate) files: FileTable,
     pub(crate) next_op_id: u64,
+    pub(crate) next_chain_id: u64,
     pub(crate) trace: u64,
     pub(crate) woken: Arc<AtomicBool>,
 }
@@ -89,12 +100,19 @@ pub struct Engine<W> {
 impl<W: World> Engine<W> {
     /// Construct an engine from `limits` and an initialized `world`.
     pub fn with_world(limits: Limits, world: W) -> Self {
+        limits.validate();
+        let bufs = vec![0u8; limits.pool_bytes()].into_boxed_slice();
+        let pool_base = limits.pool_base(bufs.as_ptr() as usize);
         Self {
             limits,
             world,
-            bufs: vec![0u8; limits.pool_bytes()].into_boxed_slice(),
+            bufs,
+            pool_base,
             pending: Vec::with_capacity(limits.ops_max as usize),
+            ready: Completions::new(limits.ops_max as usize),
+            files: FileTable::new(limits.files_max),
             next_op_id: 0,
+            next_chain_id: 0,
             trace: 0xcbf2_9ce4_8422_2325,
             woken: Arc::new(AtomicBool::new(false)),
         }

@@ -45,6 +45,10 @@ name = "io_posix_alloc"
 path = "tests/io/posix_alloc.rs"
 
 [[test]]
+name = "io_posix_files"
+path = "tests/io/posix_files.rs"
+
+[[test]]
 name = "guard_death"
 path = "tests/guard/death.rs"
 
@@ -67,6 +71,14 @@ path = "tests/sim/traces.rs"
 [[test]]
 name = "sim_contract"
 path = "tests/sim/contract.rs"
+
+[[test]]
+name = "sim_files"
+path = "tests/sim/files.rs"
+
+[[test]]
+name = "sim_chains"
+path = "tests/sim/chains.rs"
 
 [package.metadata.docs.rs]
 # io_uring is Linux only, and the simulator is part of the documented API.

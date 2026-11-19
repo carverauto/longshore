@@ -40,22 +40,62 @@ pub const IORING_REGISTER_FILES_UPDATE: c_uint = 6; // 5.1
 
 // Opcodes.
 pub const IORING_OP_NOP: u8 = 0;
+pub const IORING_OP_FSYNC: u8 = 3;
+pub const IORING_OP_READ_FIXED: u8 = 4;
+pub const IORING_OP_WRITE_FIXED: u8 = 5;
 pub const IORING_OP_TIMEOUT: u8 = 11;
 pub const IORING_OP_TIMEOUT_REMOVE: u8 = 12;
 pub const IORING_OP_ACCEPT: u8 = 13;
 pub const IORING_OP_ASYNC_CANCEL: u8 = 14;
 pub const IORING_OP_CONNECT: u8 = 16;
+pub const IORING_OP_FALLOCATE: u8 = 17;
 pub const IORING_OP_OPENAT: u8 = 18;
 pub const IORING_OP_CLOSE: u8 = 19;
+pub const IORING_OP_STATX: u8 = 21;
 pub const IORING_OP_READ: u8 = 22;
 pub const AT_FDCWD: i32 = -100;
+pub const AT_REMOVEDIR: u32 = 0x200;
+pub const O_RDONLY: u32 = 0;
+pub const O_WRONLY: u32 = 1;
+pub const O_RDWR: u32 = 2;
+pub const O_CREAT: u32 = 0o100;
+pub const O_EXCL: u32 = 0o200;
+pub const O_TRUNC: u32 = 0o1000;
+#[cfg(target_arch = "x86_64")]
+pub const O_DIRECT: u32 = 0o0040000;
+#[cfg(target_arch = "x86_64")]
+pub const O_DIRECTORY: u32 = 0o0200000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECTORY: u32 = 0o0040000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECT: u32 = 0o0200000;
 pub const O_RDONLY_CLOEXEC: u32 = 0o2000000;
 pub const IORING_OP_SEND: u8 = 26;
 pub const IORING_OP_RECV: u8 = 27;
+pub const IORING_OP_RENAMEAT: u8 = 35;
+pub const IORING_OP_UNLINKAT: u8 = 36;
+pub const IORING_OP_MKDIRAT: u8 = 37;
 pub const IORING_OP_SOCKET: u8 = 45; // 5.19
 pub const IORING_OP_SEND_ZC: u8 = 47; // 6.0
 
 pub const IOSQE_FIXED_FILE: u8 = 1 << 0;
+pub const IOSQE_IO_LINK: u8 = 1 << 2;
+
+pub const IORING_FSYNC_DATASYNC: u32 = 1 << 0;
+pub const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
+pub const FALLOC_FL_PUNCH_HOLE: u32 = 0x02;
+pub const STATX_BASIC_STATS: u32 = 0x07ff;
+
+pub const RLIMIT_NOFILE: c_int = 7;
+pub const RLIMIT_MEMLOCK: c_int = 8;
+pub const RLIM_INFINITY: u64 = !0u64;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct rlimit {
+    pub rlim_cur: u64,
+    pub rlim_max: u64,
+}
 
 // sqe.ioprio flags for send/recv.
 pub const IORING_RECVSEND_FIXED_BUF: u16 = 1 << 2; // 6.0
@@ -257,4 +297,31 @@ extern "C" {
         len: *mut u32,
     ) -> c_int;
     pub fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
+    pub fn getrlimit(resource: c_int, rlim: *mut rlimit) -> c_int;
+}
+
+/// Map portable [`crate::io::OpenFlags`] to Linux architecture-specific `openat` flags
+/// without `O_CLOEXEC` (refused for registered `io_uring` fixed file slots).
+pub fn open_flags_linux(f: crate::io::OpenFlags) -> u32 {
+    let mut out = match (f.read, f.write) {
+        (true, true) => O_RDWR,
+        (false, true) => O_WRONLY,
+        (true, false) | (false, false) => O_RDONLY,
+    };
+    if f.create {
+        out |= O_CREAT;
+    }
+    if f.exclusive {
+        out |= O_EXCL;
+    }
+    if f.empty {
+        out |= O_TRUNC;
+    }
+    if f.direct {
+        out |= O_DIRECT;
+    }
+    if f.directory {
+        out |= O_DIRECTORY;
+    }
+    out
 }
