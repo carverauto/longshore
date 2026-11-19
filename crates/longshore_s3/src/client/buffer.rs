@@ -5,8 +5,9 @@
 
 //! Lent buffers, and waiting for one.
 
-use super::lane::{waiter_id, Lane, Pool};
+use super::lane::Lane;
 use super::{open, Alive};
+use longshore_mailbox::SlotWaiter;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -98,97 +99,28 @@ impl Drop for Buffer {
     }
 }
 
-/// Waits on one pool of every open lane at once, and takes the first index
-/// that is free, looking first at lane `first`. Only when every lane is
-/// closed does it take a closed lane's, and if none is free then, it ends
-/// with nothing instead of waiting.
-pub(super) struct AnyLane {
-    pub(super) lanes: Arc<[Arc<Lane>]>,
-    pool: fn(&Lane) -> &Pool,
-    waiter: u64,
-    /// Waiting in some lane's queue.
-    queued: bool,
-}
-
-impl AnyLane {
-    pub(super) fn new(lanes: Arc<[Arc<Lane>]>, pool: fn(&Lane) -> &Pool) -> AnyLane {
-        AnyLane {
-            lanes,
-            pool,
-            waiter: waiter_id(),
-            queued: false,
-        }
-    }
-
-    fn closed(&self) -> usize {
-        self.lanes.iter().filter(|l| !open(l)).count()
-    }
-
-    fn forget(&mut self) {
-        if self.queued {
-            self.queued = false;
-            for l in self.lanes.iter() {
-                (self.pool)(l).forget(self.waiter);
-            }
-        }
-    }
-
-    pub(super) fn poll(
-        &mut self,
-        first: usize,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<(Arc<Lane>, u32)>> {
-        let count = self.lanes.len();
-        loop {
-            let closed = self.closed();
-            let all_closed = closed == count;
-            for n in 0..count {
-                let lane = &self.lanes[(first + n) % count];
-                if !all_closed && !open(lane) {
-                    continue;
-                }
-                let pool = (self.pool)(lane);
-                if let Poll::Ready(index) = pool.poll_take(self.waiter, cx) {
-                    if !all_closed && !open(lane) {
-                        pool.give(index);
-                        continue;
-                    }
-                    let lane = lane.clone();
-                    self.forget();
-                    return Poll::Ready(Some((lane, index)));
-                }
-                self.queued = true;
-            }
-            if self.closed() == closed {
-                if !all_closed {
-                    return Poll::Pending;
-                }
-                self.forget();
-                return Poll::Ready(None);
-            }
-        }
-    }
-}
-
-impl Drop for AnyLane {
-    fn drop(&mut self) {
-        self.forget();
-    }
-}
-
-/// Waits for a buffer on every lane: see [`AnyLane`]. If no lane is open
-/// and none is free, it ends with a void buffer.
+/// Waits for a buffer on every lane, looking at lane 0 first. Only when every
+/// lane is closed does it take a closed lane's, and if none is free then, it
+/// ends with a void buffer instead of waiting.
 pub(super) struct Borrow {
-    any: AnyLane,
+    lanes: Arc<[Arc<Lane>]>,
+    waiter: SlotWaiter,
     alive: Alive,
 }
 
 impl Borrow {
     pub(super) fn new(lanes: Arc<[Arc<Lane>]>, alive: Alive) -> Borrow {
         Borrow {
-            any: AnyLane::new(lanes, |l| &l.bufs),
+            lanes,
+            waiter: SlotWaiter::new(),
             alive,
         }
+    }
+}
+
+impl Drop for Borrow {
+    fn drop(&mut self) {
+        self.waiter.forget_many(&self.lanes, |l| &l.bufs);
     }
 }
 
@@ -197,9 +129,16 @@ impl Future for Borrow {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Buffer> {
         let me = self.get_mut();
-        let (lane, index) = match core::task::ready!(me.any.poll(0, cx)) {
-            Some(taken) => taken,
-            None => (me.any.lanes[0].clone(), NO_INDEX),
+        let (lane, index) = match core::task::ready!(me.waiter.poll_many(
+            &me.lanes,
+            0,
+            |l| &l.bufs,
+            |l| open(l),
+            true,
+            cx,
+        )) {
+            Some((idx, index)) => (me.lanes[idx].clone(), index),
+            None => (me.lanes[0].clone(), NO_INDEX),
         };
         Poll::Ready(Buffer {
             lane,

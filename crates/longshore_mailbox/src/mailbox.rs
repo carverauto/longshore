@@ -99,7 +99,14 @@ impl<M: Copy, A> Sender<M, A> {
         &self.cells
     }
 
-    /// True once [`Sender::stop`] or [`Receiver::begin_close`] has run.
+    /// Monotonic advisory signal that [`Sender::stop`] or
+    /// [`Receiver::begin_close`] has begun.
+    ///
+    /// Because the closed flag is published before the queue state transitions,
+    /// a concurrent [`Sender::try_send`] or [`Sender::send_slot`] racing `stop`
+    /// or `begin_close` may still return `Ok(())` after `is_closed()` becomes
+    /// `true`; any accepted message is delivered before `Stop` or drained by
+    /// `begin_close`.
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
@@ -186,6 +193,12 @@ impl<M: Copy, A> Receiver<M, A> {
     }
 
     /// Receive by parking without an `Io` backend.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the mailbox was built with [`mailbox_parked`]; `Io`-backed
+    /// mailboxes must use [`Io::tick`] and [`Receiver::drain`], or
+    /// [`Receiver::wait_stop`] when parking after I/O shutdown.
     pub fn recv_parked(&mut self) -> Recv<M> {
         self.rx.recv_parked()
     }

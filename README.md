@@ -220,6 +220,26 @@ across `UringIo`, `PosixIo`, and `SimIo`:
   per connection, and the workspace test and benchmark suites still enable
   `tls`.
 
+## Passing messages between cores
+
+- **`longshore::mailbox` (`longshore_mailbox`)**: bounded lock-free MPSC queue
+  for `Copy` messages into a thread owning an `Io` (`Io::waker()` and
+  `Op::AwaitWake`, with zero timers), plus a thread-parking receiver mode for
+  threads without an `Io`.
+- **Back pressure, `stop`, and atomic `close`**: `TrySendError::Full` returns
+  the message without allocating; `stop` uses a `+ 1` reserved slot so prior
+  messages are delivered first while later sends are refused; receiver `close`
+  is atomic with `send`, keeping answers already written and answering
+  sent-and-unanswered slots with the closed outcome.
+- **Slot pools and futures**: generic `Pool` with a preallocated waiter queue
+  (`Builder::waiters` on the S3 client; grows dynamically if exceeded),
+  single- and multi-pool waiting (`SlotWaiter`), `detach` returning the
+  caller's attached `u32` tag strictly after freeing the slot, `CallFuture`,
+  and shared `block_on`.
+- **Verification**: tested under `loom` (`scripts/test-model.sh`),
+  `alloc_guard::sealed`, and deterministic multi-core `Engine<Virtual>`
+  simulation.
+
 ## Requirements
 
 - Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when

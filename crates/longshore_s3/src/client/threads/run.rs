@@ -187,7 +187,7 @@ pub fn run<B: Backend>(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lan
         token_base: 7 << 40,
         heartbeat_ns: 50 * MS,
     };
-    let (mut worker, lane) = Worker::new(&mut io, s3, layout);
+    let (mut worker, lane) = Worker::with_waiters(&mut io, s3, layout, b.waiters as usize);
     worker.start(&mut io);
     #[cfg(all(feature = "fault-injection", target_os = "linux"))]
     let asked = lane.clone();

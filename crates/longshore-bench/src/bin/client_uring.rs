@@ -33,11 +33,10 @@ fn main() {
     use longshore::http::server::{self, Server};
     use longshore::io::uring::UringIo;
     use longshore::io::{Completions, Io, Limits, Sock};
+    use longshore::mailbox::block_on;
     use longshore::store::creds::Credentials;
-    use std::future::Future;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
     use std::sync::mpsc::channel;
-    use std::task::{Context, Poll, Wake, Waker};
 
     const SIZE: u32 = 1 << 20;
     const CALLERS: usize = 4;
@@ -191,25 +190,6 @@ fn main() {
         println!(
             "ok rotate: refused {refused} times with the first keys, then accepted with the file's"
         );
-    }
-
-    /// A minimal executor: polls on this thread, parked between wake-ups.
-    fn block_on<F: Future>(f: F) -> F::Output {
-        struct Unpark(std::thread::Thread);
-        impl Wake for Unpark {
-            fn wake(self: std::sync::Arc<Self>) {
-                self.0.unpark();
-            }
-        }
-        let waker = Waker::from(std::sync::Arc::new(Unpark(std::thread::current())));
-        let mut cx = Context::from_waker(&waker);
-        let mut f = std::pin::pin!(f);
-        loop {
-            if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
-                return v;
-            }
-            std::thread::park();
-        }
     }
 
     fn pattern(caller: usize, round: usize, i: usize) -> u8 {

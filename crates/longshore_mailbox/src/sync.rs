@@ -12,7 +12,9 @@
 //! standard everywhere because `Io::waker` and `std::task::Waker` require it.
 
 #[cfg(not(longshore_model))]
-pub use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+pub use std::sync::atomic::{
+    fence, AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
+};
 #[cfg(not(longshore_model))]
 pub use std::sync::{Condvar, Mutex};
 #[cfg(not(longshore_model))]
@@ -44,7 +46,9 @@ impl<T> UnsafeCell<T> {
 #[cfg(longshore_model)]
 pub use loom::cell::UnsafeCell;
 #[cfg(longshore_model)]
-pub use loom::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+pub use loom::sync::atomic::{
+    fence, AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
+};
 #[cfg(longshore_model)]
 pub use loom::sync::{Condvar, Mutex};
 #[cfg(longshore_model)]

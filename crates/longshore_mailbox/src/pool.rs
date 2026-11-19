@@ -166,6 +166,11 @@ impl SlotWaiter {
         if count == 0 {
             return Poll::Ready(None);
         }
+        if count == 1 && !take_closed {
+            return self
+                .poll_one(pool_of(&entries[0]), || is_open(&entries[0]), cx)
+                .map(|slot| slot.map(|s| (0, s)));
+        }
         loop {
             let closed = entries.iter().filter(|e| !is_open(e)).count();
             let all_closed = closed == count;

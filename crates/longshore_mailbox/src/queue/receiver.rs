@@ -6,7 +6,8 @@
 //! Single-consumer receiver side of the bounded lock-free MPSC queue.
 
 use super::{
-    Entry, QueueReceiver, Recv, TryRecv, CLOSED, COUNT_MASK, NOTIFY_IDLE, NOTIFY_PARKED, STOPPED,
+    Entry, QueueReceiver, Recv, TryRecv, CLOSED, COUNT_MASK, NOTIFY_IDLE, NOTIFY_PARKED, PARK_NONE,
+    PARK_RECV, PARK_STOP, STOPPED,
 };
 use crate::sync::{self, Ordering};
 use longshore_common::io::{Busy, Completion, Io, Op};
@@ -40,12 +41,11 @@ impl<M: Copy> QueueReceiver<M> {
 
     /// Pop the next message or in-band stop without blocking.
     pub fn try_recv(&mut self) -> TryRecv<M> {
-        if self.closed {
+        if self.closed || self.stop_seen {
             return TryRecv::Closed;
         }
         let n = self.shared.slots.len();
         loop {
-            let no_senders = self.shared.senders.load(Ordering::Acquire) == 0;
             let idx = self.head % n;
             let slot = &self.shared.slots[idx];
             if slot.seq.load(Ordering::Acquire) == self.head + 1 {
@@ -63,15 +63,17 @@ impl<M: Copy> QueueReceiver<M> {
                     }
                 }
             }
-            let s = self.shared.state.load(Ordering::Acquire);
-            if (s & COUNT_MASK) == 0 {
-                if self.stop_pending {
-                    self.stop_pending = false;
-                    self.stop_seen = true;
-                    return TryRecv::Stop;
-                }
-                if self.stop_seen || (no_senders && (s & STOPPED) == 0) {
-                    return TryRecv::Closed;
+            if self.stop_pending || self.shared.senders.load(Ordering::Acquire) == 0 {
+                let s = self.shared.state.load(Ordering::Acquire);
+                if (s & COUNT_MASK) == 0 {
+                    if self.stop_pending {
+                        self.stop_pending = false;
+                        self.stop_seen = true;
+                        return TryRecv::Stop;
+                    }
+                    if (s & STOPPED) == 0 {
+                        return TryRecv::Closed;
+                    }
                 }
             }
             return TryRecv::Empty;
@@ -92,11 +94,23 @@ impl<M: Copy> QueueReceiver<M> {
     }
 
     /// Wait by parking the calling thread until an item, stop, or close.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the queue was built with [`super::queue_parked`] (or
+    /// [`crate::mailbox_parked`]); `Io`-backed queues must use [`Io::tick`] and
+    /// [`QueueReceiver::drain`], or [`QueueReceiver::wait_stop`] when parking
+    /// after I/O shutdown.
     pub fn recv_parked(&mut self) -> Recv<M> {
         {
             let mut g = self.shared.parker.lock().expect("parker lock");
             *g = Some(sync::current());
         }
+        assert_eq!(
+            self.shared.park_mode.load(Ordering::Relaxed),
+            PARK_RECV,
+            "recv_parked requires a queue built with queue_parked or mailbox_parked"
+        );
         loop {
             self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
             match self.try_recv() {
@@ -132,10 +146,18 @@ impl<M: Copy> QueueReceiver<M> {
             let mut g = self.shared.parker.lock().expect("parker lock");
             *g = Some(sync::current());
         }
+        if self.shared.park_mode.load(Ordering::Acquire) == PARK_NONE {
+            let _ = self.shared.park_mode.compare_exchange(
+                PARK_NONE,
+                PARK_STOP,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+        }
         loop {
             self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
-            if self.shared.stop_requested.load(Ordering::Acquire)
-                || self.shared.senders.load(Ordering::Acquire) == 0
+            if self.shared.stop_requested.load(Ordering::SeqCst)
+                || self.shared.senders.load(Ordering::SeqCst) == 0
             {
                 return;
             }
@@ -162,6 +184,7 @@ impl<M: Copy> QueueReceiver<M> {
         if self.closed {
             return;
         }
+        self.shared.closed.store(true, Ordering::Release);
         let prev = self.shared.state.fetch_or(CLOSED, Ordering::AcqRel);
         let rem_msgs = (prev & COUNT_MASK) as usize;
         let rem_stop = (prev & STOPPED != 0) && !self.stop_seen && !self.stop_pending;

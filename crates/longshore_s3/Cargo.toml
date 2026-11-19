@@ -70,6 +70,10 @@ name = "client_waits"
 path = "tests/client/waits.rs"
 
 [[test]]
+name = "client_alloc"
+path = "tests/client/alloc.rs"
+
+[[test]]
 name = "store_creds_sim"
 path = "tests/store/creds_sim.rs"
 

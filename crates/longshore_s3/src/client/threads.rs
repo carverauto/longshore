@@ -6,7 +6,7 @@
 //! The I/O threads behind a [`Client`]: building them, and stopping them
 //! when the last handle, buffer and operation are gone.
 
-use super::lane::{Kind, Lane, Request, KEY_MAX};
+use super::lane::Lane;
 use super::Client;
 use crate::creds::Credentials;
 use crate::s3::{KeyPrefix, Validate};
@@ -98,6 +98,9 @@ pub struct Builder {
     pub buffer_size: u32,
     /// Operations in progress at most. Others wait.
     pub operations: u32,
+    /// Waiters preallocated per pool on each thread. Waiting beyond this
+    /// grows the queue rather than refusing callers.
+    pub waiters: u32,
     pub family: Family,
     /// See [`longshore_dns::Config::prefer_large_segments`].
     pub prefer_large_segments: Option<usize>,
@@ -129,6 +132,7 @@ impl Builder {
             buffers: 64,
             buffer_size: 8 << 20,
             operations: 64,
+            waiters: 256,
             family: Family::V4,
             prefer_large_segments: None,
             nameservers: Vec::new(),
@@ -149,8 +153,8 @@ impl Builder {
         if self.threads == 0 || self.threads > 1024 {
             return bad("threads must be 1 to 1024");
         }
-        if self.connections == 0 || self.buffers == 0 || self.operations == 0 {
-            return bad("connections, buffers and operations must be at least 1");
+        if self.connections == 0 || self.buffers == 0 || self.operations == 0 || self.waiters == 0 {
+            return bad("connections, buffers, operations and waiters must be at least 1");
         }
         if self.buffer_size < 8192 {
             return bad("buffer_size must be at least 8192");
@@ -295,20 +299,7 @@ impl Threads {
 impl Drop for Threads {
     fn drop(&mut self) {
         for lane in &self.lanes {
-            // The queue keeps one place beyond the operation slots for this.
-            let _ = lane.requests.try_send(Request {
-                op: 0,
-                kind: Kind::Shutdown,
-                key: [0; KEY_MAX],
-                key_len: 0,
-                buf: 0,
-                len: 0,
-                upload: None,
-                number: 0,
-                expect: Default::default(),
-                budget: super::Budget::UNLIMITED,
-            });
-            lane.wake.wake();
+            lane.sender.stop();
         }
         for j in self.joins.lock().expect("joins lock").drain(..) {
             let _ = j.join();

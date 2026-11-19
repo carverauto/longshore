@@ -8,13 +8,15 @@
 //! own, so the same code runs on a real thread, in the simulator, and under
 //! a caller's event loop.
 
-use super::lane::{Cell, Finished, Kind, Lane, Pool, Request};
+use super::lane::{Finished, Kind, Lane, Request};
 use super::sync::{AtomicBool, AtomicU32, AtomicU64};
 use crate::s3::S3;
 use longshore_common::io::{BufId, Completion, Io, Op, Token};
+use longshore_mailbox::{Config, Pool, Receiver, Recv, TryRecv};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{sync_channel, Receiver, TryRecvError};
 use std::sync::Arc;
+
+const DEFAULT_WAITERS: usize = 256;
 
 /// How a worker lays its lane out over the store it is given.
 #[derive(Clone, Copy, Debug)]
@@ -34,7 +36,7 @@ pub struct Layout {
 pub struct Worker {
     s3: S3,
     lane: Arc<Lane>,
-    requests: Receiver<Request>,
+    rx: Receiver<Request, Finished>,
     layout: Layout,
     /// Operation slots the store is running.
     running: Box<[bool]>,
@@ -45,10 +47,21 @@ impl Worker {
     /// Build a worker and its lane over `s3`, which must not have been
     /// started. Initialization: this allocates.
     pub fn new<IO: Io>(io: &mut IO, s3: S3, layout: Layout) -> (Worker, Arc<Lane>) {
-        assert!(layout.operations >= 1 && layout.buffers >= 1);
-        let wake = io
-            .waker()
-            .expect("the I/O backend has no way to be woken from another thread");
+        Self::with_waiters(
+            io,
+            s3,
+            layout,
+            DEFAULT_WAITERS.max(layout.operations as usize),
+        )
+    }
+
+    pub(super) fn with_waiters<IO: Io>(
+        io: &mut IO,
+        s3: S3,
+        layout: Layout,
+        waiters_prealloc: usize,
+    ) -> (Worker, Arc<Lane>) {
+        assert!(layout.operations >= 1 && layout.buffers >= 1 && waiters_prealloc >= 1);
         let first = io.buf(layout.first_buffer);
         let (base, buf_size) = (first.as_mut_ptr(), first.len());
         if layout.buffers > 1 {
@@ -59,17 +72,20 @@ impl Worker {
                 "lent buffers must be contiguous and of one size"
             );
         }
-        let (tx, rx) = sync_channel(layout.operations as usize + 1);
+        let config = Config {
+            capacity: layout.operations as usize,
+            slots: layout.operations,
+            waiters_prealloc,
+            wake_token: Token(layout.token_base),
+        };
+        let (sender, rx) = longshore_mailbox::mailbox(io, config)
+            .expect("the I/O backend has no way to be woken from another thread");
         let lane = Arc::new(Lane {
-            requests: tx,
-            wake,
-            cells: (0..layout.operations).map(|_| Cell::new()).collect(),
-            ops: Pool::new(layout.operations),
-            bufs: Pool::new(layout.buffers),
+            sender,
+            bufs: Pool::new(layout.buffers, waiters_prealloc),
             base,
             buf_size,
             in_flight: AtomicU32::new(0),
-            closed: AtomicBool::new(false),
             reloads: [AtomicU64::new(0), AtomicU64::new(0)],
             void: AtomicBool::new(false),
             #[cfg(all(feature = "fault-injection", target_os = "linux"))]
@@ -78,7 +94,7 @@ impl Worker {
         let worker = Worker {
             s3,
             lane: lane.clone(),
-            requests: rx,
+            rx,
             layout,
             running: vec![false; layout.operations as usize].into_boxed_slice(),
             stopping: false,
@@ -89,51 +105,63 @@ impl Worker {
     /// Start the store and the worker's own timer and wake-up. Call once.
     pub fn start<IO: Io>(&mut self, io: &mut IO) {
         self.s3.start(io);
-        self.arm(io, 0);
-        self.arm(io, 1);
+        self.rx
+            .arm(io)
+            .expect("Limits::ops_max must leave two operations for the worker");
+        self.arm_timer(io);
     }
 
-    fn arm<IO: Io>(&self, io: &mut IO, which: u64) {
-        let op = if which == 0 {
-            Op::AwaitWake
-        } else {
+    fn arm_timer<IO: Io>(&self, io: &mut IO) {
+        io.submit(
+            Token(self.layout.token_base + 1),
             Op::Timeout {
                 nanos: self.layout.heartbeat_ns,
-            }
-        };
-        io.submit(Token(self.layout.token_base + which), op)
-            .expect("Limits::ops_max must leave two operations for the worker");
+            },
+        )
+        .expect("Limits::ops_max must leave two operations for the worker");
     }
 
     /// Feed a completion. Returns false if it belongs to neither the worker
     /// nor its store.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
-        match c.token.0.checked_sub(self.layout.token_base) {
-            Some(0) => self.arm(io, 0),
-            Some(1) => {
-                self.s3.tick(io);
-                self.arm(io, 1);
-            }
-            _ => return self.s3.on_completion(io, c),
+        if self
+            .rx
+            .on_completion(io, c)
+            .expect("Limits::ops_max must leave two operations for the worker")
+        {
+            return true;
         }
-        true
+        if c.token == Token(self.layout.token_base + 1) {
+            self.s3.tick(io);
+            self.arm_timer(io);
+            return true;
+        }
+        self.s3.on_completion(io, c)
     }
 
     /// Take what callers have asked for and report what has ended. Never
     /// waits. Call after feeding completions, and before waiting for more.
     pub fn turn<IO: Io>(&mut self, io: &mut IO) {
         loop {
-            match self.requests.try_recv() {
-                Ok(r) => self.begin(io, r),
-                Err(TryRecvError::Empty) => break,
+            match self.rx.try_recv() {
+                TryRecv::Message(r) => self.begin(io, r),
+                TryRecv::Stop => self.stopping = true,
+                TryRecv::Empty => break,
                 // Every handle is gone: nothing more can be asked for.
-                Err(TryRecvError::Disconnected) => {
+                TryRecv::Closed => {
                     self.stopping = true;
                     break;
                 }
             }
         }
         self.report();
+    }
+
+    fn answer(&mut self, op: u32, finished: Finished) {
+        self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+        if let Some(buf) = self.rx.answer(op, finished) {
+            self.lane.give_buffer(buf);
+        }
     }
 
     fn report(&mut self) {
@@ -147,21 +175,19 @@ impl Worker {
         }
         while let Some(d) = self.s3.poll() {
             self.running[d.token as usize] = false;
-            self.lane
-                .finish(d.token as u32, Finished::Outcome(d.outcome));
+            self.answer(d.token as u32, Finished::Outcome(d.outcome));
         }
     }
 
     fn begin<IO: Io>(&mut self, io: &mut IO, r: Request) {
+        if self.stopping {
+            self.answer(r.op, Finished::Closed);
+            return;
+        }
         let key = core::str::from_utf8(&r.key[..r.key_len as usize]).unwrap_or("");
         let buf = BufId(self.layout.first_buffer.0 + r.buf);
         let token = r.op as u64;
         let sent = match r.kind {
-            Kind::Shutdown => {
-                self.stopping = true;
-                return;
-            }
-            _ if self.stopping => return self.lane.finish(r.op, Finished::Closed),
             Kind::Store {
                 no_clobber: false,
                 checksum,
@@ -206,7 +232,7 @@ impl Worker {
         };
         match sent {
             Ok(()) => self.running[r.op as usize] = true,
-            Err(e) => self.lane.finish(r.op, Finished::Rejected(e)),
+            Err(e) => self.answer(r.op, Finished::Rejected(e)),
         }
     }
 
@@ -218,13 +244,23 @@ impl Worker {
 
     /// Mark the lane closed and end every request still queued.
     pub fn close(&mut self) {
-        self.lane.close();
-        while let Ok(r) = self.requests.try_recv() {
-            match r.kind {
-                Kind::Shutdown => self.stopping = true,
-                _ => self.lane.finish(r.op, Finished::Closed),
+        let lane = &self.lane;
+        let stopping = &mut self.stopping;
+        self.rx.begin_close(|item| match item {
+            Recv::Message(r) => {
+                lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                if let Some(buf) =
+                    lane.sender
+                        .cells()
+                        .answer(lane.sender.pool(), r.op, Finished::Closed)
+                {
+                    lane.give_buffer(buf);
+                }
             }
-        }
+            Recv::Stop => *stopping = true,
+            Recv::Closed => {}
+        });
+        self.lane.bufs.wake_all();
     }
 
     /// The I/O under the store has failed: mark the lane closed and end
@@ -248,24 +284,20 @@ impl Worker {
                     Some(report) => Finished::Outcome(crate::s3::Outcome::Report(report)),
                     None => Finished::Closed,
                 };
-                self.lane.finish(op as u32, finished);
+                self.answer(op as u32, finished);
             }
         }
+        let lane = &self.lane;
+        self.rx
+            .finish_close(|| Finished::Closed, |buf| lane.give_buffer(buf));
+        self.lane.bufs.wake_all();
     }
 
-    /// After [`Worker::abandon`]: block the calling thread, ending every
-    /// request that arrives as closed, until a shutdown is asked for.
+    /// After [`Worker::abandon`]: block the calling thread until a shutdown is
+    /// asked for.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) fn refuse_until_shutdown(&mut self) {
-        if self.stopping {
-            return;
-        }
-        while let Ok(r) = self.requests.recv() {
-            match r.kind {
-                Kind::Shutdown => return,
-                _ => self.lane.finish(r.op, Finished::Closed),
-            }
-        }
+        self.rx.wait_stop();
     }
 
     /// The store this worker runs, for its counters.

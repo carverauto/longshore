@@ -4,8 +4,8 @@
 longshore is an object storage client in Rust built around Linux `io_uring`,
 with a portable POSIX readiness backend (`kqueue` on macOS, `epoll` on Linux
 hosts without `io_uring`). It moves large amounts of data with little CPU. It
-talks to Amazon S3, S3-compatible stores and Google Cloud Storage. It is six
-small crates, and a seventh, `longshore`, that gathers them under one name.
+talks to Amazon S3, S3-compatible stores and Google Cloud Storage. It is eight
+small crates, and a ninth, `longshore`, that gathers them under one name.
 
 ## Tech Stack
 - Rust, stable toolchain, edition 2021
@@ -49,11 +49,12 @@ either redesigned or left out.
 - Every source file carries the Apache 2.0 header (`scripts/license-headers.py`)
 
 ### Architecture Patterns
-- Seven workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
-  (`checksum`), `longshore_dns` (`dns`), `longshore_http_client` (`http`),
-  `longshore_tls` (`tls`), `longshore_s3` (`store`, `crypto`, `client`), and
-  the `longshore` facade crate that re-exports them (plus `longshore-bench` for
-  benchmarks and real-kernel checks)
+- Nine workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
+  (`checksum`), `longshore_dns` (`dns`), `longshore_stream` (`stream`),
+  `longshore_http_client` (`http`), `longshore_tls` (`tls`),
+  `longshore_mailbox` (`mailbox`), `longshore_s3` (`store`, `crypto`,
+  `client`), and the `longshore` facade crate that re-exports them (plus
+  `longshore-bench` for benchmarks and real-kernel checks)
 - Fixed-capacity slots for connections and operations, sized from `Limits`
   and `Config`
 - Operations are submitted with a caller token and collected with `poll`

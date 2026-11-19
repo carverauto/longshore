@@ -11,7 +11,9 @@
 use longshore_common::io::posix::PosixIo;
 use longshore_common::io::{BufId, Busy, Completions, FileId, Io, Limits, Op, Sock, Token};
 use longshore_common::sim::{Faults, SimIo};
-use longshore_mailbox::{mailbox, queue, queue_parked, NoWaker, Recv, TryRecv, TrySendError};
+use longshore_mailbox::{
+    mailbox, queue, queue_parked, queue_with_wake, NoWaker, Recv, TryRecv, TrySendError,
+};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::mpsc;
@@ -264,4 +266,16 @@ fn try_send_racing_stop_never_delivers_after_stop() {
         );
         assert_eq!(before_stop, accepted);
     }
+}
+
+#[test]
+#[should_panic(expected = "queue_parked or mailbox_parked")]
+fn recv_parked_panics_on_queue_with_wake() {
+    struct NoopWake;
+    impl longshore_common::io::Wake for NoopWake {
+        fn wake(&self) {}
+    }
+
+    let (_tx, mut rx) = queue_with_wake::<u32>(std::sync::Arc::new(NoopWake), 2, Token(1));
+    let _ = rx.recv_parked();
 }
