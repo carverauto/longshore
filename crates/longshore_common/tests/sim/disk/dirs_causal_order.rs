@@ -47,7 +47,7 @@ fn setup_causal_sim(seed: u64, max_name_len: usize) -> SimIo {
     let mut sim = SimIo::new(base_limits(), seed, Faults::default());
     sim.setup_disk(DiskConfig {
         max_files: 6,
-        max_dirs: 6,
+        max_dirs: 8,
         max_bytes_per_file: 4096,
         max_name_len,
         write_log_entries: 8,
@@ -213,5 +213,97 @@ fn poisoned_unrelated_dir_rename_does_not_block_later_moved_subdir_sync() {
         sim.power_loss();
 
         assert_file_byte(&mut sim, &mut out, 60, "/other/f", 0xE5);
+    });
+}
+
+#[test]
+fn move_durable_subtree_then_move_out_and_lengthen_ancestor_preserves_saved() {
+    let mut sim = setup_causal_sim(213, 22);
+    let mut out = Completions::new(16);
+    sealed(|| {
+        mkdir_path(&mut sim, &mut out, 1, "/y");
+        mkdir_path(&mut sim, &mut out, 2, "/z");
+        sync_dir_path(&mut sim, &mut out, 10, "/");
+        mkdir_path(&mut sim, &mut out, 20, "/z/leaf");
+        sync_dir_path(&mut sim, &mut out, 30, "/z");
+        create_write_sync_close(&mut sim, &mut out, 35, "/z/leaf/123456789", 0xF1);
+        sync_dir_path(&mut sim, &mut out, 39, "/z/leaf");
+
+        rename_path(&mut sim, &mut out, 40, "/z", "/y/z");
+        rename_path(&mut sim, &mut out, 41, "/y/z/leaf/123456789", "/saved");
+        rename_path(&mut sim, &mut out, 42, "/y", "/long_dir_name");
+        sync_dir_path(&mut sim, &mut out, 50, "/");
+        sync_dir_path(&mut sim, &mut out, 60, "/long_dir_name");
+        sync_dir_path(&mut sim, &mut out, 70, "/long_dir_name/z/leaf");
+        sim.power_loss();
+
+        assert_file_byte(&mut sim, &mut out, 80, "/saved", 0xF1);
+    });
+}
+
+#[test]
+fn move_durable_other_then_create_and_move_out_before_lengthening_ancestor() {
+    let mut sim = setup_causal_sim(215, 28);
+    let mut out = Completions::new(16);
+    sealed(|| {
+        mkdir_path(&mut sim, &mut out, 1, "/d");
+        mkdir_path(&mut sim, &mut out, 2, "/other");
+        sync_dir_path(&mut sim, &mut out, 10, "/");
+        mkdir_path(&mut sim, &mut out, 20, "/other/sub");
+        sync_dir_path(&mut sim, &mut out, 30, "/other");
+
+        rename_path(&mut sim, &mut out, 40, "/other", "/d/other");
+        create_write_sync_close(&mut sim, &mut out, 45, "/d/other/sub/1234567890123", 0xF2);
+        rename_path(
+            &mut sim,
+            &mut out,
+            50,
+            "/d/other/sub/1234567890123",
+            "/saved",
+        );
+        rename_path(&mut sim, &mut out, 51, "/d", "/longdir");
+        sync_dir_path(&mut sim, &mut out, 60, "/");
+        sync_dir_path(&mut sim, &mut out, 70, "/longdir");
+        sync_dir_path(&mut sim, &mut out, 80, "/longdir/other/sub");
+        sim.power_loss();
+
+        assert_file_byte(&mut sim, &mut out, 90, "/saved", 0xF2);
+    });
+}
+
+#[test]
+fn deep_durable_hierarchy_move_out_before_lengthening_ancestor_exceeds_j_steps() {
+    let mut sim = setup_causal_sim(217, 32);
+    let mut out = Completions::new(16);
+    sealed(|| {
+        mkdir_path(&mut sim, &mut out, 1, "/d");
+        mkdir_path(&mut sim, &mut out, 2, "/other");
+        sync_dir_path(&mut sim, &mut out, 10, "/");
+        mkdir_path(&mut sim, &mut out, 20, "/other/a");
+        sync_dir_path(&mut sim, &mut out, 25, "/other");
+        mkdir_path(&mut sim, &mut out, 30, "/other/a/b");
+        sync_dir_path(&mut sim, &mut out, 35, "/other/a");
+        mkdir_path(&mut sim, &mut out, 40, "/other/a/b/c");
+        sync_dir_path(&mut sim, &mut out, 45, "/other/a/b");
+        mkdir_path(&mut sim, &mut out, 50, "/other/a/b/c/d");
+        sync_dir_path(&mut sim, &mut out, 55, "/other/a/b/c");
+        create_write_sync_close(&mut sim, &mut out, 60, "/other/a/b/c/d/1234567890123", 0xF3);
+        sync_dir_path(&mut sim, &mut out, 65, "/other/a/b/c/d");
+
+        rename_path(&mut sim, &mut out, 70, "/other", "/d/other");
+        rename_path(
+            &mut sim,
+            &mut out,
+            71,
+            "/d/other/a/b/c/d/1234567890123",
+            "/saved",
+        );
+        rename_path(&mut sim, &mut out, 72, "/d", "/longdir");
+        sync_dir_path(&mut sim, &mut out, 80, "/");
+        sync_dir_path(&mut sim, &mut out, 90, "/longdir");
+        sync_dir_path(&mut sim, &mut out, 100, "/longdir/other/a/b/c/d");
+        sim.power_loss();
+
+        assert_file_byte(&mut sim, &mut out, 110, "/saved", 0xF3);
     });
 }

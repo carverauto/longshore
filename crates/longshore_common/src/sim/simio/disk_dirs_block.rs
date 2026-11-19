@@ -6,40 +6,29 @@
 //! Causal ordering and descendant-blocking checks for [`SimDisk`] directory
 //! log entries.
 
-use super::super::{SimDisk, SimName};
+use super::super::SimDisk;
 use super::DirChangeKind;
 
-fn is_path_prefix(ancestor: &[u8], path: &[u8]) -> bool {
-    if ancestor == b"/" {
-        return true;
-    }
-    path.len() > ancestor.len()
-        && path[..ancestor.len()] == *ancestor
-        && path[ancestor.len()] == b'/'
-}
-
-fn inode_is_descendant_in_table(
-    names: &[SimName],
-    name_bytes: &[u8],
-    max_name_len: usize,
-    ancestor_ii: u32,
-    node_ii: u32,
-) -> bool {
-    let Some(a_ni) = (0..names.len()).find(|&i| names[i].used && names[i].inode == ancestor_ii)
-    else {
-        return false;
-    };
-    let Some(n_ni) = (0..names.len()).find(|&i| names[i].used && names[i].inode == node_ii) else {
-        return false;
-    };
-    let a_base = a_ni * max_name_len;
-    let n_base = n_ni * max_name_len;
-    let a_path = &name_bytes[a_base..a_base + names[a_ni].len as usize];
-    let n_path = &name_bytes[n_base..n_base + names[n_ni].len as usize];
-    is_path_prefix(a_path, n_path)
-}
-
 impl SimDisk {
+    fn durable_parent_inode(&self, node_ii: u32) -> Option<u32> {
+        let ni = (0..self.durable_names.len())
+            .find(|&i| self.durable_names[i].used && self.durable_names[i].inode == node_ii)?;
+        let base = ni * self.max_name_len;
+        let path = &self.durable_name_bytes[base..base + self.durable_names[ni].len as usize];
+        let parent_path = match path.iter().rposition(|&b| b == b'/') {
+            Some(0) | None => b"/" as &[u8],
+            Some(pos) => &path[..pos],
+        };
+        let p_ni = (0..self.durable_names.len()).find(|&i| {
+            if !self.durable_names[i].used {
+                return false;
+            }
+            let p_base = i * self.max_name_len;
+            &self.durable_name_bytes[p_base..p_base + self.durable_names[i].len as usize]
+                == parent_path
+        })?;
+        Some(self.durable_names[p_ni].inode)
+    }
     pub(super) fn dir_entry_blocked_by_earlier(&self, idx: usize) -> bool {
         let kind = self.dir_log[idx].kind;
         let parents = kind.parents();
@@ -106,7 +95,7 @@ impl SimDisk {
 
     fn inode_is_same_or_descendant_at(&self, j: usize, ancestor_ii: u32, node_ii: u32) -> bool {
         let mut cur = node_ii;
-        for _ in 0..=j {
+        for _ in 0..=self.inodes.len() {
             if cur == ancestor_ii {
                 return true;
             }
@@ -130,16 +119,17 @@ impl SimDisk {
                     _ => {}
                 }
             }
-            let Some(p) = parent else {
-                return inode_is_descendant_in_table(
-                    &self.durable_names,
-                    &self.durable_name_bytes,
-                    self.max_name_len,
-                    ancestor_ii,
-                    cur,
-                );
-            };
-            cur = p;
+            if let Some(p) = parent {
+                cur = p;
+            } else {
+                if cur == 0 {
+                    return false;
+                }
+                let Some(p) = self.durable_parent_inode(cur) else {
+                    return false;
+                };
+                cur = p;
+            }
         }
         false
     }
