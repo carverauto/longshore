@@ -12,7 +12,7 @@
 use crate::io::files::FileTable;
 use crate::io::{
     BufId, Completion, Completions, FileId, Limits, Op, Sock, Token, Wake, EBADF, ECANCELED,
-    ENOBUFS, ENOENT,
+    ENFILE, ENOBUFS, ENOENT,
 };
 use std::io;
 use std::net::SocketAddr;

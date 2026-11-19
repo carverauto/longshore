@@ -6,7 +6,9 @@
 //! Shared armed-accept contract checks.
 
 use super::{close_socks, drain_one, drain_until, net_limits, send_all};
-use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ECANCELED, EMFILE, ENFILE};
+use crate::io::{
+    BufId, Completion, Completions, Io, Limits, Op, Sock, Token, ECANCELED, EMFILE, ENFILE,
+};
 use std::net::SocketAddr;
 
 fn several_accepts_on_one_armed_accept<IO: Io>(
@@ -203,7 +205,72 @@ fn accept_range_full_and_armed_again<IO: Io>(
     );
 }
 
+fn accept_range_len_zero_returns_enfile<IO: Io>(
+    make: &mut impl FnMut(Limits) -> IO,
+    addr: SocketAddr,
+) {
+    let mut io = make(Limits {
+        sockets_max: 4,
+        accept_range_start: 0,
+        accept_range_len: 0,
+        ..net_limits()
+    });
+    let mut out = Completions::new(8);
+    let bound = io.listen(Sock(0), addr).expect("listen");
+
+    // With no incoming client, ArmedAccept with accept_range_len == 0
+    // completes immediately with -ENFILE on tick(false) without blocking.
+    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
+        .unwrap();
+    io.tick(false, &mut out).unwrap();
+    assert_eq!(out.pop(), Some(Completion::new(Token(1), -ENFILE)));
+    assert!(out.is_empty());
+
+    // Even with a client connecting, ArmedAccept with accept_range_len == 0
+    // completes at submit time with -ENFILE without accepting or resetting the client.
+    io.submit(
+        Token(2),
+        Op::Connect {
+            sock: Sock(1),
+            addr: bound,
+        },
+    )
+    .unwrap();
+    io.submit(Token(3), Op::ArmedAccept { listener: Sock(0) })
+        .unwrap();
+    io.tick(false, &mut out).unwrap();
+    let mut got_accept = None;
+    let mut connect_done = false;
+    while let Some(c) = out.pop() {
+        match c.token.0 {
+            3 => got_accept = Some(c),
+            2 => {
+                assert_eq!(c, Completion::new(Token(2), 0));
+                connect_done = true;
+            }
+            other => panic!("unexpected completion token {other}"),
+        }
+    }
+    assert_eq!(got_accept, Some(Completion::new(Token(3), -ENFILE)));
+    if !connect_done {
+        io.submit(Token(4), Op::Cancel { target: Token(2) })
+            .unwrap();
+        let mut cancel_done = false;
+        drain_until(&mut io, &mut out, |_, c| {
+            if c.token.0 == 2 {
+                assert!(c.result == 0 || c.result == -ECANCELED, "{c:?}");
+                connect_done = true;
+            } else if c.token.0 == 4 {
+                cancel_done = true;
+            }
+            connect_done && cancel_done
+        });
+    }
+    close_socks(&mut io, &mut out, &[Sock(0), Sock(1)]);
+}
+
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
     several_accepts_on_one_armed_accept(make, addr);
     accept_range_full_and_armed_again(make, addr);
+    accept_range_len_zero_returns_enfile(make, addr);
 }

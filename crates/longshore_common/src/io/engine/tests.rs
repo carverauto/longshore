@@ -331,6 +331,8 @@ fn conditional_trace_hash_changes_only_when_more_or_buf_is_set() {
 #[test]
 fn close_cancels_armed_accept_and_armed_recv_and_give_back_forwards() {
     let l = Limits {
+        accept_range_start: 2,
+        accept_range_len: 2,
         ring_buffers: 2,
         ring_buffer_size: 64,
         ..limits(8)

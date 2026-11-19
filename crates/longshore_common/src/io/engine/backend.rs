@@ -80,6 +80,10 @@ impl<W: World> Io for Engine<W> {
                     listener.0 < self.limits.sockets_max,
                     "socket slot out of range"
                 );
+                if self.limits.accept_range_len == 0 {
+                    self.ready.push(Completion::new(token, -ENFILE));
+                    return Ok(());
+                }
                 ([0u8; 108], 0)
             }
             Op::ArmedRecv { sock } => {
