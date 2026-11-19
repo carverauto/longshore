@@ -1,16 +1,20 @@
 # Project Context
 
 ## Purpose
-longshore is an object storage client in Rust for Linux `io_uring`. It moves
-large amounts of data with little CPU. It talks to Amazon S3, S3-compatible
-stores and Google Cloud Storage. It is six small crates, and a seventh,
-`longshore`, that gathers them under one name.
+longshore is an object storage client in Rust built around Linux `io_uring`,
+with a portable POSIX readiness backend (`kqueue` on macOS, `epoll` on Linux
+hosts without `io_uring`). It moves large amounts of data with little CPU. It
+talks to Amazon S3, S3-compatible stores and Google Cloud Storage. It is six
+small crates, and a seventh, `longshore`, that gathers them under one name.
 
 ## Tech Stack
 - Rust, stable toolchain, edition 2021
-- Linux 6.1 or later on x86-64 and AArch64, `io_uring` through raw system calls
+- Linux 6.1 or later on x86-64 and AArch64 (`io_uring` through raw system
+  calls), plus portable POSIX readiness (`kqueue` on macOS, `epoll` on Linux)
 - AWS-LC (through `aws-lc-sys`) for AES-GCM, `rustls` for the TLS 1.3 handshake only
-- `crc-fast` for CRC-64/NVME and CRC-32C, `ring` for SHA-256 and HMAC
+- `longshore_crc`'s own x86-64 and AArch64 kernels for CRC-64/NVME and CRC-32C
+  (zero external dependencies; `crc-fast` is a dev/bench oracle only), `ring`
+  for SHA-256 and HMAC
 
 ## Project Conventions
 
@@ -18,8 +22,9 @@ stores and Google Cloud Storage. It is six small crates, and a seventh,
 Every change is checked against these. A feature that cannot meet them is
 either redesigned or left out.
 
-1. One thread drives all I/O from `io_uring` completions. No locks and no
-   async runtime on the data path.
+1. One thread drives all I/O from one completion queue (`io_uring` on Linux,
+   or the portable `kqueue`/`epoll` engine elsewhere). No locks and no async
+   runtime on the data path.
 2. Memory is allocated when the client is built. Nothing allocates after
    that. The tests run under an allocator that aborts if something does. The
    TLS handshake is the one exception, because `rustls` allocates.
@@ -44,8 +49,11 @@ either redesigned or left out.
 - Every source file carries the Apache 2.0 header (`scripts/license-headers.py`)
 
 ### Architecture Patterns
-- One crate, `longshore`, with modules `io`, `sim`, `dns`, `http`, `tls`,
-  `checksum`, `crypto` and `store`
+- Seven workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
+  (`checksum`), `longshore_dns` (`dns`), `longshore_http_client` (`http`),
+  `longshore_tls` (`tls`), `longshore_s3` (`store`, `crypto`, `client`), and
+  the `longshore` facade crate that re-exports them (plus `longshore-bench` for
+  benchmarks and real-kernel checks)
 - Fixed-capacity slots for connections and operations, sized from `Limits`
   and `Config`
 - Operations are submitted with a caller token and collected with `poll`
@@ -69,8 +77,11 @@ either redesigned or left out.
 - Integrity is CRC-64/NVME on S3 and CRC-32C on Google Cloud Storage
 
 ## Important Constraints
-- Linux only for the `io_uring` backend. The crate must still compile
-  elsewhere so documentation builds.
+- `io_uring` is Linux 6.1+ only; macOS (`kqueue`) and Linux without
+  `io_uring` (`epoll`) run on the portable POSIX backend (without zero-copy
+  sends or registered buffers, and macOS refuses core pinning). Other
+  platforms build the crate and run the simulator, while building a client
+  returns `BuildError::Unsupported`.
 - Not planned: HTTP/2 (object stores gain nothing from it over pooled
   HTTP/1.1 connections and S3 does not offer it), interactive sign-in flows
   such as SSO, and Azure Blob Storage until an account is available to test

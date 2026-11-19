@@ -96,6 +96,7 @@ fn completions_come_out_in_the_order_they_went_in(tc: TestCase) {
 }
 
 fn limits(tc: &TestCase) -> Limits {
+    #[allow(clippy::needless_update)]
     Limits {
         sockets_max: 1,
         buffers: tc.draw(gs::integers::<u32>().max_value(6)),
@@ -103,6 +104,7 @@ fn limits(tc: &TestCase) -> Limits {
         small_buffers: tc.draw(gs::integers::<u32>().max_value(6)),
         small_buffer_size: tc.draw(gs::integers::<u32>().min_value(1).max_value(700)),
         ops_max: 1,
+        ..Limits::BASE
     }
 }
 

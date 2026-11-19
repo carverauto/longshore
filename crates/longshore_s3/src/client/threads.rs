@@ -18,20 +18,20 @@ use std::thread::JoinHandle;
 /// Why a client could not be built.
 #[derive(Debug)]
 pub enum BuildError {
-    /// Only Linux has the I/O this client is built on.
+    /// This platform has no supported I/O backend (Linux and macOS are supported).
     Unsupported,
     /// A setting is out of range. The text says which.
     Setting(&'static str),
     /// No nameserver was given and none was found in `/etc/resolv.conf`.
     NoNameserver,
-    /// An I/O thread could not set up its ring.
+    /// An I/O thread could not set up its backend.
     Io(std::io::Error),
 }
 
 impl std::fmt::Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuildError::Unsupported => write!(f, "this client runs on Linux only"),
+            BuildError::Unsupported => write!(f, "this client runs on Linux and macOS only"),
             BuildError::Setting(what) => write!(f, "{what}"),
             BuildError::NoNameserver => write!(f, "no nameserver configured or found"),
             BuildError::Io(e) => write!(f, "I/O thread set-up failed: {e}"),
@@ -85,8 +85,11 @@ pub struct Builder {
     /// HTTPS and downloads, which one core bounds.
     pub threads: u32,
     /// Pin thread `n` to CPU `first + n * step`. On a machine with several
-    /// NUMA nodes, choose CPUs on the network card's node.
+    /// NUMA nodes, choose CPUs on the network card's node. Refused on macOS.
     pub pin: Option<(usize, usize)>,
+    /// Use the portable readiness backend (`epoll` on Linux) instead of
+    /// `io_uring`. On macOS the portable backend (`kqueue`) is always used.
+    pub portable: bool,
     /// The limits below are per thread.
     pub connections: u32,
     /// Buffers lent to callers. An operation holds one while it runs.
@@ -121,6 +124,7 @@ impl Builder {
             tls: false,
             threads: 1,
             pin: None,
+            portable: false,
             connections: 64,
             buffers: 64,
             buffer_size: 8 << 20,
@@ -134,6 +138,10 @@ impl Builder {
 
     fn check(&self) -> Result<(), BuildError> {
         let bad = |what| Err(BuildError::Setting(what));
+        #[cfg(target_os = "macos")]
+        if self.pin.is_some() {
+            return bad("pinning threads to cores is not supported on macOS");
+        }
         if self.threads == 0 || self.threads > 1024 {
             return bad("threads must be 1 to 1024");
         }
@@ -195,20 +203,33 @@ impl Builder {
         self.start()
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     fn start(self) -> Result<Client, BuildError> {
         Err(BuildError::Unsupported)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn start(self) -> Result<Client, BuildError> {
+        use longshore_common::io::posix::PosixIo;
+        #[cfg(target_os = "linux")]
+        use longshore_common::io::uring::UringIo;
+
         let (ready, started) = std::sync::mpsc::channel();
         let mut joins = Vec::new();
         for n in 0..self.threads {
             let (settings, report) = (self.clone(), ready.clone());
             let spawned = std::thread::Builder::new()
                 .name(format!("longshore-io-{n}"))
-                .spawn(move || linux::run(settings, n, report));
+                .spawn(move || {
+                    #[cfg(target_os = "linux")]
+                    if settings.portable {
+                        run::run::<PosixIo>(settings, n, report);
+                    } else {
+                        run::run::<UringIo>(settings, n, report);
+                    }
+                    #[cfg(target_os = "macos")]
+                    run::run::<PosixIo>(settings, n, report);
+                });
             match spawned {
                 Ok(j) => joins.push(j),
                 Err(e) => {
@@ -258,7 +279,7 @@ pub(super) struct Threads {
 }
 
 impl Threads {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn new(lanes: Vec<Arc<Lane>>, joins: Vec<JoinHandle<()>>) -> Threads {
         Threads {
             lanes,
@@ -291,5 +312,5 @@ impl Drop for Threads {
     }
 }
 
-#[cfg(target_os = "linux")]
-mod linux;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod run;

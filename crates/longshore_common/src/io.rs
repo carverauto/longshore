@@ -16,6 +16,11 @@ use std::io;
 use std::net::SocketAddr;
 
 pub mod alloc_guard;
+pub mod contract;
+pub mod engine;
+#[cfg(unix)]
+pub mod posix;
+pub mod scenario;
 pub mod segment;
 pub use segment::Segment;
 #[cfg(target_os = "linux")]
@@ -47,21 +52,12 @@ pub enum Op {
     /// leaves the slot free; the caller need not close it. A connect that
     /// succeeds completes with 0, or with what [`Segment::decode`] reads
     /// when the backend was asked to measure segment sizes.
-    Connect {
-        sock: Sock,
-        addr: SocketAddr,
-    },
+    Connect { sock: Sock, addr: SocketAddr },
     /// Open a UDP socket in slot `sock` connected to `addr`. `Send` and `Recv`
     /// then carry whole datagrams.
-    ConnectUdp {
-        sock: Sock,
-        addr: SocketAddr,
-    },
+    ConnectUdp { sock: Sock, addr: SocketAddr },
     /// Accept one connection from `listener` into slot `sock`.
-    Accept {
-        listener: Sock,
-        sock: Sock,
-    },
+    Accept { listener: Sock, sock: Sock },
     /// Send `len` bytes of buffer `buf` starting at `off`. May complete short.
     Send {
         sock: Sock,
@@ -86,9 +82,12 @@ pub enum Op {
         off: u32,
         len: u32,
     },
-    Close {
-        sock: Sock,
-    },
+    /// Close socket slot `sock`. Gives every other operation in flight on
+    /// `sock` (including an [`Op::Accept`] waiting on a closed listener) its
+    /// final completion without waiting for the peer, in no fixed order
+    /// relative to the close's own completion. Closing a slot that holds no
+    /// socket still completes once.
+    Close { sock: Sock },
     /// Wait until the backend's waker has been signalled from any thread.
     /// Completes with 0. Signals that arrive while no `AwaitWake` is in
     /// flight are kept, so the next one completes at once. Requires
@@ -104,16 +103,14 @@ pub enum Op {
         len: u32,
     },
     /// Completes with 0 after `nanos`.
-    Timeout {
-        nanos: u64,
-    },
-    /// Ask for the in-flight operation submitted with `target` to stop. That
-    /// operation then completes, normally with `-ECANCELED`, or with its real
-    /// result if it finished first. The cancel itself completes with 0, or a
-    /// negated errno if no such operation was found.
-    Cancel {
-        target: Token,
-    },
+    Timeout { nanos: u64 },
+    /// Ask for the in-flight operation submitted with `target` at the moment
+    /// this cancel is submitted to stop. An operation submitted later under
+    /// the same token or already finished is not matched. The target then
+    /// completes once, normally with `-ECANCELED`, or with its real result if
+    /// it finished first. The cancel itself completes with 0 if found, or a
+    /// negative errno if no such operation was in flight.
+    Cancel { target: Token },
 }
 
 /// `result` is a byte count or 0 on success, or a negated Linux errno.
@@ -129,6 +126,7 @@ pub const EPIPE: i32 = 32;
 pub const ETIME: i32 = 62;
 pub const ECANCELED: i32 = 125;
 pub const ENOENT: i32 = 2;
+pub const EBADF: i32 = 9;
 pub const EAGAIN: i32 = 11;
 
 /// Fixed-capacity completion buffer; `tick` never delivers more than fit.
@@ -199,6 +197,16 @@ pub struct Limits {
 }
 
 impl Limits {
+    /// Zeroed base value for struct-update construction (`Limits { ..Limits::BASE }`).
+    pub const BASE: Self = Self {
+        sockets_max: 0,
+        buffers: 0,
+        buffer_size: 0,
+        small_buffers: 0,
+        small_buffer_size: 0,
+        ops_max: 0,
+    };
+
     /// Buffers of both sizes.
     pub fn buffer_count(&self) -> u32 {
         self.buffers + self.small_buffers
@@ -254,6 +262,12 @@ impl Limits {
             let (left, right) = pool.split_at_mut(a_at);
             (&mut right[..a_len], &mut left[b_at..b_at + b_len])
         }
+    }
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self::BASE
     }
 }
 

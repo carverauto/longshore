@@ -3,11 +3,13 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! One I/O thread of a client on Linux: its ring, its store and its loop.
+//! One I/O thread of a client: its backend, its store, and its loop.
 
 use super::{Builder, Lane};
 use crate::client::worker::{Layout, Worker};
 use crate::s3::{Config, CredentialsFile, Endpoint, Vendor, S3};
+use longshore_common::io::posix::PosixIo;
+#[cfg(target_os = "linux")]
 use longshore_common::io::uring::UringIo;
 use longshore_common::io::{BufId, Completions, Io, Limits, Sock};
 use longshore_dns::Resolver;
@@ -18,13 +20,56 @@ use std::sync::Arc;
 
 const MS: u64 = 1_000_000;
 
+#[cfg(target_os = "linux")]
 extern "C" {
     fn sched_setaffinity(pid: i32, len: usize, mask: *const u64) -> i32;
 }
 
+/// Platform I/O backend that a client thread builds and drives.
+pub(super) trait Backend: Io + Sized {
+    fn build(limits: Limits) -> std::io::Result<Self>;
+    fn quiesce(&mut self) -> bool;
+    #[cfg(all(feature = "fault-injection", target_os = "linux"))]
+    fn inject_lane_fault(&mut self, _code: u8) {}
+}
+
+#[cfg(target_os = "linux")]
+impl Backend for UringIo {
+    fn build(limits: Limits) -> std::io::Result<Self> {
+        UringIo::new(limits)
+    }
+
+    fn quiesce(&mut self) -> bool {
+        UringIo::quiesce(self)
+    }
+
+    #[cfg(feature = "fault-injection")]
+    fn inject_lane_fault(&mut self, code: u8) {
+        use longshore_common::io::uring::Fault;
+        match code {
+            1 => self.inject(Fault::TickFails),
+            2 => self.inject(Fault::RingLost),
+            _ => {}
+        }
+    }
+}
+
+impl Backend for PosixIo {
+    fn build(limits: Limits) -> std::io::Result<Self> {
+        PosixIo::new(limits)
+    }
+
+    fn quiesce(&mut self) -> bool {
+        // The POSIX world only touches caller buffers during a synchronous
+        // syscall inside `tick`, never asynchronously in the kernel.
+        true
+    }
+}
+
 /// One I/O thread: build everything, report the lane, then run until
 /// shut down.
-pub fn run(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
+pub fn run<B: Backend>(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
+    #[cfg(target_os = "linux")]
     if let Some((first, step)) = b.pin {
         let cpu = first + n as usize * step;
         let mut mask = [0u64; 16];
@@ -33,12 +78,16 @@ pub fn run(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
             unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = n;
+
     let conns = b.connections;
     // Large buffers: two per connection for TLS records, then the lent
     // ones. Small buffers: one head per connection, three for DNS, one for
     // rereading the credentials file.
     let tls_buffers = if b.tls { 2 * conns } else { 0 };
     let buffer_size = b.buffer_size.max(if b.tls { 256 * 1024 } else { 8192 });
+    #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: conns + 2,
         buffers: tls_buffers + b.buffers,
@@ -49,8 +98,9 @@ pub fn run(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
         // the resolver's four, the store's timer, the worker's two and
         // the read of the credentials file.
         ops_max: conns * 3 + 4 + 1 + 2 + 1,
+        ..Limits::BASE
     };
-    let mut io = match UringIo::new(limits) {
+    let mut io = match B::build(limits) {
         Ok(io) => io,
         Err(e) => {
             let _ = ready.send(Err(e));
@@ -129,7 +179,7 @@ pub fn run(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
     };
     let (mut worker, lane) = Worker::new(&mut io, s3, layout);
     worker.start(&mut io);
-    #[cfg(feature = "fault-injection")]
+    #[cfg(all(feature = "fault-injection", target_os = "linux"))]
     let asked = lane.clone();
     if ready.send(Ok(lane)).is_err() {
         return;
@@ -141,14 +191,15 @@ pub fn run(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
         if worker.finished() {
             break;
         }
-        #[cfg(feature = "fault-injection")]
-        match asked.fault.swap(0, std::sync::atomic::Ordering::AcqRel) {
-            1 => io.inject(longshore_common::io::uring::Fault::TickFails),
-            2 => io.inject(longshore_common::io::uring::Fault::RingLost),
-            _ => {}
+        #[cfg(all(feature = "fault-injection", target_os = "linux"))]
+        {
+            let code = asked.fault.swap(0, std::sync::atomic::Ordering::AcqRel);
+            if code != 0 {
+                io.inject_lane_fault(code);
+            }
         }
         if io.tick(true, &mut out).is_err() {
-            // A broken ring. Stop what the kernel still runs, then hand
+            // A broken backend. Stop what the kernel still runs, then hand
             // callers their operations back. The pool stays allocated
             // until they shut the thread down, or for good if the kernel
             // could not be stopped.

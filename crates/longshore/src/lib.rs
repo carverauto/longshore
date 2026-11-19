@@ -3,12 +3,13 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! An object storage client for Linux `io_uring`.
+//! An object storage client for Linux `io_uring` and portable POSIX backends.
 //!
 //! longshore moves a lot of data with little CPU. One thread drives
-//! everything from `io_uring` completions. Buffers, connection slots and
-//! operation slots are allocated when the client is built, and the client
-//! makes no copy of an upload's body.
+//! everything from one completion queue (`io_uring` on Linux, or the
+//! portable `kqueue`/`epoll` engine elsewhere). Buffers, connection slots
+//! and operation slots are allocated when the client is built, and the
+//! client makes no copy of an upload's body.
 //!
 //! # Highlights
 //!
@@ -40,10 +41,12 @@
 //!
 //! # Platform
 //!
-//! Linux 6.1 or later, on x86-64 or AArch64. The crate builds on other
-//! systems, and the simulator runs there, but [`client::Builder::build`]
-//! returns [`client::BuildError::Unsupported`] because there is no
-//! `io_uring` to run on.
+//! Linux 6.1 or later, on x86-64 or AArch64, uses `io_uring` by default and
+//! can select the portable `epoll` backend via [`client::Builder::portable`].
+//! macOS runs on the portable `kqueue` backend (requesting CPU pinning via
+//! [`client::Builder::pin`] returns [`client::BuildError::Setting`]). The
+//! crate builds on other systems and the simulator runs there, while
+//! [`client::Builder::build`] returns [`client::BuildError::Unsupported`].
 //!
 //! In a container two things have to be set on the node. The runtime's
 //! default seccomp profile refuses the `io_uring` system calls, so the
@@ -239,7 +242,8 @@
 //! under one name:
 //!
 //! - [`io`], from `longshore_common`: the [`io::Io`] trait every layer is
-//!   written against, and the `io_uring` backend.
+//!   written against, the `io_uring` backend, and the portable POSIX
+//!   (`kqueue`/`epoll`) backend.
 //! - [`dns`], [`http`], [`tls`]: the protocols, from `longshore_dns`,
 //!   `longshore_http_client` and `longshore_tls`.
 //! - [`checksum`], from `longshore_crc`.

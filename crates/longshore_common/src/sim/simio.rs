@@ -3,15 +3,18 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::io::{
-    BufId, Busy, Completion, Completions, FileId, Io, Limits, Op, Sock, Token, EAGAIN, ECANCELED,
-    ECONNREFUSED, ECONNRESET, ENOENT, EPIPE,
-};
+//! Deterministic virtual world ([`Virtual`]) and its [`SimIo`] engine alias.
+
+use crate::io::engine::{Engine, World};
+use crate::io::{FileId, Limits, Op, Sock, Wake, EAGAIN, ECONNREFUSED, ECONNRESET, ENOENT, EPIPE};
 use crate::sim::prng::Prng;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-mod backend;
+mod ops;
+mod world;
 
 /// Fault probabilities, in parts per million, evaluated per attempt.
 #[derive(Clone, Copy, Debug, Default)]
@@ -34,7 +37,7 @@ pub struct Faults {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum SockState {
+pub(super) enum SockState {
     Free,
     Listening,
     /// Connect submitted, waiting for the listener to accept.
@@ -46,91 +49,64 @@ enum SockState {
     UdpConnected,
 }
 
-struct SimSock {
-    state: SockState,
-    addr: Option<SocketAddr>,
-    peer: u32,
+pub(super) struct SimSock {
+    pub(super) state: SockState,
+    pub(super) addr: Option<SocketAddr>,
+    pub(super) peer: u32,
     /// Bytes in flight towards this socket.
-    rx: Box<[u8]>,
-    rx_head: usize,
-    rx_len: usize,
-    peer_closed: bool,
-    reset: bool,
+    pub(super) rx: Box<[u8]>,
+    pub(super) rx_head: usize,
+    pub(super) rx_len: usize,
+    pub(super) peer_closed: bool,
+    pub(super) reset: bool,
     /// For UDP: whether `peer` is valid.
-    has_peer: bool,
+    pub(super) has_peer: bool,
     /// What a connect on this socket completes with once accepted: the
     /// segment size of the route it took, or 0.
-    segment: u32,
+    pub(super) segment: u32,
 }
 
 /// Another address of a listener.
-struct Route {
-    addr: SocketAddr,
-    listener: SocketAddr,
+pub(super) struct Route {
+    pub(super) addr: SocketAddr,
+    pub(super) listener: SocketAddr,
     /// What connections to `addr` report as their segment size.
-    segment: u32,
+    pub(super) segment: u32,
     /// Connects to `addr` that reached the listener.
-    connects: u64,
-}
-
-#[derive(Clone, Copy)]
-struct Pending {
-    token: Token,
-    op: Op,
-    /// Absolute deadline for timeouts.
-    deadline: u64,
-    cancelled: bool,
-    /// Identifies this operation among all ever submitted.
-    id: u64,
-    /// For a cancel: the operation it named when it was submitted, if any.
-    /// The real kernel fixes the target at that moment too, so a cancel can
-    /// neither hit an operation submitted later under the same token nor
-    /// find one that has already finished.
-    cancel_target: Option<u64>,
-    /// A connect that has claimed its socket and is waiting to be accepted.
-    attached: bool,
-}
-
-pub struct SimIo {
-    limits: Limits,
-    faults: Faults,
-    rng: Prng,
-    now: u64,
-    bufs: Box<[u8]>,
-    socks: Box<[SimSock]>,
-    pending: Vec<Pending>,
-    next_op_id: u64,
-    trace: u64,
-    /// Registered files and their current contents; `None` means absent.
-    files: Vec<Option<Vec<u8>>>,
-    /// Extra addresses of listeners: (address, the listener's address, the
-    /// segment size connections to the address report).
-    routes: Vec<Route>,
-    /// Set by the waker from any thread, cleared when an `AwaitWake` completes.
-    woken: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// The path limit connects to routed addresses report with their size.
-    path_limit: u32,
+    pub(super) connects: u64,
 }
 
 /// Virtual time added per tick.
-const STEP_NS: u64 = 100_000;
+pub(super) const STEP_NS: u64 = 100_000;
 /// Bytes a virtual socket holds before senders stall.
-const SOCK_BUF: usize = 64 * 1024;
+pub(super) const SOCK_BUF: usize = 64 * 1024;
 /// Ticks `tick(wait = true)` spins with nothing completing before reporting a deadlock.
-const STALL_TICKS: u32 = 100_000;
+pub(super) const STALL_TICKS: u32 = 100_000;
 
-mod engine;
+pub(super) struct SimWaker(pub(super) Arc<AtomicBool>);
 
-struct SimWaker(std::sync::Arc<std::sync::atomic::AtomicBool>);
-
-impl crate::io::Wake for SimWaker {
+impl Wake for SimWaker {
     fn wake(&self) {
-        self.0.store(true, std::sync::atomic::Ordering::Release);
+        self.0.store(true, Ordering::Release);
     }
 }
 
-impl SimIo {
-    pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
+/// Deterministic virtual world driven by [`Engine`].
+pub struct Virtual {
+    pub(super) faults: Faults,
+    pub(super) rng: Prng,
+    pub(super) now: u64,
+    pub(super) socks: Box<[SimSock]>,
+    /// Registered files and their current contents; `None` means absent.
+    pub(super) files: Vec<Option<Vec<u8>>>,
+    /// Extra addresses of listeners.
+    pub(super) routes: Vec<Route>,
+    /// The path limit connects to routed addresses report with their size.
+    pub(super) path_limit: u32,
+}
+
+impl Virtual {
+    pub fn new(limits: Limits, seed: u64, faults: Faults) -> Self {
         let sock = || SimSock {
             state: SockState::Free,
             addr: None,
@@ -143,46 +119,38 @@ impl SimIo {
             has_peer: false,
             segment: 0,
         };
-        SimIo {
-            limits,
+        Self {
             faults,
             rng: Prng::new(seed),
             now: 0,
-            bufs: vec![0u8; limits.pool_bytes()].into_boxed_slice(),
             socks: (0..limits.sockets_max).map(|_| sock()).collect(),
-            pending: Vec::with_capacity(limits.ops_max as usize),
-            next_op_id: 0,
-            trace: 0xcbf2_9ce4_8422_2325,
             files: Vec::new(),
             routes: Vec::new(),
-            woken: Default::default(),
             path_limit: 0,
         }
     }
+}
 
-    /// Hash of every completion delivered so far (token, result, time). Two
-    /// runs with the same seed and inputs produce the same value.
-    pub fn trace_hash(&self) -> u64 {
-        self.trace
-    }
+/// Deterministic simulator built on [`Engine`] and [`Virtual`].
+pub type SimIo = Engine<Virtual>;
 
-    fn range(&self, buf: BufId, off: u32, len: u32) -> core::ops::Range<usize> {
-        self.limits.range(buf, off, len)
+impl SimIo {
+    pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
+        Engine::with_world(limits, Virtual::new(limits, seed, faults))
     }
 
     /// Set or remove the contents of a registered file, as an operator
     /// replacing a credentials file would. Test setup, so it may allocate.
     pub fn set_file(&mut self, file: FileId, contents: Option<&[u8]>) {
-        self.files[file.0 as usize] = contents.map(|c| c.to_vec());
+        self.world_mut().files[file.0 as usize] = contents.map(|c| c.to_vec());
     }
 
     /// Give the listener at `listener` another address, `addr`, as a store
-    /// with several front ends has. A connect to `addr` completes with
-    /// `segment_size`, the way a backend that measures segment sizes
-    /// reports them; 0 means not measured. Test setup, so it may allocate.
+    /// with several front ends has. Test setup, so it may allocate.
     pub fn route(&mut self, addr: SocketAddr, listener: SocketAddr, segment_size: u32) {
-        self.routes.retain(|r| r.addr != addr);
-        self.routes.push(Route {
+        let routes = &mut self.world_mut().routes;
+        routes.retain(|r| r.addr != addr);
+        routes.push(Route {
             addr,
             listener,
             segment: segment_size,
@@ -193,12 +161,13 @@ impl SimIo {
     /// The largest segment the simulated path could carry, which connects
     /// to routed addresses report next to their own size. 0 is unknown.
     pub fn set_path_limit(&mut self, path_limit: u32) {
-        self.path_limit = path_limit;
+        self.world_mut().path_limit = path_limit;
     }
 
     /// Connects to the routed address `addr` that reached its listener.
     pub fn route_connects(&self, addr: SocketAddr) -> u64 {
-        self.routes
+        self.world()
+            .routes
             .iter()
             .find(|r| r.addr == addr)
             .map_or(0, |r| r.connects)
@@ -207,7 +176,7 @@ impl SimIo {
     /// Bind a UDP socket for a simulated server. Not part of `Io`: production
     /// code never serves UDP.
     pub fn bind_udp(&mut self, sock: Sock, addr: SocketAddr) {
-        let s = &mut self.socks[sock.0 as usize];
+        let s = &mut self.world_mut().socks[sock.0 as usize];
         s.state = SockState::UdpBound;
         s.addr = Some(addr);
         s.has_peer = false;

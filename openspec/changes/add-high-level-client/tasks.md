@@ -24,7 +24,7 @@
 - [x] 3.5 Throughput by thread count for HTTPS upload, download and HTTPS download, recorded in `bench/results/` (`m22-client-and-soak.md`)
 
 ## 4. Packaging
-- [ ] 4.1 Compile on non-Linux targets with an unsupported error at build of a client
+- [x] ~~4.1 Compile on non-Linux targets with an unsupported error at build of a client~~ *(superseded by `add-portable-io-backend`: macOS now builds and runs the client on the portable `kqueue` backend; other non-Linux targets still return `BuildError::Unsupported`)*
 - [ ] 4.2 Crate documentation with runnable examples, and an `examples/` directory
 - [ ] 4.3 Stated minimum Rust version, a feature that turns TLS off, and a note on the C toolchain AWS-LC needs
 - [ ] 4.4 README: quick start with the high-level client

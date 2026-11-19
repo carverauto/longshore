@@ -78,9 +78,8 @@ fn main() {
             sockets_max: 1 + server_conns,
             buffers: 2 * server_conns,
             buffer_size: SIZE,
-            small_buffers: 0,
-            small_buffer_size: 0,
             ops_max: server_conns * 3 + 2,
+            ..Limits::BASE
         })
         .expect("server ring");
         let mut server = Server::new(server::Config {
@@ -315,6 +314,7 @@ fn main() {
             }
         });
         for round in 0..REPEATS {
+            #[allow(clippy::needless_update)]
             let limits = Limits {
                 sockets_max: SOCKS + 1,
                 buffers: 1,
@@ -322,6 +322,7 @@ fn main() {
                 small_buffers: SOCKS,
                 small_buffer_size: 64,
                 ops_max: 2 * SOCKS + 2,
+                ..Limits::BASE
             };
             let mut io = UringIo::new(limits).expect("ring");
             let _wake = io.waker().expect("waker");

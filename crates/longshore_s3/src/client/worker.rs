@@ -230,7 +230,7 @@ impl Worker {
     /// The I/O under the store has failed: mark the lane closed and end
     /// every operation running or queued as closed. `quiet` says whether the
     /// `Io` is known to have stopped using the lent buffers (see
-    /// [`longshore_common::io::uring::UringIo::quiesce`]); their memory must stay
+    /// `longshore_common::io::uring::UringIo::quiesce`); their memory must stay
     /// allocated either way. If not, the lane is void: callers get their
     /// operations back, but its buffers are empty and never lent again. The
     /// store is not driven after this.
@@ -255,7 +255,7 @@ impl Worker {
 
     /// After [`Worker::abandon`]: block the calling thread, ending every
     /// request that arrives as closed, until a shutdown is asked for.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) fn refuse_until_shutdown(&mut self) {
         if self.stopping {
             return;

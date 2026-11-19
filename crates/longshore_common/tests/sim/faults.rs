@@ -17,9 +17,8 @@ const LIMITS: Limits = Limits {
     sockets_max: 4,
     buffers: 3,
     buffer_size: 4096,
-    small_buffers: 0,
-    small_buffer_size: 0,
     ops_max: 4,
+    ..Limits::BASE
 };
 const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
 const TOTAL: u64 = 300_000;

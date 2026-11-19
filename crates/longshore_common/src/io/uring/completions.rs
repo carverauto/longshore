@@ -110,6 +110,9 @@ impl UringIo {
     }
 
     pub(super) fn on_cqe(&mut self, c: io_uring_cqe, out: &mut Completions) {
+        if c.user_data == INTERNAL_CANCEL || c.user_data == QUIESCE {
+            return;
+        }
         let i = c.user_data as u32;
         let state = self.slots[i as usize].state;
         if c.flags & IORING_CQE_F_NOTIF != 0 {
@@ -181,6 +184,9 @@ impl UringIo {
             if self.slots[i as usize].cancel_requested {
                 // Cancelled while the socket was being created: do not start
                 // the connect, which nothing would cancel.
+                if self.slots[i as usize].sock_closed {
+                    return self.finish(i, -ECANCELED, out);
+                }
                 return self.release_socket(i, -ECANCELED);
             }
             self.slots[i as usize].state = State::ConnectStep;
@@ -200,7 +206,7 @@ impl UringIo {
         }
         if state == State::ConnectStep {
             let r = self.end_measure(i, c.res);
-            if r < 0 {
+            if r < 0 && !self.slots[i as usize].sock_closed {
                 return self.release_socket(i, r);
             }
             return self.finish(i, r, out);

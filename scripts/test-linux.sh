@@ -16,22 +16,26 @@
 #   aarch64-unknown-linux-musl user@arm-host
 #   x86_64-unknown-linux-musl  user@x86-host
 #
-# Without that file the Linux checks are skipped with a warning: the gate is
-# then weaker, and says so.
+# Without that file (or with zero hosts listed) the script fails so the
+# Linux io_uring path is never silently skipped.
 set -eu
 cd "$(dirname "$0")/.."
 
 HOSTS="${LONGSHORE_TEST_HOSTS_FILE:-$HOME/.config/longshore/test-hosts}"
 if [ ! -f "$HOSTS" ]; then
-    echo "WARNING: $HOSTS not found; SKIPPING real io_uring checks." >&2
-    echo "WARNING: nothing in this run exercised the Linux I/O path." >&2
-    exit 0
+    echo "ERROR: $HOSTS not found; io_uring was not exercised." >&2
+    echo "ERROR: see README.md for setting LONGSHORE_TEST_HOSTS_FILE or ~/.config/longshore/test-hosts." >&2
+    exit 1
 fi
 
 ID="gate-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)-$$"
 # -n: ssh must not read the host list that the loop below is reading.
 SSH="ssh -n -o BatchMode=yes -o ConnectTimeout=10"
 expected=$(grep -c -v '^[[:space:]]*\(#\|$\)' "$HOSTS" || true)
+if [ "$expected" -eq 0 ]; then
+    echo "ERROR: $HOSTS lists 0 hosts; io_uring was not exercised." >&2
+    exit 1
+fi
 ran=0
 failed=0
 
@@ -39,15 +43,19 @@ failed=0
 while read -r target dest <&3; do
     case "$target" in ''|\#*) continue ;; esac
     echo "== $target on $dest"
-    cargo build --release --quiet --target "$target" -p longshore-bench --bin echo_uring --bin http_uring --bin dns_uring --bin client_uring
+    cargo build --release --quiet --target "$target" -p longshore-bench --bin contract_uring --bin echo_uring --bin http_uring --bin dns_uring --bin client_uring
     # Built apart from the rest: its feature lets a test break a ring, and
     # no other program is built with that in it.
     cargo build --release --quiet --target "$target" -p longshore-bench --features fault-injection --bin client_faults
     bin="target/$target/release"
     $SSH "$dest" "mkdir -p longshore-bench/$ID"
-    scp -q -o BatchMode=yes "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$dest:longshore-bench/$ID/" </dev/null
+    scp -q -o BatchMode=yes "$bin/contract_uring" "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$dest:longshore-bench/$ID/" </dev/null
     # Each check seals the heap after setup and exits non-zero on any failure.
     if $SSH "$dest" "cd longshore-bench/$ID && set -e
+        timeout 60 ./contract_uring
+        timeout 60 ./contract_uring --v6
+        timeout 60 ./contract_uring --posix
+        timeout 60 ./contract_uring --posix --v6
         timeout 60 ./echo_uring
         timeout 60 ./echo_uring --zc
         timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc

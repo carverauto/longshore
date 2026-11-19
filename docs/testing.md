@@ -6,8 +6,9 @@
 - Linux 6.1 or later, on x86-64 or AArch64. Older kernels are not supported.
 - A recent stable Rust toolchain.
 
-The code builds on macOS and the simulator tests run there. Anything that
-uses `io_uring` has to be cross-compiled and run on a Linux host.
+The simulator, unit, property, and portable `kqueue` backend and client tests
+run directly on macOS. Anything that uses `io_uring` (or Linux `epoll`
+real-kernel checks) has to be cross-compiled and run on a Linux host.
 
 ## Build and test
 
@@ -21,9 +22,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 `scripts/test-linux.sh` cross-compiles the check programs for
 `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`, copies them to
-the hosts listed in `~/.config/longshore/test-hosts`, and runs them. That file
-has one `<rust-target> <ssh-destination>` per line. If it is missing, the
-real-kernel checks are skipped with a warning.
+the hosts listed in `~/.config/longshore/test-hosts` (or
+`$LONGSHORE_TEST_HOSTS_FILE`), and runs them. That file has one
+`<rust-target> <ssh-destination>` per line. If it is missing or lists zero
+hosts, the script exits non-zero and reports that `io_uring` was not exercised.
 
 `scripts/test-model.sh` builds `longshore_s3` with its locks, atomics and thread
 parking replaced by [loom](https://github.com/tokio-rs/loom)'s, and runs the

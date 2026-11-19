@@ -3,18 +3,18 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! The `Io` trait for the simulator.
+//! `Io` trait implementation for `Engine<W>`.
 
 use super::*;
+use crate::io::{BufId, Busy, Io};
 
-impl Io for SimIo {
+impl<W: World> Io for Engine<W> {
     fn now_ns(&self) -> u64 {
-        self.now
+        self.world.now_ns()
     }
 
     fn unix_secs(&self) -> u64 {
-        // 2026-01-01T00:00:00Z plus virtual time.
-        1_767_225_600 + self.now / 1_000_000_000
+        self.world.unix_secs()
     }
 
     fn buf(&mut self, id: BufId) -> &mut [u8] {
@@ -26,27 +26,20 @@ impl Io for SimIo {
         self.limits.pair(&mut self.bufs, a, b)
     }
 
-    fn register_file(&mut self, _path: &str) -> io::Result<FileId> {
-        self.files.push(None);
-        Ok(FileId(self.files.len() as u32 - 1))
-    }
-
-    fn waker(&mut self) -> Option<std::sync::Arc<dyn crate::io::Wake>> {
-        Some(std::sync::Arc::new(super::SimWaker(self.woken.clone())))
+    fn register_file(&mut self, path: &str) -> io::Result<FileId> {
+        self.world.register_file(path)
     }
 
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
-        if self
-            .socks
-            .iter()
-            .any(|s| s.state == SockState::Listening && s.addr == Some(addr))
-        {
-            return Err(io::Error::from(io::ErrorKind::AddrInUse));
-        }
-        let s = &mut self.socks[sock.0 as usize];
-        s.state = SockState::Listening;
-        s.addr = Some(addr);
-        Ok(addr)
+        self.world.listen(sock, addr)
+    }
+
+    fn measure_segment_sizes(&mut self, on: bool) {
+        self.world.measure_segment_sizes(on);
+    }
+
+    fn waker(&mut self) -> Option<Arc<dyn Wake>> {
+        self.world.waker(self.woken.clone())
     }
 
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy> {
@@ -54,14 +47,16 @@ impl Io for SimIo {
             return Err(Busy);
         }
         let deadline = match op {
-            Op::Timeout { nanos } => self.now + nanos,
+            Op::Timeout { nanos } => self.world.now_ns() + nanos,
             _ => 0,
         };
         let cancel_target = match op {
             Op::Cancel { target } => self
                 .pending
                 .iter()
-                .find(|q| q.token == target && !matches!(q.op, Op::Cancel { .. }))
+                .find(|q| {
+                    q.token == target && !matches!(q.op, Op::Cancel { .. } | Op::Close { .. })
+                })
                 .map(|q| q.id),
             _ => None,
         };
@@ -74,40 +69,37 @@ impl Io for SimIo {
             id: self.next_op_id,
             cancel_target,
             attached: false,
+            fresh: true,
         });
         Ok(())
     }
 
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()> {
-        let mut stalled = 0;
+        let mut idle = 0u32;
         loop {
             self.step(out);
             if !wait || !out.is_empty() {
                 return Ok(());
             }
-            // Nothing completed. If only timers remain, jump to the earliest.
             let earliest = self
                 .pending
                 .iter()
                 .filter(|p| matches!(p.op, Op::Timeout { .. }))
                 .map(|p| p.deadline)
                 .min();
-            if let Some(t) = earliest {
-                if self
+            let only_timers = !self.pending.is_empty()
+                && self
                     .pending
                     .iter()
-                    .all(|p| matches!(p.op, Op::Timeout { .. }))
-                {
-                    self.now = self.now.max(t.saturating_sub(STEP_NS));
+                    .all(|p| matches!(p.op, Op::Timeout { .. }));
+            self.world.clear_interest();
+            for p in &self.pending {
+                if !p.cancelled {
+                    self.world.add_interest(&p.op);
                 }
             }
-            stalled += 1;
-            if stalled > STALL_TICKS && earliest.is_none() {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "simulation deadlock: operations pending but none can progress",
-                ));
-            }
+            idle += 1;
+            self.world.wait(earliest, only_timers, idle)?;
         }
     }
 }

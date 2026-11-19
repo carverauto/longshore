@@ -19,9 +19,8 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
         sockets_max: 1,
         buffers: 4,
         buffer_size: SIZE,
-        small_buffers: 0,
-        small_buffer_size: 0,
         ops_max: 8,
+        ..Limits::BASE
     })
     .unwrap_or_else(|e| die(&e.to_string()));
     let mut cfg = client_cfg(1, SIZE, 0);

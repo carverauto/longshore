@@ -54,6 +54,10 @@ name = "client_builder"
 path = "tests/client/builder.rs"
 
 [[test]]
+name = "client_portable"
+path = "tests/client/portable.rs"
+
+[[test]]
 name = "client_model"
 path = "tests/client/model.rs"
 

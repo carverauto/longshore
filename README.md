@@ -19,9 +19,11 @@
 # longshore
 
 longshore is an object storage client written in Rust. It is built to move a
-lot of data with little CPU: one thread on Linux `io_uring`, all memory
+lot of data with little CPU: one thread per core on Linux `io_uring`, all memory
 allocated at start-up, and no copy of an upload's body made by the client,
-which hands large sends to the kernel as zero-copy sends.
+which hands large sends to the kernel as zero-copy sends. On macOS (`kqueue`)
+and on Linux hosts without `io_uring` (`epoll`), it also runs on a portable
+POSIX readiness backend for development, tests, and non-ring environments.
 
 It talks to:
 
@@ -40,8 +42,9 @@ API will change between releases.
 
 ## Performance
 
-One client thread against Amazon S3, 8 MiB objects, from instances in the
-same region as the bucket. Medians of five runs, and of eight for HTTPS PUT.
+These figures are for the Linux `io_uring` backend (not the portable POSIX
+backend). One client thread against Amazon S3, 8 MiB objects, from instances in
+the same region as the bucket. Medians of five runs, and of eight for HTTPS PUT.
 GB means 10^9 bytes.
 
 | Request | Graviton4, 300 Gbit/s card | AMD Zen 5, 200 Gbit/s card |
@@ -108,16 +111,32 @@ to drive it.
 
 ## Requirements
 
-- Linux 6.1 or later, on x86-64 or AArch64.
+- Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when
+  `Builder::portable` is set), or macOS for the portable `kqueue` backend
+  (without core pinning). Other targets build the crate and run the simulator.
 - A recent stable Rust toolchain.
 
-The code builds on macOS and the simulator tests run there. Anything that
-uses `io_uring` has to be cross-compiled and run on a Linux host.
+The simulator, unit, property, and portable `kqueue` backend and client tests
+run directly on macOS. Anything that uses `io_uring` (and Linux `epoll`) has to
+run on a Linux host.
 
 ```sh
-cargo test --workspace          # unit, simulation and property tests
+cargo test --workspace          # unit, simulation, property and portable tests
 ./scripts/test.sh               # those, the model checks, then the real-kernel checks
 ```
+
+To run the real-kernel checks (`scripts/test-linux.sh`) from a Mac or local
+workstation, configure `~/.config/longshore/test-hosts` (or set
+`LONGSHORE_TEST_HOSTS_FILE`) with one `<rust-target> <ssh-destination>` per
+line, for example:
+
+```text
+aarch64-unknown-linux-musl user@arm-host
+x86_64-unknown-linux-musl  user@x86-host
+```
+
+`scripts/test-linux.sh` fails if no host is configured so the `io_uring` checks
+are never silently skipped.
 
 In a container, `io_uring` needs a seccomp profile that allows it and a
 locked-memory limit large enough for the client's buffers. Both are set on

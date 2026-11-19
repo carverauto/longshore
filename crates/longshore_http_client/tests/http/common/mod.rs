@@ -39,9 +39,8 @@ pub const LIMITS: Limits = Limits {
     sockets_max: 1 + CONNS * 2 + 2,
     buffers: 11,
     buffer_size: BUF,
-    small_buffers: 0,
-    small_buffer_size: 0,
     ops_max: CONNS * 2 + CONNS + 1 + 1 + 1,
+    ..Limits::BASE
 };
 
 pub struct World {

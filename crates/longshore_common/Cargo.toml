@@ -29,6 +29,22 @@ name = "io_props"
 path = "tests/io/props.rs"
 
 [[test]]
+name = "io_posix"
+path = "tests/io/posix.rs"
+
+[[test]]
+name = "io_posix_contract"
+path = "tests/io/posix_contract.rs"
+
+[[test]]
+name = "io_posix_faults"
+path = "tests/io/posix_faults.rs"
+
+[[test]]
+name = "io_posix_alloc"
+path = "tests/io/posix_alloc.rs"
+
+[[test]]
 name = "guard_death"
 path = "tests/guard/death.rs"
 
@@ -43,6 +59,14 @@ path = "tests/sim/faults.rs"
 [[test]]
 name = "sim_sockets"
 path = "tests/sim/sockets.rs"
+
+[[test]]
+name = "sim_traces"
+path = "tests/sim/traces.rs"
+
+[[test]]
+name = "sim_contract"
+path = "tests/sim/contract.rs"
 
 [package.metadata.docs.rs]
 # io_uring is Linux only, and the simulator is part of the documented API.

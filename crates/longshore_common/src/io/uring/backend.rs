@@ -73,6 +73,8 @@ impl Io for UringIo {
         self.slots[i as usize].token = token.0;
         self.slots[i as usize].state = State::InFlight;
         self.slots[i as usize].phase = 0;
+        self.slots[i as usize].op_sock = None;
+        self.slots[i as usize].sock_closed = false;
         self.slots[i as usize].cancel_requested = false;
         let mut sqe = match op {
             Op::Connect { sock, addr } | Op::ConnectUdp { sock, addr } => {
@@ -81,6 +83,7 @@ impl Io for UringIo {
                 s.state = State::Connecting;
                 s.phase = PHASE_SOCKET;
                 s.sock = sock.0;
+                s.op_sock = Some(sock);
                 s.probe_fd = -1;
                 (s.addr, s.addr_len) = sockaddr_any::from(addr);
                 let family = s.addr.family;
@@ -107,6 +110,7 @@ impl Io for UringIo {
             }
             Op::Accept { listener, sock } => {
                 assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                self.slots[i as usize].op_sock = Some(listener);
                 let mut s = self.fixed(listener);
                 s.opcode = IORING_OP_ACCEPT;
                 s.file_index = sock.0 + 1;
@@ -119,6 +123,7 @@ impl Io for UringIo {
                 len,
                 zero_copy,
             } => {
+                self.slots[i as usize].op_sock = Some(sock);
                 let mut s = self.fixed(sock);
                 s.addr = self.buf_ptr(buf, off, len);
                 s.len = len;
@@ -138,6 +143,7 @@ impl Io for UringIo {
                 off,
                 len,
             } => {
+                self.slots[i as usize].op_sock = Some(sock);
                 let mut s = self.fixed(sock);
                 s.opcode = IORING_OP_RECV;
                 s.addr = self.buf_ptr(buf, off, len);
@@ -150,6 +156,7 @@ impl Io for UringIo {
                 off,
                 len,
             } => {
+                self.slots[i as usize].op_sock = Some(sock);
                 let mut s = self.fixed(sock);
                 s.opcode = IORING_OP_RECV;
                 s.addr = self.buf_ptr(buf, off, len);
@@ -160,6 +167,34 @@ impl Io for UringIo {
             }
             Op::Close { sock } => {
                 assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                self.slots[i as usize].state = State::Close;
+                for k in 0..self.slots.len() {
+                    if k as u32 == i || self.slots[k].op_sock != Some(sock) {
+                        continue;
+                    }
+                    if matches!(
+                        self.slots[k].state,
+                        State::Free
+                            | State::Close
+                            | State::FileClose
+                            | State::ConnectRelease
+                            | State::AwaitNotif
+                    ) {
+                        continue;
+                    }
+                    self.slots[k].sock_closed = true;
+                    if !self.slots[k].cancel_requested {
+                        self.slots[k].cancel_requested = true;
+                        let addr = k as u64 | self.slots[k].phase;
+                        self.push(io_uring_sqe {
+                            opcode: IORING_OP_ASYNC_CANCEL,
+                            fd: -1,
+                            addr,
+                            user_data: INTERNAL_CANCEL,
+                            ..Default::default()
+                        });
+                    }
+                }
                 io_uring_sqe {
                     opcode: IORING_OP_CLOSE,
                     file_index: sock.0 + 1,
@@ -179,7 +214,7 @@ impl Io for UringIo {
                     Some(k)
                         if matches!(
                             self.slots[k].state,
-                            State::FileClose | State::ConnectRelease
+                            State::Close | State::FileClose | State::ConnectRelease
                         ) =>
                     {
                         u64::MAX

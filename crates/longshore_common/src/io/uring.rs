@@ -45,6 +45,8 @@ enum State {
     FileOpen,
     FileRead,
     FileClose,
+    /// Closing a socket slot.
+    Close,
 }
 
 #[derive(Clone, Copy)]
@@ -53,6 +55,11 @@ struct Slot {
     state: State,
     result: i32,
     sock: u32,
+    /// The socket slot this operation is in flight on, if any (`Accept` uses
+    /// `listener`; `Close` and non-socket ops leave this `None`).
+    op_sock: Option<Sock>,
+    /// True if an [`Op::Close`] on `op_sock` has already submitted the close.
+    sock_closed: bool,
     /// For a file read: the descriptor, and where the bytes go.
     fd: i32,
     file_addr: u64,
@@ -109,6 +116,8 @@ const PHASE_FILE_CLOSE: u64 = 4 << 32;
 const PHASE_SOCK_RELEASE: u64 = 5 << 32;
 /// The cancel and timer `quiesce` submits, which belong to no slot.
 const QUIESCE: u64 = 6 << 32;
+/// Internal cancel submitted by `Op::Close` for sibling ops on the socket.
+const INTERNAL_CANCEL: u64 = 7 << 32;
 
 mod completions;
 
@@ -162,8 +171,8 @@ fn name_memlock_limit(e: io::Error) -> io::Error {
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
     pub fn new(limits: Limits) -> io::Result<UringIo> {
-        // Room for one SQE per operation, and for `quiesce`'s cancel and timer.
-        let entries = (limits.ops_max + 2).next_power_of_two().max(8);
+        // Room for one SQE + one internal cancel SQE per operation, and `quiesce`'s two SQEs.
+        let entries = (limits.ops_max * 2 + 2).next_power_of_two().max(8);
         let mut ring = Ring::new(
             entries,
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN,
@@ -187,6 +196,8 @@ impl UringIo {
             state: State::Free,
             result: 0,
             sock: 0,
+            op_sock: None,
+            sock_closed: false,
             fd: -1,
             file_addr: 0,
             file_len: 0,
@@ -244,9 +255,11 @@ impl UringIo {
                 let opcode = match s.state {
                     // A close is never cancelled, and a zero-copy send whose
                     // result is in only waits for its notification.
-                    State::Free | State::FileClose | State::ConnectRelease | State::AwaitNotif => {
-                        continue
-                    }
+                    State::Free
+                    | State::Close
+                    | State::FileClose
+                    | State::ConnectRelease
+                    | State::AwaitNotif => continue,
                     State::Timer => IORING_OP_TIMEOUT_REMOVE,
                     _ => IORING_OP_ASYNC_CANCEL,
                 };
@@ -279,7 +292,7 @@ impl UringIo {
             }
             while let Some(c) = self.reap() {
                 match c.user_data {
-                    QUIESCE => {}
+                    QUIESCE | INTERNAL_CANCEL => {}
                     t if t == QUIESCE | 1 => timing = false,
                     _ => {
                         self.on_cqe(c, &mut out);
