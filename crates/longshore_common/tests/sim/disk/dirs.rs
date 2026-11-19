@@ -16,6 +16,8 @@ use longshore_common::sim::{DiskFaults, SimIo};
 
 #[path = "dirs_overflow.rs"]
 mod overflow;
+#[path = "dirs_sync_fail.rs"]
+mod sync_fail;
 
 #[test]
 fn open_file_survives_unlink_and_rename_and_cross_dir_rename_sync() {

@@ -346,7 +346,7 @@ impl SimDisk {
                 DirChangeKind::Create { parent, .. }
                 | DirChangeKind::Mkdir { parent, .. }
                 | DirChangeKind::Unlink { parent, .. }
-                    if parent == d =>
+                    if parent == d && !entry.old_dir_synced =>
                 {
                     entry.poisoned = true;
                 }
@@ -354,7 +354,9 @@ impl SimDisk {
                     old_parent,
                     new_parent,
                     ..
-                } if old_parent == d || new_parent == d => {
+                } if (old_parent == d && !entry.old_dir_synced)
+                    || (new_parent == d && !entry.new_dir_synced) =>
+                {
                     entry.poisoned = true;
                 }
                 _ => {}
