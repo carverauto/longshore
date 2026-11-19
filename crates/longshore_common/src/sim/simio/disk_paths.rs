@@ -5,11 +5,18 @@
 
 //! Path normalization, inode/name allocation, `open`, and `close` for [`SimDisk`].
 
+use super::dirs::DirChangeKind;
+use super::log::LogKind;
 use super::{SimDisk, SimInode, SimName, SimOpenFile};
 use crate::io::posix::errno::linux::{
     EBADF, EEXIST, EINVAL, EISDIR, ENAMETOOLONG, ENOENT, ENOSPC, ENOTDIR,
 };
 use crate::io::{FileSlot, OpenFlags};
+
+pub(super) fn base_range(path: &[u8]) -> core::ops::Range<usize> {
+    let pos = path.iter().rposition(|&b| b == b'/').unwrap_or(0);
+    pos + 1..path.len()
+}
 
 impl SimDisk {
     pub(super) fn normalize_into(raw: &[u8], dst: &mut [u8]) -> Result<usize, i32> {
@@ -49,16 +56,17 @@ impl SimDisk {
         (0..self.names.len()).find(|&i| self.names[i].used && self.name_slice(i) == path)
     }
 
-    pub(super) fn check_parent(&self, path: &[u8]) -> Result<(), i32> {
+    pub(super) fn check_parent(&self, path: &[u8]) -> Result<u32, i32> {
         let parent = match path.iter().rposition(|&b| b == b'/') {
             Some(0) | None => b"/" as &[u8],
             Some(pos) => &path[..pos],
         };
         let pi = self.find_name(parent).ok_or(-ENOENT)?;
-        if !self.inodes[self.names[pi].inode as usize].is_dir {
+        let parent_ii = self.names[pi].inode;
+        if !self.inodes[parent_ii as usize].is_dir {
             return Err(-ENOTDIR);
         }
-        Ok(())
+        Ok(parent_ii)
     }
 
     pub(super) fn alloc_file_inode(&mut self) -> Result<usize, i32> {
@@ -66,16 +74,18 @@ impl SimDisk {
         let ii = self.inodes.iter().position(|i| !i.used).ok_or(-ENOSPC)?;
         self.data_used[di] = true;
         let d_off = di * self.max_bytes_per_file;
-        self.file_data[d_off..d_off + self.max_bytes_per_file].fill(0);
+        self.durable_data[d_off..d_off + self.max_bytes_per_file].fill(0);
         let ino = self.next_ino;
         self.next_ino += 1;
         self.inodes[ii] = SimInode {
             used: true,
             is_dir: false,
             data_idx: di as u32,
-            size: 0,
-            links: 1,
+            durable_size: 0,
+            live_links: 1,
+            durable_links: 0,
             opens: 0,
+            dir_log_refs: 0,
             ino,
         };
         Ok(ii)
@@ -89,9 +99,11 @@ impl SimDisk {
             used: true,
             is_dir: true,
             data_idx: 0,
-            size: 0,
-            links: 1,
+            durable_size: 0,
+            live_links: 1,
+            durable_links: 0,
             opens: 0,
+            dir_log_refs: 0,
             ino,
         };
         Ok(ii)
@@ -99,11 +111,19 @@ impl SimDisk {
 
     pub(super) fn free_inode_if_dead(&mut self, ii: usize) {
         let ino = &mut self.inodes[ii];
-        if ino.used && ino.links == 0 && ino.opens == 0 {
+        if ino.used
+            && ino.live_links == 0
+            && ino.durable_links == 0
+            && ino.opens == 0
+            && ino.dir_log_refs == 0
+        {
+            let ino_num = ino.ino;
             if !ino.is_dir {
                 self.data_used[ino.data_idx as usize] = false;
             }
             *ino = SimInode::EMPTY;
+            self.purge_inode_log(ii);
+            self.clear_read_errors_for_inode(ino_num);
         }
     }
 
@@ -126,10 +146,7 @@ impl SimDisk {
                     return -ENOTDIR;
                 }
                 if flags.empty {
-                    let d_off = self.inodes[ii].data_idx as usize * self.max_bytes_per_file;
-                    let old_sz = self.inodes[ii].size as usize;
-                    self.file_data[d_off..d_off + old_sz].fill(0);
-                    self.inodes[ii].size = 0;
+                    self.push_log_entry(ii, LogKind::Truncate, &[]);
                 }
             }
             self.inodes[ii].opens += 1;
@@ -142,9 +159,10 @@ impl SimDisk {
         if !flags.create || flags.directory {
             return -ENOENT;
         }
-        if let Err(e) = self.check_parent(&self.scratch_a[..len]) {
-            return e;
-        }
+        let parent_ii = match self.check_parent(&self.scratch_a[..len]) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
         let ii = match self.alloc_file_inode() {
             Ok(i) => i,
             Err(e) => return e,
@@ -152,7 +170,7 @@ impl SimDisk {
         let ni = match self.names.iter().position(|n| !n.used) {
             Some(i) => i,
             None => {
-                self.inodes[ii].links = 0;
+                self.inodes[ii].live_links = 0;
                 self.free_inode_if_dead(ii);
                 return -ENOSPC;
             }
@@ -169,6 +187,17 @@ impl SimDisk {
             inode: ii as u32,
             flags,
         });
+        let a_range = base_range(&self.scratch_a[..len]);
+        let name_len = a_range.len();
+        self.record_dir_change(
+            DirChangeKind::Create {
+                parent: parent_ii,
+                child: ii as u32,
+                name_len: name_len as u16,
+            },
+            a_range,
+            0..0,
+        );
         0
     }
 
@@ -184,5 +213,17 @@ impl SimDisk {
         self.inodes[ii].opens = self.inodes[ii].opens.saturating_sub(1);
         self.free_inode_if_dead(ii);
         0
+    }
+
+    pub(super) fn undo_open_handle(&mut self, slot: FileSlot) {
+        if let Some(entry) = self
+            .open_slots
+            .get_mut(slot.0 as usize)
+            .and_then(Option::take)
+        {
+            let ii = entry.inode as usize;
+            self.inodes[ii].opens = self.inodes[ii].opens.saturating_sub(1);
+            self.free_inode_if_dead(ii);
+        }
     }
 }

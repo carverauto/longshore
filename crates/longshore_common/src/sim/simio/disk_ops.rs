@@ -3,39 +3,75 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! Read, write, space, status, and directory/name operations for [`SimDisk`].
+//! Read, write, sync, space, status, and directory operations for [`SimDisk`].
 
-use super::{SimDisk, SimName};
+use super::faults::{misdirect_slot_count, pick_misdirected_off, sector_cut_bounds};
+use super::log::LogKind;
+use super::{DiskFaultCtx, PlacedFault, SimDisk};
 use crate::io::files::STATX_SIZE;
-use crate::io::posix::errno::linux::{
-    EBADF, EBUSY, EEXIST, EINVAL, EISDIR, ENAMETOOLONG, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY,
-};
+use crate::io::posix::errno::linux::{EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, EOPNOTSUPP};
 use crate::io::FileSlot;
 
 impl SimDisk {
     pub(super) fn read(
-        &self,
+        &mut self,
         slot: FileSlot,
         pool: &mut [u8],
         range: core::ops::Range<usize>,
         file_off: u64,
+        placed: Option<PlacedFault>,
+        ctx: &mut DiskFaultCtx<'_>,
     ) -> i32 {
         let Some(open) = self.open_slots.get(slot.0 as usize).and_then(|s| *s) else {
             return -EBADF;
         };
-        let ino = &self.inodes[open.inode as usize];
-        if ino.is_dir {
+        let ii = open.inode as usize;
+        if self.inodes[ii].is_dir {
             return -EISDIR;
         }
         if !open.flags.read && open.flags.write {
             return -EBADF;
         }
-        if file_off >= ino.size || range.is_empty() {
+        let live = self.live_size(ii);
+        let n = if file_off >= live || range.is_empty() {
+            0
+        } else {
+            range.len().min((live - file_off) as usize)
+        };
+        if let Some(pf) = placed {
+            if pf == PlacedFault::FailAfter {
+                if n > 0 {
+                    self.read_overlay(ii, &mut pool[range.start..range.start + n], file_off);
+                }
+                ctx.counters.placed_fail_after += 1;
+                return -EIO;
+            }
+            ctx.counters.placed_fail += 1;
+            return -EIO;
+        }
+        if n == 0 {
             return 0;
         }
-        let n = range.len().min((ino.size - file_off) as usize);
-        let d_off = ino.data_idx as usize * self.max_bytes_per_file + file_off as usize;
-        pool[range.start..range.start + n].copy_from_slice(&self.file_data[d_off..d_off + n]);
+        let s = self.sector_size as u64;
+        let first_sec = file_off / s;
+        let last_sec = (file_off + n as u64 - 1) / s;
+        let ino_num = self.inodes[ii].ino;
+        if self.has_read_error(ino_num, first_sec, last_sec) {
+            return -EIO;
+        }
+        if ctx.rng.chance(ctx.faults.read_error) {
+            let sec = first_sec + ctx.rng.below(last_sec - first_sec + 1);
+            self.record_read_error(ino_num, sec);
+            ctx.counters.read_error += 1;
+            return -EIO;
+        }
+        self.read_overlay(ii, &mut pool[range.start..range.start + n], file_off);
+        if ctx.rng.chance(ctx.faults.bit_flip) {
+            let byte_idx = ctx.rng.below(n as u64) as usize;
+            let bit = 1u8 << ctx.rng.below(8);
+            pool[range.start + byte_idx] ^= bit;
+            ctx.counters.bit_flip += 1;
+        }
         n as i32
     }
 
@@ -45,6 +81,8 @@ impl SimDisk {
         pool: &[u8],
         range: core::ops::Range<usize>,
         file_off: u64,
+        placed: Option<PlacedFault>,
+        ctx: &mut DiskFaultCtx<'_>,
     ) -> i32 {
         let Some(open) = self.open_slots.get(slot.0 as usize).and_then(|s| *s) else {
             return -EBADF;
@@ -63,17 +101,133 @@ impl SimDisk {
         if end > self.max_bytes_per_file as u64 {
             return -ENOSPC;
         }
-        let d_base = self.inodes[ii].data_idx as usize * self.max_bytes_per_file;
-        let old_size = self.inodes[ii].size;
-        if len > 0 && file_off > old_size {
-            self.file_data[d_base + old_size as usize..d_base + file_off as usize].fill(0);
+        let data = &pool[range];
+        if let Some(pf) = placed {
+            return match pf {
+                PlacedFault::Fail => {
+                    ctx.counters.placed_fail += 1;
+                    -EIO
+                }
+                PlacedFault::FailAfter => {
+                    self.commit_write(ii, file_off, data);
+                    ctx.counters.placed_fail_after += 1;
+                    -EIO
+                }
+                PlacedFault::LostReported => {
+                    ctx.counters.lost_reported += 1;
+                    -EIO
+                }
+                PlacedFault::LostSilent => {
+                    ctx.counters.lost_silent += 1;
+                    data.len() as i32
+                }
+                PlacedFault::ShortWrite => self.inject_short_write(ii, file_off, data, ctx),
+                PlacedFault::TornReported => self.inject_torn_write(ii, file_off, data, true, ctx),
+                PlacedFault::TornSilent => self.inject_torn_write(ii, file_off, data, false, ctx),
+                PlacedFault::MisdirectedWrite => {
+                    let s = self.sector_size as u64;
+                    let live = self.live_size(ii);
+                    let (other, ov_start, ov_count) =
+                        misdirect_slot_count(live, file_off, data.len(), s);
+                    if other > 0 {
+                        let dst = pick_misdirected_off(ctx.rng, other, ov_start, ov_count, s);
+                        self.commit_write(ii, dst, data);
+                        ctx.counters.misdirected_write += 1;
+                    } else {
+                        self.commit_write(ii, file_off, data);
+                    }
+                    data.len() as i32
+                }
+            };
         }
-        let dst = d_base + file_off as usize;
-        self.file_data[dst..dst + range.len()].copy_from_slice(&pool[range.clone()]);
-        if end > old_size {
-            self.inodes[ii].size = end;
+        if data.is_empty() {
+            return 0;
         }
-        range.len() as i32
+        let s = self.sector_size as u64;
+        if ctx.rng.chance(ctx.faults.lost_reported) {
+            ctx.counters.lost_reported += 1;
+            return -EIO;
+        }
+        if ctx.rng.chance(ctx.faults.lost_silent) {
+            ctx.counters.lost_silent += 1;
+            return data.len() as i32;
+        }
+        let cuts = sector_cut_bounds(file_off, data.len(), s);
+        if cuts.is_some() && ctx.rng.chance(ctx.faults.short_write) {
+            return self.inject_short_write(ii, file_off, data, ctx);
+        }
+        if ctx.rng.chance(ctx.faults.torn_reported) {
+            return self.inject_torn_write(ii, file_off, data, true, ctx);
+        }
+        if ctx.rng.chance(ctx.faults.torn_silent) {
+            return self.inject_torn_write(ii, file_off, data, false, ctx);
+        }
+        let live = self.live_size(ii);
+        let (other, ov_start, ov_count) = misdirect_slot_count(live, file_off, data.len(), s);
+        if other > 0 && ctx.rng.chance(ctx.faults.misdirected_write) {
+            let dst = pick_misdirected_off(ctx.rng, other, ov_start, ov_count, s);
+            self.commit_write(ii, dst, data);
+            ctx.counters.misdirected_write += 1;
+            return data.len() as i32;
+        }
+        self.commit_write(ii, file_off, data);
+        data.len() as i32
+    }
+
+    pub(super) fn commit_write(&mut self, ii: usize, file_off: u64, data: &[u8]) {
+        if !data.is_empty() {
+            self.push_write_log(ii, file_off, data);
+            let ino_num = self.inodes[ii].ino;
+            self.clear_read_errors_range(ino_num, file_off, file_off + data.len() as u64);
+        }
+    }
+
+    pub(super) fn attempt_sync(
+        &mut self,
+        slot: FileSlot,
+        placed: Option<PlacedFault>,
+        ctx: &mut DiskFaultCtx<'_>,
+    ) -> i32 {
+        let Some(open) = self.open_slots.get(slot.0 as usize).and_then(|s| *s) else {
+            return -EBADF;
+        };
+        let ii = open.inode as usize;
+        if let Some(pf) = placed {
+            return match pf {
+                PlacedFault::FailAfter => {
+                    self.sync_inode(ii);
+                    ctx.counters.placed_fail_after += 1;
+                    -EIO
+                }
+                _ => {
+                    ctx.counters.placed_fail += 1;
+                    -EIO
+                }
+            };
+        }
+        if ctx.rng.chance(ctx.faults.sync_fail) {
+            self.poison_inode(ii);
+            ctx.counters.sync_fail += 1;
+            return -EIO;
+        }
+        self.sync_inode(ii);
+        0
+    }
+
+    fn sync_inode(&mut self, ii: usize) {
+        if self.inodes[ii].is_dir {
+            self.sync_dir(ii);
+        } else {
+            self.sync_file(ii);
+        }
+    }
+
+    fn poison_inode(&mut self, ii: usize) {
+        if self.inodes[ii].is_dir {
+            self.poison_dir(ii);
+        } else {
+            self.poison_file(ii);
+        }
     }
 
     pub(super) fn reserve(
@@ -82,6 +236,8 @@ impl SimDisk {
         file_off: u64,
         len: u64,
         keep_size: bool,
+        placed: Option<PlacedFault>,
+        ctx: &mut DiskFaultCtx<'_>,
     ) -> i32 {
         let Some(open) = self.open_slots.get(slot.0 as usize).and_then(|s| *s) else {
             return -EBADF;
@@ -102,16 +258,35 @@ impl SimDisk {
         if end > self.max_bytes_per_file as u64 {
             return -ENOSPC;
         }
-        let old_size = self.inodes[ii].size;
-        if !keep_size && end > old_size {
-            let d_base = self.inodes[ii].data_idx as usize * self.max_bytes_per_file;
-            self.file_data[d_base + old_size as usize..d_base + end as usize].fill(0);
-            self.inodes[ii].size = end;
+        if let Some(pf) = placed {
+            if pf == PlacedFault::FailAfter {
+                if !keep_size && end > self.live_size(ii) {
+                    self.push_log_entry(ii, LogKind::Extend { end }, &[]);
+                }
+                ctx.counters.placed_fail_after += 1;
+                return -EIO;
+            }
+            ctx.counters.placed_fail += 1;
+            return -EIO;
+        }
+        if ctx.rng.chance(ctx.faults.reserve_refused) {
+            ctx.counters.reserve_refused += 1;
+            return -ENOSPC;
+        }
+        if !keep_size && end > self.live_size(ii) {
+            self.push_log_entry(ii, LogKind::Extend { end }, &[]);
         }
         0
     }
 
-    pub(super) fn punch(&mut self, slot: FileSlot, file_off: u64, len: u64) -> i32 {
+    pub(super) fn punch(
+        &mut self,
+        slot: FileSlot,
+        file_off: u64,
+        len: u64,
+        placed: Option<PlacedFault>,
+        ctx: &mut DiskFaultCtx<'_>,
+    ) -> i32 {
         let Some(open) = self.open_slots.get(slot.0 as usize).and_then(|s| *s) else {
             return -EBADF;
         };
@@ -125,14 +300,27 @@ impl SimDisk {
         if len == 0 {
             return -EINVAL;
         }
-        let size = self.inodes[ii].size;
-        let start = file_off.min(size) as usize;
-        let end = file_off.saturating_add(len).min(size) as usize;
-        if end > start {
-            let d_base = self.inodes[ii].data_idx as usize * self.max_bytes_per_file;
-            self.file_data[d_base + start..d_base + end].fill(0);
+        if let Some(pf) = placed {
+            if pf == PlacedFault::FailAfter {
+                self.apply_punch(ii, file_off, len);
+                ctx.counters.placed_fail_after += 1;
+                return -EIO;
+            }
+            ctx.counters.placed_fail += 1;
+            return -EIO;
         }
+        if ctx.rng.chance(ctx.faults.punch_refused) {
+            ctx.counters.punch_refused += 1;
+            return -EOPNOTSUPP;
+        }
+        self.apply_punch(ii, file_off, len);
         0
+    }
+
+    fn apply_punch(&mut self, ii: usize, file_off: u64, len: u64) {
+        self.push_log_entry(ii, LogKind::Punch { file_off, len }, &[]);
+        let ino_num = self.inodes[ii].ino;
+        self.clear_read_errors_range(ino_num, file_off, file_off.saturating_add(len));
     }
 
     pub(super) fn status(
@@ -148,175 +336,19 @@ impl SimDisk {
         let Some(ni) = self.find_name(&self.scratch_a[..len]) else {
             return -ENOENT;
         };
-        let ino = &self.inodes[self.names[ni].inode as usize];
+        let ii = self.names[ni].inode as usize;
+        let ino = self.inodes[ii];
+        let size = if ino.is_dir { 0 } else { self.live_size(ii) };
         let mut raw = [0u8; STATX_SIZE];
         let mode: u16 = if ino.is_dir { 0o040755 } else { 0o100644 };
         raw[0..4].copy_from_slice(&0x07ffu32.to_le_bytes());
-        raw[4..8].copy_from_slice(&4096u32.to_le_bytes());
-        raw[16..20].copy_from_slice(&ino.links.to_le_bytes());
+        raw[4..8].copy_from_slice(&self.sector_size.max(4096).to_le_bytes());
+        raw[16..20].copy_from_slice(&ino.live_links.to_le_bytes());
         raw[28..30].copy_from_slice(&mode.to_le_bytes());
         raw[32..40].copy_from_slice(&ino.ino.to_le_bytes());
-        raw[40..48].copy_from_slice(&ino.size.to_le_bytes());
-        raw[48..56].copy_from_slice(&ino.size.div_ceil(512).to_le_bytes());
+        raw[40..48].copy_from_slice(&size.to_le_bytes());
+        raw[48..56].copy_from_slice(&size.div_ceil(512).to_le_bytes());
         pool[out_range].copy_from_slice(&raw);
-        0
-    }
-
-    pub(super) fn rename(
-        &mut self,
-        pool: &[u8],
-        old_range: core::ops::Range<usize>,
-        new_range: core::ops::Range<usize>,
-    ) -> i32 {
-        let old_len = match Self::normalize_into(&pool[old_range], &mut self.scratch_a) {
-            Ok(n) => n,
-            Err(e) => return e,
-        };
-        let new_len = match Self::normalize_into(&pool[new_range], &mut self.scratch_b) {
-            Ok(n) => n,
-            Err(e) => return e,
-        };
-        let old = &self.scratch_a[..old_len];
-        let new = &self.scratch_b[..new_len];
-        if old == b"/" || new == b"/" {
-            return -EBUSY;
-        }
-        let Some(old_ni) = self.find_name(old) else {
-            return -ENOENT;
-        };
-        if let Err(e) = self.check_parent(new) {
-            return e;
-        }
-        if old == new {
-            return 0;
-        }
-        let old_ii = self.names[old_ni].inode as usize;
-        let old_is_dir = self.inodes[old_ii].is_dir;
-        if old_is_dir && new.len() > old.len() && &new[..old.len()] == old && new[old.len()] == b'/'
-        {
-            return -EINVAL;
-        }
-        let dst = self.find_name(new);
-        if let Some(dst_ni) = dst {
-            let dst_ii = self.names[dst_ni].inode as usize;
-            let dst_is_dir = self.inodes[dst_ii].is_dir;
-            if old_is_dir && !dst_is_dir {
-                return -ENOTDIR;
-            }
-            if !old_is_dir && dst_is_dir {
-                return -EISDIR;
-            }
-            if dst_is_dir {
-                let has_child = (0..self.names.len()).any(|k| {
-                    if !self.names[k].used {
-                        return false;
-                    }
-                    let s = self.name_slice(k);
-                    s.len() > new.len() && &s[..new.len()] == new && s[new.len()] == b'/'
-                });
-                if has_child {
-                    return -ENOTEMPTY;
-                }
-            }
-        }
-        if old_is_dir {
-            for k in 0..self.names.len() {
-                if !self.names[k].used {
-                    continue;
-                }
-                let s_len = self.names[k].len as usize;
-                let base = k * self.max_name_len;
-                let is_child = s_len > old_len
-                    && self.name_bytes[base..base + old_len] == self.scratch_a[..old_len]
-                    && self.name_bytes[base + old_len] == b'/';
-                if is_child && new_len + (s_len - old_len) > self.max_name_len {
-                    return -ENAMETOOLONG;
-                }
-            }
-        }
-        if let Some(dst_ni) = dst {
-            let dst_ii = self.names[dst_ni].inode as usize;
-            self.names[dst_ni].used = false;
-            self.inodes[dst_ii].links = self.inodes[dst_ii].links.saturating_sub(1);
-            self.free_inode_if_dead(dst_ii);
-        }
-        if old_is_dir {
-            for k in 0..self.names.len() {
-                if !self.names[k].used || k == old_ni {
-                    continue;
-                }
-                let s_len = self.names[k].len as usize;
-                let base = k * self.max_name_len;
-                let is_child = s_len > old_len
-                    && self.name_bytes[base..base + old_len] == self.scratch_a[..old_len]
-                    && self.name_bytes[base + old_len] == b'/';
-                if is_child {
-                    let tail = s_len - old_len;
-                    self.name_bytes
-                        .copy_within(base + old_len..base + s_len, base + new_len);
-                    self.name_bytes[base..base + new_len]
-                        .copy_from_slice(&self.scratch_b[..new_len]);
-                    self.names[k].len = (new_len + tail) as u16;
-                }
-            }
-        }
-        let base = old_ni * self.max_name_len;
-        self.name_bytes[base..base + new_len].copy_from_slice(&self.scratch_b[..new_len]);
-        self.names[old_ni].len = new_len as u16;
-        0
-    }
-
-    pub(super) fn unlink(&mut self, raw_path: &[u8]) -> i32 {
-        let len = match Self::normalize_into(raw_path, &mut self.scratch_a) {
-            Ok(n) => n,
-            Err(e) => return e,
-        };
-        if &self.scratch_a[..len] == b"/" {
-            return -EISDIR;
-        }
-        let Some(ni) = self.find_name(&self.scratch_a[..len]) else {
-            return -ENOENT;
-        };
-        let ii = self.names[ni].inode as usize;
-        if self.inodes[ii].is_dir {
-            return -EISDIR;
-        }
-        self.names[ni].used = false;
-        self.inodes[ii].links = self.inodes[ii].links.saturating_sub(1);
-        self.free_inode_if_dead(ii);
-        0
-    }
-
-    pub(super) fn mkdir(&mut self, raw_path: &[u8]) -> i32 {
-        let len = match Self::normalize_into(raw_path, &mut self.scratch_a) {
-            Ok(n) => n,
-            Err(e) => return e,
-        };
-        if self.find_name(&self.scratch_a[..len]).is_some() {
-            return -EEXIST;
-        }
-        if let Err(e) = self.check_parent(&self.scratch_a[..len]) {
-            return e;
-        }
-        let ii = match self.alloc_dir_inode() {
-            Ok(i) => i,
-            Err(e) => return e,
-        };
-        let ni = match self.names.iter().position(|n| !n.used) {
-            Some(i) => i,
-            None => {
-                self.inodes[ii].links = 0;
-                self.free_inode_if_dead(ii);
-                return -ENOSPC;
-            }
-        };
-        let base = ni * self.max_name_len;
-        self.name_bytes[base..base + len].copy_from_slice(&self.scratch_a[..len]);
-        self.names[ni] = SimName {
-            used: true,
-            len: len as u16,
-            inode: ii as u32,
-        };
         0
     }
 }

@@ -237,6 +237,9 @@ impl Completions {
     pub fn len(&self) -> usize {
         self.len
     }
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
+    }
     /// Caller must check `is_full` first.
     pub fn push(&mut self, c: Completion) {
         self.items[self.len] = c;

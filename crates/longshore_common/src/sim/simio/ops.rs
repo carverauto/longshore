@@ -44,7 +44,13 @@ impl Virtual {
     }
 
     /// Try to make progress on one operation. `None` means not ready yet.
-    pub(super) fn attempt_op(&mut self, op: &Op, pool: &mut [u8], limits: &Limits) -> Option<i32> {
+    pub(super) fn attempt_op(
+        &mut self,
+        op: &Op,
+        pool: &mut [u8],
+        limits: &Limits,
+        file_op_num: u64,
+    ) -> Option<i32> {
         match *op {
             Op::Timeout { .. } | Op::AwaitWake | Op::Cancel { .. } => {
                 unreachable!("resolved by Engine")
@@ -302,7 +308,15 @@ impl Virtual {
                 Some(0)
             }
             _ if op.is_file_op() => match self.disk.as_mut() {
-                Some(disk) => Some(disk.attempt(op, pool, limits)),
+                Some(disk) => {
+                    let mut ctx = disk::DiskFaultCtx {
+                        faults: &self.disk_faults,
+                        placed: &mut self.placed_faults,
+                        counters: &mut self.disk_counters,
+                        rng: &mut self.rng,
+                    };
+                    Some(disk.attempt(op, pool, limits, file_op_num, &mut ctx))
+                }
                 None => Some(-ENOENT),
             },
             _ => unreachable!("handled above"),

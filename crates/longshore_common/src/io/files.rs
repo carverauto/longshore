@@ -109,6 +109,11 @@ impl FileTable {
         self.slots.get(slot.0 as usize).is_some_and(|s| s.has_file)
     }
 
+    pub(crate) fn reset(&mut self) {
+        self.slots.fill(SlotEntry::EMPTY);
+        self.gen = 0;
+    }
+
     pub(crate) fn on_open_done(&mut self, slot: FileSlot, ok: bool, direct: bool) {
         if let Some(s) = self.slots.get_mut(slot.0 as usize) {
             s.opens = s.opens.saturating_sub(1);

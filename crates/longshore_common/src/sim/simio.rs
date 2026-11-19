@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 mod disk;
-pub use disk::DiskConfig;
+pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
 mod ops;
 mod world;
 
@@ -103,6 +103,10 @@ pub struct Virtual {
     pub(super) files: Vec<Option<Vec<u8>>>,
     /// Preallocated simulated disk for `FileSlot` file ops.
     pub(in crate::sim::simio) disk: Option<disk::SimDisk>,
+    pub(super) disk_faults: DiskFaults,
+    pub(in crate::sim::simio) placed_faults: Vec<disk::PlacedEntry>,
+    pub(super) file_op_seq: u64,
+    pub(super) disk_counters: DiskFaultCounters,
     /// Extra addresses of listeners.
     pub(super) routes: Vec<Route>,
     /// The path limit connects to routed addresses report with their size.
@@ -130,8 +134,29 @@ impl Virtual {
             socks: (0..limits.sockets_max).map(|_| sock()).collect(),
             files: Vec::new(),
             disk: None,
+            disk_faults: DiskFaults::default(),
+            placed_faults: Vec::new(),
+            file_op_seq: 0,
+            disk_counters: DiskFaultCounters::default(),
             routes: Vec::new(),
             path_limit: 0,
+        }
+    }
+
+    pub(super) fn power_loss(&mut self) {
+        for s in self.socks.iter_mut() {
+            s.state = SockState::Free;
+            s.addr = None;
+            s.peer = 0;
+            s.rx_head = 0;
+            s.rx_len = 0;
+            s.peer_closed = false;
+            s.reset = false;
+            s.has_peer = false;
+            s.segment = 0;
+        }
+        if let Some(disk) = self.disk.as_mut() {
+            disk.power_loss(&mut self.rng);
         }
     }
 }
@@ -148,6 +173,58 @@ impl SimIo {
     pub fn setup_disk(&mut self, cfg: DiskConfig) {
         let files_max = self.limits.files_max;
         self.world_mut().disk = Some(disk::SimDisk::new(cfg, files_max));
+    }
+
+    /// Set probabilistic disk fault rates in parts per million.
+    pub fn set_disk_faults(&mut self, faults: DiskFaults) {
+        self.world_mut().disk_faults = faults;
+    }
+
+    /// Place a fault on the `op_num`-th accepted file operation (1-based).
+    /// Test setup, so it may allocate.
+    pub fn place_disk_fault(&mut self, op_num: u64, fault: PlacedFault) {
+        assert!(op_num > 0, "file op_num must be 1-based");
+        let placed = &mut self.world_mut().placed_faults;
+        if let Some(existing) = placed.iter_mut().find(|e| !e.used && e.op_num == op_num) {
+            existing.fault = fault;
+            return;
+        }
+        if let Some(reuse) = placed.iter_mut().find(|e| e.used) {
+            *reuse = disk::PlacedEntry {
+                op_num,
+                fault,
+                used: false,
+            };
+            return;
+        }
+        placed.push(disk::PlacedEntry {
+            op_num,
+            fault,
+            used: false,
+        });
+    }
+
+    /// Return counts of injected disk faults.
+    pub fn disk_fault_counters(&self) -> DiskFaultCounters {
+        self.world().disk_counters
+    }
+
+    /// Flip bit `bit` (`0..8`) at `file_off` on the medium itself (durable bytes
+    /// and write log alike).
+    pub fn corrupt_medium_bit(&mut self, path: &str, file_off: u64, bit: u8) -> Result<(), i32> {
+        let Some(disk) = self.world_mut().disk.as_mut() else {
+            return Err(-ENOENT);
+        };
+        disk.corrupt_medium_bit(path.as_bytes(), file_off, bit)
+    }
+
+    /// Simulate whole-machine power loss: drop all in-flight socket and file
+    /// ops with no completions, free all sockets and file slots, clear timers
+    /// and the waker flag, and settle unsynced disk writes and directory
+    /// changes in order using the simulator's seed.
+    pub fn power_loss(&mut self) {
+        self.reset_for_power_loss();
+        self.world_mut().power_loss();
     }
 
     /// Set or remove the contents of a registered file, as an operator

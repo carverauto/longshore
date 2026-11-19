@@ -59,8 +59,12 @@ either redesigned or left out.
 - Operations are submitted with a caller token and collected with `poll`
 
 ### Testing Strategy
-- Simulation tests with seeded fault injection (resets, short writes, partial
-  reads, flipped bits, delays) for every protocol path
+- Simulation tests with seeded network fault injection (resets, short writes,
+  partial reads, flipped bits, delays) for every protocol path
+- Simulated disk fault and crash-recovery tests (`DiskFaults`, placed faults by
+  submission number, `corrupt_medium_bit`, durable vs. unsynced writes and
+  directories, whole-machine `power_loss` with sector-aligned torn writes, and
+  zero-allocation WAL recovery under `alloc_guard`)
 - Property tests with Hegel for parsers and codecs
 - Fuzz targets for parsers that read bytes from the network
 - Real-kernel self-checks on Linux for anything that touches `io_uring`

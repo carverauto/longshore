@@ -76,6 +76,7 @@ impl<W: World> Io for Engine<W> {
             _ => None,
         };
         self.next_op_id += 1;
+        let world_tag = self.world.on_submit(&op);
         self.pending.push(Pending {
             token,
             op,
@@ -89,6 +90,7 @@ impl<W: World> Io for Engine<W> {
             chain_pos: 0,
             chain_active: true,
             chain_aborted: false,
+            world_tag,
         });
         Ok(())
     }
@@ -114,6 +116,7 @@ impl<W: World> Io for Engine<W> {
         let chain_id = self.next_chain_id;
         for (pos, &(token, op)) in ops.iter().enumerate() {
             self.next_op_id += 1;
+            let world_tag = self.world.on_submit(&op);
             self.pending.push(Pending {
                 token,
                 op,
@@ -127,6 +130,7 @@ impl<W: World> Io for Engine<W> {
                 chain_pos: pos as u32,
                 chain_active: pos == 0,
                 chain_aborted: false,
+                world_tag,
             });
         }
         Ok(())

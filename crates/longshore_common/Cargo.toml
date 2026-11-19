@@ -80,6 +80,18 @@ path = "tests/sim/files.rs"
 name = "sim_chains"
 path = "tests/sim/chains.rs"
 
+[[test]]
+name = "sim_disk"
+path = "tests/sim/disk.rs"
+
+[[test]]
+name = "sim_storage"
+path = "tests/sim/storage.rs"
+
+[[test]]
+name = "sim_wal"
+path = "tests/sim/wal.rs"
+
 [package.metadata.docs.rs]
 # io_uring is Linux only, and the simulator is part of the documented API.
 default-target = "x86_64-unknown-linux-gnu"

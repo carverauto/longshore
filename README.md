@@ -133,6 +133,40 @@ same single-threaded `Io` queue (`UringIo`, `PosixIo`, and `SimIo`):
   `FilePunch`). Pools are registered with the kernel as `<= 1 GiB` contiguous
   ranges of whole buffers, removing the 16,384-buffer limit.
 
+## Simulated disk
+
+`longshore::sim::SimIo` includes a preallocated deterministic virtual disk for
+testing file and WAL recovery alongside virtual sockets under one PRNG seed and
+one virtual clock (zero heap allocation after setup):
+
+- **Setup (`SimIo::setup_disk`)**: takes a [`DiskConfig`] fixing `max_files`,
+  `max_dirs`, `max_bytes_per_file`, `max_name_len`, `write_log_entries`,
+  `write_log_bytes`, `read_error_sectors`, and `sector_size` (`512` or `4096`).
+- **Durable vs. unsynced state**: files hold durable bytes plus an ordered
+  write log overlaid on `FileRead`. `FileSync` folds clean log entries into
+  durable state; when the log is full, the oldest clean entry is written back
+  automatically. Directories track durable names separately from unsynced
+  create, mkdir, rename, and unlink changes until a directory `FileSync`, and
+  open `FileSlot`s survive rename or unlink of their paths.
+- **Whole-machine `SimIo::power_loss`**: drops every in-flight socket and file
+  operation with no completion, frees all socket and file slots, clears timers
+  and the waker flag, settles each unsynced write in order by the seed (whole,
+  dropped, or cut at an interior sector boundary for multi-sector writes), and
+  settles each unsynced directory change while preserving persistent sector
+  read errors and the placed-fault operation counter.
+- **Fault injection (`DiskFaults`, `PlacedFault`, `SimIo::corrupt_medium_bit`)**:
+  `SimIo::set_disk_faults` sets 11 independent parts-per-million rates (all `0`
+  by default, drawing zero PRNG values so traces without disk faults stay
+  unchanged): `short_write` (aborts chains with `-ECANCELED`), `torn_reported`,
+  `torn_silent`, `lost_reported`, `lost_silent`, `misdirected_write`,
+  `read_error` (persistent per sector until covered by a full-sector write or
+  `FilePunch`), `bit_flip` (read buffer only), `sync_fail` (`-EIO` with Linux
+  `AS_EIO` write poisoning so covered writes never become durable),
+  `reserve_refused` (`-ENOSPC`), and `punch_refused` (`-EOPNOTSUPP`).
+  `SimIo::place_disk_fault` targets a 1-based submitted file operation with
+  `Fail`, `FailAfter`, or any write fault, and `SimIo::disk_fault_counters`
+  exposes zero-allocation per-fault counts.
+
 ## Requirements
 
 - Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when

@@ -64,6 +64,21 @@ pub trait World {
     fn clear_interest(&mut self) {}
     /// Optional notification before `wait` for each non-cancelled pending op.
     fn add_interest(&mut self, _op: &Op) {}
+    /// Optional notification when an operation is accepted at submission.
+    /// Returns an opaque tag attached to the pending operation.
+    fn on_submit(&mut self, _op: &Op) -> u64 {
+        0
+    }
+    /// Attempt an operation with its submission tag. Defaults to [`World::attempt`].
+    fn attempt_tagged(
+        &mut self,
+        op: &Op,
+        pool: &mut [u8],
+        limits: &Limits,
+        _tag: u64,
+    ) -> Option<i32> {
+        self.attempt(op, pool, limits)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -80,6 +95,7 @@ pub(crate) struct Pending {
     pub(crate) chain_pos: u32,
     pub(crate) chain_active: bool,
     pub(crate) chain_aborted: bool,
+    pub(crate) world_tag: u64,
 }
 
 /// [`crate::io::Io`] implementation backed by a [`World`].
@@ -131,5 +147,14 @@ impl<W: World> Engine<W> {
     /// Mutable access to the underlying world.
     pub fn world_mut(&mut self) -> &mut W {
         &mut self.world
+    }
+
+    /// Drop all in-flight state, ready completions, file slots, and wake flag
+    /// without allocating. Used by simulated whole-machine power loss.
+    pub(crate) fn reset_for_power_loss(&mut self) {
+        self.pending.clear();
+        self.ready.clear();
+        self.files.reset();
+        self.woken.store(false, Ordering::Release);
     }
 }

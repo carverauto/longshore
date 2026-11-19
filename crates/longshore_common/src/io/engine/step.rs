@@ -46,12 +46,19 @@ impl<W: World> Engine<W> {
                     }
                     return Some(-EBADF);
                 }
-                self.world
-                    .attempt(&p.op, &mut self.bufs[self.pool_base..], &self.limits)
+                self.world.attempt_tagged(
+                    &p.op,
+                    &mut self.bufs[self.pool_base..],
+                    &self.limits,
+                    p.world_tag,
+                )
             }
-            _ => self
-                .world
-                .attempt(&p.op, &mut self.bufs[self.pool_base..], &self.limits),
+            _ => self.world.attempt_tagged(
+                &p.op,
+                &mut self.bufs[self.pool_base..],
+                &self.limits,
+                p.world_tag,
+            ),
         }
     }
 

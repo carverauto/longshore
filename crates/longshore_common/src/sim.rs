@@ -14,4 +14,4 @@ pub mod prng;
 pub mod scenario;
 mod simio;
 
-pub use simio::{DiskConfig, Faults, SimIo, Virtual};
+pub use simio::{DiskConfig, DiskFaultCounters, DiskFaults, Faults, PlacedFault, SimIo, Virtual};

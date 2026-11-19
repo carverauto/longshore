@@ -56,8 +56,27 @@ impl World for Virtual {
         self.rng.chance(self.faults.delay)
     }
 
+    fn on_submit(&mut self, op: &Op) -> u64 {
+        if op.is_file_op() {
+            self.file_op_seq += 1;
+            self.file_op_seq
+        } else {
+            0
+        }
+    }
+
     fn attempt(&mut self, op: &Op, pool: &mut [u8], limits: &Limits) -> Option<i32> {
-        self.attempt_op(op, pool, limits)
+        self.attempt_op(op, pool, limits, 0)
+    }
+
+    fn attempt_tagged(
+        &mut self,
+        op: &Op,
+        pool: &mut [u8],
+        limits: &Limits,
+        tag: u64,
+    ) -> Option<i32> {
+        self.attempt_op(op, pool, limits, tag)
     }
 
     fn claimed(&self, op: &Op) -> bool {
