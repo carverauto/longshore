@@ -36,17 +36,19 @@ suggests.
 ## Layout
 
 
-The library is six crates in `crates/`, and a seventh that gathers them.
+The library is eight crates in `crates/`, and a ninth that gathers them.
 
 | Crate | Contents | Uses |
 |---|---|---|
-| `longshore_common` | `io`: the `Io` trait, the `io_uring` backend on raw system calls, and the allocation guard. `sim`: the simulator, behind the `sim` feature | Nothing outside the standard library |
+| `longshore_common` | `io`: the `Io` trait, `Engine<W>`, the `io_uring` backend on raw system calls, the portable POSIX (`kqueue`/`epoll`) backend, and the allocation guard. `sim`: the simulator, behind the `sim` feature | Nothing outside the standard library |
 | `longshore_dns` | Resolver for A and AAAA records over UDP | `longshore_common` |
 | `longshore_crc` | CRC-64/NVME, CRC-32C, base64, with their own kernels for x86-64 and AArch64 | Nothing outside the standard library |
-| `longshore_tls` | TLS 1.3 record layer and the `rustls` handshake wrapper | `longshore_common`, `aws-lc-sys`, `rustls`, `webpki-roots` |
-| `longshore_http_client` | HTTP/1.1 client with a connection pool and chunked decoding, a stream that is plain or TLS, and a server used by the tests | `longshore_common`, `longshore_tls` |
-| `longshore_s3` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials. `client`: a handle any thread can share, over one or more I/O threads that each run a store, with lent buffers. `crypto`: SHA-256 and HMAC-SHA256 | The five above, `ring` |
-| `longshore` | No code. It re-exports the others as `longshore::io`, `sim`, `dns`, `checksum`, `tls`, `http`, `store`, `client` and `crypto` | The six above |
+| `longshore_tls` | TLS 1.3 record layer and the `rustls` handshake wrapper (optional, behind the default-on `tls` feature) | `longshore_common`, `aws-lc-sys`, `rustls`, `webpki-roots` |
+| `longshore_stream` | Plain-or-TLS byte stream (`Stream`) over `Io` | `longshore_common`, optional `longshore_tls` |
+| `longshore_http_client` | HTTP/1.1 client with a connection pool and chunked decoding, and a server used by the tests | `longshore_common`, `longshore_stream`, optional `longshore_tls` |
+| `longshore_mailbox` | Bounded lock-free `Copy` MPSC mailboxes, `Io` wake/drain, generic `Pool`/waiters, and `CallFuture`/`block_on` | `longshore_common` |
+| `longshore_s3` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials. `client`: a handle any thread can share, over one or more I/O threads that each run a store, with lent buffers. `crypto`: SHA-256 and HMAC-SHA256 | The seven above (optional `longshore_tls`), `ring` |
+| `longshore` | No code. It re-exports the others as `longshore::io`, `sim`, `dns`, `checksum`, `stream`, `tls` (feature `tls`), `http`, `mailbox`, `store`, `client` and `crypto` | The eight above |
 
 A protocol crate does no I/O of its own. It submits operations to an `Io`
 and is fed their completions, so each one runs the same on the kernel and

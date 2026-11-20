@@ -58,9 +58,8 @@ fn main() {
         sockets_max: 4,
         buffers: 3,
         buffer_size: chunk,
-        small_buffers: 0,
-        small_buffer_size: 0,
         ops_max: 4,
+        ..Limits::BASE
     };
     let mut io = match UringIo::new(limits) {
         Ok(io) => io,

@@ -1,0 +1,311 @@
+// Copyright 2026 Carver Automation Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License").
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tier 1 E2E tests for Feature 8: `IORING_SETUP_SUBMIT_ALL` & consumed check (`#42`).
+
+#[cfg(unix)]
+use crate::e2e::harness::posix_backend;
+#[cfg(target_os = "linux")]
+use crate::e2e::harness::write_pool_bytes;
+#[cfg(any(unix, target_os = "linux"))]
+use crate::e2e::harness::TempDir;
+use crate::e2e::harness::{drive_until, write_nul_path};
+#[cfg(target_os = "linux")]
+use longshore::io::uring::UringIo;
+#[cfg(target_os = "linux")]
+use longshore::io::Sock;
+use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ENOENT};
+#[cfg(feature = "sim")]
+use longshore::sim::{Faults, SimIo};
+use std::path::Path;
+
+pub(super) fn file_limits(ops_max: u32) -> Limits {
+    Limits {
+        sockets_max: 4,
+        files_max: 8,
+        buffers: 4,
+        buffer_size: 4096,
+        ops_max,
+        ..Limits::BASE
+    }
+}
+
+pub(super) fn open_flags(create: bool) -> OpenFlags {
+    OpenFlags {
+        read: true,
+        write: true,
+        create,
+        ..Default::default()
+    }
+}
+
+fn submit_failing_open_then_trailing<IO: Io + ?Sized>(io: &mut IO, dir: &Path) {
+    let mut out = Completions::new(16);
+    let missing = dir.join("does_not_exist.dat");
+    let good = dir.join("trailing_ok.dat");
+    let len_missing = write_nul_path(io, BufId(0), 0, missing.to_str().unwrap());
+    let len_good = write_nul_path(io, BufId(1), 0, good.to_str().unwrap());
+
+    io.submit(
+        Token(1),
+        Op::FileOpen {
+            slot: FileSlot(0),
+            path_buf: BufId(0),
+            path_off: 0,
+            path_len: len_missing,
+            flags: open_flags(false),
+        },
+    )
+    .unwrap();
+    io.submit(Token(2), Op::Timeout { nanos: 0 }).unwrap();
+    io.submit(Token(3), Op::Timeout { nanos: 0 }).unwrap();
+    io.submit(
+        Token(4),
+        Op::FileOpen {
+            slot: FileSlot(1),
+            path_buf: BufId(1),
+            path_off: 0,
+            path_len: len_good,
+            flags: open_flags(true),
+        },
+    )
+    .unwrap();
+
+    let mut cs = drive_until(io, &mut out, 1_000, |v| v.len() == 4).unwrap();
+    cs.sort_by_key(|c| c.token.0);
+    assert_eq!(cs[0].result, -ENOENT);
+    assert_eq!(cs[1].result, 0);
+    assert_eq!(cs[2].result, 0);
+    assert_eq!(cs[3].result, 0);
+
+    io.submit(Token(5), Op::FileClose { slot: FileSlot(1) })
+        .unwrap();
+    let closed = drive_until(io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
+    assert_eq!(closed[0].result, 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn t1_f08_1_uring_batch_eight_mixed_ops_consumed_and_completed() {
+    let dir = TempDir::new("f08_batch8").unwrap();
+    let mut io = UringIo::new(file_limits(16)).expect("uring");
+    let mut out = Completions::new(16);
+
+    for i in 0..4u32 {
+        let p = dir.file_path(&format!("f{i}.bin"));
+        let plen = write_nul_path(&mut io, BufId(i), 0, p.to_str().unwrap());
+        io.submit(
+            Token(10 + i as u64),
+            Op::FileOpen {
+                slot: FileSlot(i),
+                path_buf: BufId(i),
+                path_off: 0,
+                path_len: plen,
+                flags: open_flags(true),
+            },
+        )
+        .unwrap();
+        io.submit(Token(20 + i as u64), Op::Timeout { nanos: 0 })
+            .unwrap();
+    }
+
+    let cs = drive_until(&mut io, &mut out, 1_000, |v| v.len() == 8).unwrap();
+    assert!(cs.iter().all(|c| c.result == 0), "unexpected: {cs:?}");
+
+    for i in 0..4u32 {
+        io.submit(Token(30 + i as u64), Op::FileClose { slot: FileSlot(i) })
+            .unwrap();
+    }
+    let closed = drive_until(&mut io, &mut out, 1_000, |v| v.len() == 4).unwrap();
+    assert!(closed.iter().all(|c| c.result == 0));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn t1_f08_2_uring_submit_all_refused_open_does_not_block_trailing_ops() {
+    let dir = TempDir::new("f08_refused").unwrap();
+    let mut io = UringIo::new(file_limits(16)).expect("uring");
+    let mut out = Completions::new(16);
+
+    // Pre-open FileSlot(2) for a trailing FileWrite.
+    let pre = dir.file_path("preopened.dat");
+    let plen = write_nul_path(&mut io, BufId(2), 0, pre.to_str().unwrap());
+    io.submit(
+        Token(1),
+        Op::FileOpen {
+            slot: FileSlot(2),
+            path_buf: BufId(2),
+            path_off: 0,
+            path_len: plen,
+            flags: open_flags(true),
+        },
+    )
+    .unwrap();
+    drive_until(&mut io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
+
+    // Queue failing open ahead of Timeout and FileWrite in one turn.
+    let missing = dir.file_path("absent.dat");
+    let mlen = write_nul_path(&mut io, BufId(0), 0, missing.to_str().unwrap());
+    write_pool_bytes(&mut io, BufId(3), 0, b"trailing-write");
+    io.submit(
+        Token(10),
+        Op::FileOpen {
+            slot: FileSlot(0),
+            path_buf: BufId(0),
+            path_off: 0,
+            path_len: mlen,
+            flags: open_flags(false),
+        },
+    )
+    .unwrap();
+    io.submit(Token(11), Op::Timeout { nanos: 0 }).unwrap();
+    io.submit(
+        Token(12),
+        Op::FileWrite {
+            slot: FileSlot(2),
+            buf: BufId(3),
+            off: 0,
+            len: 14,
+            file_off: 0,
+        },
+    )
+    .unwrap();
+
+    let mut cs = drive_until(&mut io, &mut out, 1_000, |v| v.len() == 3).unwrap();
+    cs.sort_by_key(|c| c.token.0);
+    assert_eq!(cs[0].result, -ENOENT);
+    assert_eq!(cs[1].result, 0);
+    assert_eq!(cs[2].result, 14);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn t1_f08_3_uring_multi_sqe_turns_return_ok_with_exact_consumed_count() {
+    let mut io = UringIo::new(file_limits(16)).expect("uring");
+    let mut out = Completions::new(16);
+    for count in [6u64, 10, 4] {
+        for i in 0..count {
+            io.submit(Token(100 * count + i), Op::Timeout { nanos: 0 })
+                .unwrap();
+        }
+        let cs = drive_until(&mut io, &mut out, 1_000, |v| v.len() == count as usize).unwrap();
+        assert!(cs.iter().all(|c| c.result == 0));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn t1_f08_4_uring_mixed_socket_and_file_ops_single_turn() {
+    let dir = TempDir::new("f08_mixed").unwrap();
+    let mut io = UringIo::new(file_limits(16)).expect("uring");
+    let mut out = Completions::new(16);
+
+    let bound = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
+    io.submit(
+        Token(1),
+        Op::Accept {
+            listener: Sock(0),
+            sock: Sock(1),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token(2),
+        Op::Connect {
+            sock: Sock(2),
+            addr: bound,
+        },
+    )
+    .unwrap();
+    let fpath = dir.file_path("mixed.dat");
+    let flen = write_nul_path(&mut io, BufId(0), 0, fpath.to_str().unwrap());
+    io.submit(
+        Token(3),
+        Op::FileOpen {
+            slot: FileSlot(0),
+            path_buf: BufId(0),
+            path_off: 0,
+            path_len: flen,
+            flags: open_flags(true),
+        },
+    )
+    .unwrap();
+    drive_until(&mut io, &mut out, 1_000, |v| v.len() == 3).unwrap();
+
+    write_pool_bytes(&mut io, BufId(1), 0, b"sock-msg");
+    write_pool_bytes(&mut io, BufId(2), 0, b"file-msg");
+    io.submit(
+        Token(10),
+        Op::Send {
+            sock: Sock(2),
+            buf: BufId(1),
+            off: 0,
+            len: 8,
+            zero_copy: false,
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token(11),
+        Op::Recv {
+            sock: Sock(1),
+            buf: BufId(3),
+            off: 0,
+            len: 64,
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token(12),
+        Op::FileWrite {
+            slot: FileSlot(0),
+            buf: BufId(2),
+            off: 0,
+            len: 8,
+            file_off: 0,
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token(13),
+        Op::FileSync {
+            slot: FileSlot(0),
+            datasync: true,
+        },
+    )
+    .unwrap();
+
+    let mut cs = drive_until(&mut io, &mut out, 1_000, |v| v.len() == 4).unwrap();
+    cs.sort_by_key(|c| c.token.0);
+    assert_eq!(cs[0].result, 8);
+    assert_eq!(cs[1].result, 8);
+    assert_eq!(cs[2].result, 8);
+    assert_eq!(cs[3].result, 0);
+}
+
+#[test]
+fn t1_f08_5_cross_backend_failing_file_op_does_not_strand_trailing_ops() {
+    #[cfg(feature = "sim")]
+    {
+        let mut io = SimIo::new(file_limits(16), 3, Faults::default());
+        io.setup_disk(longshore::sim::DiskConfig {
+            max_files: 8,
+            max_dirs: 4,
+            max_bytes_per_file: 64 * 1024,
+            max_name_len: 128,
+            write_log_entries: 16,
+            write_log_bytes: 32 * 1024,
+            read_error_sectors: 4,
+            sector_size: 512,
+        });
+        submit_failing_open_then_trailing(&mut io, Path::new("/"));
+    }
+    #[cfg(unix)]
+    {
+        let dir = TempDir::new("f08_posix").unwrap();
+        let mut io = posix_backend(file_limits(16)).expect("posix");
+        submit_failing_open_then_trailing(&mut io, dir.path());
+    }
+}

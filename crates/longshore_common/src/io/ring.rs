@@ -13,6 +13,8 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::io;
 
+pub(crate) mod buf_ring;
+
 struct Map {
     ptr: *mut c_void,
     len: usize,
@@ -77,8 +79,18 @@ impl Ring {
     /// Create a ring. Must be called on the thread that will submit when
     /// `IORING_SETUP_SINGLE_ISSUER` is set.
     pub fn new(entries: u32, flags: u32) -> io::Result<Ring> {
+        Self::setup(entries, None, flags)
+    }
+
+    /// Create a ring with an explicit completion queue size (`IORING_SETUP_CQSIZE`).
+    pub fn with_cq(entries: u32, cq_entries: u32, flags: u32) -> io::Result<Ring> {
+        Self::setup(entries, Some(cq_entries), flags | IORING_SETUP_CQSIZE)
+    }
+
+    fn setup(entries: u32, cq_entries: Option<u32>, flags: u32) -> io::Result<Ring> {
         let mut p = io_uring_params {
             flags,
+            cq_entries: cq_entries.unwrap_or(0),
             ..Default::default()
         };
         let fd = unsafe { syscall(SYS_IO_URING_SETUP, entries, &mut p as *mut io_uring_params) }
@@ -88,7 +100,8 @@ impl Ring {
             return Err(io::Error::new(
                 e.kind(),
                 format!(
-                    "io_uring_setup(entries={entries}, flags={flags:#x}) failed: {e}; {}",
+                    "io_uring_setup(entries={entries}, cq_entries={}, flags={flags:#x}) failed: {e}; {}",
+                    cq_entries.unwrap_or(0),
                     setup_hint(&e)
                 ),
             ));
@@ -246,25 +259,60 @@ impl Ring {
         self.register(IORING_REGISTER_FILES, fds.as_ptr().cast(), fds.len() as u32)
     }
 
+    /// Confine `IORING_FILE_INDEX_ALLOC` allocations to `off..off + len`.
+    pub fn register_file_alloc_range(&mut self, off: u32, len: u32) -> io::Result<()> {
+        let range = io_uring_file_index_range { off, len, resv: 0 };
+        self.register(
+            IORING_REGISTER_FILE_ALLOC_RANGE,
+            (&range as *const io_uring_file_index_range).cast(),
+            0,
+        )
+    }
+
+    /// Register a mapped buffer ring (`nr_args == 1` per Linux 6.1).
+    pub fn register_pbuf_ring(&mut self, reg: &io_uring_buf_reg) -> io::Result<()> {
+        self.register(
+            IORING_REGISTER_PBUF_RING,
+            (reg as *const io_uring_buf_reg).cast(),
+            1,
+        )
+    }
+
     /// Install `fd` at index `slot` of the registered file table.
     pub fn update_file(&mut self, slot: u32, fd: i32) -> io::Result<()> {
+        self.update_file_raw(slot, fd)
+            .map_err(io::Error::from_raw_os_error)
+    }
+
+    /// Install `fd` at index `slot` of the registered file table, returning the
+    /// raw OS errno without heap allocation on error.
+    pub fn update_file_raw(&mut self, slot: u32, fd: i32) -> Result<(), i32> {
         let fds = [fd];
         let up = io_uring_files_update {
             offset: slot,
             resv: 0,
             fds: fds.as_ptr() as u64,
         };
-        self.register(
+        self.register_raw(
             IORING_REGISTER_FILES_UPDATE,
             (&up as *const io_uring_files_update).cast(),
             1,
         )
     }
 
-    fn register(&mut self, op: u32, arg: *const c_void, n: u32) -> io::Result<()> {
+    fn register_raw(&mut self, op: u32, arg: *const c_void, n: u32) -> Result<(), i32> {
         let r = unsafe { syscall(SYS_IO_URING_REGISTER, self.fd, op, arg, n) };
         if r < 0 {
-            let e = io::Error::last_os_error();
+            return Err(io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(crate::io::EINVAL));
+        }
+        Ok(())
+    }
+
+    fn register(&mut self, op: u32, arg: *const c_void, n: u32) -> io::Result<()> {
+        if let Err(errno) = self.register_raw(op, arg, n) {
+            let e = io::Error::from_raw_os_error(errno);
             return Err(io::Error::new(
                 e.kind(),
                 format!("io_uring_register(op={op}, n={n}) failed: {e}"),

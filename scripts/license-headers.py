@@ -31,11 +31,19 @@ def header(suffix: str) -> str:
 
 
 def tracked() -> list[pathlib.Path]:
-    out = subprocess.run(
-        ["git", "ls-files", "crates", "fuzz", "scripts"],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    return [p for p in map(pathlib.Path, out.split()) if p.suffix in COMMENT]
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "crates", "fuzz", "scripts"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        return [p for p in map(pathlib.Path, out.split()) if p.suffix in COMMENT]
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return [
+            p
+            for root in ("crates", "fuzz", "scripts")
+            for p in sorted(pathlib.Path(root).rglob("*"))
+            if p.is_file() and p.suffix in COMMENT and not p.name.startswith("._")
+        ]
 
 
 def main() -> int:

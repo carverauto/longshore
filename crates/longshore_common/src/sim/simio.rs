@@ -3,15 +3,24 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
+//! Deterministic virtual world ([`Virtual`]) and its [`SimIo`] engine alias.
+
+use crate::io::engine::{Attempt, Engine, World};
 use crate::io::{
-    BufId, Busy, Completion, Completions, FileId, Io, Limits, Op, Sock, Token, EAGAIN, ECANCELED,
-    ECONNREFUSED, ECONNRESET, ENOENT, EPIPE,
+    BufId, FileId, Limits, Op, Sock, Wake, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET, ENAMETOOLONG,
+    ENFILE, ENOBUFS, ENOENT, EPIPE,
 };
 use crate::sim::prng::Prng;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-mod backend;
+mod disk;
+pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
+mod ops;
+mod ops_armed;
+mod world;
 
 /// Fault probabilities, in parts per million, evaluated per attempt.
 #[derive(Clone, Copy, Debug, Default)]
@@ -34,7 +43,7 @@ pub struct Faults {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum SockState {
+pub(super) enum SockState {
     Free,
     Listening,
     /// Connect submitted, waiting for the listener to accept.
@@ -46,91 +55,84 @@ enum SockState {
     UdpConnected,
 }
 
-struct SimSock {
-    state: SockState,
-    addr: Option<SocketAddr>,
-    peer: u32,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SimAddr {
+    Ip(SocketAddr),
+    Unix([u8; 108], u8),
+}
+
+pub(super) struct SimSock {
+    pub(super) state: SockState,
+    pub(super) addr: Option<SimAddr>,
+    pub(super) peer: u32,
     /// Bytes in flight towards this socket.
-    rx: Box<[u8]>,
-    rx_head: usize,
-    rx_len: usize,
-    peer_closed: bool,
-    reset: bool,
+    pub(super) rx: Box<[u8]>,
+    pub(super) rx_head: usize,
+    pub(super) rx_len: usize,
+    pub(super) peer_closed: bool,
+    pub(super) reset: bool,
     /// For UDP: whether `peer` is valid.
-    has_peer: bool,
+    pub(super) has_peer: bool,
     /// What a connect on this socket completes with once accepted: the
     /// segment size of the route it took, or 0.
-    segment: u32,
+    pub(super) segment: u32,
 }
 
 /// Another address of a listener.
-struct Route {
-    addr: SocketAddr,
-    listener: SocketAddr,
+pub(super) struct Route {
+    pub(super) addr: SocketAddr,
+    pub(super) listener: SocketAddr,
     /// What connections to `addr` report as their segment size.
-    segment: u32,
+    pub(super) segment: u32,
     /// Connects to `addr` that reached the listener.
-    connects: u64,
-}
-
-#[derive(Clone, Copy)]
-struct Pending {
-    token: Token,
-    op: Op,
-    /// Absolute deadline for timeouts.
-    deadline: u64,
-    cancelled: bool,
-    /// Identifies this operation among all ever submitted.
-    id: u64,
-    /// For a cancel: the operation it named when it was submitted, if any.
-    /// The real kernel fixes the target at that moment too, so a cancel can
-    /// neither hit an operation submitted later under the same token nor
-    /// find one that has already finished.
-    cancel_target: Option<u64>,
-    /// A connect that has claimed its socket and is waiting to be accepted.
-    attached: bool,
-}
-
-pub struct SimIo {
-    limits: Limits,
-    faults: Faults,
-    rng: Prng,
-    now: u64,
-    bufs: Box<[u8]>,
-    socks: Box<[SimSock]>,
-    pending: Vec<Pending>,
-    next_op_id: u64,
-    trace: u64,
-    /// Registered files and their current contents; `None` means absent.
-    files: Vec<Option<Vec<u8>>>,
-    /// Extra addresses of listeners: (address, the listener's address, the
-    /// segment size connections to the address report).
-    routes: Vec<Route>,
-    /// Set by the waker from any thread, cleared when an `AwaitWake` completes.
-    woken: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// The path limit connects to routed addresses report with their size.
-    path_limit: u32,
+    pub(super) connects: u64,
 }
 
 /// Virtual time added per tick.
-const STEP_NS: u64 = 100_000;
+pub(super) const STEP_NS: u64 = 100_000;
 /// Bytes a virtual socket holds before senders stall.
-const SOCK_BUF: usize = 64 * 1024;
+pub(super) const SOCK_BUF: usize = 64 * 1024;
 /// Ticks `tick(wait = true)` spins with nothing completing before reporting a deadlock.
-const STALL_TICKS: u32 = 100_000;
+pub(super) const STALL_TICKS: u32 = 100_000;
 
-mod engine;
+pub(super) struct SimWaker(pub(super) Arc<AtomicBool>);
 
-struct SimWaker(std::sync::Arc<std::sync::atomic::AtomicBool>);
-
-impl crate::io::Wake for SimWaker {
+impl Wake for SimWaker {
     fn wake(&self) {
-        self.0.store(true, std::sync::atomic::Ordering::Release);
+        self.0.store(true, Ordering::Release);
     }
 }
 
-impl SimIo {
-    pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
+/// Deterministic virtual world driven by [`Engine`].
+pub struct Virtual {
+    pub(super) faults: Faults,
+    pub(super) rng: Prng,
+    pub(super) now: u64,
+    pub(super) socks: Box<[SimSock]>,
+    /// Registered files and their current contents; `None` means absent.
+    pub(super) files: Vec<Option<Vec<u8>>>,
+    /// Preallocated simulated disk for `FileSlot` file ops.
+    pub(in crate::sim::simio) disk: Option<disk::SimDisk>,
+    pub(super) disk_faults: DiskFaults,
+    pub(in crate::sim::simio) placed_faults: Vec<disk::PlacedEntry>,
+    pub(super) file_op_seq: u64,
+    pub(super) disk_counters: DiskFaultCounters,
+    /// Extra addresses of listeners.
+    pub(super) routes: Vec<Route>,
+    /// The path limit connects to routed addresses report with their size.
+    pub(super) path_limit: u32,
+    pub(super) ring_base: u32,
+    pub(super) ring_free: Box<[u16]>,
+    pub(super) ring_free_len: usize,
+    pub(super) ring_in_free: Box<[bool]>,
+    pub(super) accept_start: u32,
+    pub(super) accept_len: u32,
+    pub(super) no_delay: bool,
+    pub(super) keep_alive: bool,
+}
+
+impl Virtual {
+    pub fn new(limits: Limits, seed: u64, faults: Faults) -> Self {
         let sock = || SimSock {
             state: SockState::Free,
             addr: None,
@@ -143,46 +145,133 @@ impl SimIo {
             has_peer: false,
             segment: 0,
         };
-        SimIo {
-            limits,
+        let ring_count = limits.ring_buffers as usize;
+        Self {
             faults,
             rng: Prng::new(seed),
             now: 0,
-            bufs: vec![0u8; limits.pool_bytes()].into_boxed_slice(),
             socks: (0..limits.sockets_max).map(|_| sock()).collect(),
-            pending: Vec::with_capacity(limits.ops_max as usize),
-            next_op_id: 0,
-            trace: 0xcbf2_9ce4_8422_2325,
             files: Vec::new(),
+            disk: None,
+            disk_faults: DiskFaults::default(),
+            placed_faults: Vec::with_capacity(64),
+            file_op_seq: 0,
+            disk_counters: DiskFaultCounters::default(),
             routes: Vec::new(),
-            woken: Default::default(),
             path_limit: 0,
+            ring_base: limits.ring_base(),
+            ring_free: (0..limits.ring_buffers as u16).rev().collect(),
+            ring_free_len: ring_count,
+            ring_in_free: vec![true; ring_count].into_boxed_slice(),
+            accept_start: limits.accept_range_start,
+            accept_len: limits.accept_range_len,
+            no_delay: false,
+            keep_alive: false,
         }
     }
 
-    /// Hash of every completion delivered so far (token, result, time). Two
-    /// runs with the same seed and inputs produce the same value.
-    pub fn trace_hash(&self) -> u64 {
-        self.trace
+    pub(super) fn power_loss(&mut self) {
+        for s in self.socks.iter_mut() {
+            s.state = SockState::Free;
+            s.addr = None;
+            s.peer = 0;
+            s.rx_head = 0;
+            s.rx_len = 0;
+            s.peer_closed = false;
+            s.reset = false;
+            s.has_peer = false;
+            s.segment = 0;
+        }
+        let n = self.ring_free.len();
+        for (i, slot) in self.ring_free.iter_mut().enumerate() {
+            *slot = (n - 1 - i) as u16;
+        }
+        self.ring_free_len = n;
+        self.ring_in_free.fill(true);
+        if let Some(disk) = self.disk.as_mut() {
+            disk.power_loss(&mut self.rng);
+        }
+    }
+}
+
+/// Deterministic simulator built on [`Engine`] and [`Virtual`].
+pub type SimIo = Engine<Virtual>;
+
+impl SimIo {
+    pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
+        Engine::with_world(limits, Virtual::new(limits, seed, faults))
     }
 
-    fn range(&self, buf: BufId, off: u32, len: u32) -> core::ops::Range<usize> {
-        self.limits.range(buf, off, len)
+    /// Preallocate the virtual disk tables. Test setup, so it allocates once.
+    pub fn setup_disk(&mut self, cfg: DiskConfig) {
+        let files_max = self.limits.files_max;
+        self.world_mut().disk = Some(disk::SimDisk::new(cfg, files_max));
+    }
+
+    /// Set probabilistic disk fault rates in parts per million.
+    pub fn set_disk_faults(&mut self, faults: DiskFaults) {
+        self.world_mut().disk_faults = faults;
+    }
+
+    /// Place a fault on the `op_num`-th accepted file operation (1-based).
+    /// Test setup, so it may allocate.
+    pub fn place_disk_fault(&mut self, op_num: u64, fault: PlacedFault) {
+        assert!(op_num > 0, "file op_num must be 1-based");
+        let placed = &mut self.world_mut().placed_faults;
+        if let Some(existing) = placed.iter_mut().find(|e| !e.used && e.op_num == op_num) {
+            existing.fault = fault;
+            return;
+        }
+        if let Some(reuse) = placed.iter_mut().find(|e| e.used) {
+            *reuse = disk::PlacedEntry {
+                op_num,
+                fault,
+                used: false,
+            };
+            return;
+        }
+        placed.push(disk::PlacedEntry {
+            op_num,
+            fault,
+            used: false,
+        });
+    }
+
+    /// Return counts of injected disk faults.
+    pub fn disk_fault_counters(&self) -> DiskFaultCounters {
+        self.world().disk_counters
+    }
+
+    /// Flip bit `bit` (`0..8`) at `file_off` on the medium itself (durable bytes
+    /// and write log alike).
+    pub fn corrupt_medium_bit(&mut self, path: &str, file_off: u64, bit: u8) -> Result<(), i32> {
+        let Some(disk) = self.world_mut().disk.as_mut() else {
+            return Err(-ENOENT);
+        };
+        disk.corrupt_medium_bit(path.as_bytes(), file_off, bit)
+    }
+
+    /// Simulate whole-machine power loss: drop all in-flight socket and file
+    /// ops with no completions, free all sockets and file slots, clear timers
+    /// and the waker flag, and settle unsynced disk writes and directory
+    /// changes in order using the simulator's seed.
+    pub fn power_loss(&mut self) {
+        self.reset_for_power_loss();
+        self.world_mut().power_loss();
     }
 
     /// Set or remove the contents of a registered file, as an operator
     /// replacing a credentials file would. Test setup, so it may allocate.
     pub fn set_file(&mut self, file: FileId, contents: Option<&[u8]>) {
-        self.files[file.0 as usize] = contents.map(|c| c.to_vec());
+        self.world_mut().files[file.0 as usize] = contents.map(|c| c.to_vec());
     }
 
     /// Give the listener at `listener` another address, `addr`, as a store
-    /// with several front ends has. A connect to `addr` completes with
-    /// `segment_size`, the way a backend that measures segment sizes
-    /// reports them; 0 means not measured. Test setup, so it may allocate.
+    /// with several front ends has. Test setup, so it may allocate.
     pub fn route(&mut self, addr: SocketAddr, listener: SocketAddr, segment_size: u32) {
-        self.routes.retain(|r| r.addr != addr);
-        self.routes.push(Route {
+        let routes = &mut self.world_mut().routes;
+        routes.retain(|r| r.addr != addr);
+        routes.push(Route {
             addr,
             listener,
             segment: segment_size,
@@ -193,12 +282,13 @@ impl SimIo {
     /// The largest segment the simulated path could carry, which connects
     /// to routed addresses report next to their own size. 0 is unknown.
     pub fn set_path_limit(&mut self, path_limit: u32) {
-        self.path_limit = path_limit;
+        self.world_mut().path_limit = path_limit;
     }
 
     /// Connects to the routed address `addr` that reached its listener.
     pub fn route_connects(&self, addr: SocketAddr) -> u64 {
-        self.routes
+        self.world()
+            .routes
             .iter()
             .find(|r| r.addr == addr)
             .map_or(0, |r| r.connects)
@@ -207,9 +297,9 @@ impl SimIo {
     /// Bind a UDP socket for a simulated server. Not part of `Io`: production
     /// code never serves UDP.
     pub fn bind_udp(&mut self, sock: Sock, addr: SocketAddr) {
-        let s = &mut self.socks[sock.0 as usize];
+        let s = &mut self.world_mut().socks[sock.0 as usize];
         s.state = SockState::UdpBound;
-        s.addr = Some(addr);
+        s.addr = Some(SimAddr::Ip(addr));
         s.has_peer = false;
         s.rx_head = 0;
         s.rx_len = 0;

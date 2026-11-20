@@ -64,9 +64,8 @@ pub fn serve(connections: u32) -> SocketAddr {
             sockets_max: 1 + connections,
             buffers: 2 * connections,
             buffer_size: SIZE,
-            small_buffers: 0,
-            small_buffer_size: 0,
             ops_max: connections * 3 + 2,
+            ..Limits::BASE
         })
         .expect("server ring");
         let mut server = Server::new(server::Config {

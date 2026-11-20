@@ -11,6 +11,7 @@ use super::*;
 /// body 1, user tx 2, user rx 3. Small buffers: the client head.
 pub(super) fn selftest() {
     const SIZE: u32 = 8 << 20;
+    #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: 3,
         buffers: 4,
@@ -18,6 +19,7 @@ pub(super) fn selftest() {
         small_buffers: 1,
         small_buffer_size: 4096,
         ops_max: 8,
+        ..Limits::BASE
     };
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(&e.to_string()));
     let mut server = Server::new(server::Config {

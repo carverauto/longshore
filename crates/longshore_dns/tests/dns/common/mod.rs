@@ -20,9 +20,8 @@ pub const LIMITS: Limits = Limits {
     sockets_max: 4,
     buffers: 4,
     buffer_size: 1024,
-    small_buffers: 0,
-    small_buffer_size: 0,
     ops_max: 8,
+    ..Limits::BASE
 };
 pub const NS1: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)), 53);
 pub const NS2: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 54)), 53);

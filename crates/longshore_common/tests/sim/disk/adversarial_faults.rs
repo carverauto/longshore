@@ -1,0 +1,192 @@
+// Copyright 2026 Carver Automation Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License").
+// SPDX-License-Identifier: Apache-2.0
+
+//! Adversarial Tier 5 `SimDisk` tests for `dir_log` overflow, `sync_fail`
+//! truncate+reserve, `read_errors` saturation, and >64 `PlacedFault`s under `sealed`.
+
+use super::adversarial::{mkdir_path, rename_path};
+use super::{
+    base_limits, dir_open, drive, make_sim, open_path, put_path, read_at, rw_create, stat_size,
+    sync_dir_path, sync_slot, write_fill,
+};
+use longshore_common::io::alloc_guard::sealed;
+use longshore_common::io::posix::errno::linux::EIO;
+use longshore_common::io::{BufId, Completions, FileSlot, Op, OpenFlags};
+use longshore_common::sim::{DiskConfig, DiskFaults, Faults, PlacedFault, SimIo};
+
+#[test]
+fn simdisk_dir_log_overflow_poisoned_mkdir_and_sync_fail_truncate_reserve() {
+    let mut sim = make_sim(51, 512, 8, 4096);
+    let mut out = Completions::new(16);
+    assert_eq!(mkdir_path(&mut sim, &mut out, 1, "/d"), 0);
+    assert_eq!(
+        open_path(&mut sim, &mut out, 2, FileSlot(0), "/d", dir_open()),
+        0
+    );
+    sim.set_disk_faults(DiskFaults {
+        sync_fail: 1_000_000,
+        ..Default::default()
+    });
+    assert_eq!(sync_slot(&mut sim, &mut out, 3, FileSlot(0)), -EIO);
+    sim.set_disk_faults(DiskFaults::default());
+    assert_eq!(
+        drive(&mut sim, &mut out, 4, Op::FileClose { slot: FileSlot(0) }),
+        0
+    );
+
+    assert_eq!(
+        open_path(&mut sim, &mut out, 5, FileSlot(0), "/d/f", rw_create()),
+        0
+    );
+    assert_eq!(
+        drive(&mut sim, &mut out, 6, Op::FileClose { slot: FileSlot(0) }),
+        0
+    );
+    for i in 0..80u64 {
+        let (a, b) = if i % 2 == 0 {
+            ("/d/f", "/d/g")
+        } else {
+            ("/d/g", "/d/f")
+        };
+        assert_eq!(rename_path(&mut sim, &mut out, 100 + i, a, b), 0);
+    }
+    assert_eq!(stat_size(&mut sim, &mut out, 200, "/d/f"), 0);
+
+    let mut sim2 = make_sim(52, 512, 8, 4096);
+    assert_eq!(
+        open_path(&mut sim2, &mut out, 1, FileSlot(0), "/tr.dat", rw_create()),
+        0
+    );
+    assert_eq!(
+        write_fill(&mut sim2, &mut out, 2, FileSlot(0), 0, 512, 0x77),
+        512
+    );
+    assert_eq!(sync_slot(&mut sim2, &mut out, 3, FileSlot(0)), 0);
+    assert_eq!(
+        drive(&mut sim2, &mut out, 4, Op::FileClose { slot: FileSlot(0) }),
+        0
+    );
+    sync_dir_path(&mut sim2, &mut out, 5, "/");
+
+    let empty_flags = OpenFlags {
+        read: true,
+        write: true,
+        empty: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        open_path(&mut sim2, &mut out, 10, FileSlot(0), "/tr.dat", empty_flags),
+        0
+    );
+    sim2.set_disk_faults(DiskFaults {
+        sync_fail: 1_000_000,
+        ..Default::default()
+    });
+    assert_eq!(sync_slot(&mut sim2, &mut out, 11, FileSlot(0)), -EIO);
+    sim2.set_disk_faults(DiskFaults::default());
+
+    assert_eq!(
+        drive(
+            &mut sim2,
+            &mut out,
+            12,
+            Op::FileReserve {
+                slot: FileSlot(0),
+                file_off: 0,
+                len: 1024,
+                keep_size: false,
+            },
+        ),
+        0
+    );
+    assert_eq!(sync_slot(&mut sim2, &mut out, 13, FileSlot(0)), 0);
+    sim2.power_loss();
+    assert_eq!(stat_size(&mut sim2, &mut out, 14, "/tr.dat"), 1024);
+}
+
+#[test]
+fn simdisk_read_error_saturation_and_placed_faults_above_64_sealed() {
+    let mut sim = SimIo::new(base_limits(), 61, Faults::default());
+    sim.setup_disk(DiskConfig {
+        max_files: 8,
+        max_dirs: 4,
+        max_bytes_per_file: 32 * 1024,
+        max_name_len: 128,
+        write_log_entries: 16,
+        write_log_bytes: 16 * 1024,
+        read_error_sectors: 2,
+        sector_size: 512,
+    });
+    let mut out = Completions::new(16);
+
+    assert_eq!(
+        open_path(&mut sim, &mut out, 1, FileSlot(0), "/sat.dat", rw_create()),
+        0
+    );
+    assert_eq!(
+        write_fill(&mut sim, &mut out, 2, FileSlot(0), 0, 2048, 0x33),
+        2048
+    );
+    assert_eq!(sync_slot(&mut sim, &mut out, 3, FileSlot(0)), 0);
+    sync_dir_path(&mut sim, &mut out, 4, "/");
+
+    for i in 0..80u64 {
+        sim.place_disk_fault(1000 + i, PlacedFault::Fail);
+    }
+
+    sealed(|| {
+        sim.set_disk_faults(DiskFaults {
+            read_error: 1_000_000,
+            ..Default::default()
+        });
+        for sec in 0..4u64 {
+            assert_eq!(
+                read_at(&mut sim, &mut out, 20 + sec, FileSlot(0), sec * 512, 512),
+                -EIO
+            );
+        }
+        sim.set_disk_faults(DiskFaults {
+            short_write: 200_000,
+            torn_reported: 100_000,
+            torn_silent: 100_000,
+            lost_reported: 100_000,
+            lost_silent: 100_000,
+            misdirected_write: 100_000,
+            read_error: 100_000,
+            bit_flip: 200_000,
+            sync_fail: 200_000,
+            reserve_refused: 200_000,
+            punch_refused: 200_000,
+        });
+        for k in 0..10u64 {
+            let _ = write_fill(&mut sim, &mut out, 200 + k * 4, FileSlot(0), 0, 1024, 0x44);
+            let _ = read_at(&mut sim, &mut out, 201 + k * 4, FileSlot(0), 0, 1024);
+            let _ = sync_slot(&mut sim, &mut out, 202 + k * 4, FileSlot(0));
+            let _ = drive(
+                &mut sim,
+                &mut out,
+                203 + k * 4,
+                Op::FilePunch {
+                    slot: FileSlot(0),
+                    file_off: 0,
+                    len: 512,
+                },
+            );
+        }
+        let dl = put_path(&mut sim, BufId(0), "/sealed_dir");
+        let _ = drive(
+            &mut sim,
+            &mut out,
+            500,
+            Op::FileMkdir {
+                path_buf: BufId(0),
+                path_off: 0,
+                path_len: dl,
+            },
+        );
+        sim.power_loss();
+    });
+    assert!(sim.disk_fault_counters().read_error >= 4);
+}

@@ -53,7 +53,7 @@ mod exact;
 mod lane;
 mod multipart;
 mod pending;
-mod sync;
+use longshore_mailbox::sync;
 mod threads;
 mod worker;
 
@@ -172,7 +172,7 @@ impl Client {
             Fault::RingLost => 2,
         };
         lane.fault.store(code, Ordering::Release);
-        lane.wake.wake();
+        lane.sender.wake();
     }
 
     /// Whether I/O thread `thread` has stopped taking work, as it does
@@ -201,7 +201,7 @@ impl Client {
 
     /// Borrow a buffer, blocking the calling thread until one is free.
     pub fn buffer_blocking(&self) -> Buffer {
-        lane::block_on(self.buffer())
+        longshore_mailbox::block_on(self.buffer())
     }
 
     /// Store the first `len` bytes of `body` under `key`, replacing any
@@ -315,8 +315,12 @@ impl Client {
         map: fn(Finished, u32) -> Result<T, Error>,
     ) -> Pending<Result<T, Error>> {
         let first = self.lanes[least_busy(&self.lanes)].clone();
-        Pending::new((first, self.alive.clone()), key, kind, None, 0, None, map)
-            .on_any(self.lanes.clone())
+        let pending = Pending::new((first, self.alive.clone()), key, kind, None, 0, None, map);
+        if self.lanes.len() > 1 {
+            pending.on_any(self.lanes.clone())
+        } else {
+            pending
+        }
     }
 }
 
@@ -356,6 +360,9 @@ fn request(op: u32, key: &str, kind: Kind, buf: u32, len: u32) -> Result<Request
 /// The index of the open lane with the fewest operations in progress, or of
 /// a closed one if none is open.
 fn least_busy(lanes: &[Arc<Lane>]) -> usize {
+    if lanes.len() == 1 {
+        return 0;
+    }
     (0..lanes.len())
         .min_by_key(|&n| (!open(&lanes[n]), lanes[n].in_flight()))
         .expect("at least one lane")
@@ -363,5 +370,5 @@ fn least_busy(lanes: &[Arc<Lane>]) -> usize {
 
 /// Whether the lane still takes requests.
 fn open(lane: &Lane) -> bool {
-    !lane.closed.load(Ordering::Acquire)
+    !lane.sender.is_closed()
 }

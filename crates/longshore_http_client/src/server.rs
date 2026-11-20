@@ -11,8 +11,9 @@
 //! on one simulated `Io`, or on real sockets.
 
 use crate::head::{parse_request, Fields, HeadWriter};
-use crate::stream::{Step, Stream};
 use longshore_common::io::{BufId, Completion, Io, Op, Sock, Token};
+use longshore_stream::{Step, Stream};
+#[cfg(feature = "tls")]
 use longshore_tls::handshake::{Handshake, ServerSetup};
 use std::io;
 use std::net::SocketAddr;
@@ -93,6 +94,7 @@ enum State {
     /// Reserved for the accept in flight.
     Accepting,
     /// Accepted; the TLS handshake is in progress.
+    #[cfg(feature = "tls")]
     Handshake,
     RecvHead {
         have: u32,
@@ -181,6 +183,7 @@ pub struct Server {
     conns: Box<[Conn]>,
     streams: Box<[Stream]>,
     /// Present when the server speaks TLS.
+    #[cfg(feature = "tls")]
     tls: Option<ServerSetup>,
     objects: Vec<Object>,
     /// Ids of the multipart uploads in progress; zero is a free entry.
@@ -230,16 +233,24 @@ mod xml;
 impl Server {
     /// A plain-HTTP server.
     pub fn new(cfg: Config) -> Server {
-        Self::build(cfg, None)
+        #[cfg(feature = "tls")]
+        {
+            Self::build(cfg, None)
+        }
+        #[cfg(not(feature = "tls"))]
+        {
+            Self::build(cfg)
+        }
     }
 
     /// An HTTPS server. Each connection additionally uses two pool buffers
     /// for sealed records, starting at `first_tls_buf`.
+    #[cfg(feature = "tls")]
     pub fn with_tls(cfg: Config, setup: ServerSetup, first_tls_buf: u32) -> Server {
         Self::build(cfg, Some((setup, first_tls_buf)))
     }
 
-    fn build(cfg: Config, tls: Option<(ServerSetup, u32)>) -> Server {
+    fn build(cfg: Config, #[cfg(feature = "tls")] tls: Option<(ServerSetup, u32)>) -> Server {
         assert!(cfg.head_max <= cfg.buffer_size && cfg.head_max <= u16::MAX as u32);
         let conn = Conn {
             state: State::Free,
@@ -279,12 +290,14 @@ impl Server {
                 kept: Default::default(),
             })
             .collect();
+        #[cfg(feature = "tls")]
         let first_tls_buf = tls.as_ref().map(|t| t.1);
         let streams = (0..cfg.connections_max)
             .map(|i| {
                 let token = |kind| Token(cfg.token_base + i as u64 * 8 + kind);
                 let s = Stream::new(Sock(cfg.first_sock + i), token(K_SEND), token(K_RECV));
-                match first_tls_buf {
+                #[cfg(feature = "tls")]
+                let s = match first_tls_buf {
                     Some(first) => s.with_tls_buffers(
                         BufId(first + 2 * i),
                         BufId(first + 2 * i + 1),
@@ -293,13 +306,15 @@ impl Server {
                         u32::MAX,
                     ),
                     None => s,
-                }
+                };
+                s
             })
             .collect();
         Server {
             cfg,
             conns: vec![conn; cfg.connections_max as usize].into_boxed_slice(),
             streams,
+            #[cfg(feature = "tls")]
             tls: tls.map(|t| t.0),
             objects,
             uploads: [0; multipart::UPLOADS_MAX],

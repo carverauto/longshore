@@ -12,6 +12,10 @@
 #![allow(non_camel_case_types)]
 
 use core::ffi::{c_int, c_long, c_uint, c_void};
+use core::mem::{offset_of, size_of};
+
+mod sock;
+pub use sock::*;
 
 pub const SYS_IO_URING_SETUP: c_long = 425;
 pub const SYS_IO_URING_ENTER: c_long = 426;
@@ -37,51 +41,92 @@ pub const IORING_OFF_SQES: i64 = 0x1000_0000;
 pub const IORING_REGISTER_BUFFERS: c_uint = 0; // 5.1
 pub const IORING_REGISTER_FILES: c_uint = 2; // 5.1
 pub const IORING_REGISTER_FILES_UPDATE: c_uint = 6; // 5.1
+pub const IORING_REGISTER_PBUF_RING: c_uint = 22; // 5.19
+pub const IORING_UNREGISTER_PBUF_RING: c_uint = 23; // 5.19
+pub const IORING_REGISTER_FILE_ALLOC_RANGE: c_uint = 25; // 6.0
 
 // Opcodes.
 pub const IORING_OP_NOP: u8 = 0;
+pub const IORING_OP_FSYNC: u8 = 3;
+pub const IORING_OP_READ_FIXED: u8 = 4;
+pub const IORING_OP_WRITE_FIXED: u8 = 5;
 pub const IORING_OP_TIMEOUT: u8 = 11;
 pub const IORING_OP_TIMEOUT_REMOVE: u8 = 12;
 pub const IORING_OP_ACCEPT: u8 = 13;
 pub const IORING_OP_ASYNC_CANCEL: u8 = 14;
 pub const IORING_OP_CONNECT: u8 = 16;
+pub const IORING_OP_FALLOCATE: u8 = 17;
 pub const IORING_OP_OPENAT: u8 = 18;
 pub const IORING_OP_CLOSE: u8 = 19;
+pub const IORING_OP_STATX: u8 = 21;
 pub const IORING_OP_READ: u8 = 22;
 pub const AT_FDCWD: i32 = -100;
+pub const AT_REMOVEDIR: u32 = 0x200;
+pub const O_RDONLY: u32 = 0;
+pub const O_WRONLY: u32 = 1;
+pub const O_RDWR: u32 = 2;
+pub const O_CREAT: u32 = 0o100;
+pub const O_EXCL: u32 = 0o200;
+pub const O_TRUNC: u32 = 0o1000;
+#[cfg(target_arch = "x86_64")]
+pub const O_DIRECT: u32 = 0o0040000;
+#[cfg(target_arch = "x86_64")]
+pub const O_DIRECTORY: u32 = 0o0200000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECTORY: u32 = 0o0040000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECT: u32 = 0o0200000;
 pub const O_RDONLY_CLOEXEC: u32 = 0o2000000;
 pub const IORING_OP_SEND: u8 = 26;
 pub const IORING_OP_RECV: u8 = 27;
+pub const IORING_OP_SHUTDOWN: u8 = 34; // 5.11
+pub const IORING_OP_RENAMEAT: u8 = 35;
+pub const IORING_OP_UNLINKAT: u8 = 36;
+pub const IORING_OP_MKDIRAT: u8 = 37;
 pub const IORING_OP_SOCKET: u8 = 45; // 5.19
+pub const IORING_OP_URING_CMD: u8 = 46; // 5.19
 pub const IORING_OP_SEND_ZC: u8 = 47; // 6.0
 
+pub const SOCKET_URING_OP_GETSOCKOPT: u64 = 2; // 6.7
+
 pub const IOSQE_FIXED_FILE: u8 = 1 << 0;
+pub const IOSQE_IO_LINK: u8 = 1 << 2;
+pub const IOSQE_IO_HARDLINK: u8 = 1 << 3;
+pub const IOSQE_BUFFER_SELECT: u8 = 1 << 5;
+
+pub const IORING_ACCEPT_MULTISHOT: u16 = 1 << 0;
+pub const IORING_RECV_MULTISHOT: u16 = 1 << 1;
+pub const IORING_FILE_INDEX_ALLOC: u32 = !0u32;
+
+pub const IORING_FSYNC_DATASYNC: u32 = 1 << 0;
+pub const FALLOC_FL_KEEP_SIZE: u32 = 0x01;
+pub const FALLOC_FL_PUNCH_HOLE: u32 = 0x02;
+pub const STATX_BASIC_STATS: u32 = 0x07ff;
+
+pub const RLIMIT_NOFILE: c_int = 7;
+pub const RLIMIT_MEMLOCK: c_int = 8;
+pub const RLIM_INFINITY: u64 = !0u64;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct rlimit {
+    pub rlim_cur: u64,
+    pub rlim_max: u64,
+}
 
 // sqe.ioprio flags for send/recv.
 pub const IORING_RECVSEND_FIXED_BUF: u16 = 1 << 2; // 6.0
 pub const IORING_SEND_ZC_REPORT_USAGE: u16 = 1 << 3; // 6.2
 
+pub const IORING_CQE_F_BUFFER: u32 = 1 << 0;
 pub const IORING_CQE_F_MORE: u32 = 1 << 1;
 pub const IORING_CQE_F_NOTIF: u32 = 1 << 3;
+pub const IORING_CQE_BUFFER_SHIFT: u32 = 16;
 /// Set in `cqe.res` of a notification CQE when the kernel copied the data
 /// instead of sending it zero-copy (requires `IORING_SEND_ZC_REPORT_USAGE`).
 pub const IORING_NOTIF_USAGE_ZC_COPIED: u32 = 1 << 31;
 
-pub const MSG_WAITALL: u32 = 0x100;
-pub const MSG_NOSIGNAL: u32 = 0x4000;
-pub const MSG_DONTWAIT: u32 = 0x40;
-pub const AF_INET: u16 = 2;
-pub const AF_INET6: u16 = 10;
-pub const SOCK_STREAM: u64 = 1;
-pub const SOCK_DGRAM: u64 = 2;
 pub const EFD_CLOEXEC: c_int = 0o2000000;
-pub const SOCK_CLOEXEC: u64 = 0o2000000;
-pub const IPPROTO_TCP: c_int = 6;
-pub const TCP_MAXSEG: c_int = 2;
-pub const IPPROTO_IP: c_int = 0;
-pub const IP_MTU: c_int = 14;
-pub const IPPROTO_IPV6: c_int = 41;
-pub const IPV6_MTU: c_int = 24;
 pub const CLOCK_MONOTONIC: c_int = 1;
 pub const CLOCK_REALTIME: c_int = 0;
 
@@ -170,44 +215,32 @@ pub struct io_uring_files_update {
     pub fds: u64,
 }
 
-/// Storage for a `sockaddr_in` or a `sockaddr_in6`, which share their first
-/// two fields. `len` is how much of it the kernel is told to read.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct sockaddr_any {
-    pub family: u16,
-    /// Network byte order.
-    pub port: [u8; 2],
-    /// `sockaddr_in`: the address, then padding. `sockaddr_in6`: flow
-    /// information, the address, then the scope id.
-    pub rest: [u8; 24],
+pub struct io_uring_file_index_range {
+    pub off: u32,
+    pub len: u32,
+    pub resv: u64,
 }
 
-pub const SOCKADDR_IN_LEN: u32 = 16;
-pub const SOCKADDR_IN6_LEN: u32 = 28;
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct io_uring_buf_reg {
+    pub ring_addr: u64,
+    pub ring_entries: u32,
+    pub bgid: u16,
+    pub pad: u16,
+    pub resv: [u64; 3],
+}
 
-impl sockaddr_any {
-    /// The kernel's form of `addr`, and its length.
-    pub fn from(addr: std::net::SocketAddr) -> (sockaddr_any, u32) {
-        let mut s = sockaddr_any {
-            port: addr.port().to_be_bytes(),
-            ..Default::default()
-        };
-        match addr {
-            std::net::SocketAddr::V4(a) => {
-                s.family = AF_INET;
-                s.rest[..4].copy_from_slice(&a.ip().octets());
-                (s, SOCKADDR_IN_LEN)
-            }
-            std::net::SocketAddr::V6(a) => {
-                s.family = AF_INET6;
-                s.rest[..4].copy_from_slice(&a.flowinfo().to_ne_bytes());
-                s.rest[4..20].copy_from_slice(&a.ip().octets());
-                s.rest[20..24].copy_from_slice(&a.scope_id().to_ne_bytes());
-                (s, SOCKADDR_IN6_LEN)
-            }
-        }
-    }
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct io_uring_buf {
+    pub addr: u64,
+    pub len: u32,
+    pub bid: u16,
+    /// `io_uring_buf_ring.tail` aliases `bufs[0].resv` at byte offset 14.
+    pub resv: u16,
 }
 
 /// `struct __kernel_timespec`.
@@ -219,15 +252,20 @@ pub struct timespec {
 }
 
 const _: () = {
-    assert!(core::mem::size_of::<io_uring_sqe>() == 64);
-    assert!(core::mem::size_of::<io_uring_cqe>() == 16);
-    assert!(core::mem::size_of::<io_uring_params>() == 120);
-    assert!(core::mem::size_of::<sockaddr_any>() == SOCKADDR_IN6_LEN as usize);
+    assert!(size_of::<io_uring_sqe>() == 64);
+    assert!(size_of::<io_uring_cqe>() == 16);
+    assert!(size_of::<io_uring_params>() == 120);
+    assert!(size_of::<io_uring_file_index_range>() == 16);
+    assert!(size_of::<io_uring_buf_reg>() == 40);
+    assert!(size_of::<io_uring_buf>() == 16);
+    assert!(offset_of!(io_uring_buf, resv) == 14);
 };
 
 pub const PROT_READ: c_int = 1;
 pub const PROT_WRITE: c_int = 2;
 pub const MAP_SHARED: c_int = 0x01;
+pub const MAP_PRIVATE: c_int = 0x02;
+pub const MAP_ANONYMOUS: c_int = 0x20;
 pub const MAP_POPULATE: c_int = 0x8000;
 pub const MAP_FAILED: *mut c_void = !0usize as *mut c_void;
 
@@ -248,13 +286,32 @@ extern "C" {
     pub fn dup(fd: c_int) -> c_int;
     #[cfg(feature = "fault-injection")]
     pub fn dup2(old: c_int, new: c_int) -> c_int;
-    pub fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
-    pub fn getsockopt(
-        fd: c_int,
-        level: c_int,
-        name: c_int,
-        value: *mut c_void,
-        len: *mut u32,
-    ) -> c_int;
     pub fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
+    pub fn getrlimit(resource: c_int, rlim: *mut rlimit) -> c_int;
+}
+
+/// Map portable [`crate::io::OpenFlags`] to Linux architecture-specific `openat` flags
+/// without `O_CLOEXEC` (refused for registered `io_uring` fixed file slots).
+pub fn open_flags_linux(f: crate::io::OpenFlags) -> u32 {
+    let mut out = match (f.read, f.write) {
+        (true, true) => O_RDWR,
+        (false, true) => O_WRONLY,
+        (true, false) | (false, false) => O_RDONLY,
+    };
+    if f.create {
+        out |= O_CREAT;
+    }
+    if f.exclusive {
+        out |= O_EXCL;
+    }
+    if f.empty {
+        out |= O_TRUNC;
+    }
+    if f.direct {
+        out |= O_DIRECT;
+    }
+    if f.directory {
+        out |= O_DIRECTORY;
+    }
+    out
 }

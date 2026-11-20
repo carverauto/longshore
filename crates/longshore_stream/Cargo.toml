@@ -1,0 +1,30 @@
+[package]
+name = "longshore_stream"
+description = "Plain or TLS byte stream over longshore I/O, for clients and servers"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+readme = "README.md"
+autotests = false
+
+[features]
+default = ["tls"]
+tls = ["dep:longshore_tls"]
+
+[dependencies]
+longshore_common.workspace = true
+longshore_tls = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Turns the simulator on for this crate's own tests.
+longshore_common = { workspace = true, features = ["sim"] }
+rcgen.workspace = true
+
+[[test]]
+name = "stream_plain"
+path = "tests/stream/plain.rs"
+
+[[test]]
+name = "stream_tls"
+path = "tests/stream/tls.rs"

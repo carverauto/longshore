@@ -40,6 +40,7 @@ pub const RX: BufId = BufId(7);
 
 pub const HEAD_MAX: u32 = 8192;
 
+#[allow(clippy::needless_update)]
 pub const LIMITS: Limits = Limits {
     sockets_max: 1 + CONNS * 2,
     buffers: 8,
@@ -47,6 +48,7 @@ pub const LIMITS: Limits = Limits {
     small_buffers: CONNS,
     small_buffer_size: HEAD_MAX,
     ops_max: CONNS * 3 + 2,
+    ..Limits::BASE
 };
 
 pub struct World {
@@ -172,6 +174,7 @@ pub fn s3_config(attempts_max: u32, enforce: bool) -> Config {
         backoff_max_ns: 800 * MS,
         require_checksums: enforce,
         http,
+        #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Fixed(ADDR),
     }

@@ -120,7 +120,7 @@ impl Client {
         budget: Budget,
     ) -> Pending<Result<Report, Error>> {
         let first = self.lanes[least_busy(&self.lanes)].clone();
-        Pending::new(
+        let pending = Pending::new(
             (first, self.alive.clone()),
             key,
             Kind::Head,
@@ -129,8 +129,12 @@ impl Client {
             None,
             report_of,
         )
-        .within(budget, expect)
-        .on_any(self.lanes.clone())
+        .within(budget, expect);
+        if self.lanes.len() > 1 {
+            pending.on_any(self.lanes.clone())
+        } else {
+            pending
+        }
     }
 
     /// Fetch the object `expect` names under `key`, or bytes `first..=last`

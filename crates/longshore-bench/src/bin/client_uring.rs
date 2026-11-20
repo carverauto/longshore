@@ -33,11 +33,10 @@ fn main() {
     use longshore::http::server::{self, Server};
     use longshore::io::uring::UringIo;
     use longshore::io::{Completions, Io, Limits, Sock};
+    use longshore::mailbox::block_on;
     use longshore::store::creds::Credentials;
-    use std::future::Future;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
     use std::sync::mpsc::channel;
-    use std::task::{Context, Poll, Wake, Waker};
 
     const SIZE: u32 = 1 << 20;
     const CALLERS: usize = 4;
@@ -78,9 +77,8 @@ fn main() {
             sockets_max: 1 + server_conns,
             buffers: 2 * server_conns,
             buffer_size: SIZE,
-            small_buffers: 0,
-            small_buffer_size: 0,
             ops_max: server_conns * 3 + 2,
+            ..Limits::BASE
         })
         .expect("server ring");
         let mut server = Server::new(server::Config {
@@ -194,25 +192,6 @@ fn main() {
         );
     }
 
-    /// A minimal executor: polls on this thread, parked between wake-ups.
-    fn block_on<F: Future>(f: F) -> F::Output {
-        struct Unpark(std::thread::Thread);
-        impl Wake for Unpark {
-            fn wake(self: std::sync::Arc<Self>) {
-                self.0.unpark();
-            }
-        }
-        let waker = Waker::from(std::sync::Arc::new(Unpark(std::thread::current())));
-        let mut cx = Context::from_waker(&waker);
-        let mut f = std::pin::pin!(f);
-        loop {
-            if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
-                return v;
-            }
-            std::thread::park();
-        }
-    }
-
     fn pattern(caller: usize, round: usize, i: usize) -> u8 {
         (i as u32).wrapping_mul(2654435761).to_le_bytes()[1] ^ (caller * 31 + round) as u8
     }
@@ -315,6 +294,7 @@ fn main() {
             }
         });
         for round in 0..REPEATS {
+            #[allow(clippy::needless_update)]
             let limits = Limits {
                 sockets_max: SOCKS + 1,
                 buffers: 1,
@@ -322,6 +302,7 @@ fn main() {
                 small_buffers: SOCKS,
                 small_buffer_size: 64,
                 ops_max: 2 * SOCKS + 2,
+                ..Limits::BASE
             };
             let mut io = UringIo::new(limits).expect("ring");
             let _wake = io.waker().expect("waker");

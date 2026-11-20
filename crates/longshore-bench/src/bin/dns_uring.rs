@@ -53,9 +53,8 @@ fn main() {
         sockets_max: 2,
         buffers: 3,
         buffer_size: 1024,
-        small_buffers: 0,
-        small_buffer_size: 0,
         ops_max: 8,
+        ..Limits::BASE
     })
     .unwrap_or_else(|e| {
         eprintln!("dns_uring: {e}");

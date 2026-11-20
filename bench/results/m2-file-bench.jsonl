@@ -1,0 +1,4 @@
+{"host":"donbot","arch":"aarch64","kernel":"7.0.0-1019-nvidia","fs":"ext4","mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1911.2,"p95_us":5261.7,"p99_us":6266.0,"mean_us":2457.0}
+{"host":"donbot","arch":"aarch64","kernel":"7.0.0-1019-nvidia","fs":"ext4","mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1600.8,"p95_us":2627.0,"p99_us":2887.9,"mean_us":1639.9}
+{"host":"10.0.0.3","arch":"x86_64","kernel":"6.8.12-11-pve","fs":"xfs","mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":280.6,"p95_us":831.7,"p99_us":2890.2,"mean_us":376.6}
+{"host":"10.0.0.3","arch":"x86_64","kernel":"6.8.12-11-pve","fs":"xfs","mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":265.3,"p95_us":2789.0,"p99_us":3523.7,"mean_us":492.7}

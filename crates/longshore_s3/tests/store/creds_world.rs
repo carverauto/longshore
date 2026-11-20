@@ -34,9 +34,8 @@ pub const fn limits(buffer_size: u32) -> Limits {
         sockets_max: 1 + CONNS * 2,
         buffers: 12,
         buffer_size,
-        small_buffers: 0,
-        small_buffer_size: 0,
         ops_max: CONNS * 3 + CONNS + 1 + 2,
+        ..Limits::BASE
     }
 }
 
@@ -117,6 +116,7 @@ pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: Validate)
         backoff_max_ns: 400 * MS,
         require_checksums: false,
         http,
+        #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Fixed(ADDR),
     });
