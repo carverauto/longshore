@@ -73,9 +73,11 @@ jobs:
           # `uring` job on a full Linux VM; container pods can restrict io_uring
           # registration opcodes (such as IORING_REGISTER_PBUF_RING).
           cargo test --workspace --exclude longshore
-          cargo test -p longshore --lib --doc
+          cargo test -p longshore --lib
+          cargo test -p longshore --doc
           cargo test --workspace --exclude longshore-bench --exclude longshore --no-default-features
-          cargo test -p longshore --lib --doc --no-default-features
+          cargo test -p longshore --lib --no-default-features
+          cargo test -p longshore --doc --no-default-features
           cargo test -p longshore_common --features fault-injection
       - name: Model-checked client hand-offs
         run: ./scripts/test-model.sh
