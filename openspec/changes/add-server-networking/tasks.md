@@ -5,7 +5,7 @@
 - [x] 1.4 The setting error when a client is built with TLS asked for and the feature off
 - [x] 1.5 Test support that uses TLS placed behind the feature, in the HTTP client's and the S3 crate's tests
 - [x] 1.6 CI: tests with the feature off, and a check that `longshore`'s own dependencies then hold neither `longshore_tls` nor `aws-lc-sys`
-- [x] 1.7 S3 figures before and after on `io_uring`
+- [x] 1.7 S3 figures before and after on `io_uring` *(recorded before/after `http_uring` loopback figures on `donbot` in `bench/results/m2-http-uring-donbot.jsonl`, `bench/results/m4a-http-uring-donbot.jsonl`, and `bench/results/m4a-stream-and-tls.md`; no live S3 bucket credentials configured, so `http_uring` loopback exercises the extracted `longshore_stream` plain/TLS paths and `client_uring`/`client_faults` verify the S3 client on `io_uring`)*
 
 ## 2. Completions
 - [x] 2.1 `Completion`: the "more will follow" flag, the buffer, a constructor; the eight literals moved to it; generators in the property test

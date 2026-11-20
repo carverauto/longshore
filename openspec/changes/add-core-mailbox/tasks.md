@@ -20,7 +20,7 @@
 - [x] 3.3 The builder's setting for preallocated waiters
 - [x] 3.4 The client's tests and its ten model tests pass unedited
 - [x] 3.5 The threaded client's tests run under the allocator that aborts, with each thread's waker made before the seal
-- [x] 3.6 Real-kernel checks, and S3 figures before and after on `io_uring`
+- [x] 3.6 Real-kernel checks, and S3 figures before and after on `io_uring` *(31/31 real-kernel checks on `donbot` and `10.0.0.3` plus before/after `http_uring` loopback figures on `donbot` recorded in `bench/results/m5b-http-uring-donbot.jsonl` and `bench/results/m5b-core-mailbox.md`; no live S3 bucket credentials configured, so `http_uring` loopback + `client_uring`/`client_faults` verify the mailbox-backed S3 client on `io_uring`)*
 
 ## 4. Project
 - [x] 4.1 `longshore` re-exports the crate; README: passing messages between cores

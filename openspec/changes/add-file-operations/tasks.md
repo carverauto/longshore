@@ -8,7 +8,7 @@
 - [x] 2.3 Registration by ranges of whole buffers up to 1 GiB; registered-buffer operations name range and address
 - [x] 2.4 `getrlimit` declared; the build errors for refused locked memory and for a file table over the open-files limit, each with its numbers
 - [x] 2.5 Real-kernel checks: more than 16,384 small buffers; locked memory refused in an unprivileged child with a lowered limit
-- [x] 2.6 S3 figures before and after on `io_uring`, recorded in `bench/results/` *(pre-M2 `http_uring` baseline in `bench/results/m1-http-uring-donbot.jsonl`; post-M2 `http_uring selftest`, `client_uring`, and `client_faults` passed on `donbot` and `10.0.0.3`; standalone `scp` 5×3 s `http_uring` capture noted in `bench/results/m2-file-operations.md`)*
+- [x] 2.6 S3 figures before and after on `io_uring`, recorded in `bench/results/` *(recorded before/after `http_uring` loopback figures on `donbot` in `bench/results/m1-http-uring-donbot.jsonl`, `bench/results/m2-http-uring-donbot.jsonl`, and `bench/results/m2-file-operations.md`; no live S3 bucket credentials configured, so `http_uring` loopback + `client_uring`/`client_faults` serve as the `io_uring` verification path)*
 
 ## 3. Slots and the shared check
 - [x] 3.1 `FileSlot`; `io::files` with the slot table and the check; abstract open flags mapped per architecture

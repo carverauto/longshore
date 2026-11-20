@@ -139,7 +139,7 @@ same single-threaded `Io` queue (`UringIo`, `PosixIo`, and `SimIo`):
 testing file and WAL recovery alongside virtual sockets under one PRNG seed and
 one virtual clock (zero heap allocation after setup):
 
-- **Setup (`SimIo::setup_disk`)**: takes a [`DiskConfig`] fixing `max_files`,
+- **Setup (`SimIo::setup_disk`)**: takes a `DiskConfig` fixing `max_files`,
   `max_dirs`, `max_bytes_per_file`, `max_name_len`, `write_log_entries`,
   `write_log_bytes`, `read_error_sectors`, and `sector_size` (`512` or `4096`).
 - **Durable vs. unsynced state**: files hold durable bytes plus an ordered
@@ -217,8 +217,9 @@ across `UringIo`, `PosixIo`, and `SimIo`:
   `BuildError::Setting` naming `tls` if TLS is requested).
 - **What it does not remove**: `longshore_s3` still compiles C via `ring` for
   request signing, an active TLS `Stream` still keeps two TLS record buffers
-  per connection, and the workspace test and benchmark suites still enable
-  `tls`.
+  per connection, and default workspace test runs and `longshore-bench` still
+  enable `tls` (non-TLS workspace tests run with `--exclude longshore-bench
+  --no-default-features`).
 
 ## Passing messages between cores
 
@@ -244,7 +245,8 @@ across `UringIo`, `PosixIo`, and `SimIo`:
 
 - Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when
   `Builder::portable` is set), or macOS for the portable `kqueue` backend
-  (without core pinning). Other targets build the crate and run the simulator.
+  (without core pinning). Other targets build the crate and run the simulator,
+  while `client::Builder::build` returns `BuildError::Unsupported`.
 - A recent stable Rust toolchain.
 - **`RLIMIT_MEMLOCK` and `RLIMIT_NOFILE`**: `UringIo` registers its buffer pool
   as locked memory (charged against `RLIMIT_MEMLOCK`, summed across all rings
@@ -268,8 +270,12 @@ run directly on macOS. Anything that uses `io_uring` (and Linux `epoll`) has to
 run on a Linux host.
 
 ```sh
-cargo test --workspace          # unit, simulation, property and portable tests
-./scripts/test.sh               # those, the model checks, then the real-kernel checks
+cargo test --workspace                                                 # unit, simulation, property, portable and e2e tests
+cargo test --workspace --exclude longshore-bench --no-default-features # plain build without longshore_tls / aws-lc-sys
+cargo test -p longshore_common --features fault-injection              # stale-readiness & fault-injection tests
+./scripts/test-model.sh                                                # loom model checks (longshore_mailbox + longshore_s3)
+./scripts/test.sh                                                      # workspace tests, model checks, then real-kernel checks
+cargo bench -p longshore-bench --bench <name>                          # criterion microbenchmarks (see bench/README.md)
 ```
 
 To run the real-kernel checks (`scripts/test-linux.sh`) from a Mac or local

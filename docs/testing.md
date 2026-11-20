@@ -27,11 +27,12 @@ the hosts listed in `~/.config/longshore/test-hosts` (or
 `<rust-target> <ssh-destination>` per line. If it is missing or lists zero
 hosts, the script exits non-zero and reports that `io_uring` was not exercised.
 
-`scripts/test-model.sh` builds `longshore_s3` with its locks, atomics and thread
-parking replaced by [loom](https://github.com/tokio-rs/loom)'s, and runs the
-hand-offs between callers and I/O threads in every order loom reaches with
-one or two forced thread switches. A wake-up that could be lost shows up
-there as a thread left waiting. loom is only in that build.
+`scripts/test-model.sh` builds `longshore_mailbox` and `longshore_s3` with their
+locks, atomics and thread parking replaced by
+[loom](https://github.com/tokio-rs/loom)'s, and runs the queue, slot, and client
+hand-offs between callers and I/O threads in every order loom reaches with one
+or two forced thread switches. A wake-up that could be lost shows up there as a
+thread left waiting. loom is only in that build.
 
 `client_faults`, one of the check programs, makes a running client's rings
 fail and tears clients down with work in flight. It is built with the

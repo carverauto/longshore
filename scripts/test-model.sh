@@ -4,8 +4,10 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 # SPDX-License-Identifier: Apache-2.0
 
-# Runs the model-checked tests of the shareable client's hand-offs between
-# callers and I/O threads (crates/longshore_s3/tests/client/model.rs).
+# Runs the model-checked tests of `longshore_mailbox`
+# (`crates/longshore_mailbox/tests/mailbox/model.rs`) and the shareable
+# client's hand-offs between callers and I/O threads
+# (`crates/longshore_s3/tests/client/model.rs`).
 #
 # They need the crate built with `--cfg longshore_model`, which swaps its
 # locks, atomics and thread parking for the model checker's. That is a
