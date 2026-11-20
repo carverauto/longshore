@@ -1,0 +1,10 @@
+write 3.46 GB/s runtime_ms 9919 cpu 0.09
+read 4.87 GB/s runtime_ms 7054 cpu 0.13
+write 3.73 GB/s runtime_ms 9202 cpu 0.1
+read 4.87 GB/s runtime_ms 7054 cpu 0.13
+write 3.73 GB/s runtime_ms 9202 cpu 0.1
+read 4.87 GB/s runtime_ms 7054 cpu 0.13
+write 3.73 GB/s runtime_ms 9201 cpu 0.1
+read 4.87 GB/s runtime_ms 7054 cpu 0.13
+write 3.73 GB/s runtime_ms 9202 cpu 0.1
+read 4.87 GB/s runtime_ms 7054 cpu 0.13
