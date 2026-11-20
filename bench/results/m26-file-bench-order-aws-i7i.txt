@@ -1,0 +1,35 @@
+# AWS i7i.4xlarge, x86_64, 7.0.0-1017-aws, XFS on instance-store NVMe, pinned to CPU 2. 2026-11-20.
+# order=two_ops-first run=1
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":21.0,"p95_us":127.8,"p99_us":138.1,"mean_us":36.1}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.7,"p95_us":28.6,"p99_us":37.7,"mean_us":21.4}
+# order=--chain-first run=1
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.8,"p95_us":276.7,"p99_us":399.9,"mean_us":58.7}
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.4,"p95_us":26.8,"p99_us":42.3,"mean_us":21.1}
+# order=--interleave run=1
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.6,"p95_us":26.4,"p99_us":36.9,"mean_us":21.4}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.7,"p95_us":28.5,"p99_us":34.0,"mean_us":21.1}
+# order=two_ops-first run=2
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.8,"p95_us":129.4,"p99_us":300.8,"mean_us":42.1}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.5,"p95_us":29.2,"p99_us":37.1,"mean_us":21.5}
+# order=--chain-first run=2
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.8,"p95_us":128.2,"p99_us":131.6,"mean_us":35.7}
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.5,"p95_us":30.0,"p99_us":48.2,"mean_us":21.6}
+# order=--interleave run=2
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.6,"p95_us":31.4,"p99_us":46.2,"mean_us":21.9}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.6,"p95_us":26.0,"p99_us":34.0,"mean_us":21.1}
+# order=two_ops-first run=3
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.7,"p95_us":124.5,"p99_us":333.7,"mean_us":43.0}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.6,"p95_us":28.4,"p99_us":41.6,"mean_us":21.3}
+# order=--chain-first run=3
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.8,"p95_us":119.1,"p99_us":121.4,"mean_us":35.5}
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.4,"p95_us":29.5,"p99_us":39.3,"mean_us":21.2}
+# order=--interleave run=3
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.5,"p95_us":25.3,"p99_us":33.7,"mean_us":21.3}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.6,"p95_us":24.4,"p99_us":34.2,"mean_us":21.0}
+# interleave iters=2000
+{"mode":"two_ops","iters":2000,"enters_per_op":2.00,"p50_us":20.4,"p95_us":25.6,"p99_us":33.1,"mean_us":21.1}
+{"mode":"chain","iters":2000,"enters_per_op":2.00,"p50_us":20.4,"p95_us":25.2,"p99_us":35.0,"mean_us":21.0}
+{"mode":"two_ops","iters":2000,"enters_per_op":2.00,"p50_us":20.5,"p95_us":24.7,"p99_us":33.6,"mean_us":21.0}
+{"mode":"chain","iters":2000,"enters_per_op":2.00,"p50_us":20.4,"p95_us":24.9,"p99_us":34.5,"mean_us":21.2}
+{"mode":"two_ops","iters":2000,"enters_per_op":2.00,"p50_us":20.3,"p95_us":24.9,"p99_us":33.1,"mean_us":21.0}
+{"mode":"chain","iters":2000,"enters_per_op":2.00,"p50_us":20.4,"p95_us":24.6,"p99_us":33.0,"mean_us":20.9}

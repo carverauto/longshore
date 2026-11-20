@@ -10,9 +10,16 @@ use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Tok
 use std::path::Path;
 use std::time::Instant;
 
-fn run_one_mode(io: &mut UringIo, buf: BufId, iters: usize, chained: bool) -> Vec<u64> {
-    let mut out = Completions::new(8);
+fn run_one_mode(io: &mut UringIo, buf: BufId, iters: usize, chained: bool) {
     let mut us = Vec::with_capacity(iters);
+    let enters = measure(io, buf, iters, chained, &mut us);
+    report(chained, &mut us, enters);
+}
+
+/// Time `iters` write-then-sync pairs into `us`, in nanoseconds. Returns
+/// the system calls made.
+fn measure(io: &mut UringIo, buf: BufId, iters: usize, chained: bool, us: &mut Vec<u64>) -> u64 {
+    let mut out = Completions::new(8);
     let mut enters_total = 0u64;
     for i in 0..iters {
         let file_off = ((i % 64) * 4096) as u64;
@@ -75,6 +82,11 @@ fn run_one_mode(io: &mut UringIo, buf: BufId, iters: usize, chained: bool) -> Ve
         us.push(t0.elapsed().as_nanos() as u64);
         enters_total += io.enters() - e0;
     }
+    enters_total
+}
+
+fn report(chained: bool, us: &mut [u64], enters_total: u64) {
+    let iters = us.len();
     us.sort_unstable();
     let p50 = us[iters / 2] as f64 / 1000.0;
     let p95 = us[(iters * 95) / 100] as f64 / 1000.0;
@@ -85,10 +97,17 @@ fn run_one_mode(io: &mut UringIo, buf: BufId, iters: usize, chained: bool) -> Ve
         "{{\"mode\":\"{label}\",\"iters\":{iters},\"enters_per_op\":{:.2},\"p50_us\":{p50:.1},\"p95_us\":{p95:.1},\"p99_us\":{p99:.1},\"mean_us\":{mean:.1}}}",
         enters_total as f64 / iters as f64
     );
-    us
 }
 
-pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize) {
+/// How the two modes are ordered in the measured part.
+pub(super) enum Order {
+    /// All of one mode, then all of the other.
+    Blocks { chain_first: bool },
+    /// Ten of one, ten of the other, in turn, so both see the same file state.
+    Interleaved,
+}
+
+pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
     let limits = Limits {
         sockets_max: 2,
         buffers: 1,
@@ -142,12 +161,31 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize) {
     assert_eq!(out.pop().unwrap().result, 0);
 
     // Warmup
-    let _ = run_one_mode(&mut io, wbuf, 20, true);
-    let _ = run_one_mode(&mut io, wbuf, 20, false);
+    let mut warm = Vec::with_capacity(40);
+    measure(&mut io, wbuf, 20, true, &mut warm);
+    measure(&mut io, wbuf, 20, false, &mut warm);
 
-    // Measured
-    let _ = run_one_mode(&mut io, wbuf, iters, false);
-    let _ = run_one_mode(&mut io, wbuf, iters, true);
+    // Whichever mode runs second runs on a file the first has just
+    // written, so the order is the caller's choice.
+    match order {
+        Order::Blocks { chain_first } => {
+            run_one_mode(&mut io, wbuf, iters, chain_first);
+            run_one_mode(&mut io, wbuf, iters, !chain_first);
+        }
+        Order::Interleaved => {
+            let (mut two, mut chain) = (Vec::with_capacity(iters), Vec::with_capacity(iters));
+            let (mut two_enters, mut chain_enters) = (0, 0);
+            let mut left = iters;
+            while left > 0 {
+                let n = left.min(10);
+                two_enters += measure(&mut io, wbuf, n, false, &mut two);
+                chain_enters += measure(&mut io, wbuf, n, true, &mut chain);
+                left -= n;
+            }
+            report(false, &mut two, two_enters);
+            report(true, &mut chain, chain_enters);
+        }
+    }
 
     io.submit(Token(99), Op::FileClose { slot: FileSlot(0) })
         .unwrap();

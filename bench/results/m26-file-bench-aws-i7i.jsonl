@@ -1,6 +1,0 @@
-{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.6,"p95_us":493.2,"p99_us":769.6,"mean_us":90.0}
-{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.5,"p95_us":27.6,"p99_us":41.8,"mean_us":21.3}
-{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.5,"p95_us":292.3,"p99_us":412.4,"mean_us":57.2}
-{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.2,"p95_us":26.5,"p99_us":40.6,"mean_us":21.2}
-{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":20.4,"p95_us":329.4,"p99_us":441.8,"mean_us":60.1}
-{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":20.4,"p95_us":27.8,"p99_us":46.4,"mean_us":21.5}
