@@ -69,8 +69,13 @@ jobs:
         run: cargo doc --no-deps --workspace --exclude longshore-bench --features longshore/sim
       - name: Test
         run: |
-          cargo test --workspace
-          cargo test --workspace --exclude longshore-bench --no-default-features
+          # Real-kernel io_uring E2E tests in `longshore --test e2e` run in the
+          # `uring` job on a full Linux VM; container pods can restrict io_uring
+          # registration opcodes (such as IORING_REGISTER_PBUF_RING).
+          cargo test --workspace --exclude longshore
+          cargo test -p longshore --lib --doc
+          cargo test --workspace --exclude longshore-bench --exclude longshore --no-default-features
+          cargo test -p longshore --lib --doc --no-default-features
           cargo test -p longshore_common --features fault-injection
       - name: Model-checked client hand-offs
         run: ./scripts/test-model.sh
@@ -123,6 +128,11 @@ jobs:
           timeout 60 ./echo_uring --zc
           timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc
           timeout 60 ./http_uring selftest
+      - name: E2E suite (real io_uring, POSIX, simulator)
+        run: |
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          cargo test -p longshore --test e2e
+          cargo test -p longshore --test e2e --no-default-features
       - name: Client I/O threads failing and torn down under load
         run: |
           sudo prlimit --pid $$ --memlock=unlimited:unlimited
