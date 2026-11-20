@@ -1,0 +1,31 @@
+# DGX Spark (donbot), aarch64, 7.0.0-1019-nvidia, ext4. 2026-11-20.
+# order=two_ops-first run=1
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1679.5,"p95_us":4524.1,"p99_us":5464.4,"mean_us":2078.1}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1500.3,"p95_us":2399.1,"p99_us":2816.5,"mean_us":1575.5}
+# order=--chain-first run=1
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":2474.2,"p95_us":5434.2,"p99_us":5986.3,"mean_us":2807.2}
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1604.7,"p95_us":2885.7,"p99_us":3327.8,"mean_us":1677.3}
+# order=two_ops-first run=2
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":2046.7,"p95_us":5293.5,"p99_us":6457.9,"mean_us":2487.8}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1688.2,"p95_us":2843.9,"p99_us":3619.9,"mean_us":1710.7}
+# order=--chain-first run=2
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":2031.7,"p95_us":5149.9,"p99_us":5978.4,"mean_us":2436.7}
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1534.6,"p95_us":2633.4,"p99_us":3352.9,"mean_us":1600.2}
+# order=two_ops-first run=3
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":2153.3,"p95_us":5041.1,"p99_us":5559.7,"mean_us":2494.1}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1622.7,"p95_us":2822.1,"p99_us":3394.7,"mean_us":1686.5}
+# order=--chain-first run=3
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1568.0,"p95_us":5172.2,"p99_us":6494.1,"mean_us":2130.8}
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1363.5,"p95_us":2454.0,"p99_us":2959.2,"mean_us":1489.4}
+# interleave run=1
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1560.6,"p95_us":2822.0,"p99_us":3250.8,"mean_us":1665.2}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1509.4,"p95_us":2769.0,"p99_us":3187.5,"mean_us":1634.5}
+# interleave run=2
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1465.2,"p95_us":2369.2,"p99_us":2746.3,"mean_us":1550.8}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1363.4,"p95_us":2365.2,"p99_us":2778.5,"mean_us":1496.4}
+# interleave run=3
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1778.3,"p95_us":5756.9,"p99_us":6371.8,"mean_us":2010.6}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1755.8,"p95_us":5393.2,"p99_us":6144.8,"mean_us":2078.4}
+# interleave iters=2000
+{"mode":"two_ops","iters":2000,"enters_per_op":2.00,"p50_us":1476.9,"p95_us":2625.2,"p99_us":3127.1,"mean_us":1562.6}
+{"mode":"chain","iters":2000,"enters_per_op":2.00,"p50_us":1309.3,"p95_us":2575.0,"p99_us":3236.0,"mean_us":1506.2}
