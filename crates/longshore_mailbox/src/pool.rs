@@ -182,6 +182,9 @@ impl SlotWaiter {
                 let idx = (first + n) % count;
                 let entry = &entries[idx];
                 if !all_closed && !is_open(entry) {
+                    if self.queued {
+                        pool_of(entry).forget(self.id);
+                    }
                     continue;
                 }
                 let pool = pool_of(entry);

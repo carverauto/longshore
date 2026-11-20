@@ -163,6 +163,12 @@ impl Virtual {
                 buf,
                 off,
                 len,
+            }
+            | Op::RecvNow {
+                sock,
+                buf,
+                off,
+                len,
             } if matches!(
                 self.socks[sock.0 as usize].state,
                 SockState::UdpBound | SockState::UdpConnected
@@ -170,7 +176,7 @@ impl Virtual {
             {
                 let s = sock.0 as usize;
                 if self.socks[s].rx_len == 0 {
-                    return None;
+                    return matches!(op, Op::RecvNow { .. }).then_some(-EAGAIN);
                 }
                 let dst = limits.range(buf, off, len);
                 let q = &mut self.socks[s];

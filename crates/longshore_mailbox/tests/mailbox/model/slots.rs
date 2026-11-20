@@ -254,3 +254,69 @@ fn slots_poll_many_races_give_and_stop() {
         rx1.close(|_| {}, || 0, |_| {});
     });
 }
+
+#[test]
+fn slots_poll_one_races_stop_and_give() {
+    model(2, || {
+        let cfg = Config {
+            capacity: 1,
+            slots: 1,
+            waiters_prealloc: 2,
+            wake_token: Token(1),
+        };
+        let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut w_init = SlotWaiter::new();
+        let Poll::Ready(Some(s0)) = w_init.poll_one(tx.pool(), || !tx.is_closed(), &mut cx) else {
+            panic!("slot 0");
+        };
+
+        let tx_give = tx.clone();
+        let h_give = loom::thread::spawn(move || {
+            tx_give.pool().give(s0);
+        });
+        let tx_stop = tx.clone();
+        let h_stop = loom::thread::spawn(move || {
+            tx_stop.stop();
+        });
+
+        let mut w = SlotWaiter::new();
+        let got = block_on(core::future::poll_fn(|cx| {
+            w.poll_one(tx.pool(), || !tx.is_closed(), cx)
+        }));
+        h_give.join().unwrap();
+        h_stop.join().unwrap();
+        if let Some(s) = got {
+            tx.pool().give(s);
+        }
+        rx.close(|_| {}, || 0, |_| {});
+    });
+}
+
+#[test]
+fn slots_call_future_drop_detach_races_answer_and_close() {
+    model(2, || {
+        let cfg = Config {
+            capacity: 1,
+            slots: 1,
+            waiters_prealloc: 2,
+            wake_token: Token(1),
+        };
+        let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
+        let tx2 = tx.clone();
+        let h = loom::thread::spawn(move || {
+            let mut fut = pin!(tx2.call(|s| s, 999));
+            let mut cx = Context::from_waker(Waker::noop());
+            let _ = fut.as_mut().poll(&mut cx);
+            drop(fut);
+        });
+        match rx.recv_parked() {
+            Recv::Message(s) => {
+                let _ = rx.answer(s, 42);
+            }
+            Recv::Closed | Recv::Stop => {}
+        }
+        rx.close(|_| {}, || 999, |_| {});
+        h.join().unwrap();
+    });
+}

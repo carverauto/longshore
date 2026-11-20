@@ -14,3 +14,4 @@
 pub mod ring_direct_chains;
 pub mod ring_limits_submit;
 pub mod server_ring_scale;
+pub mod uring_adversarial;

@@ -229,3 +229,25 @@ fn plain_stream_idle_check_eof_and_reset() {
     let _ = TlsError::Record;
     let _ = TlsError::Alert(116);
 }
+
+#[test]
+fn plain_stream_send_alert_submits_zero_len_and_error_passes_through() {
+    let (mut io, mut client, mut server) = connect_pair(88, Faults::default());
+    let mut out = Completions::new(8);
+    sealed(|| {
+        client.send_alert(&mut io, C_TX, 0, 1, 0);
+        io.tick(true, &mut out).unwrap();
+        let c = out.pop().unwrap();
+        assert_eq!(c.token, C_SEND);
+        assert_eq!(client.on_send(&mut io, c.result), Step::Done(0));
+
+        assert_eq!(
+            client.on_send(&mut io, -longshore_common::io::EPIPE),
+            Step::Done(-longshore_common::io::EPIPE)
+        );
+        assert_eq!(
+            server.on_recv(&mut io, -longshore_common::io::ECONNRESET),
+            Step::Done(-longshore_common::io::ECONNRESET)
+        );
+    });
+}

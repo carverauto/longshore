@@ -116,3 +116,97 @@ fn waiters_within_prealloc_and_warmed_block_on_allocate_nothing() {
         assert_eq!(block_on(fut), 78);
     });
 }
+
+#[test]
+fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
+    use longshore_common::io::{Completions, Io, Limits};
+    use longshore_common::sim::{Faults, SimIo};
+    use longshore_mailbox::mailbox;
+
+    let limits = Limits {
+        ops_max: 4,
+        ..Limits::BASE
+    };
+    let mut sim_a = SimIo::new(limits, 1, Faults::default());
+    let mut sim_b = SimIo::new(limits, 2, Faults::default());
+    let cfg = Config {
+        capacity: 4,
+        slots: 1,
+        waiters_prealloc: 4,
+        wake_token: Token(9),
+    };
+    let (tx_a, mut rx_a) = mailbox::<u32, u32, _>(&mut sim_a, cfg).unwrap();
+    let (tx_b, mut rx_b) = mailbox::<u32, u32, _>(&mut sim_b, cfg).unwrap();
+    rx_a.arm(&mut sim_a).unwrap();
+    rx_b.arm(&mut sim_b).unwrap();
+    let mut out_a = Completions::new(8);
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut w_many = SlotWaiter::new();
+
+    sealed(|| {
+        let Poll::Ready(Some(sa)) =
+            SlotWaiter::new().poll_one(tx_a.pool(), || !tx_a.is_closed(), &mut cx)
+        else {
+            panic!("slot a")
+        };
+        let Poll::Ready(Some((1, sb))) = w_many.poll_many(
+            &[&tx_a, &tx_b],
+            0,
+            |s| s.pool(),
+            |s| !s.is_closed(),
+            false,
+            &mut cx,
+        ) else {
+            panic!("slot b")
+        };
+        tx_b.pool().give(sb);
+
+        let Poll::Ready(Some(sb2)) =
+            SlotWaiter::new().poll_one(tx_b.pool(), || !tx_b.is_closed(), &mut cx)
+        else {
+            panic!("slot b2")
+        };
+        assert_eq!(
+            w_many.poll_many(
+                &[&tx_a, &tx_b],
+                0,
+                |s| s.pool(),
+                |s| !s.is_closed(),
+                false,
+                &mut cx,
+            ),
+            Poll::Pending
+        );
+        w_many.forget_many(&[&tx_a, &tx_b], |s| s.pool());
+
+        // CallFuture dropped in Stage::Slot (queued in Pool::waiters).
+        {
+            let mut fut_slot = pin!(tx_a.call(|s| s, 0));
+            assert_eq!(fut_slot.as_mut().poll(&mut cx), Poll::Pending);
+        }
+        tx_a.pool().give(sa);
+        tx_b.pool().give(sb2);
+
+        // CallFuture dropped in Stage::Sent (detach) then answered under sealed.
+        {
+            let mut fut = pin!(tx_a.call(|s| s, 0));
+            assert_eq!(fut.as_mut().poll(&mut cx), Poll::Pending);
+        }
+        let _ = sim_a.tick(false, &mut out_a);
+        while let Some(c) = out_a.pop() {
+            let _ = rx_a.on_completion(&mut sim_a, c);
+        }
+        let mut got_slot = None;
+        rx_a.drain(|item| {
+            if let Recv::Message(s) = item {
+                got_slot = Some(s);
+            }
+        });
+        if let Some(s) = got_slot {
+            let _ = rx_a.answer(s, 1);
+        }
+        rx_a.begin_close(|_| {});
+        rx_a.finish_close(|| 0, |_| {});
+        rx_b.close(|_| {}, || 0, |_| {});
+    });
+}

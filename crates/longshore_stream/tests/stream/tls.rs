@@ -13,6 +13,9 @@ use longshore_stream::{IdleCheck, Step, Stream, TlsError};
 use longshore_tls::handshake::{ClientSetup, Handshake, ServerSetup};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+#[path = "tls/adversarial.rs"]
+mod adversarial;
+
 #[global_allocator]
 static ALLOC: Guard = Guard;
 

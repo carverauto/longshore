@@ -283,3 +283,21 @@ fn tiny_chunks_decode_to_the_stored_bytes() {
         assert_eq!(w.client.connects, 1);
     }
 }
+
+#[test]
+fn interim_responses_101_and_malformed_1xx_are_refused_while_100_continues() {
+    assert_eq!(
+        get(b"HTTP/1.1 101 Switching Protocols\r\n\r\n"),
+        BAD_FRAMING
+    );
+    for bad_1xx in [
+        b"HTTP/1.1 100 Continue\r\nContent-Length: 5\r\n\r\n".as_slice(),
+        b"HTTP/1.1 100 Continue\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
+        b"HTTP/1.1 100 Continue\r\nConnection: close\r\n\r\n".as_slice(),
+    ] {
+        assert_eq!(get(bad_1xx), BAD_FRAMING);
+    }
+    ok(200, 2)(get(
+        b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    ));
+}

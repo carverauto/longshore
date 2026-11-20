@@ -182,13 +182,16 @@ impl SimDisk {
         }
         let mask = 1u8 << bit;
         let di = self.inodes[ii].data_idx as usize;
+        let mut flipped = false;
         if file_off < self.inodes[ii].durable_size {
             let d_idx = di * self.max_bytes_per_file + file_off as usize;
             self.durable_data[d_idx] ^= mask;
+            flipped = true;
         }
         if self.poisoned_eof[di].is_some() && self.poisoned_bit(di, file_off as usize) {
             let p_idx = di * self.max_bytes_per_file + file_off as usize;
             self.poisoned_data[p_idx] ^= mask;
+            flipped = true;
         }
         for entry in &self.log_entries[..self.log_len] {
             if entry.inode as usize != ii {
@@ -202,8 +205,12 @@ impl SimDisk {
             {
                 if file_off >= w_off && file_off < w_off + w_len as u64 {
                     self.log_bytes[buf_off + (file_off - w_off) as usize] ^= mask;
+                    flipped = true;
                 }
             }
+        }
+        if !flipped {
+            self.push_write_log(ii, file_off, &[mask]);
         }
         Ok(())
     }

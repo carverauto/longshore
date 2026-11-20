@@ -43,3 +43,4 @@ pub mod t4_apps_storage;
 pub mod linux_uring_suite;
 #[cfg(feature = "sim")]
 pub mod sealed_suite;
+pub mod t5_adversarial;

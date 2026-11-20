@@ -70,6 +70,10 @@ name = "client_waits"
 path = "tests/client/waits.rs"
 
 [[test]]
+name = "client_waits_adversarial"
+path = "tests/client/waits_adversarial.rs"
+
+[[test]]
 name = "client_alloc"
 path = "tests/client/alloc.rs"
 

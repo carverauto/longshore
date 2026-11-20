@@ -29,6 +29,14 @@ name = "io_props"
 path = "tests/io/props.rs"
 
 [[test]]
+name = "io_engine_adversarial"
+path = "tests/io/engine_adversarial.rs"
+
+[[test]]
+name = "io_posix_adversarial"
+path = "tests/io/posix_adversarial.rs"
+
+[[test]]
 name = "io_posix"
 path = "tests/io/posix.rs"
 

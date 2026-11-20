@@ -12,6 +12,9 @@ use longshore_common::io::alloc_guard::Guard;
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
+#[path = "alloc/exact_multipart.rs"]
+mod exact_multipart;
+
 #[test]
 fn builder_rejects_zero_waiters_with_setting_error() {
     use longshore_s3::client::{BuildError, Builder};

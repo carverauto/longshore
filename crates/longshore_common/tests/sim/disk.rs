@@ -15,6 +15,10 @@ use longshore_common::sim::{DiskConfig, Faults, SimIo};
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
+#[path = "disk/adversarial.rs"]
+mod adversarial;
+#[path = "disk/adversarial_faults.rs"]
+mod adversarial_faults;
 #[path = "disk/dirs.rs"]
 mod dirs;
 #[path = "disk/faults.rs"]

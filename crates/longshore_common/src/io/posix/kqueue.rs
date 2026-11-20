@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 const WAKE_IDENT: usize = 1;
 const EVENTS_CAP: usize = 64;
+const MAX_WAIT_SECS: u64 = 86_400;
 
 struct KqueueWaker {
     woken: Arc<AtomicBool>,
@@ -206,8 +207,14 @@ impl Poller {
                     if rem == 0 {
                         return Ok(());
                     }
-                    ts.tv_sec = (rem / 1_000_000_000) as i64;
-                    ts.tv_nsec = (rem % 1_000_000_000) as i64;
+                    let secs = rem / 1_000_000_000;
+                    if secs >= MAX_WAIT_SECS {
+                        ts.tv_sec = MAX_WAIT_SECS as i64;
+                        ts.tv_nsec = 0;
+                    } else {
+                        ts.tv_sec = secs as i64;
+                        ts.tv_nsec = (rem % 1_000_000_000) as i64;
+                    }
                     &ts as *const timespec
                 }
                 None => core::ptr::null(),

@@ -124,7 +124,7 @@ impl<W: World> Io for Engine<W> {
             _ => ([0u8; 108], 0),
         };
         let deadline = match op {
-            Op::Timeout { nanos } => self.world.now_ns() + nanos,
+            Op::Timeout { nanos } => self.world.now_ns().saturating_add(nanos),
             _ => 0,
         };
         let cancel_target = match op {

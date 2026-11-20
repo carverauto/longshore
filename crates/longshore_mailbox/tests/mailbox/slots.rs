@@ -245,3 +245,142 @@ fn poll_one_forgets_waiter_when_is_open_flips_false_mid_poll() {
     );
     assert_eq!(sw2.poll_one(&pool, || true, &mut cx2), Poll::Ready(Some(0)));
 }
+
+#[test]
+fn poll_many_forgets_closed_entry_and_never_strands_other_waiter() {
+    use core::sync::atomic::{AtomicBool, Ordering as AOrd};
+    let p0 = Pool::new(1, 2);
+    let p1 = Pool::new(1, 2);
+    let mut cx_noop = Context::from_waker(Waker::noop());
+    assert_eq!(p0.poll_take(1, &mut cx_noop), Poll::Ready(0));
+    assert_eq!(p1.poll_take(2, &mut cx_noop), Poll::Ready(0));
+
+    struct Entry {
+        pool: Pool,
+        open: AtomicBool,
+    }
+    let entries = [
+        Entry {
+            pool: p0,
+            open: AtomicBool::new(true),
+        },
+        Entry {
+            pool: p1,
+            open: AtomicBool::new(true),
+        },
+    ];
+    let (cnt_a, w_a) = counted_waker();
+    let (cnt_b, w_b) = counted_waker();
+    let mut cx_a = Context::from_waker(&w_a);
+    let mut cx_b = Context::from_waker(&w_b);
+    let mut waiter_a = SlotWaiter::new();
+    let mut waiter_b = SlotWaiter::new();
+
+    assert_eq!(
+        waiter_a.poll_many(
+            &entries,
+            0,
+            |e| &e.pool,
+            |e| e.open.load(AOrd::Relaxed),
+            false,
+            &mut cx_a,
+        ),
+        Poll::Pending
+    );
+    assert_eq!(
+        waiter_b.poll_one(&entries[0].pool, || true, &mut cx_b),
+        Poll::Pending
+    );
+
+    entries[0].open.store(false, AOrd::Relaxed);
+    assert_eq!(
+        waiter_a.poll_many(
+            &entries,
+            0,
+            |e| &e.pool,
+            |e| e.open.load(AOrd::Relaxed),
+            false,
+            &mut cx_a,
+        ),
+        Poll::Pending
+    );
+
+    entries[0].pool.give(0);
+    assert_eq!(
+        cnt_b.0.load(AOrd::Relaxed),
+        1,
+        "waiter_b must be woken when p0 frees slot"
+    );
+    assert_eq!(
+        cnt_a.0.load(AOrd::Relaxed),
+        0,
+        "closed waiter_a must not steal p0 wake"
+    );
+    assert_eq!(
+        waiter_b.poll_one(&entries[0].pool, || true, &mut cx_b),
+        Poll::Ready(Some(0))
+    );
+}
+
+#[test]
+fn poll_many_empty_first_offset_single_take_closed_mid_flip_and_forget_passes_on() {
+    let mut cx_noop = Context::from_waker(Waker::noop());
+    let mut w = SlotWaiter::new();
+    let empty: [Pool; 0] = [];
+    assert_eq!(
+        w.poll_many(&empty, 0, |p| p, |_| true, false, &mut cx_noop),
+        Poll::Ready(None)
+    );
+
+    let single = [Pool::new(1, 2)];
+    assert_eq!(
+        w.poll_many(&single, 0, |p| p, |_| false, true, &mut cx_noop),
+        Poll::Ready(Some((0, 0)))
+    );
+    single[0].give(0);
+
+    let pools = [Pool::new(1, 2), Pool::new(1, 2)];
+    assert_eq!(
+        w.poll_many(&pools, 1, |p| p, |_| true, false, &mut cx_noop),
+        Poll::Ready(Some((1, 0)))
+    );
+    let (cnt_other, w_other) = counted_waker();
+    let mut cx_other = Context::from_waker(&w_other);
+    let mut w2 = SlotWaiter::new();
+    let mut w3 = SlotWaiter::new();
+    assert_eq!(
+        pools[0].poll_take(waiter_id(), &mut cx_noop),
+        Poll::Ready(0)
+    );
+    assert_eq!(
+        w2.poll_many(&pools, 1, |p| p, |_| true, false, &mut cx_noop),
+        Poll::Pending
+    );
+    assert_eq!(
+        w3.poll_one(&pools[0], || true, &mut cx_other),
+        Poll::Pending
+    );
+    pools[0].give(0);
+    w2.forget_many(&pools, |p| p);
+    assert_eq!(cnt_other.0.load(Ordering::Relaxed), 1);
+
+    // Mid-loop is_open flip triggers retry for both take_closed=false and take_closed=true.
+    for take_closed in [false, true] {
+        let fp = [Pool::new(1, 2), Pool::new(1, 2)];
+        assert_eq!(fp[0].poll_take(waiter_id(), &mut cx_noop), Poll::Ready(0));
+        assert_eq!(fp[1].poll_take(waiter_id(), &mut cx_noop), Poll::Ready(0));
+        let calls = AtomicUsize::new(0);
+        let mut wf = SlotWaiter::new();
+        assert_eq!(
+            wf.poll_many(
+                &fp,
+                0,
+                |p| p,
+                |_| calls.fetch_add(1, Ordering::Relaxed) < 2,
+                take_closed,
+                &mut cx_noop,
+            ),
+            Poll::Ready(None)
+        );
+    }
+}

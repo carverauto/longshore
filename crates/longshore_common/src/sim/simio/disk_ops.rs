@@ -121,7 +121,15 @@ impl SimDisk {
                     ctx.counters.lost_silent += 1;
                     data.len() as i32
                 }
-                PlacedFault::ShortWrite => self.inject_short_write(ii, file_off, data, ctx),
+                PlacedFault::ShortWrite => {
+                    let s = self.sector_size as u64;
+                    if sector_cut_bounds(file_off, data.len(), s).is_some() {
+                        self.inject_short_write(ii, file_off, data, ctx)
+                    } else {
+                        self.commit_write(ii, file_off, data);
+                        data.len() as i32
+                    }
+                }
                 PlacedFault::TornReported => self.inject_torn_write(ii, file_off, data, true, ctx),
                 PlacedFault::TornSilent => self.inject_torn_write(ii, file_off, data, false, ctx),
                 PlacedFault::MisdirectedWrite => {

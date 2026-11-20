@@ -243,3 +243,48 @@ fn queue_try_send_racing_stop_try_recv_then_close() {
         }
     });
 }
+
+#[test]
+fn queue_concurrent_stops_emit_at_most_one_stop() {
+    model(2, || {
+        let (tx1, mut rx) = queue_parked::<u32>(2);
+        let tx2 = tx1.clone();
+        let _ = tx1.try_send(7);
+        let h1 = loom::thread::spawn(move || tx1.stop());
+        let h2 = loom::thread::spawn(move || tx2.stop());
+        let mut stops = 0;
+        let mut msgs = Vec::new();
+        loop {
+            match rx.recv_parked() {
+                Recv::Message(m) => msgs.push(m),
+                Recv::Stop => stops += 1,
+                Recv::Closed => break,
+            }
+        }
+        h1.join().unwrap();
+        h2.join().unwrap();
+        assert_eq!(stops, 1);
+        assert_eq!(msgs, vec![7]);
+    });
+}
+
+#[test]
+fn queue_recv_parked_races_wake_try_send_and_last_sender_drop() {
+    model(2, || {
+        let (tx, mut rx) = queue_parked::<u32>(2);
+        let h = loom::thread::spawn(move || {
+            tx.wake();
+            let _ = tx.try_send(9);
+            drop(tx);
+        });
+        let mut msgs = Vec::new();
+        loop {
+            match rx.recv_parked() {
+                Recv::Message(v) => msgs.push(v),
+                Recv::Stop | Recv::Closed => break,
+            }
+        }
+        h.join().unwrap();
+        assert_eq!(msgs, vec![9]);
+    });
+}
