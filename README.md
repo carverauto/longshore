@@ -70,7 +70,7 @@ runs between two machines. Every measurement is in
 
 ```toml
 [dependencies]
-longshore = "0.1"
+longshore = "0.2"
 ```
 
 The API documentation is on [docs.rs](https://docs.rs/longshore), and for
