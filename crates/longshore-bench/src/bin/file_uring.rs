@@ -6,6 +6,7 @@
 //! Real-kernel checks and direct-I/O chain latency benchmark for file operations.
 //!
 //!   file_uring [--dir PATH] [--posix] [--bench] [--iters N]
+//!   file_uring [--dir PATH] --throughput [--size-gib N] [--block-kib N] [--depth N] [--runs N]
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -23,6 +24,21 @@ mod bench;
 #[cfg(target_os = "linux")]
 #[path = "file_uring/checks.rs"]
 mod checks;
+
+#[cfg(target_os = "linux")]
+#[path = "file_uring/throughput.rs"]
+mod throughput;
+
+#[cfg(target_os = "linux")]
+fn number(args: &mut impl Iterator<Item = String>, flag: &str) -> u64 {
+    match args.next().map(|v| v.parse::<u64>()) {
+        Some(Ok(n)) if n > 0 => n,
+        _ => {
+            eprintln!("{flag} requires a count of at least 1");
+            std::process::exit(2);
+        }
+    }
+}
 
 #[cfg(target_os = "linux")]
 struct WorkDir(std::path::PathBuf);
@@ -55,6 +71,8 @@ fn main() {
     let mut do_bench = false;
     let mut iters = 400usize;
     let mut memlock_child = false;
+    let mut do_throughput = false;
+    let (mut size_gib, mut block_kib, mut depth, mut runs) = (16u64, 1024u64, 32u64, 3u64);
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -82,6 +100,11 @@ fn main() {
                 }
             }
             "--memlock-child" => memlock_child = true,
+            "--throughput" => do_throughput = true,
+            "--size-gib" => size_gib = number(&mut args, "--size-gib"),
+            "--block-kib" => block_kib = number(&mut args, "--block-kib"),
+            "--depth" => depth = number(&mut args, "--depth"),
+            "--runs" => runs = number(&mut args, "--runs"),
             other => {
                 eprintln!("unknown flag: {other}");
                 std::process::exit(2);
@@ -105,6 +128,19 @@ fn main() {
 
     if do_bench {
         bench::run_direct_sync_bench(&work.0, iters);
+        return;
+    }
+
+    if do_throughput {
+        throughput::run(
+            &work.0,
+            throughput::Shape {
+                size: size_gib << 30,
+                block: (block_kib << 10) as u32,
+                depth: depth as u32,
+                runs: runs as u32,
+            },
+        );
         return;
     }
 
