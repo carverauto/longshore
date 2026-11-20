@@ -44,16 +44,15 @@ API will change between releases.
 
 These figures are for the Linux `io_uring` backend (not the portable POSIX
 backend). One client thread against Amazon S3, 8 MiB objects, from instances in
-the same region as the bucket. Medians of five runs, and of eight for HTTPS PUT.
-GB means 10^9 bytes.
+the same region as the bucket. Medians of five runs. GB means 10^9 bytes.
 
 | Request | Graviton4, 300 Gbit/s card | AMD Zen 5, 200 Gbit/s card |
 |---|---|---|
-| PUT, plain HTTP | 36.7 GB/s | 22.4 GB/s |
-| PUT with a CRC-64 checksum on every body | 16.4 GB/s | 13.3 GB/s |
-| GET | 4.4 GB/s | 7.9 GB/s |
-| HTTPS PUT, 3 MiB send batch | 5.2 GB/s | 7.3 GB/s |
-| HTTPS GET | 2.7 GB/s | 5.1 GB/s |
+| PUT, plain HTTP | 36.4 GB/s | 23.9 GB/s |
+| PUT with a CRC-64 checksum on every body | 16.7 GB/s | 14.1 GB/s |
+| GET | 4.6 GB/s | 7.9 GB/s |
+| HTTPS PUT | 5.1 GB/s | 7.6 GB/s |
+| HTTPS GET | 2.8 GB/s | 5.2 GB/s |
 
 Plain PUT fills the 300 Gbit/s card with half of the client's thread idle.
 Every row below it is bound by the one core the client runs on, and grows
