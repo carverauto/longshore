@@ -5,7 +5,7 @@
 
 //! Real-kernel checks and direct-I/O chain latency benchmark for file operations.
 //!
-//!   file_uring [--dir PATH] [--posix] [--bench] [--iters N]
+//!   file_uring [--dir PATH] [--posix] [--bench] [--chain-first | --interleave] [--iters N]
 //!   file_uring [--dir PATH] --throughput [--size-gib N] [--block-kib N] [--depth N] [--runs N]
 
 #[cfg(not(target_os = "linux"))]
@@ -69,6 +69,8 @@ fn main() {
     let mut dir_arg: Option<std::path::PathBuf> = None;
     let mut posix = false;
     let mut do_bench = false;
+    let mut chain_first = false;
+    let mut interleave = false;
     let mut iters = 400usize;
     let mut memlock_child = false;
     let mut do_throughput = false;
@@ -85,6 +87,8 @@ fn main() {
             }
             "--posix" => posix = true,
             "--bench" => do_bench = true,
+            "--chain-first" => chain_first = true,
+            "--interleave" => interleave = true,
             "--iters" => {
                 let Some(val) = args.next() else {
                     eprintln!("--iters requires a count");
@@ -127,7 +131,12 @@ fn main() {
     };
 
     if do_bench {
-        bench::run_direct_sync_bench(&work.0, iters);
+        let order = if interleave {
+            bench::Order::Interleaved
+        } else {
+            bench::Order::Blocks { chain_first }
+        };
+        bench::run_direct_sync_bench(&work.0, iters, order);
         return;
     }
 
