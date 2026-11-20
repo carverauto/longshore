@@ -70,39 +70,73 @@ fn t2_f09_2_linux_rlimit_memlock_descriptive_error() {
             rlim_max: u64,
         }
         extern "C" {
+            fn getrlimit(resource: i32, rlim: *mut RLimit) -> i32;
             fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
             fn geteuid() -> u32;
+            fn setuid(uid: u32) -> i32;
+            fn setgid(gid: u32) -> i32;
         }
         const RLIMIT_MEMLOCK: i32 = 8;
         if unsafe { geteuid() } == 0 {
-            // Privileged root with CAP_IPC_LOCK bypasses RLIMIT_MEMLOCK; report marker cleanly.
-            println!("SKIP_ROOT_CAP_IPC_LOCK");
-            return;
+            assert_eq!(unsafe { setgid(65534) }, 0, "setgid nobody");
+            assert_eq!(unsafe { setuid(65534) }, 0, "setuid nobody");
         }
-        let lim = RLimit {
-            rlim_cur: 4096,
-            rlim_max: 4096,
+        let mut orig = RLimit {
+            rlim_cur: 0,
+            rlim_max: 0,
         };
-        assert_eq!(unsafe { setrlimit(RLIMIT_MEMLOCK, &lim) }, 0);
+        assert_eq!(unsafe { getrlimit(RLIMIT_MEMLOCK, &mut orig) }, 0);
+        let tiny = Limits {
+            sockets_max: 2,
+            ops_max: 4,
+            ..Limits::BASE
+        };
+        let mut chosen = None;
+        for shift in 17..=28 {
+            let cap = 1u64 << shift;
+            if cap > orig.rlim_max {
+                break;
+            }
+            let lim = RLimit {
+                rlim_cur: cap,
+                rlim_max: orig.rlim_max,
+            };
+            if unsafe { setrlimit(RLIMIT_MEMLOCK, &lim) } != 0 {
+                continue;
+            }
+            if let Ok(io) = UringIo::new(tiny) {
+                drop(io);
+                chosen = Some(cap);
+                break;
+            }
+        }
+        let cap = chosen.expect("found RLIMIT_MEMLOCK high enough for ring setup");
+        let pool_target = (cap as u32).saturating_add(1 << 20);
         let limits = Limits {
             sockets_max: 2,
-            buffers: 32,
-            buffer_size: 4096,
+            buffers: 1,
+            buffer_size: pool_target,
             ops_max: 4,
             ..Limits::BASE
         };
         let err = match UringIo::new(limits) {
-            Ok(_) => panic!("expected RLIMIT_MEMLOCK failure"),
+            Ok(_) => panic!("expected RLIMIT_MEMLOCK failure for cap={cap}"),
             Err(e) => e,
         };
+        assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);
         let msg = err.to_string();
         assert!(
             msg.contains("RLIMIT_MEMLOCK"),
             "missing RLIMIT_MEMLOCK: {msg}"
         );
         assert!(
-            msg.contains("4096") || msg.contains("131072") || msg.contains("128 KiB"),
-            "error must name pool size or limit: {msg}"
+            msg.contains(&format!("{cap} bytes")),
+            "error must name RLIMIT_MEMLOCK ({cap} bytes): {msg}"
+        );
+        assert!(
+            msg.contains(&limits.pool_bytes().to_string()),
+            "error must name pool_bytes ({}): {msg}",
+            limits.pool_bytes()
         );
         return;
     }

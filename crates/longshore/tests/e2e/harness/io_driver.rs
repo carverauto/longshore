@@ -221,8 +221,22 @@ pub struct TempDir {
 impl TempDir {
     /// Creates a unique directory under `std::env::temp_dir()`.
     pub fn new(prefix: &str) -> io::Result<Self> {
+        Self::new_in(&std::env::temp_dir(), prefix)
+    }
+
+    /// Creates a unique directory under `LONGSHORE_TEST_DIR` (falling back to `std::env::temp_dir()`).
+    #[allow(dead_code)]
+    pub fn new_in_test_dir(prefix: &str) -> io::Result<Self> {
+        let base = std::env::var_os("LONGSHORE_TEST_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        Self::new_in(&base, prefix)
+    }
+
+    /// Creates a unique directory under `base`.
+    pub fn new_in(base: &Path, prefix: &str) -> io::Result<Self> {
         let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), seq));
+        let dir = base.join(format!("{prefix}_{}_{}", std::process::id(), seq));
         std::fs::create_dir_all(&dir)?;
         Ok(Self { path: dir })
     }
@@ -256,17 +270,87 @@ impl Drop for TempDir {
     }
 }
 
-/// Reserves and returns an unused IPv4 loopback socket address.
-pub fn unused_loopback_addr() -> io::Result<SocketAddr> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    listener.local_addr()
+fn unused_tcp_addr(bind: &str) -> io::Result<SocketAddr> {
+    use std::net::TcpStream;
+    use std::time::Duration;
+    for _ in 0..64 {
+        let addr = {
+            let listener = TcpListener::bind(bind)?;
+            listener.local_addr()?
+        };
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(50)) {
+            Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => return Ok(addr),
+            Ok(_) | Err(_) => continue,
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AddrInUse,
+        "could not obtain a cleanly closed loopback port",
+    ))
 }
 
-/// Reserves and returns an unused IPv6 loopback socket address.
+/// Reserves and returns an unused IPv4 loopback socket address, verifying no
+/// child process inherited the listening descriptor before returning.
+pub fn unused_loopback_addr() -> io::Result<SocketAddr> {
+    unused_tcp_addr("127.0.0.1:0")
+}
+
+/// Reserves and returns an unused IPv6 loopback socket address, verifying no
+/// child process inherited the listening descriptor before returning.
 #[allow(dead_code)]
 pub fn unused_loopback_v6_addr() -> io::Result<SocketAddr> {
-    let listener = TcpListener::bind("[::1]:0")?;
-    listener.local_addr()
+    unused_tcp_addr("[::1]:0")
+}
+
+/// Returns the workspace root, honoring `LONGSHORE_REPO_ROOT` when running a
+/// cross-compiled test binary on a remote host.
+pub fn workspace_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("LONGSHORE_REPO_ROOT") {
+        return PathBuf::from(root);
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+/// Returns the `file_uring` binary path, honoring `LONGSHORE_FILE_URING_BIN`
+/// or building it with `cargo` when running locally.
+#[cfg(target_os = "linux")]
+pub fn file_uring_bin() -> PathBuf {
+    if let Some(bin) = std::env::var_os("LONGSHORE_FILE_URING_BIN") {
+        let path = PathBuf::from(bin);
+        assert!(
+            path.is_file(),
+            "LONGSHORE_FILE_URING_BIN does not point to a file: {}",
+            path.display()
+        );
+        return path;
+    }
+    let root = workspace_root();
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let build = std::process::Command::new(&cargo)
+        .current_dir(&root)
+        .args([
+            "build",
+            "--quiet",
+            "-p",
+            "longshore-bench",
+            "--bin",
+            "file_uring",
+        ])
+        .output()
+        .expect("build file_uring");
+    assert!(
+        build.status.success(),
+        "building file_uring failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| root.join("target"));
+    target_dir.join("debug/file_uring")
 }
 
 /// Constructs a portable `Engine<Posix>` backend configured with `limits`.

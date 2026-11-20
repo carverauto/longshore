@@ -6,44 +6,28 @@
 //! Tier 1 E2E tests for Feature 13: `file_uring` real-kernel check & direct-IO bench wiring.
 
 use super::helpers::repo_root;
+#[cfg(target_os = "linux")]
+use crate::e2e::harness::{file_uring_bin, TempDir};
 
 #[cfg(target_os = "linux")]
 fn run_file_uring(args: &[&str]) -> std::process::Output {
-    let root = repo_root();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = std::process::Command::new(&cargo)
-        .current_dir(&root)
-        .args([
-            "build",
-            "--quiet",
-            "-p",
-            "longshore-bench",
-            "--bin",
-            "file_uring",
-        ])
-        .output()
-        .expect("build file_uring");
-    assert!(
-        build.status.success(),
-        "building file_uring failed: {}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| root.join("target"));
-    let bin = target_dir.join("debug/file_uring");
-    std::process::Command::new(bin)
+    std::process::Command::new(file_uring_bin())
         .args(args)
         .output()
         .expect("execute file_uring")
+}
+
+#[cfg(target_os = "linux")]
+fn run_file_uring_in_temp(prefix: &str) -> std::process::Output {
+    let dir = TempDir::new_in_test_dir(prefix).expect("temp dir");
+    run_file_uring(&["--dir", &dir.path().to_string_lossy()])
 }
 
 /// `T1-F13-1`: (`Linux`) `file_uring` executes real-kernel `O_DIRECT` file ops & chains and exits 0.
 #[cfg(target_os = "linux")]
 #[test]
 fn t1_f13_1_file_uring_binary_executes_o_direct() {
-    let dir = super::super::harness::TempDir::new("e2e_f13_direct").expect("temp dir");
-    let out = run_file_uring(&["--dir", &dir.path().to_string_lossy()]);
+    let out = run_file_uring_in_temp("e2e_f13_direct");
     assert!(
         out.status.success(),
         "file_uring failed:\nstdout={}\nstderr={}",
@@ -56,7 +40,7 @@ fn t1_f13_1_file_uring_binary_executes_o_direct() {
 #[cfg(target_os = "linux")]
 #[test]
 fn t1_f13_2_file_uring_alloc_guard_sealed() {
-    let out = run_file_uring(&[]);
+    let out = run_file_uring_in_temp("e2e_f13_sealed");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !stderr.contains("alloc_guard:"),
@@ -69,7 +53,7 @@ fn t1_f13_2_file_uring_alloc_guard_sealed() {
 #[cfg(target_os = "linux")]
 #[test]
 fn t1_f13_3_file_uring_over_16384_buffers() {
-    let out = run_file_uring(&[]);
+    let out = run_file_uring_in_temp("e2e_f13_16k");
     assert!(out.status.success(), "file_uring failed: {:?}", out.status);
     let combined = format!(
         "{}{}",
@@ -88,7 +72,7 @@ fn t1_f13_3_file_uring_over_16384_buffers() {
 #[cfg(target_os = "linux")]
 #[test]
 fn t1_f13_4_file_uring_submit_all_partial_refusal() {
-    let out = run_file_uring(&[]);
+    let out = run_file_uring_in_temp("e2e_f13_submit_all");
     assert!(out.status.success(), "file_uring failed: {:?}", out.status);
 }
 

@@ -6,35 +6,16 @@
 //! Tier 2 E2E tests for Feature 13: `file_uring` limits, diagnostics, and failure checks.
 
 use super::helpers::repo_root;
-
 #[cfg(target_os = "linux")]
-fn file_uring_bin() -> std::path::PathBuf {
-    let root = repo_root();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = std::process::Command::new(&cargo)
-        .current_dir(&root)
-        .args([
-            "build",
-            "--quiet",
-            "-p",
-            "longshore-bench",
-            "--bin",
-            "file_uring",
-        ])
-        .output()
-        .expect("build file_uring");
-    assert!(build.status.success());
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| root.join("target"));
-    target_dir.join("debug/file_uring")
-}
+use crate::e2e::harness::{file_uring_bin, TempDir};
 
 /// `T2-F13-1`: (`Linux`) `file_uring` verifies lowered `RLIMIT_MEMLOCK` failure in child process.
 #[cfg(target_os = "linux")]
 #[test]
 fn t2_f13_1_file_uring_lowered_memlock_child() {
+    let dir = TempDir::new_in_test_dir("e2e_f13_t2_memlock").expect("temp dir");
     let out = std::process::Command::new(file_uring_bin())
+        .args(["--dir", &dir.path().to_string_lossy()])
         .output()
         .expect("run file_uring");
     assert!(
@@ -48,7 +29,9 @@ fn t2_f13_1_file_uring_lowered_memlock_child() {
 #[cfg(target_os = "linux")]
 #[test]
 fn t2_f13_2_file_uring_rlimit_nofile_boundary() {
+    let dir = TempDir::new_in_test_dir("e2e_f13_t2_nofile").expect("temp dir");
     let out = std::process::Command::new(file_uring_bin())
+        .args(["--dir", &dir.path().to_string_lossy()])
         .output()
         .expect("run file_uring");
     assert!(out.status.success());
@@ -58,7 +41,9 @@ fn t2_f13_2_file_uring_rlimit_nofile_boundary() {
 #[cfg(target_os = "linux")]
 #[test]
 fn t2_f13_3_file_uring_misaligned_o_direct_einval() {
+    let dir = TempDir::new_in_test_dir("e2e_f13_t2_einval").expect("temp dir");
     let out = std::process::Command::new(file_uring_bin())
+        .args(["--dir", &dir.path().to_string_lossy()])
         .output()
         .expect("run file_uring");
     assert!(out.status.success());

@@ -130,7 +130,10 @@ fn t2_f20_2_armed_recv_cancelled_delivers_single_final_completion() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
+    drive_until(&mut io, &mut out, 50, |v| {
+        v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
+    })
+    .unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
@@ -249,7 +252,11 @@ fn t2_f20_4_uring_empty_armed_recv_completions_never_leak_ring_buffers() {
             },
         )
         .unwrap();
-        drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
+        drive_until(&mut io, &mut out, 50, |v| {
+            v.iter().any(|c| c.token == Token(1 + round * 10))
+                && v.iter().any(|c| c.token == Token(2 + round * 10))
+        })
+        .unwrap();
         io.submit(Token(3 + round * 10), Op::ArmedRecv { sock: Sock(2) })
             .unwrap();
         io.submit(Token(4 + round * 10), Op::Close { sock: Sock(1) })
@@ -257,6 +264,7 @@ fn t2_f20_4_uring_empty_armed_recv_completions_never_leak_ring_buffers() {
         let cs = drive_until(&mut io, &mut out, 50, |v| {
             v.iter()
                 .any(|c| c.token == Token(3 + round * 10) && !c.more)
+                && v.iter().any(|c| c.token == Token(4 + round * 10))
         })
         .unwrap();
         let eof = cs
@@ -267,7 +275,10 @@ fn t2_f20_4_uring_empty_armed_recv_completions_never_leak_ring_buffers() {
         assert!(eof.buf.is_none());
         io.submit(Token(5 + round * 10), Op::Close { sock: Sock(2) })
             .unwrap();
-        drive_until(&mut io, &mut out, 50, |v| v.len() == 1).unwrap();
+        drive_until(&mut io, &mut out, 50, |v| {
+            v.iter().any(|c| c.token == Token(5 + round * 10))
+        })
+        .unwrap();
     }
 }
 

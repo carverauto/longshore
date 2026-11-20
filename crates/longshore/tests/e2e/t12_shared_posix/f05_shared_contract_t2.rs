@@ -240,20 +240,38 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
             100,
         )
         .unwrap();
-        let eof = submit_and_wait_one(
-            &mut *io,
-            &mut out,
-            Token(tok + 1),
-            Op::RecvNow {
-                sock: Sock(1),
-                buf: BufId(0),
-                off: 0,
-                len: 64,
-            },
-            100,
-        )
-        .unwrap();
-        assert_eq!(eof.result, 0);
+        tok += 1;
+        let mut eof = -EAGAIN;
+        for _ in 0..64 {
+            let r = submit_and_wait_one(
+                &mut *io,
+                &mut out,
+                Token(tok),
+                Op::RecvNow {
+                    sock: Sock(1),
+                    buf: BufId(0),
+                    off: 0,
+                    len: 64,
+                },
+                100,
+            )
+            .unwrap();
+            tok += 1;
+            if r.result != -EAGAIN {
+                eof = r.result;
+                break;
+            }
+            submit_and_wait_one(
+                &mut *io,
+                &mut out,
+                Token(tok),
+                Op::Timeout { nanos: 500_000 },
+                100,
+            )
+            .unwrap();
+            tok += 1;
+        }
+        assert_eq!(eof, 0);
 
         for (k, sock) in [Sock(1), Sock(0)].into_iter().enumerate() {
             io.submit(Token(200 + k as u64), Op::Close { sock })

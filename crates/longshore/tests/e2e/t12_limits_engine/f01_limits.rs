@@ -16,11 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root")
-        .to_path_buf()
+    crate::e2e::harness::workspace_root()
 }
 
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {

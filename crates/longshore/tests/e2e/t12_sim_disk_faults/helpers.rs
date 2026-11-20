@@ -175,10 +175,5 @@ pub fn sync_root_dir(sim: &mut SimIo, out: &mut Completions, tok: u64, slot: Fil
 }
 
 pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crates/")
-        .parent()
-        .expect("repo root")
-        .to_path_buf()
+    crate::e2e::harness::workspace_root()
 }

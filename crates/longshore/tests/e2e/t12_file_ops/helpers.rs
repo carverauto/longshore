@@ -200,10 +200,5 @@ pub fn stat_size(
 }
 
 pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crates/")
-        .parent()
-        .expect("repo root")
-        .to_path_buf()
+    crate::e2e::harness::workspace_root()
 }

@@ -175,7 +175,7 @@ fn t4_04_plain_stream_echo_without_tls() {
 
 #[test]
 fn t4_04_cargo_tree_no_default_features_excludes_tls_and_aws_lc() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let manifest_dir = crate::e2e::harness::workspace_root().join("crates/longshore");
     let output = Command::new("cargo")
         .args(["tree", "--no-default-features", "-e", "normal"])
         .current_dir(manifest_dir)

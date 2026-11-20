@@ -19,7 +19,6 @@ use longshore::io::uring::UringIo;
 use longshore::io::{BufId, Completions, Io, Op, Sock, Token};
 #[cfg(feature = "sim")]
 use longshore::sim::{Faults, SimIo};
-use std::path::Path;
 
 #[cfg(target_os = "linux")]
 const EPERM: i32 = 1;
@@ -241,12 +240,15 @@ fn t2_f23_4_uring_peer_eof_on_armed_close() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
+    drive_until(&mut io, &mut out, 50, |v| {
+        v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
+    })
+    .unwrap();
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
     io.submit(Token(4), Op::Close { sock: Sock(2) }).unwrap();
     drive_until(&mut io, &mut out, 50, |v| {
-        v.iter().any(|c| c.token == Token(3) && !c.more)
+        v.iter().any(|c| c.token == Token(3) && !c.more) && v.iter().any(|c| c.token == Token(4))
     })
     .unwrap();
     io.submit(
@@ -263,15 +265,13 @@ fn t2_f23_4_uring_peer_eof_on_armed_close() {
         v.iter().any(|c| c.token == Token(5))
     })
     .unwrap();
-    assert_eq!(cs[0].result, 0);
+    let eof = cs.iter().find(|c| c.token == Token(5)).unwrap();
+    assert_eq!(eof.result, 0);
 }
 
 #[test]
 fn t2_f23_5_ci_and_test_linux_script_reference_server_kernel_check() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root");
+    let root = crate::e2e::harness::workspace_root();
     let script =
         std::fs::read_to_string(root.join("scripts/test-linux.sh")).expect("test-linux.sh");
     let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("ci.yml");

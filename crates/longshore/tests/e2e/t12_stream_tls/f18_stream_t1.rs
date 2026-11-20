@@ -21,7 +21,6 @@ use longshore::stream::{IdleCheck, Step};
 use longshore::tls::handshake::Handshake;
 #[cfg(feature = "sim")]
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
 use std::process::Command;
 
 #[cfg(feature = "sim")]
@@ -345,10 +344,7 @@ fn t1_f18_4_stream_idle_check_clean_dirty_and_closed() {
 
 #[test]
 fn t1_f18_5_longshore_stream_has_zero_http_dependency() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root");
+    let root = crate::e2e::harness::workspace_root();
     let out = Command::new("cargo")
         .args(["tree", "-p", "longshore_stream", "-e", "normal"])
         .current_dir(root)

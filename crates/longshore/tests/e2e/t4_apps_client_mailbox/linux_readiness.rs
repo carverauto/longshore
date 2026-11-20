@@ -47,13 +47,13 @@ fn t4_14_builder_defaults_and_linux_no_silent_fallback_contract() {
         assert_eq!(&back.as_slice()[..9], b"uring-s3!");
     }
 
-    // Requesting portable = false with impossible memory/lock budget on Linux
-    // fails with BuildError::Io (never silent fallback to Posix).
+    // Requesting portable = false with a buffer exceeding UringIo's 1 GiB
+    // registered-range limit fails with BuildError::Io (never silent fallback to Posix).
     #[cfg(target_os = "linux")]
     {
         let mut huge = b;
-        huge.buffers = 1_000_000;
-        huge.buffer_size = 64 * 1024;
+        huge.buffers = 1;
+        huge.buffer_size = (1 << 30) + 4096;
         match huge.build() {
             Err(BuildError::Io(_)) | Err(BuildError::Setting(_)) => {}
             Ok(_) => panic!("excessive UringIo client pool must fail rather than fall back"),

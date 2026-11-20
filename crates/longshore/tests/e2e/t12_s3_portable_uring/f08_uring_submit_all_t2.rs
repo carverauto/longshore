@@ -139,11 +139,7 @@ fn t2_f08_3_uring_failing_op_followed_by_valid_chain() {
 
 #[test]
 fn t2_f08_4_file_uring_binary_and_scripts_include_submit_all_check() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root")
-        .to_path_buf();
+    let root = crate::e2e::harness::workspace_root();
     let script = std::fs::read_to_string(root.join("scripts/test-linux.sh")).expect("script");
     assert!(
         script.contains("file_uring"),
@@ -161,23 +157,33 @@ fn t2_f08_4_file_uring_binary_and_scripts_include_submit_all_check() {
 
     #[cfg(target_os = "linux")]
     {
-        if let Ok(exe) = std::env::current_exe() {
-            let candidates: [Option<PathBuf>; 2] = [
-                exe.parent().map(|d| d.join("file_uring")),
-                exe.parent()
-                    .and_then(|d| d.parent())
-                    .map(|d| d.join("file_uring")),
-            ];
-            if let Some(bin) = candidates.into_iter().flatten().find(|p| p.is_file()) {
-                let out = std::process::Command::new(bin)
-                    .output()
-                    .expect("run file_uring");
-                assert!(
-                    out.status.success(),
-                    "file_uring failed:\n{}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
+        let bin = std::env::var_os("LONGSHORE_FILE_URING_BIN")
+            .map(PathBuf::from)
+            .filter(|p| p.is_file())
+            .or_else(|| {
+                std::env::current_exe().ok().and_then(|exe| {
+                    [
+                        exe.parent().map(|d| d.join("file_uring")),
+                        exe.parent()
+                            .and_then(|d| d.parent())
+                            .map(|d| d.join("file_uring")),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .find(|p| p.is_file())
+                })
+            });
+        if let Some(bin) = bin {
+            let dir = TempDir::new_in_test_dir("f08_submit_all").expect("temp dir");
+            let out = std::process::Command::new(bin)
+                .args(["--dir", &dir.path().to_string_lossy()])
+                .output()
+                .expect("run file_uring");
+            assert!(
+                out.status.success(),
+                "file_uring failed:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
     }
 }

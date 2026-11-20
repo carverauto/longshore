@@ -25,6 +25,7 @@ fn spawn_posix_receiver(
     tx_done: Arc<AtomicUsize>,
     detached_tags: Arc<std::sync::Mutex<Vec<u32>>>,
     close_after_n: Option<usize>,
+    answer_gate: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
 ) -> (Sender<Job, u32>, thread::JoinHandle<()>) {
     let lim = Limits {
         sockets_max: 2,
@@ -62,6 +63,15 @@ fn spawn_posix_receiver(
                             TryRecv::Message(job) => {
                                 handled += 1;
                                 tx_done.fetch_add(1, Ordering::Relaxed);
+                                if handled == 1 {
+                                    if let Some(gate) = &answer_gate {
+                                        let (lock, cv) = &**gate;
+                                        let mut ready = lock.lock().unwrap();
+                                        while !*ready {
+                                            ready = cv.wait(ready).unwrap();
+                                        }
+                                    }
+                                }
                                 if let Some(tag) = io_rx.answer(job.slot, job.val * 2) {
                                     detached_tags.lock().unwrap().push(tag);
                                 }
@@ -104,8 +114,20 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     // caller cancellation returning u32 tag, and graceful Sender::stop().
     let handled_a = Arc::new(AtomicUsize::new(0));
     let tags_a = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let (tx0, h0) = spawn_posix_receiver(Arc::clone(&handled_a), Arc::clone(&tags_a), None);
-    let (tx1, h1) = spawn_posix_receiver(Arc::clone(&handled_a), Arc::clone(&tags_a), None);
+    let gate0 = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let gate1 = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let (tx0, h0) = spawn_posix_receiver(
+        Arc::clone(&handled_a),
+        Arc::clone(&tags_a),
+        None,
+        Some(Arc::clone(&gate0)),
+    );
+    let (tx1, h1) = spawn_posix_receiver(
+        Arc::clone(&handled_a),
+        Arc::clone(&tags_a),
+        None,
+        Some(Arc::clone(&gate1)),
+    );
 
     // Test detach returning caller-attached u32 tag (0xBEEF) to receiver after freeing slot.
     let waker = Waker::noop();
@@ -125,13 +147,21 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     )
     .unwrap();
     assert_eq!(tx0.detach(slot0), None);
+    {
+        let (lock, cv) = &*gate0;
+        *lock.lock().unwrap() = true;
+        cv.notify_one();
+    }
 
     // Multi-pool wait across [&tx0, &tx1] via SlotWaiter::poll_many.
-    let mut held = Vec::new();
-    for wid in 100..104u64 {
-        if let Poll::Ready(s) = tx0.pool().poll_take(wid, &mut cx) {
-            held.push(s);
-        }
+    let mut held = Vec::with_capacity(4);
+    let mut w_hold = SlotWaiter::new();
+    while held.len() < 4 {
+        let slot = block_on(core::future::poll_fn(|cx| {
+            w_hold.poll_one(tx0.pool(), || !tx0.is_closed(), cx)
+        }))
+        .expect("tx0 pool should yield all 4 slots");
+        held.push(slot);
     }
     let mut w_many = SlotWaiter::new();
     let Poll::Ready(Some((which, slot1))) = w_many.poll_many(
@@ -155,6 +185,11 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     )
     .unwrap();
     assert_eq!(tx1.detach(slot1), None);
+    {
+        let (lock, cv) = &*gate1;
+        *lock.lock().unwrap() = true;
+        cv.notify_one();
+    }
     for s in held {
         tx0.pool().give(s);
     }
@@ -197,7 +232,7 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     // Phase B: Receiver close() racing active senders — every message either answered or Closed.
     let handled_b = Arc::new(AtomicUsize::new(0));
     let tags_b = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let (tx_race, h_race) = spawn_posix_receiver(Arc::clone(&handled_b), tags_b, Some(5));
+    let (tx_race, h_race) = spawn_posix_receiver(Arc::clone(&handled_b), tags_b, Some(5), None);
     let stop_flag = Arc::new(AtomicBool::new(false));
     let mut racers = Vec::new();
     let answered_cnt = Arc::new(AtomicUsize::new(0));

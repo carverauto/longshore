@@ -19,15 +19,11 @@ use longshore::io::{Op, Token};
 #[cfg(feature = "sim")]
 use longshore::sim::{Faults, SimIo};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 pub(super) fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root")
-        .to_path_buf()
+    crate::e2e::harness::workspace_root()
 }
 
 pub(super) fn for_each_backend(

@@ -13,7 +13,6 @@ use longshore::io::uring::Fault;
 use longshore::mailbox::block_on;
 use longshore::store::creds::Credentials;
 use longshore::store::report::{End, Expect, Put, Report};
-use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
@@ -159,10 +158,7 @@ fn t1_f27_4_threaded_client_store_fetch_runs_under_alloc_guard() {
 
 #[test]
 fn t1_f27_5_unedited_s3_client_model_tests_pass() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root");
+    let root = crate::e2e::harness::workspace_root();
     let model_src = std::fs::read_to_string(root.join("crates/longshore_s3/tests/client/model.rs"))
         .expect("model.rs");
     assert_eq!(

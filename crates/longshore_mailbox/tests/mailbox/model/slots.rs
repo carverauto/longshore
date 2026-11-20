@@ -191,3 +191,66 @@ fn slots_close_answers_first_then_unanswered_without_overwriting() {
         assert_eq!(tx1.poll_answer(3, &mut cx), Poll::Pending);
     });
 }
+
+#[test]
+fn slots_poll_many_races_give_and_stop() {
+    model(2, || {
+        let cfg = Config {
+            capacity: 1,
+            slots: 1,
+            waiters_prealloc: 2,
+            wake_token: Token(1),
+        };
+        let (tx0, mut rx0) = mailbox_parked::<u32, u32>(cfg);
+        let (tx1, mut rx1) = mailbox_parked::<u32, u32>(cfg);
+
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut w_init = SlotWaiter::new();
+        let Poll::Ready(Some(s0)) = w_init.poll_one(tx0.pool(), || !tx0.is_closed(), &mut cx)
+        else {
+            panic!("tx0 slot");
+        };
+        let Poll::Ready(Some(s1)) = w_init.poll_one(tx1.pool(), || !tx1.is_closed(), &mut cx)
+        else {
+            panic!("tx1 slot");
+        };
+
+        let tx0_give = tx0.clone();
+        let h_give = loom::thread::spawn(move || {
+            tx0_give.pool().give(s0);
+        });
+
+        let tx0_stop = tx0.clone();
+        let tx1_stop = tx1.clone();
+        let h_stop = loom::thread::spawn(move || {
+            tx0_stop.stop();
+            tx1_stop.stop();
+        });
+
+        let mut w_many = SlotWaiter::new();
+        let res = block_on(core::future::poll_fn(|cx| {
+            w_many.poll_many(
+                &[&tx0, &tx1],
+                0,
+                |s| s.pool(),
+                |s| !s.is_closed(),
+                false,
+                cx,
+            )
+        }));
+
+        h_give.join().unwrap();
+        h_stop.join().unwrap();
+        assert!(tx0.is_closed());
+        assert!(tx1.is_closed());
+
+        if let Some((idx, slot)) = res {
+            assert_eq!(idx, 0);
+            assert_eq!(slot, s0);
+            tx0.pool().give(slot);
+        }
+        tx1.pool().give(s1);
+        rx0.close(|_| {}, || 0, |_| {});
+        rx1.close(|_| {}, || 0, |_| {});
+    });
+}
