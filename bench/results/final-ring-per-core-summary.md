@@ -119,3 +119,25 @@ Confirmed on `feat/ring-per-core` in `/Volumes/Build/scratch/verify-local-m6p3.l
 - **Clippy Matrix (`-D warnings`)**: All workspace feature-matrix clippy invocations passed with zero errors.
 - **Full Local Test Matrix**: All workspace unit, property, simulation, sealed zero-allocation, doc-test, and `e2e` suites passed with `0 failed` across all matrix configurations (`e2e` passes: `299`, `292`, `301`, `292`, `299`, plus `longshore_common`, `longshore_crc`, `longshore_dns`, `longshore_http_client`, `longshore_mailbox`, `longshore_s3`, `longshore_stream`, `longshore_tls`, and `sim_traces`).
 - **Loom Model Checking (`./scripts/test-model.sh`)**: `27/27` passed (`mailbox_model`: `17 passed` in `0.35s`; `client_model`: `10 passed` in `3.50s`, `415`–`20,183` orders).
+
+## 8. Post-Audit Real-S3 AWS (`c8gn.8xlarge`) & `donbot` TLS `perf` Flamegraphs
+
+### 8.1 Real Amazon S3 on `c8gn.8xlarge` (`us-east-1`, Linux `7.0.0-1017-aws`)
+
+Measured with `s3_uring` (`--size 8388608 --secs 8 --cpu 2`, 3 runs per cell, raw output in [`final-s3-aws-c8gn8xl.jsonl`](final-s3-aws-c8gn8xl.jsonl)) against `s3-next-bench-90658f11`. All correctness suites passed with `allocation_sealed=true` (`selftest` HTTP & HTTPS, `multipart`, `objects`, `badcrc` checksum enforcement) and zero retries across all 18 throughput runs:
+
+| Workload | `m14` Baseline (`c8gn.8xlarge`) | Final (`feat/ring-per-core`, median, min to max) | Delta |
+|---|---:|---|---|
+| HTTP PUT (192 conns) | `12.28 GB/s` | `12.14 GB/s` (`12.07 to 12.24`, 98 Gbit/s NIC cap) | At 100G NIC cap |
+| HTTP PUT + CRC-64/NVME (192 conns) | `12.24 GB/s` | `11.83 GB/s` (`10.25 to 12.25`) | At 100G NIC cap |
+| HTTP GET (64 conns) | `4.01 GB/s` | `3.96 GB/s` (`3.81 to 4.13`) | `-1.2%` |
+| HTTPS PUT (64 conns) | `2.89 GB/s` | `3.94 GB/s` (`3.80 to 3.97`) | `+36.3%` |
+| HTTPS PUT + CRC-64/NVME (64 conns) | `2.52 GB/s` | `3.67 GB/s` (`3.65 to 3.78`) | `+45.6%` |
+| HTTPS GET (64 conns) | `2.52 GB/s` | `2.53 GB/s` (`2.41 to 2.62`) | `+0.4%` |
+
+### 8.2 `donbot` TLS `perf` Profiles & Flamegraphs (`aarch64` Cortex-X925, CPU 19)
+
+Profiled with `perf record -F 999 -g --call-graph fp` (`-C force-frame-pointers=yes`, `http_uring sink` pinned to CPU 18, client pinned to CPU 19, 8 s each):
+
+- **TLS PUT** ([`final-tls-put-donbot-flamegraph.svg`](final-tls-put-donbot-flamegraph.svg), `5,082` X925 samples, `4.56 GB/CPU-s`): `56.87%` in `aws_lc_0_47_0_aes_gcm_enc_kernel`, remainder in Linux kernel TCP/skb/netfilter; `longshore` userspace `< 1%`.
+- **TLS GET** ([`final-tls-get-donbot-flamegraph.svg`](final-tls-get-donbot-flamegraph.svg), `6,741` X925 samples, `3.93 GB/CPU-s`): `49.62%` in `aws_lc_0_47_0_aes_gcm_dec_kernel`, `11.26%` in `__arch_copy_to_user`, remainder in Linux kernel TCP/netfilter; `longshore` userspace `< 1%`.
