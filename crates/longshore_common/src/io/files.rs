@@ -110,6 +110,7 @@ impl FileTable {
         self.slots.get(slot.0 as usize).is_some_and(|s| s.has_file)
     }
 
+    #[cfg(any(test, feature = "sim"))]
     pub(crate) fn reset(&mut self) {
         self.slots.fill(SlotEntry::EMPTY);
         self.gen = 0;

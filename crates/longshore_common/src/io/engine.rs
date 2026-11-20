@@ -202,6 +202,7 @@ impl<W: World> Engine<W> {
 
     /// Drop all in-flight state, ready completions, file slots, and wake flag
     /// without allocating. Used by simulated whole-machine power loss.
+    #[cfg(any(test, feature = "sim"))]
     pub(crate) fn reset_for_power_loss(&mut self) {
         self.pending.clear();
         self.ready.clear();

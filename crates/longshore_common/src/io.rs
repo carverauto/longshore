@@ -273,6 +273,7 @@ impl Completions {
     pub fn len(&self) -> usize {
         self.len
     }
+    #[cfg(any(test, feature = "sim"))]
     pub(crate) fn clear(&mut self) {
         self.len = 0;
     }
