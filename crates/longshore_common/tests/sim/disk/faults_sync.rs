@@ -12,7 +12,7 @@ use super::{
 use longshore_common::io::alloc_guard::sealed;
 use longshore_common::io::posix::errno::linux::EIO;
 use longshore_common::io::{BufId, Completions, FileSlot, Io, Op, OpenFlags};
-use longshore_common::sim::DiskFaults;
+use longshore_common::sim::{DiskFaults, SimIo};
 
 fn fail_sync(
     sim: &mut longshore_common::sim::SimIo,
@@ -218,12 +218,7 @@ fn sync_fail_poisoned_truncate_followed_by_zero_and_nonzero_writes() {
                 open_path(&mut sim, &mut out, b + 3, slot, path, trunc_flags),
                 0
             );
-            sim.set_disk_faults(DiskFaults {
-                sync_fail: 1_000_000,
-                ..Default::default()
-            });
-            assert_eq!(sync_slot(&mut sim, &mut out, b + 4, slot), -EIO);
-            sim.set_disk_faults(DiskFaults::default());
+            fail_sync(&mut sim, &mut out, b + 4, slot);
         }
 
         assert_eq!(
@@ -247,27 +242,33 @@ fn sync_fail_poisoned_truncate_followed_by_zero_and_nonzero_writes() {
         assert!(live1[1024..1536].iter().all(|&b| b == 0x33));
 
         sim.power_loss();
-        assert_eq!(stat_size(&mut sim, &mut out, 70, "/tr0.dat"), 4096);
-        assert_eq!(
-            open_path(&mut sim, &mut out, 71, FileSlot(0), "/tr0.dat", rw_open()),
-            0
-        );
-        assert_eq!(read_at(&mut sim, &mut out, 72, FileSlot(0), 0, 4096), 4096);
-        let dur0 = sim.buf(BufId(2));
-        assert!(dur0[..512].iter().all(|&b| b == 0x22));
-        assert!(dur0[512..4096].iter().all(|&b| b == 0x11));
-
-        assert_eq!(stat_size(&mut sim, &mut out, 80, "/tr1.dat"), 4096);
-        assert_eq!(
-            open_path(&mut sim, &mut out, 81, FileSlot(1), "/tr1.dat", rw_open()),
-            0
-        );
-        assert_eq!(read_at(&mut sim, &mut out, 82, FileSlot(1), 0, 4096), 4096);
-        let dur1 = sim.buf(BufId(2));
-        assert!(dur1[..1024].iter().all(|&b| b == 0x11));
-        assert!(dur1[1024..1536].iter().all(|&b| b == 0x33));
-        assert!(dur1[1536..4096].iter().all(|&b| b == 0x11));
+        assert_poisoned_truncates_rolled_back(&mut sim, &mut out);
     });
+}
+
+/// After power loss both files are 4096 bytes again: the poisoned truncate never landed,
+/// and only the later synced writes sit on top of the old `0x11` data.
+fn assert_poisoned_truncates_rolled_back(sim: &mut SimIo, out: &mut Completions) {
+    assert_eq!(stat_size(sim, out, 70, "/tr0.dat"), 4096);
+    assert_eq!(
+        open_path(sim, out, 71, FileSlot(0), "/tr0.dat", rw_open()),
+        0
+    );
+    assert_eq!(read_at(sim, out, 72, FileSlot(0), 0, 4096), 4096);
+    let dur0 = sim.buf(BufId(2));
+    assert!(dur0[..512].iter().all(|&b| b == 0x22));
+    assert!(dur0[512..4096].iter().all(|&b| b == 0x11));
+
+    assert_eq!(stat_size(sim, out, 80, "/tr1.dat"), 4096);
+    assert_eq!(
+        open_path(sim, out, 81, FileSlot(1), "/tr1.dat", rw_open()),
+        0
+    );
+    assert_eq!(read_at(sim, out, 82, FileSlot(1), 0, 4096), 4096);
+    let dur1 = sim.buf(BufId(2));
+    assert!(dur1[..1024].iter().all(|&b| b == 0x11));
+    assert!(dur1[1024..1536].iter().all(|&b| b == 0x33));
+    assert!(dur1[1536..4096].iter().all(|&b| b == 0x11));
 }
 
 #[test]

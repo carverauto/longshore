@@ -51,9 +51,38 @@ pub(super) fn rename_path(
     )
 }
 
-#[test]
-fn sim_udp_recv_now_returns_eagain_when_empty_and_dgram_when_ready() {
-    let mut sim = SimIo::new(
+fn recv_now(sim: &mut SimIo, out: &mut Completions, tok: u64, sock: Sock) -> i32 {
+    drive(
+        sim,
+        out,
+        tok,
+        Op::RecvNow {
+            sock,
+            buf: BufId(1),
+            off: 0,
+            len: 64,
+        },
+    )
+}
+
+fn send_msg(sim: &mut SimIo, out: &mut Completions, tok: u64, sock: Sock, msg: &[u8]) -> i32 {
+    sim.buf(BufId(0))[..msg.len()].copy_from_slice(msg);
+    drive(
+        sim,
+        out,
+        tok,
+        Op::Send {
+            sock,
+            buf: BufId(0),
+            off: 0,
+            len: msg.len() as u32,
+            zero_copy: false,
+        },
+    )
+}
+
+fn udp_sim() -> SimIo {
+    SimIo::new(
         Limits {
             sockets_max: 4,
             buffers: 2,
@@ -63,7 +92,12 @@ fn sim_udp_recv_now_returns_eagain_when_empty_and_dgram_when_ready() {
         },
         11,
         Faults::default(),
-    );
+    )
+}
+
+#[test]
+fn sim_udp_recv_now_returns_eagain_when_empty_and_dgram_when_ready() {
+    let mut sim = udp_sim();
     let mut out = Completions::new(8);
     let srv_addr = "192.0.2.53:5353".parse().unwrap();
     sim.bind_udp(Sock(0), srv_addr);
@@ -81,98 +115,16 @@ fn sim_udp_recv_now_returns_eagain_when_empty_and_dgram_when_ready() {
     );
 
     // Empty UDP bound and connected sockets both return -EAGAIN on RecvNow.
-    assert_eq!(
-        drive(
-            &mut sim,
-            &mut out,
-            2,
-            Op::RecvNow {
-                sock: Sock(0),
-                buf: BufId(1),
-                off: 0,
-                len: 64,
-            },
-        ),
-        -EAGAIN
-    );
-    assert_eq!(
-        drive(
-            &mut sim,
-            &mut out,
-            3,
-            Op::RecvNow {
-                sock: Sock(1),
-                buf: BufId(1),
-                off: 0,
-                len: 64,
-            },
-        ),
-        -EAGAIN
-    );
+    assert_eq!(recv_now(&mut sim, &mut out, 2, Sock(0)), -EAGAIN);
+    assert_eq!(recv_now(&mut sim, &mut out, 3, Sock(1)), -EAGAIN);
 
     // Send datagram client -> server, read with RecvNow, reply server -> client, read with RecvNow.
-    sim.buf(BufId(0))[..5].copy_from_slice(b"query");
-    assert_eq!(
-        drive(
-            &mut sim,
-            &mut out,
-            4,
-            Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
-                off: 0,
-                len: 5,
-                zero_copy: false,
-            },
-        ),
-        5
-    );
-    assert_eq!(
-        drive(
-            &mut sim,
-            &mut out,
-            5,
-            Op::RecvNow {
-                sock: Sock(0),
-                buf: BufId(1),
-                off: 0,
-                len: 64,
-            },
-        ),
-        5
-    );
+    assert_eq!(send_msg(&mut sim, &mut out, 4, Sock(1), b"query"), 5);
+    assert_eq!(recv_now(&mut sim, &mut out, 5, Sock(0)), 5);
     assert_eq!(&sim.buf(BufId(1))[..5], b"query");
 
-    sim.buf(BufId(0))[..5].copy_from_slice(b"reply");
-    assert_eq!(
-        drive(
-            &mut sim,
-            &mut out,
-            6,
-            Op::Send {
-                sock: Sock(0),
-                buf: BufId(0),
-                off: 0,
-                len: 5,
-                zero_copy: false,
-            },
-        ),
-        5
-    );
-    assert_eq!(
-        drive(
-            &mut sim,
-            &mut out,
-            7,
-            Op::RecvNow {
-                sock: Sock(1),
-                buf: BufId(1),
-                off: 0,
-                len: 64,
-            },
-        ),
-        5
-    );
+    assert_eq!(send_msg(&mut sim, &mut out, 6, Sock(0), b"reply"), 5);
+    assert_eq!(recv_now(&mut sim, &mut out, 7, Sock(1)), 5);
     assert_eq!(&sim.buf(BufId(1))[..5], b"reply");
 
     // Default OpenFlags (directory: true, create: true) on missing dir -> -ENOENT.

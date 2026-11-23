@@ -113,8 +113,8 @@ pub(crate) fn verify_record(buf: &[u8], rec_bytes: usize, seed: u64, expected_se
         .all(|(i, &b)| b == payload_byte(seed, expected_seq, i))
 }
 
-pub(crate) fn setup_wal(seed: u64, sector_size: u32, delay: u32) -> (SimIo, Completions) {
-    let limits = Limits {
+fn wal_limits() -> Limits {
+    Limits {
         buffers: 4,
         buffer_size: 16 * 1024,
         small_buffers: 2,
@@ -125,16 +125,11 @@ pub(crate) fn setup_wal(seed: u64, sector_size: u32, delay: u32) -> (SimIo, Comp
         block_size: 4096,
         ops_max: 8,
         ..Limits::BASE
-    };
-    let mut sim = SimIo::new(
-        limits,
-        seed,
-        Faults {
-            delay,
-            ..Default::default()
-        },
-    );
-    sim.setup_disk(DiskConfig {
+    }
+}
+
+fn wal_disk(sector_size: u32) -> DiskConfig {
+    DiskConfig {
         max_files: 4,
         max_dirs: 2,
         max_bytes_per_file: 256 * 1024,
@@ -143,73 +138,55 @@ pub(crate) fn setup_wal(seed: u64, sector_size: u32, delay: u32) -> (SimIo, Comp
         write_log_bytes: 128 * 1024,
         read_error_sectors: 32,
         sector_size,
-    });
+    }
+}
+
+fn open_op(slot: FileSlot, path_buf: BufId, path: &[u8], flags: OpenFlags) -> Op {
+    Op::FileOpen {
+        slot,
+        path_buf,
+        path_off: 0,
+        path_len: path.len() as u32,
+        flags,
+    }
+}
+
+/// A disk with `/wal.log` open in slot 0 and its directory entry synced.
+pub(crate) fn setup_wal(seed: u64, sector_size: u32, delay: u32) -> (SimIo, Completions) {
+    let faults = Faults {
+        delay,
+        ..Default::default()
+    };
+    let mut sim = SimIo::new(wal_limits(), seed, faults);
+    sim.setup_disk(wal_disk(sector_size));
     let mut out = Completions::new(8);
     let p = b"/wal.log\0";
     let d = b"/\0";
     sim.buf(BufId(0))[..p.len()].copy_from_slice(p);
     sim.buf(BufId(3))[..d.len()].copy_from_slice(d);
+    let rw_create = OpenFlags {
+        read: true,
+        write: true,
+        create: true,
+        ..Default::default()
+    };
+    let dir = OpenFlags {
+        read: true,
+        directory: true,
+        ..Default::default()
+    };
     let mut tok = 1u64;
-    assert_eq!(
-        drive_one(
-            &mut sim,
-            &mut out,
-            &mut tok,
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
-                path_off: 0,
-                path_len: p.len() as u32,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    ..Default::default()
-                },
-            },
-        ),
-        0
-    );
-    assert_eq!(
-        drive_one(
-            &mut sim,
-            &mut out,
-            &mut tok,
-            Op::FileOpen {
-                slot: FileSlot(1),
-                path_buf: BufId(3),
-                path_off: 0,
-                path_len: d.len() as u32,
-                flags: OpenFlags {
-                    read: true,
-                    directory: true,
-                    ..Default::default()
-                },
-            },
-        ),
-        0
-    );
-    assert_eq!(
-        drive_one(
-            &mut sim,
-            &mut out,
-            &mut tok,
-            Op::FileSync {
-                slot: FileSlot(1),
-                datasync: false,
-            },
-        ),
-        0
-    );
-    assert_eq!(
-        drive(
-            &mut sim,
-            &mut out,
-            &mut tok,
-            Op::FileClose { slot: FileSlot(1) },
-        ),
-        0
-    );
+    let open_log = open_op(FileSlot(0), BufId(0), p, rw_create);
+    assert_eq!(drive_one(&mut sim, &mut out, &mut tok, open_log), 0);
+    let open_dir = open_op(FileSlot(1), BufId(3), d, dir);
+    assert_eq!(drive_one(&mut sim, &mut out, &mut tok, open_dir), 0);
+    let sync_dir = Op::FileSync {
+        slot: FileSlot(1),
+        datasync: false,
+    };
+    assert_eq!(drive_one(&mut sim, &mut out, &mut tok, sync_dir), 0);
+    let close_dir = Op::FileClose { slot: FileSlot(1) };
+    assert_eq!(drive(&mut sim, &mut out, &mut tok, close_dir), 0);
     (sim, out)
 }
 

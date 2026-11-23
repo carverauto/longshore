@@ -96,101 +96,116 @@ fn timeout_u64_max_after_ticks_does_not_overflow_or_fire_early() {
 }
 
 #[cfg(feature = "sim")]
-#[test]
-fn cancelled_file_open_releases_deferred_read_and_write_with_ebadf_and_reuses_slot() {
-    use longshore_common::io::{
-        BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, EBADF, ECANCELED,
-    };
+#[cfg(test)]
+mod deferred_cancel {
+    use longshore_common::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
     use longshore_common::sim::{DiskConfig, Faults, SimIo};
 
-    for use_write in [false, true] {
-        let mut saw_cancel = false;
-        for seed in 0..32u64 {
-            let mut sim = SimIo::new(
-                Limits {
-                    buffers: 2,
-                    buffer_size: 256,
-                    files_max: 2,
-                    ops_max: 8,
-                    ..Limits::BASE
-                },
-                seed,
-                Faults {
-                    delay: 500_000,
-                    ..Default::default()
-                },
-            );
-            sim.setup_disk(DiskConfig {
-                max_files: 4,
-                max_dirs: 2,
-                max_bytes_per_file: 4096,
-                max_name_len: 64,
-                ..DiskConfig::BASE
-            });
-            let mut out = Completions::new(8);
-            let p = b"/defer_cancel.dat\0";
-            sim.buf(BufId(0))[..p.len()].copy_from_slice(p);
-            let flags = OpenFlags {
+    pub const PATH: &[u8] = b"/defer_cancel.dat\0";
+
+    /// A delayed simulator with a small disk and `PATH` written to buffer 0.
+    pub fn delayed_sim(seed: u64) -> SimIo {
+        let mut sim = SimIo::new(
+            Limits {
+                buffers: 2,
+                buffer_size: 256,
+                files_max: 2,
+                ops_max: 8,
+                ..Limits::BASE
+            },
+            seed,
+            Faults {
+                delay: 500_000,
+                ..Default::default()
+            },
+        );
+        sim.setup_disk(DiskConfig {
+            max_files: 4,
+            max_dirs: 2,
+            max_bytes_per_file: 4096,
+            max_name_len: 64,
+            ..DiskConfig::BASE
+        });
+        sim.buf(BufId(0))[..PATH.len()].copy_from_slice(PATH);
+        sim
+    }
+
+    /// Opens `PATH` (read, write, create) into slot 0.
+    pub fn open() -> Op {
+        Op::FileOpen {
+            slot: FileSlot(0),
+            path_buf: BufId(0),
+            path_off: 0,
+            path_len: PATH.len() as u32,
+            flags: OpenFlags {
                 read: true,
                 write: true,
                 create: true,
                 ..Default::default()
-            };
-            sim.submit(
-                Token(1),
-                Op::FileOpen {
-                    slot: FileSlot(0),
-                    path_buf: BufId(0),
-                    path_off: 0,
-                    path_len: p.len() as u32,
-                    flags,
-                },
-            )
-            .unwrap();
-            let deferred_op = if use_write {
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 16,
-                    file_off: 0,
-                }
-            } else {
-                Op::FileRead {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 16,
-                    file_off: 0,
-                }
-            };
-            sim.submit(Token(2), deferred_op).unwrap();
-            sim.submit(Token(3), Op::Cancel { target: Token(1) })
-                .unwrap();
+            },
+        }
+    }
 
-            let mut got = [None; 3];
-            while got.iter().any(Option::is_none) {
-                sim.tick(true, &mut out).unwrap();
-                while let Some(c) = out.pop() {
-                    got[(c.token.0 - 1) as usize] = Some(c.result);
-                }
+    /// A 16-byte write or read on slot 0, the op that waits behind the open.
+    pub fn deferred(use_write: bool) -> Op {
+        if use_write {
+            Op::FileWrite {
+                slot: FileSlot(0),
+                buf: BufId(1),
+                off: 0,
+                len: 16,
+                file_off: 0,
             }
-            let [r1, r2, r3] = got.map(Option::unwrap);
+        } else {
+            Op::FileRead {
+                slot: FileSlot(0),
+                buf: BufId(1),
+                off: 0,
+                len: 16,
+                file_off: 0,
+            }
+        }
+    }
+
+    /// Ticks until tokens 1, 2 and 3 have all completed; their results.
+    pub fn results_of_three(sim: &mut SimIo, out: &mut Completions) -> [i32; 3] {
+        let mut got = [None; 3];
+        while got.iter().any(Option::is_none) {
+            sim.tick(true, out).unwrap();
+            while let Some(c) = out.pop() {
+                got[(c.token.0 - 1) as usize] = Some(c.result);
+            }
+        }
+        got.map(Option::unwrap)
+    }
+
+    /// Submits `op` under `token`.
+    pub fn submit(sim: &mut SimIo, token: u64, op: Op) {
+        sim.submit(Token(token), op).unwrap();
+    }
+}
+
+#[cfg(feature = "sim")]
+#[test]
+fn cancelled_file_open_releases_deferred_read_and_write_with_ebadf_and_reuses_slot() {
+    use deferred_cancel::{deferred, delayed_sim, open, results_of_three, submit};
+    use longshore_common::io::{Completions, Io, Op, Token, EBADF, ECANCELED};
+
+    for use_write in [false, true] {
+        let mut saw_cancel = false;
+        for seed in 0..32u64 {
+            let mut sim = delayed_sim(seed);
+            let mut out = Completions::new(8);
+            submit(&mut sim, 1, open());
+            submit(&mut sim, 2, deferred(use_write));
+            submit(&mut sim, 3, Op::Cancel { target: Token(1) });
+
+            let [r1, r2, r3] = results_of_three(&mut sim, &mut out);
             if r1 == -ECANCELED {
                 saw_cancel = true;
                 assert_eq!(r3, 0);
                 assert_eq!(r2, -EBADF);
-                sim.submit(
-                    Token(4),
-                    Op::FileOpen {
-                        slot: FileSlot(0),
-                        path_buf: BufId(0),
-                        path_off: 0,
-                        path_len: p.len() as u32,
-                        flags,
-                    },
-                )
-                .unwrap();
+                submit(&mut sim, 4, open());
                 sim.tick(true, &mut out).unwrap();
                 assert_eq!(out.pop().unwrap().result, 0);
                 break;

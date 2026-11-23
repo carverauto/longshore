@@ -44,6 +44,117 @@ fn drain_until(
     panic!("simulation fault test timed out");
 }
 
+/// Appends the bytes of a positive armed-recv completion to `got` and gives
+/// its ring buffer back.
+#[cfg(test)]
+fn take_recv(sim: &mut SimIo, c: &Completion, got: &mut Vec<u8>) {
+    let b = c.buf.unwrap();
+    got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result).unwrap()]);
+    sim.give_back(b);
+}
+
+/// Arms an accept on Sock(0) (token 1) and connects `client` to `bound`
+/// (token 2); the accepted socket. `strict` also checks that the accept
+/// stays armed and the connect succeeds.
+#[cfg(test)]
+fn armed_accept_and_connect(
+    sim: &mut SimIo,
+    out: &mut Completions,
+    client: Sock,
+    bound: SocketAddr,
+    strict: bool,
+) -> Sock {
+    sim.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
+        .unwrap();
+    sim.submit(
+        Token(2),
+        Op::Connect {
+            sock: client,
+            addr: bound,
+        },
+    )
+    .unwrap();
+    let mut srv = None;
+    let mut connected = false;
+    drain_until(sim, out, |_, c| {
+        if c.token.0 == 1 {
+            if strict {
+                assert!(c.more && c.result >= 0);
+            }
+            srv = Some(Sock(u32::try_from(c.result).unwrap()));
+        } else if c.token.0 == 2 {
+            if strict {
+                assert_eq!(c.result, 0);
+            }
+            connected = true;
+        }
+        srv.is_some() && connected
+    });
+    srv.unwrap()
+}
+
+/// The echo of `payload` from Sock(5) to the armed recv (token 3) on `srv`,
+/// one send of at most 2048 bytes at a time, re-arming the recv when it ends.
+#[cfg(test)]
+fn echo_payload(
+    sim: &mut SimIo,
+    out: &mut Completions,
+    srv: Sock,
+    payload: &[u8],
+    got: &mut Vec<u8>,
+) {
+    let mut sent = 0usize;
+    let mut tok = 10u64;
+    while sent < payload.len() || got.len() < payload.len() {
+        if sent < payload.len() {
+            let n = (payload.len() - sent).min(2048);
+            sim.buf(BufId(0))[..n].copy_from_slice(&payload[sent..sent + n]);
+            let t = tok;
+            tok += 1;
+            sim.submit(Token(t), send_op(Sock(5), n as u32)).unwrap();
+            let mut send_done = false;
+            drain_until(sim, out, |sim, c| {
+                if c.token.0 == 3 {
+                    if c.result > 0 {
+                        take_recv(sim, &c, got);
+                    }
+                    if !c.more && got.len() < payload.len() {
+                        sim.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
+                    }
+                } else if c.token.0 == t {
+                    assert!(c.result > 0);
+                    sent += usize::try_from(c.result).unwrap();
+                    send_done = true;
+                }
+                send_done
+            });
+        } else {
+            drain_until(sim, out, |sim, c| {
+                if c.token.0 == 3 && c.result > 0 {
+                    take_recv(sim, &c, got);
+                }
+                got.len() == payload.len()
+            });
+        }
+    }
+}
+
+/// Closes `socks` (tokens from 900) and waits for all three closes.
+#[cfg(test)]
+fn close_three(sim: &mut SimIo, out: &mut Completions, socks: [Sock; 3]) {
+    for (k, &s) in socks.iter().enumerate() {
+        sim.submit(Token(900 + k as u64), Op::Close { sock: s })
+            .unwrap();
+    }
+    let mut closed = 0;
+    drain_until(sim, out, |_, c| {
+        if c.token.0 >= 900 {
+            closed += 1;
+        }
+        closed == 3
+    });
+}
+
 #[test]
 fn armed_echo_survives_delay_short_send_and_partial_recv_with_zero_alloc() {
     let limits = Limits {
@@ -70,87 +181,77 @@ fn armed_echo_survives_delay_short_send_and_partial_recv_with_zero_alloc() {
         let bound = sim.listen(Sock(0), ADDR).unwrap();
         let mut got = Vec::with_capacity(payload.len());
         sealed(|| {
-            sim.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-                .unwrap();
-            sim.submit(
-                Token(2),
-                Op::Connect {
-                    sock: Sock(5),
-                    addr: bound,
-                },
-            )
-            .unwrap();
-            let mut srv = None;
-            let mut connected = false;
-            drain_until(&mut sim, &mut out, |_, c| {
-                if c.token.0 == 1 {
-                    assert!(c.more && c.result >= 0);
-                    srv = Some(Sock(u32::try_from(c.result).unwrap()));
-                } else if c.token.0 == 2 {
-                    assert_eq!(c.result, 0);
-                    connected = true;
-                }
-                srv.is_some() && connected
-            });
-            let srv = srv.unwrap();
+            let srv = armed_accept_and_connect(&mut sim, &mut out, Sock(5), bound, true);
             sim.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
-
-            let mut sent = 0usize;
-            let mut tok = 10u64;
-            while sent < payload.len() || got.len() < payload.len() {
-                if sent < payload.len() {
-                    let n = (payload.len() - sent).min(2048);
-                    sim.buf(BufId(0))[..n].copy_from_slice(&payload[sent..sent + n]);
-                    let t = tok;
-                    tok += 1;
-                    sim.submit(Token(t), send_op(Sock(5), n as u32)).unwrap();
-                    let mut send_done = false;
-                    drain_until(&mut sim, &mut out, |sim, c| {
-                        if c.token.0 == 3 {
-                            if c.result > 0 {
-                                let b = c.buf.unwrap();
-                                got.extend_from_slice(
-                                    &sim.buf(b)[..usize::try_from(c.result).unwrap()],
-                                );
-                                sim.give_back(b);
-                            }
-                            if !c.more && got.len() < payload.len() {
-                                sim.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
-                            }
-                        } else if c.token.0 == t {
-                            assert!(c.result > 0);
-                            sent += usize::try_from(c.result).unwrap();
-                            send_done = true;
-                        }
-                        send_done
-                    });
-                } else {
-                    drain_until(&mut sim, &mut out, |sim, c| {
-                        if c.token.0 == 3 && c.result > 0 {
-                            let b = c.buf.unwrap();
-                            got.extend_from_slice(
-                                &sim.buf(b)[..usize::try_from(c.result).unwrap()],
-                            );
-                            sim.give_back(b);
-                        }
-                        got.len() == payload.len()
-                    });
-                }
-            }
-            for (k, &s) in [Sock(0), Sock(5), srv].iter().enumerate() {
-                sim.submit(Token(900 + k as u64), Op::Close { sock: s })
-                    .unwrap();
-            }
-            let mut closed = 0;
-            drain_until(&mut sim, &mut out, |_, c| {
-                if c.token.0 >= 900 {
-                    closed += 1;
-                }
-                closed == 3
-            });
+            echo_payload(&mut sim, &mut out, srv, &payload, &mut got);
+            close_three(&mut sim, &mut out, [Sock(0), Sock(5), srv]);
         });
         assert_eq!(got, payload, "seed {seed}");
     }
+}
+
+/// Handles a completion of the armed recv (token 3): keeps its bytes and,
+/// once it ends, records its final result.
+#[cfg(test)]
+fn on_armed_recv(sim: &mut SimIo, c: &Completion, got: &mut Vec<u8>, final_res: &mut Option<i32>) {
+    if c.result > 0 {
+        take_recv(sim, c, got);
+    }
+    if !c.more {
+        assert!(c.buf.is_none());
+        *final_res = Some(c.result);
+    }
+}
+
+/// Streams `stream` from Sock(4) to the armed recv (token 3) in 64-byte
+/// sends until the recv ends, closing Sock(4) once everything is sent or a
+/// send fails; the recv's final result.
+#[cfg(test)]
+fn stream_until_recv_ends(
+    sim: &mut SimIo,
+    out: &mut Completions,
+    stream: &[u8],
+    got: &mut Vec<u8>,
+) -> i32 {
+    let mut final_res = None;
+    let mut sent = 0usize;
+    let mut tok = 10u64;
+    let mut peer_closed = false;
+    while final_res.is_none() {
+        if !peer_closed && sent < stream.len() {
+            let n = (stream.len() - sent).min(64);
+            sim.buf(BufId(0))[..n].copy_from_slice(&stream[sent..sent + n]);
+            let t = tok;
+            tok += 1;
+            sim.submit(Token(t), send_op(Sock(4), n as u32)).unwrap();
+            let mut sd = false;
+            drain_until(sim, out, |sim, c| {
+                if c.token.0 == 3 {
+                    on_armed_recv(sim, &c, got, &mut final_res);
+                } else if c.token.0 == t {
+                    if c.result > 0 {
+                        sent += usize::try_from(c.result).unwrap();
+                    } else {
+                        peer_closed = true;
+                    }
+                    sd = true;
+                }
+                sd || final_res.is_some()
+            });
+        } else {
+            if !peer_closed {
+                sim.submit(Token(800), Op::Close { sock: Sock(4) }).unwrap();
+                peer_closed = true;
+            }
+            drain_until(sim, out, |sim, c| {
+                if c.token.0 == 3 {
+                    on_armed_recv(sim, &c, got, &mut final_res);
+                }
+                final_res.is_some()
+            });
+        }
+    }
+    final_res.unwrap()
 }
 
 #[test]
@@ -181,85 +282,11 @@ fn armed_recv_with_resets_and_partial_reads_delivers_prefix_once_and_replays() {
             let mut got = Vec::with_capacity(stream.len());
             let mut final_res = None;
             sealed(|| {
-                sim.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-                    .unwrap();
-                sim.submit(
-                    Token(2),
-                    Op::Connect {
-                        sock: Sock(4),
-                        addr: bound,
-                    },
-                )
-                .unwrap();
-                let mut srv = None;
-                let mut connected = false;
-                drain_until(&mut sim, &mut out, |_, c| {
-                    if c.token.0 == 1 {
-                        srv = Some(Sock(u32::try_from(c.result).unwrap()));
-                    } else if c.token.0 == 2 {
-                        connected = true;
-                    }
-                    srv.is_some() && connected
-                });
-                let srv = srv.unwrap();
+                let srv = armed_accept_and_connect(&mut sim, &mut out, Sock(4), bound, false);
                 sim.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
-                let mut sent = 0usize;
-                let mut tok = 10u64;
-                let mut peer_closed = false;
-                while final_res.is_none() {
-                    if !peer_closed && sent < stream.len() {
-                        let n = (stream.len() - sent).min(64);
-                        sim.buf(BufId(0))[..n].copy_from_slice(&stream[sent..sent + n]);
-                        let t = tok;
-                        tok += 1;
-                        sim.submit(Token(t), send_op(Sock(4), n as u32)).unwrap();
-                        let mut sd = false;
-                        drain_until(&mut sim, &mut out, |sim, c| {
-                            if c.token.0 == 3 {
-                                if c.result > 0 {
-                                    let b = c.buf.unwrap();
-                                    got.extend_from_slice(
-                                        &sim.buf(b)[..usize::try_from(c.result).unwrap()],
-                                    );
-                                    sim.give_back(b);
-                                }
-                                if !c.more {
-                                    assert!(c.buf.is_none());
-                                    final_res = Some(c.result);
-                                }
-                            } else if c.token.0 == t {
-                                if c.result > 0 {
-                                    sent += usize::try_from(c.result).unwrap();
-                                } else {
-                                    peer_closed = true;
-                                }
-                                sd = true;
-                            }
-                            sd || final_res.is_some()
-                        });
-                    } else {
-                        if !peer_closed {
-                            sim.submit(Token(800), Op::Close { sock: Sock(4) }).unwrap();
-                            peer_closed = true;
-                        }
-                        drain_until(&mut sim, &mut out, |sim, c| {
-                            if c.token.0 == 3 {
-                                if c.result > 0 {
-                                    let b = c.buf.unwrap();
-                                    got.extend_from_slice(
-                                        &sim.buf(b)[..usize::try_from(c.result).unwrap()],
-                                    );
-                                    sim.give_back(b);
-                                }
-                                if !c.more {
-                                    assert!(c.buf.is_none());
-                                    final_res = Some(c.result);
-                                }
-                            }
-                            final_res.is_some()
-                        });
-                    }
-                }
+                final_res = Some(stream_until_recv_ends(
+                    &mut sim, &mut out, &stream, &mut got,
+                ));
             });
             assert_eq!(got.as_slice(), &stream[..got.len()], "seed {seed}");
             let r = final_res.unwrap();
@@ -268,6 +295,83 @@ fn armed_recv_with_resets_and_partial_reads_delivers_prefix_once_and_replays() {
         };
         assert_eq!(run(), run(), "deterministic replay for seed {seed}");
     }
+}
+
+/// A second client, Sock(5), finds the accept range (one socket) full: the
+/// armed accept ends with `-ENFILE` and the client's recv with `-ECONNRESET`.
+#[cfg(test)]
+fn second_client_finds_accept_range_full(
+    sim: &mut SimIo,
+    out: &mut Completions,
+    bound: SocketAddr,
+) {
+    sim.submit(
+        Token(3),
+        Op::Connect {
+            sock: Sock(5),
+            addr: bound,
+        },
+    )
+    .unwrap();
+    let (mut a_full, mut c2) = (false, false);
+    drain_until(sim, out, |_, c| {
+        if c.token.0 == 1 {
+            assert_eq!((c.result, c.more, c.buf), (-ENFILE, false, None));
+            a_full = true;
+        } else if c.token.0 == 3 {
+            c2 = true;
+        }
+        a_full && c2
+    });
+    sim.submit(
+        Token(4),
+        Op::Recv {
+            sock: Sock(5),
+            buf: BufId(0),
+            off: 0,
+            len: 16,
+        },
+    )
+    .unwrap();
+    drain_until(sim, out, |_, c| {
+        if c.token.0 == 4 {
+            assert_eq!(c.result, -ECONNRESET);
+            return true;
+        }
+        false
+    });
+}
+
+/// With its one ring buffer held, the armed recv on `srv` ends with
+/// `-ENOBUFS`; given back and re-armed, it delivers the rest, no byte lost.
+#[cfg(test)]
+fn enobufs_then_refill(sim: &mut SimIo, out: &mut Completions, srv: Sock, got: &mut Vec<u8>) {
+    sim.submit(Token(5), Op::ArmedRecv { sock: srv }).unwrap();
+    sim.buf(BufId(0))[..16].copy_from_slice(b"0123456789abcdef");
+    sim.submit(Token(6), send_op(Sock(4), 16)).unwrap();
+    let mut held = None;
+    drain_until(sim, out, |sim, c| {
+        if c.token.0 == 5 && c.result > 0 {
+            let b = c.buf.unwrap();
+            got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result).unwrap()]);
+            held = Some(b);
+            return true;
+        }
+        false
+    });
+    sim.buf(BufId(0))[..8].copy_from_slice(b"ghijklmn");
+    sim.submit(Token(7), send_op(Sock(4), 8)).unwrap();
+    drain_until(sim, out, |_, c| {
+        c.token.0 == 5 && !c.more && c.result == -ENOBUFS
+    });
+    sim.give_back(held.unwrap());
+    sim.submit(Token(8), Op::ArmedRecv { sock: srv }).unwrap();
+    drain_until(sim, out, |sim, c| {
+        if c.token.0 == 8 && c.result > 0 {
+            take_recv(sim, &c, got);
+        }
+        got.len() == 24
+    });
 }
 
 #[test]
@@ -293,93 +397,11 @@ fn enobufs_and_range_full_recover_under_faults() {
     let bound = sim.listen(Sock(0), ADDR).unwrap();
     let mut got = Vec::with_capacity(32);
     sealed(|| {
-        sim.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-            .unwrap();
-        sim.submit(
-            Token(2),
-            Op::Connect {
-                sock: Sock(4),
-                addr: bound,
-            },
-        )
-        .unwrap();
-        let mut srv = None;
-        let mut c1 = false;
-        drain_until(&mut sim, &mut out, |_, c| {
-            if c.token.0 == 1 {
-                srv = Some(Sock(u32::try_from(c.result).unwrap()));
-            } else if c.token.0 == 2 {
-                c1 = true;
-            }
-            srv.is_some() && c1
-        });
-        let srv = srv.unwrap();
+        let srv = armed_accept_and_connect(&mut sim, &mut out, Sock(4), bound, false);
         // Second client hits full accept range (len = 1) -> -ENFILE on accept and -ECONNRESET on peer.
-        sim.submit(
-            Token(3),
-            Op::Connect {
-                sock: Sock(5),
-                addr: bound,
-            },
-        )
-        .unwrap();
-        let (mut a_full, mut c2) = (false, false);
-        drain_until(&mut sim, &mut out, |_, c| {
-            if c.token.0 == 1 {
-                assert_eq!((c.result, c.more, c.buf), (-ENFILE, false, None));
-                a_full = true;
-            } else if c.token.0 == 3 {
-                c2 = true;
-            }
-            a_full && c2
-        });
-        sim.submit(
-            Token(4),
-            Op::Recv {
-                sock: Sock(5),
-                buf: BufId(0),
-                off: 0,
-                len: 16,
-            },
-        )
-        .unwrap();
-        drain_until(&mut sim, &mut out, |_, c| {
-            if c.token.0 == 4 {
-                assert_eq!(c.result, -ECONNRESET);
-                return true;
-            }
-            false
-        });
-
+        second_client_finds_accept_range_full(&mut sim, &mut out, bound);
         // Exercise -ENOBUFS + refill on srv without losing any byte.
-        sim.submit(Token(5), Op::ArmedRecv { sock: srv }).unwrap();
-        sim.buf(BufId(0))[..16].copy_from_slice(b"0123456789abcdef");
-        sim.submit(Token(6), send_op(Sock(4), 16)).unwrap();
-        let mut held = None;
-        drain_until(&mut sim, &mut out, |sim, c| {
-            if c.token.0 == 5 && c.result > 0 {
-                let b = c.buf.unwrap();
-                got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result).unwrap()]);
-                held = Some(b);
-                return true;
-            }
-            false
-        });
-        sim.buf(BufId(0))[..8].copy_from_slice(b"ghijklmn");
-        sim.submit(Token(7), send_op(Sock(4), 8)).unwrap();
-        drain_until(&mut sim, &mut out, |_, c| {
-            c.token.0 == 5 && !c.more && c.result == -ENOBUFS
-        });
-        sim.give_back(held.unwrap());
-        sim.submit(Token(8), Op::ArmedRecv { sock: srv }).unwrap();
-        drain_until(&mut sim, &mut out, |sim, c| {
-            if c.token.0 == 8 && c.result > 0 {
-                let b = c.buf.unwrap();
-                got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result).unwrap()]);
-                sim.give_back(b);
-            }
-            got.len() == 24
-        });
+        enobufs_then_refill(&mut sim, &mut out, srv, &mut got);
         assert_eq!(got, b"0123456789abcdefghijklmn");
     });
 }

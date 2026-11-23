@@ -174,74 +174,83 @@ fn placed_write_faults_on_non_write_ops_act_as_fail() {
 
 #[test]
 fn random_rates_replay_zero_stops_and_tear_invariants() {
-    let tear_len = |seed: u64, sector_size: u32| -> usize {
-        let (mut sim, mut out, mut tok) = make_storage(seed, sector_size);
-        assert_eq!(
-            open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
-            0
-        );
-        tok += 1;
-        sim.place_disk_fault(6, PlacedFault::TornSilent);
-        let wlen = (sector_size * 8) as usize;
-        assert_eq!(
-            write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, &vec![0xAA; wlen]),
-            i32::try_from(wlen).unwrap()
-        );
-        tok += 1;
-        let got = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
-        assert!(
-            !got.is_empty() && got.len() < wlen && got.len().is_multiple_of(sector_size as usize)
-        );
-        got.len()
-    };
     for sector_size in [512u32, 4096u32] {
         let mut cuts = BTreeSet::new();
         for seed in 0..20u64 {
-            let l = tear_len(seed, sector_size);
-            assert_eq!(l, tear_len(seed, sector_size));
+            let l = torn_silent_len(seed, sector_size);
+            assert_eq!(l, torn_silent_len(seed, sector_size));
             let _: bool = cuts.insert(l);
         }
         assert!(cuts.len() > 1);
     }
 
-    let run_random = |seed: u64| -> (Vec<i32>, u64) {
-        let (mut sim, mut out, mut tok) = make_storage(seed, 512);
-        assert_eq!(
-            open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
-            0
-        );
-        tok += 1;
-        sim.set_disk_faults(DiskFaults {
-            short_write: 200_000,
-            torn_reported: 200_000,
-            lost_reported: 100_000,
-            ..Default::default()
-        });
-        let mut res = Vec::new();
-        for i in 0..100u64 {
-            res.push(write_bytes(
-                &mut sim,
-                &mut out,
-                tok + i,
-                FileSlot(0),
-                0,
-                &[0x55; 1024],
-            ));
-        }
-        let c = sim.disk_fault_counters();
-        assert!(c.short_write > 0 && c.torn_reported > 0);
-        sim.set_disk_faults(DiskFaults::default());
-        for i in 0..20u64 {
-            assert_eq!(
-                write_bytes(&mut sim, &mut out, tok + 200 + i, FileSlot(0), 0, b"ok"),
-                2
-            );
-        }
-        (res, sim.trace_hash())
-    };
-    assert_eq!(run_random(11), run_random(11));
-    assert_ne!(run_random(11), run_random(12));
+    assert_eq!(random_rate_run(11), random_rate_run(11));
+    assert_ne!(random_rate_run(11), random_rate_run(12));
 
+    stale_placed_fault_is_skipped_and_refusals_hit();
+}
+
+/// An 8-sector write under a placed `TornSilent`; returns the sector-aligned length kept.
+#[cfg(test)]
+fn torn_silent_len(seed: u64, sector_size: u32) -> usize {
+    let (mut sim, mut out, mut tok) = make_storage(seed, sector_size);
+    assert_eq!(
+        open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+        0
+    );
+    tok += 1;
+    sim.place_disk_fault(6, PlacedFault::TornSilent);
+    let wlen = (sector_size * 8) as usize;
+    assert_eq!(
+        write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, &vec![0xAA; wlen]),
+        i32::try_from(wlen).unwrap()
+    );
+    tok += 1;
+    let got = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
+    assert!(!got.is_empty() && got.len() < wlen && got.len().is_multiple_of(sector_size as usize));
+    got.len()
+}
+
+/// 100 writes under random write fault rates, then 20 clean ones; returns the
+/// write results and the trace hash.
+fn random_rate_run(seed: u64) -> (Vec<i32>, u64) {
+    let (mut sim, mut out, mut tok) = make_storage(seed, 512);
+    assert_eq!(
+        open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+        0
+    );
+    tok += 1;
+    sim.set_disk_faults(DiskFaults {
+        short_write: 200_000,
+        torn_reported: 200_000,
+        lost_reported: 100_000,
+        ..Default::default()
+    });
+    let mut res = Vec::new();
+    for i in 0..100u64 {
+        res.push(write_bytes(
+            &mut sim,
+            &mut out,
+            tok + i,
+            FileSlot(0),
+            0,
+            &[0x55; 1024],
+        ));
+    }
+    let c = sim.disk_fault_counters();
+    assert!(c.short_write > 0 && c.torn_reported > 0);
+    sim.set_disk_faults(DiskFaults::default());
+    for i in 0..20u64 {
+        assert_eq!(
+            write_bytes(&mut sim, &mut out, tok + 200 + i, FileSlot(0), 0, b"ok"),
+            2
+        );
+    }
+    (res, sim.trace_hash())
+}
+
+/// A fault placed on an already-passed op number never fires; refusal rates do.
+fn stale_placed_fault_is_skipped_and_refusals_hit() {
     let (mut sim, mut out, tok) = make_storage(1, 512);
     assert_eq!(
         open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),

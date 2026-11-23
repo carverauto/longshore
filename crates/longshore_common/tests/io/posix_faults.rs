@@ -52,6 +52,74 @@ fn connect_pair(
     }
 }
 
+#[cfg(test)]
+fn recv64(sock: Sock, buf: u32) -> Op {
+    Op::Recv {
+        sock,
+        buf: BufId(buf),
+        off: 0,
+        len: 64,
+    }
+}
+
+#[cfg(test)]
+fn send(sock: Sock, buf: u32, len: u32) -> Op {
+    Op::Send {
+        sock,
+        buf: BufId(buf),
+        off: 0,
+        len,
+        zero_copy: false,
+    }
+}
+
+/// Sends "real" from Sock(4) to Sock(5), injects a stale read report on the
+/// idle Sock(2) once it is delivered: the recv on Sock(5) (token 11)
+/// completes, the one on Sock(2) (token 10) does not.
+#[cfg(test)]
+fn real_data_completes_despite_stale_report(io: &mut PosixIo, out: &mut Completions, seed: u64) {
+    io.buf(BufId(2))[..4].copy_from_slice(b"real");
+    io.submit(Token(12), send(Sock(4), 2, 4)).unwrap();
+    // Wait for Send and delivery, then inject stale on Sock(2).
+    io.tick(true, out).unwrap();
+    let mut got_real = false;
+    while let Some(c) = out.pop() {
+        assert_ne!(c.token.0, 10, "seed {seed}: idle socket must not complete");
+        if c.token.0 == 11 {
+            got_real = true;
+        }
+    }
+    io.inject_stale(Sock(2), false);
+    while !got_real {
+        io.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            assert_ne!(c.token.0, 10, "seed {seed}: stale report must not complete");
+            if c.token.0 == 11 {
+                assert_eq!(c.result, 4);
+                got_real = true;
+            }
+        }
+    }
+}
+
+/// Sends "end" from Sock(1) to the idle Sock(2): its recv (token 10) still
+/// completes normally.
+#[cfg(test)]
+fn idle_socket_completes_on_real_data(io: &mut PosixIo, out: &mut Completions) {
+    io.buf(BufId(3))[..3].copy_from_slice(b"end");
+    io.submit(Token(13), send(Sock(1), 3, 3)).unwrap();
+    let mut got_idle = false;
+    while !got_idle {
+        io.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            if c.token.0 == 10 {
+                assert_eq!(c.result, 3);
+                got_idle = true;
+            }
+        }
+    }
+}
+
 #[test]
 fn stale_report_among_real_reports_completes_real_ops() {
     for seed in 0..8u64 {
@@ -61,84 +129,13 @@ fn stale_report_among_real_reports_completes_real_ops() {
         connect_pair(&mut io, &mut out, Sock(3), Sock(4), Sock(5));
 
         // Idle socket Sock(2) gets a spurious read report; Sock(5) gets real data.
-        io.submit(
-            Token(10),
-            Op::Recv {
-                sock: Sock(2),
-                buf: BufId(0),
-                off: 0,
-                len: 64,
-            },
-        )
-        .unwrap();
-        io.submit(
-            Token(11),
-            Op::Recv {
-                sock: Sock(5),
-                buf: BufId(1),
-                off: 0,
-                len: 64,
-            },
-        )
-        .unwrap();
+        io.submit(Token(10), recv64(Sock(2), 0)).unwrap();
+        io.submit(Token(11), recv64(Sock(5), 1)).unwrap();
         io.tick(false, &mut out).unwrap();
-
-        io.buf(BufId(2))[..4].copy_from_slice(b"real");
-        io.submit(
-            Token(12),
-            Op::Send {
-                sock: Sock(4),
-                buf: BufId(2),
-                off: 0,
-                len: 4,
-                zero_copy: false,
-            },
-        )
-        .unwrap();
-        // Wait for Send and delivery, then inject stale on Sock(2).
-        io.tick(true, &mut out).unwrap();
-        let mut got_real = false;
-        while let Some(c) = out.pop() {
-            assert_ne!(c.token.0, 10, "seed {seed}: idle socket must not complete");
-            if c.token.0 == 11 {
-                got_real = true;
-            }
-        }
-        io.inject_stale(Sock(2), false);
-        while !got_real {
-            io.tick(true, &mut out).unwrap();
-            while let Some(c) = out.pop() {
-                assert_ne!(c.token.0, 10, "seed {seed}: stale report must not complete");
-                if c.token.0 == 11 {
-                    assert_eq!(c.result, 4);
-                    got_real = true;
-                }
-            }
-        }
+        real_data_completes_despite_stale_report(&mut io, &mut out, seed);
 
         // Now send real data to Sock(2); it must still complete normally.
-        io.buf(BufId(3))[..3].copy_from_slice(b"end");
-        io.submit(
-            Token(13),
-            Op::Send {
-                sock: Sock(1),
-                buf: BufId(3),
-                off: 0,
-                len: 3,
-                zero_copy: false,
-            },
-        )
-        .unwrap();
-        let mut got_idle = false;
-        while !got_idle {
-            io.tick(true, &mut out).unwrap();
-            while let Some(c) = out.pop() {
-                if c.token.0 == 10 {
-                    assert_eq!(c.result, 3);
-                    got_idle = true;
-                }
-            }
-        }
+        idle_socket_completes_on_real_data(&mut io, &mut out);
     }
 }
 

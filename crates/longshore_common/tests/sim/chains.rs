@@ -14,9 +14,13 @@ use longshore_common::sim::{DiskConfig, Faults, SimIo};
 static ALLOC: Guard = Guard;
 
 fn make_sim(limits: Limits, delay: u32) -> SimIo {
+    seeded_sim(limits, 88, delay)
+}
+
+fn seeded_sim(limits: Limits, seed: u64, delay: u32) -> SimIo {
     let mut sim = SimIo::new(
         limits,
-        88,
+        seed,
         Faults {
             delay,
             ..Default::default()
@@ -98,6 +102,65 @@ fn sim_chain_contract_and_zero_alloc() {
     });
 }
 
+const P1: &[u8] = b"/c1.dat\0";
+const P2: &[u8] = b"/c2.dat\0";
+
+/// Opens the path in `path_buf` (`path` long) read-write into slot 0.
+fn open_rw(path_buf: u32, path: &[u8]) -> Op {
+    Op::FileOpen {
+        slot: FileSlot(0),
+        path_buf: BufId(path_buf),
+        path_off: 0,
+        path_len: path.len() as u32,
+        flags: OpenFlags {
+            read: true,
+            write: true,
+            create: true,
+            ..Default::default()
+        },
+    }
+}
+
+/// Opens `P1` (token 1), cancels it (token 2), and chains a close (token 3)
+/// and an open of `P2` (token 4) behind it on the same slot.
+#[cfg(test)]
+fn cancel_open_then_chain_close_open(sim: &mut SimIo) {
+    sim.submit(Token(1), open_rw(0, P1)).unwrap();
+    sim.submit(Token(2), Op::Cancel { target: Token(1) })
+        .unwrap();
+    sim.submit_chain(&[
+        (Token(3), Op::FileClose { slot: FileSlot(0) }),
+        (Token(4), open_rw(1, P2)),
+    ])
+    .unwrap();
+}
+
+/// Ticks (10 000 times at most) until tokens 1 to 4 have completed; their results.
+#[cfg(test)]
+fn results_of_four(sim: &mut SimIo, out: &mut Completions) -> [i32; 4] {
+    let mut got = [None; 4];
+    for _ in 0..10_000 {
+        sim.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            if let Some(idx) = [1u64, 2, 3, 4].iter().position(|&t| t == c.token.0) {
+                got[idx] = Some(c.result);
+            }
+        }
+        if got.iter().all(Option::is_some) {
+            break;
+        }
+    }
+    got.map(|r| r.expect("all completions delivered"))
+}
+
+/// Submits `op` as `tok`, ticks once, and returns the completion's result.
+#[cfg(test)]
+fn run_one(sim: &mut SimIo, out: &mut Completions, tok: u64, op: Op) -> i32 {
+    sim.submit(Token(tok), op).unwrap();
+    sim.tick(true, out).unwrap();
+    out.pop().unwrap().result
+}
+
 #[test]
 fn sim_cancelled_open_then_close_open_chain_does_not_deadlock() {
     use longshore_common::io::{EBADF, ECANCELED, ENOENT};
@@ -111,103 +174,27 @@ fn sim_cancelled_open_then_close_open_chain_does_not_deadlock() {
             ops_max: 8,
             ..Limits::BASE
         };
-        let mut sim = SimIo::new(
-            limits,
-            seed,
-            Faults {
-                delay: 500_000,
-                ..Default::default()
-            },
-        );
-        sim.setup_disk(DiskConfig {
-            max_files: 32,
-            max_dirs: 16,
-            max_bytes_per_file: 64 * 1024,
-            max_name_len: 256,
-            ..DiskConfig::BASE
-        });
+        let mut sim = seeded_sim(limits, seed, 500_000);
         let mut out = Completions::new(8);
-        let p1 = b"/c1.dat\0";
-        let p2 = b"/c2.dat\0";
-        sim.buf(BufId(0))[..p1.len()].copy_from_slice(p1);
-        sim.buf(BufId(1))[..p2.len()].copy_from_slice(p2);
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
+        sim.buf(BufId(0))[..P1.len()].copy_from_slice(P1);
+        sim.buf(BufId(1))[..P2.len()].copy_from_slice(P2);
 
-        sim.submit(
-            Token(1),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
-                path_off: 0,
-                path_len: p1.len() as u32,
-                flags: rw,
-            },
-        )
-        .unwrap();
-        sim.submit(Token(2), Op::Cancel { target: Token(1) })
-            .unwrap();
-        sim.submit_chain(&[
-            (Token(3), Op::FileClose { slot: FileSlot(0) }),
-            (
-                Token(4),
-                Op::FileOpen {
-                    slot: FileSlot(0),
-                    path_buf: BufId(1),
-                    path_off: 0,
-                    path_len: p2.len() as u32,
-                    flags: rw,
-                },
-            ),
-        ])
-        .unwrap();
-
-        let mut got = [None; 4];
-        for _ in 0..10_000 {
-            sim.tick(true, &mut out).unwrap();
-            while let Some(c) = out.pop() {
-                if let Some(idx) = [1u64, 2, 3, 4].iter().position(|&t| t == c.token.0) {
-                    got[idx] = Some(c.result);
-                }
-            }
-            if got.iter().all(Option::is_some) {
-                break;
-            }
-        }
-        let res = got.map(|r| r.expect("all completions delivered"));
+        cancel_open_then_chain_close_open(&mut sim);
+        let res = results_of_four(&mut sim, &mut out);
         if res[1] == 0 {
             saw_cancelled_open = true;
             assert_eq!(res[0], -ECANCELED);
             assert_eq!(res[2], -EBADF);
             assert_eq!(res[3], -ECANCELED);
-
-            sim.submit(
-                Token(5),
-                Op::FileOpen {
-                    slot: FileSlot(0),
-                    path_buf: BufId(1),
-                    path_off: 0,
-                    path_len: p2.len() as u32,
-                    flags: rw,
-                },
-            )
-            .unwrap();
-            sim.tick(true, &mut out).unwrap();
-            assert_eq!(out.pop().unwrap().result, 0);
+            assert_eq!(run_one(&mut sim, &mut out, 5, open_rw(1, P2)), 0);
         } else {
             assert_eq!(res[1], -ENOENT);
             assert_eq!(res[0], 0);
             assert_eq!(res[2], 0);
             assert_eq!(res[3], 0);
         }
-        sim.submit(Token(6), Op::FileClose { slot: FileSlot(0) })
-            .unwrap();
-        sim.tick(true, &mut out).unwrap();
-        assert_eq!(out.pop().unwrap().result, 0);
+        let close = Op::FileClose { slot: FileSlot(0) };
+        assert_eq!(run_one(&mut sim, &mut out, 6, close), 0);
     }
     assert!(
         saw_cancelled_open,
