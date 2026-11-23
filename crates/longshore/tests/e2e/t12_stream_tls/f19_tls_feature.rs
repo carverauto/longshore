@@ -239,7 +239,9 @@ fn t2_f19_1_plain_build_rejects_tls_builder_naming_tls() {
         BuildError::Setting(msg) => {
             assert!(msg.contains("tls"), "setting error must name tls: {msg}");
         }
-        other => panic!("expected BuildError::Setting, got {other:?}"),
+        other @ (BuildError::Unsupported | BuildError::NoNameserver | BuildError::Io(_)) => {
+            panic!("expected BuildError::Setting, got {other:?}")
+        }
     }
 }
 

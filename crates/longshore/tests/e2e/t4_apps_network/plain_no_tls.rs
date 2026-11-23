@@ -53,7 +53,9 @@ fn t4_04_plain_build_rejects_tls_setting_naming_tls() {
                 "BuildError::Setting must name \"tls\", got: {msg}"
             );
         }
-        other => panic!("expected BuildError::Setting, got: {other:?}"),
+        other @ (BuildError::Unsupported | BuildError::NoNameserver | BuildError::Io(_)) => {
+            panic!("expected BuildError::Setting, got: {other:?}")
+        }
     }
 }
 

@@ -35,7 +35,7 @@ fn queue_two_senders_and_receiver() {
         while got.len() < 2 {
             match rx.recv_parked() {
                 Recv::Message(v) => got.push(v),
-                other => panic!("unexpected {other:?}"),
+                other @ (Recv::Stop | Recv::Closed) => panic!("unexpected {other:?}"),
             }
         }
         assert_eq!(rx.recv_parked(), Recv::Closed);
@@ -66,7 +66,7 @@ fn queue_full_and_wraparound() {
         match rx.recv_parked() {
             Recv::Message(3) => assert_eq!(rx.recv_parked(), Recv::Closed),
             Recv::Closed => {}
-            other => panic!("unexpected {other:?}"),
+            other @ (Recv::Message(_) | Recv::Stop) => panic!("unexpected {other:?}"),
         }
         h.join().unwrap();
     });
@@ -195,7 +195,7 @@ fn queue_try_send_racing_stop_close() {
             .iter()
             .filter_map(|i| match *i {
                 Recv::Message(v) => Some(v),
-                _ => None,
+                Recv::Stop | Recv::Closed => None,
             })
             .collect();
         match r1 {
@@ -233,7 +233,7 @@ fn queue_try_send_racing_stop_try_recv_then_close() {
             .iter()
             .filter_map(|i| match *i {
                 Recv::Message(v) => Some(v),
-                _ => None,
+                Recv::Stop | Recv::Closed => None,
             })
             .collect();
         match r1 {

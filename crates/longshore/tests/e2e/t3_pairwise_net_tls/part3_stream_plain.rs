@@ -8,7 +8,7 @@
 
 use super::super::harness::{drive_until, read_pool_bytes, write_nul_path, write_pool_bytes};
 use super::net_limits;
-use longshore::io::{BufId, Completion, Completions, Io, Op, Sock, Token};
+use longshore::io::{BufId, Completions, Io, Op, Sock, Token};
 use longshore::stream::{Stream, TlsError};
 
 #[cfg(feature = "sim")]
@@ -87,7 +87,8 @@ fn t3_16_stream_tls_vs_plain_armed_buffer_ring_invariant() {
             },
         )
         .unwrap();
-        let _: Vec<Completion> = drive_until(&mut tsim, &mut tout, 1000, |v| v.len() == 2).unwrap();
+        let _: Vec<longshore::io::Completion> =
+            drive_until(&mut tsim, &mut tout, 1000, |v| v.len() == 2).unwrap();
 
         let cap = tls_limits.buffer_size;
         let mut cli = Stream::new(Sock(1), Token(10), Token(11)).with_tls_buffers(
