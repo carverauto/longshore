@@ -49,25 +49,34 @@ webpki-roots.workspace = true
 # Criterion microbenchmarks (dev tooling). Network throughput between hosts is
 # measured by the `tcp_raw` binary instead: it needs two machines and reports
 # CPU cost, which does not fit timing a closure in-process.
+#
+# `test = true`: `cargo test` builds each bench and runs every function once
+# (criterion's test mode, without `--bench`), so the benches cannot rot and
+# the dev-dependencies only they use count as used.
 [[bench]]
 name = "dns_codec"
 harness = false
+test = true
 
 [[bench]]
 name = "http_head"
 harness = false
+test = true
 
 [[bench]]
 name = "checksums"
 harness = false
+test = true
 
 [[bench]]
 name = "aead"
 harness = false
+test = true
 
 [[bench]]
 name = "aead_memory"
 harness = false
+test = true
 
 # Feasibility probe for splitting TLS: handshake by rustls, records by longshore::tls.
 [[example]]
