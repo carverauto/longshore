@@ -6,7 +6,7 @@
 - [x] 1.5 More than one I/O thread: thread count and CPU pinning in the builder, placement of operations and lent buffers, shutdown of every thread
 - [ ] 1.6 A client driven by the caller's event loop: readable descriptor, non-blocking `turn`, tests under the simulator and on a real kernel with a caller that only polls
 - [x] 1.7 Bucket in the path as a store setting (`Config::bucket_in_path`), run against Linode Object Storage in both forms
-- [ ] 1.8 Run path addressing against a self-hosted store that requires it, MinIO or Ceph
+- [x] 1.8 Run path addressing against a self-hosted store that requires it, MinIO or Ceph (`bench/results/m27-self-hosted-stores.md`: Ceph 20.2.5 and RustFS 1.0.6, each serving only path-style requests)
 - [x] 1.9 Builder settings for a credentials file that is reread, the bucket in the path, and checksums on or off; real-kernel check of each
 
 ## 2. Operations
