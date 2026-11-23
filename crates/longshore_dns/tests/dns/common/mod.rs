@@ -251,18 +251,18 @@ fn zone_v6(tail: u16) -> Ipv6Addr {
 }
 
 pub fn config(servers: &[SocketAddr], refresh_ns: u64, family: Family) -> Config {
-    Config {
-        servers: servers.to_vec(),
-        hosts: ZONE.iter().map(|z| z.0.to_string()).collect(),
-        family,
-        prefer_large_segments: None,
-        refresh_ns,
-        timeout_ns: 50 * MS,
-        socks: [Sock::new(0), Sock::new(1)],
-        rx_bufs: [BufId::new(0), BufId::new(1)],
-        tx_buf: BufId::new(2),
-        token_base: 1 << 40,
-    }
+    Config::new(
+        servers.to_vec(),
+        ZONE.iter().map(|z| z.0.to_string()).collect(),
+        [Sock::new(0), Sock::new(1)],
+        [BufId::new(0), BufId::new(1)],
+        BufId::new(2),
+        1 << 40,
+    )
+    .with_family(family)
+    .with_prefer_large_segments(None)
+    .with_refresh_ns(refresh_ns)
+    .with_timeout_ns(50 * MS)
 }
 
 /// Run resolver and server until virtual time `until`, with allocation forbidden.

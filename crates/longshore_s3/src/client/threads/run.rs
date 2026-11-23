@@ -209,18 +209,20 @@ fn endpoint(b: &Builder, limits: Limits) -> std::io::Result<Endpoint> {
     if let Some(addr) = b.address {
         return Ok(Endpoint::Fixed(addr));
     }
-    let resolver = Resolver::new(longshore_dns::Config {
-        servers: b.nameservers.clone(),
-        hosts: vec![b.host.clone()],
-        family: b.family,
-        prefer_large_segments: b.prefer_large_segments,
-        refresh_ns: 30_000 * MS,
-        timeout_ns: 2_000 * MS,
-        socks: [Sock::new(conns), Sock::new(conns + 1)],
-        rx_bufs: [limits.small(conns), limits.small(conns + 1)],
-        tx_buf: limits.small(conns + 2),
-        token_base: 3 << 40,
-    })
+    let resolver = Resolver::new(
+        longshore_dns::Config::new(
+            b.nameservers.clone(),
+            vec![b.host.clone()],
+            [Sock::new(conns), Sock::new(conns + 1)],
+            [limits.small(conns), limits.small(conns + 1)],
+            limits.small(conns + 2),
+            3 << 40,
+        )
+        .with_family(b.family)
+        .with_prefer_large_segments(b.prefer_large_segments)
+        .with_refresh_ns(30_000 * MS)
+        .with_timeout_ns(2_000 * MS),
+    )
     // The host name or the nameservers cannot be used: the builder is
     // told why, as for any other start-up failure.
     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;

@@ -171,7 +171,7 @@ fn a_completion_for_a_server_it_does_not_have_is_ignored() {
 #[test]
 fn a_host_is_found_by_name_whatever_its_case_or_trailing_dot() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
-    cfg.hosts = vec!["S3.Example.com.".into(), "blob.example.net".into()];
+    cfg = cfg.with_hosts(vec!["S3.Example.com.".into(), "blob.example.net".into()]);
     let r = Resolver::new(cfg).expect("resolver config");
     assert_eq!(r.host_index("s3.example.com"), Some(0));
     assert_eq!(r.host_index("s3.EXAMPLE.com."), Some(0));
@@ -207,7 +207,7 @@ fn a_send_buffer_smaller_than_the_longest_query_is_refused_at_start() {
     let limits = LIMITS.with_small_buffers(1).with_small_buffer_size(20);
     let mut io = SimIo::new(limits, 1, Faults::default());
     let mut cfg = config(&[NS1], SEC, Family::V4);
-    cfg.tx_buf = limits.small(0);
+    cfg = cfg.with_tx_buf(limits.small(0));
     Resolver::new(cfg).expect("resolver config").start(&mut io);
 }
 
@@ -226,14 +226,18 @@ fn three_nameservers_are_refused() {
 #[test]
 fn no_hostname_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
-    cfg.hosts.clear();
+    let mut hosts = cfg.hosts().to_vec();
+    hosts.clear();
+    cfg = cfg.with_hosts(hosts);
     assert_eq!(Resolver::new(cfg).err(), Some(ConfigError::NoHosts));
 }
 
 #[test]
 fn a_hostname_that_is_not_one_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V6);
-    cfg.hosts.push("not a host".into());
+    let mut hosts = cfg.hosts().to_vec();
+    hosts.push("not a host".into());
+    cfg = cfg.with_hosts(hosts);
     let refused = Resolver::new(cfg).err();
     assert_eq!(refused, Some(ConfigError::Hostname("not a host".into())));
     assert_eq!(
@@ -251,6 +255,6 @@ fn a_refresh_interval_of_zero_is_refused() {
 #[test]
 fn an_answer_timeout_of_zero_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
-    cfg.timeout_ns = 0;
+    cfg = cfg.with_timeout_ns(0);
     assert_eq!(Resolver::new(cfg).err(), Some(ConfigError::ZeroInterval));
 }

@@ -11,36 +11,22 @@ use longshore_common::io::{BufId, Sock};
 use std::fmt;
 use std::net::SocketAddr;
 
-/// The hosts to resolve and the resources the resolver may use.
+mod fields;
+
+/// The hosts to resolve and the resources the resolver may use. Made with
+/// [`Config::new`] and the `with_*` setters; [`Resolver::new`](super::Resolver::new)
+/// checks it.
 pub struct Config {
-    /// One or two nameservers. On a timeout the next one is tried.
-    pub servers: Vec<SocketAddr>,
-    pub hosts: Vec<String>,
-    pub family: Family,
-    /// Prefer addresses whose connections have large TCP segments. `None`
-    /// turns this off and every address is handed out in rotation.
-    /// `Some(n)` hands out the addresses whose measured segment size is at
-    /// least half the largest seen and a quarter of the path's limit, and
-    /// keeps at least `n` addresses in use by admitting the next largest. Sizes come from
-    /// [`Resolver::connected`](super::Resolver::connected). An address not yet measured is handed out
-    /// like the large ones, so that it gets measured.
-    ///
-    /// This puts a host's connections on fewer of its addresses.
-    pub prefer_large_segments: Option<usize>,
-    /// Every host is re-resolved this often, whatever its TTL says.
-    pub refresh_ns: u64,
-    /// How long to wait for one answer.
-    pub timeout_ns: u64,
-    /// One socket slot and one receive buffer per server.
-    pub socks: [Sock; SERVERS_MAX],
-    /// Each must hold [`MESSAGE_MAX`](crate::codec::MESSAGE_MAX) bytes: that much is asked of every
-    /// receive. Checked when the resolver starts.
-    pub rx_bufs: [BufId; SERVERS_MAX],
-    /// Must hold the longest query: 18 bytes more than the longest
-    /// hostname, so 271 at most. Checked when the resolver starts.
-    pub tx_buf: BufId,
-    /// Tokens used are `token_base..token_base + 256`.
-    pub token_base: u64,
+    pub(crate) servers: Vec<SocketAddr>,
+    pub(crate) hosts: Vec<String>,
+    pub(crate) family: Family,
+    pub(crate) prefer_large_segments: Option<usize>,
+    pub(crate) refresh_ns: u64,
+    pub(crate) timeout_ns: u64,
+    pub(crate) socks: [Sock; SERVERS_MAX],
+    pub(crate) rx_bufs: [BufId; SERVERS_MAX],
+    pub(crate) tx_buf: BufId,
+    pub(crate) token_base: u64,
 }
 
 /// Why [`Resolver::new`](super::Resolver::new) refused a [`Config`].

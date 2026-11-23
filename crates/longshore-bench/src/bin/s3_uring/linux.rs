@@ -113,18 +113,20 @@ fn resolver(
     limits: &Limits,
     prefer_large_segments: Option<usize>,
 ) -> Resolver {
-    Resolver::new(longshore::dns::Config {
-        servers,
-        hosts: vec![host.to_string()],
-        family,
-        prefer_large_segments,
-        refresh_ns: 30_000 * MS,
-        timeout_ns: 2_000 * MS,
-        socks: [Sock::new(conns), Sock::new(conns + 1)],
-        rx_bufs: [limits.small(conns), limits.small(conns + 1)],
-        tx_buf: limits.small(conns + 2),
-        token_base: 3 << 40,
-    })
+    Resolver::new(
+        longshore::dns::Config::new(
+            servers,
+            vec![host.to_string()],
+            [Sock::new(conns), Sock::new(conns + 1)],
+            [limits.small(conns), limits.small(conns + 1)],
+            limits.small(conns + 2),
+            3 << 40,
+        )
+        .with_family(family)
+        .with_prefer_large_segments(prefer_large_segments)
+        .with_refresh_ns(30_000 * MS)
+        .with_timeout_ns(2_000 * MS),
+    )
     .unwrap_or_else(|e| die(e))
 }
 

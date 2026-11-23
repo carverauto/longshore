@@ -62,21 +62,23 @@ fn operations_end_when_the_name_never_resolves() {
 /// the nameserver's address, so no query is answered.
 #[cfg(test)]
 fn s3_behind_a_silent_nameserver() -> S3 {
-    let resolver = Resolver::new(longshore_dns::Config {
-        servers: vec![SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)),
-            53,
-        )],
-        hosts: vec!["bucket.objects.test".into()],
-        family: longshore_dns::Family::V4,
-        prefer_large_segments: None,
-        refresh_ns: 30_000 * MS,
-        timeout_ns: 200 * MS,
-        socks: [Sock::new(1), Sock::new(2)],
-        rx_bufs: [LIMITS.small(1), LIMITS.small(2)],
-        tx_buf: LIMITS.small(3),
-        token_base: 3 << 40,
-    })
+    let resolver = Resolver::new(
+        longshore_dns::Config::new(
+            vec![SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)),
+                53,
+            )],
+            vec!["bucket.objects.test".into()],
+            [Sock::new(1), Sock::new(2)],
+            [LIMITS.small(1), LIMITS.small(2)],
+            LIMITS.small(3),
+            3 << 40,
+        )
+        .with_family(longshore_dns::Family::V4)
+        .with_prefer_large_segments(None)
+        .with_refresh_ns(30_000 * MS)
+        .with_timeout_ns(200 * MS),
+    )
     .expect("resolver config");
     let http = client::ClientConfig::builder(1, 0, LIMITS.small(0).get(), 4096, 1 << 40)
         .head_max(2048)

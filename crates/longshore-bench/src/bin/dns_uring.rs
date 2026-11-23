@@ -81,18 +81,20 @@ fn main() {
     )
     .unwrap_or_else(|e| die::die(e));
     let n = hosts.len();
-    let mut r = Resolver::new(Config {
-        servers,
-        hosts,
-        family,
-        prefer_large_segments: None,
-        refresh_ns: 30_000_000_000,
-        timeout_ns: 1_000_000_000,
-        socks: [Sock::new(0), Sock::new(1)],
-        rx_bufs: [BufId::new(0), BufId::new(1)],
-        tx_buf: BufId::new(2),
-        token_base: 1 << 40,
-    })
+    let mut r = Resolver::new(
+        Config::new(
+            servers,
+            hosts,
+            [Sock::new(0), Sock::new(1)],
+            [BufId::new(0), BufId::new(1)],
+            BufId::new(2),
+            1 << 40,
+        )
+        .with_family(family)
+        .with_prefer_large_segments(None)
+        .with_refresh_ns(30_000_000_000)
+        .with_timeout_ns(1_000_000_000),
+    )
     .unwrap_or_else(|e| die::die(e));
     let mut out = Completions::new(8);
     let t0 = io.now_ns();

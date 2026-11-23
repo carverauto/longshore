@@ -54,7 +54,7 @@ fn parsing_arbitrary_datagrams_is_safe(tc: TestCase) {
     let data = tc.draw(gs::binary().max_size(600));
     let id = tc.draw(gs::integers::<u16>());
     if let Ok(a) = parse_response(&data, id, "s3.example.com") {
-        assert!((1..=ADDRS_MAX).contains(&a.len));
+        assert!((1..=ADDRS_MAX).contains(&a.as_slice().len()));
     }
 }
 
@@ -103,7 +103,7 @@ fn encoder_accepts_or_refuses_cleanly(tc: TestCase) {
             assert!(n <= MESSAGE_MAX);
             let got = parse_response(&answer(&q[..n], &[Ipv4Addr::new(192, 0, 2, 1)]), 7, &name);
             assert_eq!(
-                got.map(|a| a.len),
+                got.map(|a| a.as_slice().len()),
                 Ok(1),
                 "accepted name {name:?} did not survive a round trip"
             );
@@ -165,7 +165,7 @@ fn a_query_is_written_when_it_fits_and_refused_when_it_does_not(tc: TestCase) {
     m.extend_from_slice(&[0xc0, 12, 0, rtype, 0, 1, 0, 0, 0, 60, 0, rdata.len() as u8]);
     m.extend_from_slice(rdata);
     assert_eq!(
-        parse_response_for(&m, 0x1234, &name, record).map(|a| a.len),
+        parse_response_for(&m, 0x1234, &name, record).map(|a| a.as_slice().len()),
         Ok(1)
     );
 }
@@ -188,7 +188,7 @@ fn arbitrary_answer_sections_are_safe(tc: TestCase) {
     m.extend_from_slice(&tail);
     match parse_response_for(&m, 7, &name, record) {
         Ok(a) => {
-            assert!((1..=ADDRS_MAX.min(count as usize)).contains(&a.len));
+            assert!((1..=ADDRS_MAX.min(count as usize)).contains(&a.as_slice().len()));
             for addr in a.as_slice() {
                 let octets = match addr {
                     IpAddr::V4(v4) => v4.octets().to_vec(),

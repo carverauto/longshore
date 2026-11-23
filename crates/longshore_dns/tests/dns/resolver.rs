@@ -135,7 +135,9 @@ fn unknown_host_counts_as_failure_and_does_not_block_the_others() {
     let mut io = SimIo::new(LIMITS, 5, Faults::default());
     let mut s = Server::start(&mut io, NS1);
     let mut cfg = config(&[NS1], SEC, Family::V4);
-    cfg.hosts.insert(0, "missing.example.org".into());
+    let mut hosts = cfg.hosts().to_vec();
+    hosts.insert(0, "missing.example.org".into());
+    cfg = cfg.with_hosts(hosts);
     let mut r = Resolver::new(cfg).expect("resolver config");
     r.start(&mut io);
     let mut out = Completions::new(8);

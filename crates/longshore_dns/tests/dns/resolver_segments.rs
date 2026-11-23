@@ -33,7 +33,7 @@ fn resolved(keep: Option<usize>) -> (SimIo, Resolver, Server, Completions) {
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
     let mut s = Server::start(&mut io, NS1);
     let mut cfg = config(&[NS1], SEC, Family::V4);
-    cfg.prefer_large_segments = keep;
+    cfg = cfg.with_prefer_large_segments(keep);
     let mut r = Resolver::new(cfg).expect("resolver config");
     r.start(&mut io);
     let mut out = Completions::new(8);
