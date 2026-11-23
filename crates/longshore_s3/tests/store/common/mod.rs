@@ -158,23 +158,20 @@ pub fn http_config(first_sock: u32, first_buf: u32, token_base: u64) -> client::
 /// The store configuration [`world_with`] uses.
 pub fn s3_config(attempts_max: u32, enforce: bool) -> Config {
     let http = http_config(1, LIMITS.buffers(), 1 << 40);
-    Config {
-        vendor: longshore_s3::s3::Vendor::S3,
-        host: "bucket.objects.test".into(),
-        bucket_in_path: None,
-        port: 80,
-        region: "us-test-1".into(),
-        credentials: Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-            .unwrap(),
-        credentials_file: None,
-        requests_max: 4,
-        attempts_max,
-        backoff_ns: 100 * MS,
-        backoff_max_ns: 800 * MS,
-        require_checksums: enforce,
+    Config::new(
+        longshore_s3::s3::Vendor::S3,
+        "bucket.objects.test".into(),
+        "us-test-1".into(),
+        Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY").unwrap(),
         http,
-        #[cfg(feature = "tls")]
-        tls: None,
-        endpoint: Endpoint::Fixed(ADDR),
-    }
+        Endpoint::Fixed(ADDR),
+    )
+    .with_bucket_in_path(None)
+    .with_port(80)
+    .with_credentials_file(None)
+    .with_requests_max(4)
+    .with_attempts_max(attempts_max)
+    .with_backoff_ns(100 * MS)
+    .with_backoff_max_ns(800 * MS)
+    .with_require_checksums(enforce)
 }

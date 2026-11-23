@@ -100,20 +100,8 @@ fn sign(request: &str, sign_body: bool) -> (String, String) {
     if sign_body {
         signed.push(("X-Amz-Content-Sha256", &payload));
     }
-    let req = Request {
-        method,
-        canonical_uri: &canonical_uri,
-        query: &query,
-        headers: &signed,
-        payload_hash: &payload,
-    };
-    let scope = Scope {
-        access_key: "AKIDEXAMPLE",
-        secret_key: SECRET,
-        region: "us-east-1",
-        service: "service",
-        amz_date: &date,
-    };
+    let req = Request::new(method, &canonical_uri, &query, &signed, &payload);
+    let scope = Scope::new("AKIDEXAMPLE", SECRET, "us-east-1", "service", &date);
     let sig = String::from_utf8(signature(&req, &scope).unwrap().to_vec()).unwrap();
     let mut auth = [0u8; 512];
     let n = authorization(&req, &scope, &mut auth).unwrap();

@@ -141,13 +141,13 @@ fn setup<B: Backend>(b: &Builder) -> std::io::Result<(B, Worker, Arc<Lane>)> {
     let mut config = store_config(b, limits, endpoint)?;
     config.credentials_file = credentials_file;
     let s3 = S3::new(config);
-    let layout = Layout {
-        operations: b.operations,
-        first_buffer: BufId::new(tls_buffers),
-        buffers: b.buffers,
-        token_base: 7 << 40,
-        heartbeat_ns: 50 * MS,
-    };
+    let layout = Layout::new(
+        b.operations,
+        BufId::new(tls_buffers),
+        b.buffers,
+        7 << 40,
+        50 * MS,
+    );
     let (mut worker, lane) = Worker::with_waiters(&mut io, s3, layout, b.waiters as usize)
         .map_err(std::io::Error::other)?;
     worker.start(&mut io);
@@ -194,13 +194,13 @@ fn credentials_file<B: Backend>(
         return Ok(None);
     };
     let file = io.register_file(&path.to_string_lossy())?;
-    Ok(Some(CredentialsFile {
+    Ok(Some(CredentialsFile::new(
         file,
-        buf: limits.small(b.connections + 3),
-        reread_ns: b.credentials_reread_secs.max(1) * 1000 * MS,
-        token: 6 << 40,
-        validate: b.credentials_validate,
-    }))
+        limits.small(b.connections + 3),
+        b.credentials_reread_secs.max(1) * 1000 * MS,
+        6 << 40,
+        b.credentials_validate,
+    )))
 }
 
 /// The fixed address, or a resolver for the host name.
@@ -242,22 +242,21 @@ fn store_config(b: &Builder, limits: Limits, endpoint: Endpoint) -> std::io::Res
     )
     .build()
     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-    Ok(Config {
-        vendor: Vendor::S3,
-        host: b.host.clone(),
-        bucket_in_path: b.bucket_in_path.clone(),
-        port: b.port,
-        region: b.region.clone(),
-        credentials: b.credentials,
-        credentials_file: None,
-        requests_max: b.operations,
-        attempts_max: 4,
-        backoff_ns: 200 * MS,
-        backoff_max_ns: 5_000 * MS,
-        require_checksums: false,
+    let config = Config::new(
+        Vendor::S3,
+        b.host.clone(),
+        b.region.clone(),
+        b.credentials,
         http,
-        #[cfg(feature = "tls")]
-        tls: b.tls.then(|| (ClientSetup::with_public_roots(), 0)),
         endpoint,
-    })
+    )
+    .with_bucket_in_path(b.bucket_in_path.clone())
+    .with_port(b.port)
+    .with_requests_max(b.operations)
+    .with_attempts_max(4)
+    .with_backoff_ns(200 * MS)
+    .with_backoff_max_ns(5_000 * MS);
+    #[cfg(feature = "tls")]
+    let config = config.with_tls(b.tls.then(|| (ClientSetup::with_public_roots(), 0)));
+    Ok(config)
 }

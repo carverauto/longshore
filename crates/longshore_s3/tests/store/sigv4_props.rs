@@ -74,13 +74,13 @@ fn encoding_is_reversible_and_uses_only_what_a_signature_allows(tc: TestCase) {
     assert_eq!(decode(&twice[..n]).as_deref(), Some(encoded));
 }
 
-const SCOPE: Scope<'static> = Scope {
-    access_key: "AKIDEXAMPLE",
-    secret_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-    region: "us-east-1",
-    service: "s3",
-    amz_date: b"20150830T123600Z",
-};
+const SCOPE: Scope<'static> = Scope::new(
+    "AKIDEXAMPLE",
+    "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+    "us-east-1",
+    "s3",
+    b"20150830T123600Z",
+);
 
 /// A word of 1 to 8 characters from `alphabet`.
 fn word(tc: &TestCase, alphabet: &[u8]) -> String {
@@ -111,13 +111,7 @@ fn borrowed(pairs: &[(String, String)]) -> Vec<(&str, &str)> {
 #[cfg(test)]
 fn sign(method: &str, headers: &[(String, String)], query: &[(String, String)]) -> String {
     let (h, q) = (borrowed(headers), borrowed(query));
-    let req = Request {
-        method,
-        canonical_uri: "/dir/key",
-        query: &q,
-        headers: &h,
-        payload_hash: UNSIGNED_PAYLOAD,
-    };
+    let req = Request::new(method, "/dir/key", &q, &h, UNSIGNED_PAYLOAD);
     let sig = signature(&req, &SCOPE).unwrap();
     // The header value ends with the same signature.
     let mut auth = [0u8; 2048];

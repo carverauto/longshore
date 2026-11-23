@@ -11,10 +11,10 @@
 #[cfg(test)]
 mod common;
 use common::*;
-use longshore_s3::erase::{write_manifest, Failure, Failures};
+use longshore_s3::erase::{write_manifest, Failures};
 use longshore_s3::options::Options;
 use longshore_s3::presign::{self, Access, PresignError};
-use longshore_s3::stat::{header_in, Stat};
+use longshore_s3::stat::header_in;
 
 const LEN: u32 = 5000;
 
@@ -31,7 +31,7 @@ fn described() -> Options {
 impl World {
     fn stat(&mut self, token: u64, key: &str, into: Option<BufId>) -> Outcome {
         self.s3.stat(&mut self.io, token, key, into).unwrap();
-        self.last().outcome
+        self.last().outcome()
     }
 
     fn put(&mut self, token: u64, key: &str, pattern: u8) {
@@ -39,7 +39,7 @@ impl World {
         self.s3
             .store(&mut self.io, token, key, TX, LEN, Checksum::Compute)
             .unwrap();
-        assert_eq!(self.last().outcome, Outcome::Stored);
+        assert_eq!(self.last().outcome(), Outcome::Stored);
     }
 }
 
@@ -58,18 +58,21 @@ fn stat_reports_an_object_without_fetching_it() {
         &described(),
     )
     .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
 
     w.io.buf(RX).fill(0);
     let Outcome::Stat(stat) = w.stat(2, "doc", Some(RX)) else {
         panic!("expected a stat")
     };
-    assert_eq!(stat.size, u64::from(LEN));
-    assert_eq!(stat.modified, Some(1_445_412_480));
-    assert_eq!(stat.checksum, Some(longshore_crc::crc64_header_value(crc)));
-    assert!(stat.tag.is_some_and(|t| t.as_bytes().starts_with(b"\"")));
+    assert_eq!(stat.size(), u64::from(LEN));
+    assert_eq!(stat.modified(), Some(1_445_412_480));
+    assert_eq!(
+        stat.checksum(),
+        Some(longshore_crc::crc64_header_value(crc))
+    );
+    assert!(stat.tag().is_some_and(|t| t.as_bytes().starts_with(b"\"")));
     // No body was received: the buffer holds the head and nothing after it.
-    let head = &w.io.buf(RX)[..stat.head_len as usize];
+    let head = &w.io.buf(RX)[..stat.head_len() as usize];
     assert!(head.starts_with(b"HTTP/1.1 200") && head.ends_with(b"\r\n\r\n"));
     assert_eq!(header_in(head, "content-type"), Some(&b"text/plain"[..]));
     assert_eq!(header_in(head, "x-amz-meta-owner"), Some(&b"team a"[..]));
@@ -77,18 +80,19 @@ fn stat_reports_an_object_without_fetching_it() {
         header_in(head, "x-amz-storage-class"),
         Some(&b"STANDARD_IA"[..])
     );
-    assert!(w.io.buf(RX)[stat.head_len as usize..]
+    assert!(w.io.buf(RX)[stat.head_len() as usize..]
         .iter()
         .all(|b| *b == 0));
 
     // Without a buffer the fields are the same and no head is copied.
+    let Outcome::Stat(bare) = w.stat(3, "doc", None) else {
+        panic!("no stat")
+    };
     assert_eq!(
-        w.stat(3, "doc", None),
-        Outcome::Stat(Stat {
-            head_len: 0,
-            ..stat
-        })
+        (bare.size(), bare.modified(), bare.checksum(), bare.tag()),
+        (stat.size(), stat.modified(), stat.checksum(), stat.tag())
     );
+    assert_eq!(bare.head_len(), 0);
     assert_eq!(w.stat(4, "absent", None), Outcome::NotFound);
 }
 
@@ -101,18 +105,18 @@ fn optional_headers_are_sent_again_on_a_retry() {
     w.s3.store_no_clobber_with(&mut w.io, 1, "k", TX, LEN, Checksum::None, &described())
         .unwrap();
     let d = w.last();
-    assert_eq!((d.outcome, d.attempts), (Outcome::Stored, 3));
+    assert_eq!((d.outcome(), d.attempts()), (Outcome::Stored, 3));
     let Outcome::Stat(stat) = w.stat(2, "k", Some(RX)) else {
         panic!("expected a stat")
     };
-    let head = &w.io.buf(RX)[..stat.head_len as usize];
+    let head = &w.io.buf(RX)[..stat.head_len() as usize];
     assert_eq!(header_in(head, "x-amz-meta-owner"), Some(&b"team a"[..]));
     // A plain store of the same key afterwards carries none of them.
     w.put(3, "k", 2);
     let Outcome::Stat(plain) = w.stat(4, "k", Some(RX)) else {
         panic!("expected a stat")
     };
-    let plain_head = &w.io.buf(RX)[..plain.head_len as usize];
+    let plain_head = &w.io.buf(RX)[..plain.head_len() as usize];
     assert_eq!(header_in(plain_head, "x-amz-meta-owner"), None);
     assert_eq!(header_in(plain_head, "content-type"), None);
 }
@@ -132,14 +136,14 @@ fn a_copy_is_made_inside_the_store() {
         &described(),
     )
     .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
 
     w.s3.copy(&mut w.io, 2, "a/src", "b/dst").unwrap();
     let d = w.last();
-    assert_eq!((d.outcome, d.attempts), (Outcome::Copied, 1));
+    assert_eq!((d.outcome(), d.attempts()), (Outcome::Copied, 1));
     w.s3.fetch(&mut w.io, 3, "b/dst", None, RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: LEN,
             verified: true
@@ -150,11 +154,11 @@ fn a_copy_is_made_inside_the_store() {
     let Outcome::Stat(stat) = w.stat(4, "b/dst", Some(RX)) else {
         panic!("expected a stat")
     };
-    let head = &w.io.buf(RX)[..stat.head_len as usize];
+    let head = &w.io.buf(RX)[..stat.head_len() as usize];
     assert_eq!(header_in(head, "content-type"), Some(&b"text/plain"[..]));
 
     w.s3.copy(&mut w.io, 5, "absent", "c").unwrap();
-    assert_eq!(w.last().outcome, Outcome::NotFound);
+    assert_eq!(w.last().outcome(), Outcome::NotFound);
     assert_eq!(w.s3.copy(&mut w.io, 6, "", "c"), Err(SubmitError::BadKey));
 }
 
@@ -167,7 +171,7 @@ fn a_copy_answered_with_an_error_document_is_not_a_copy() {
         .script(Behavior::ErrorDocument(200, "InternalError"));
     w.s3.copy(&mut w.io, 2, "src", "dst").unwrap();
     let d = w.last();
-    assert_eq!((d.outcome, d.attempts), (Outcome::Copied, 2));
+    assert_eq!((d.outcome(), d.attempts()), (Outcome::Copied, 2));
     assert!(w.server.object("/dst").is_some());
     // Status 200 and an error that will not improve.
     w.server
@@ -175,7 +179,7 @@ fn a_copy_answered_with_an_error_document_is_not_a_copy() {
     w.s3.copy(&mut w.io, 3, "src", "other").unwrap();
     let denied = w.last();
     assert_eq!(
-        (denied.outcome, denied.attempts),
+        (denied.outcome(), denied.attempts()),
         (Outcome::Fatal(Fatal::ErrorDocument), 1)
     );
     assert!(w.server.object("/other").is_none());
@@ -183,7 +187,10 @@ fn a_copy_answered_with_an_error_document_is_not_a_copy() {
     w.server.script(Behavior::ApplyThenClose);
     w.s3.copy(&mut w.io, 4, "src", "third").unwrap();
     let recopied = w.last();
-    assert_eq!((recopied.outcome, recopied.attempts), (Outcome::Copied, 2));
+    assert_eq!(
+        (recopied.outcome(), recopied.attempts()),
+        (Outcome::Copied, 2)
+    );
 }
 
 #[test]
@@ -199,21 +206,16 @@ fn a_batch_erase_reports_the_keys_it_could_not_erase() {
     w.server.script(Behavior::Status(503));
     w.s3.erase_many(&mut w.io, 10, TX, len, RX).unwrap();
     let d = w.last();
-    let Outcome::ErasedMany { len: report } = d.outcome else {
+    let Outcome::ErasedMany { len: report } = d.outcome() else {
         panic!("expected a batch result, got {d:?}")
     };
-    assert_eq!(d.attempts, 2);
+    assert_eq!(d.attempts(), 2);
     let failures: Vec<_> = Failures::parse(&w.io.buf(RX)[..report as usize])
         .unwrap()
         .map(|f| f.unwrap())
         .collect();
-    assert_eq!(
-        failures,
-        [Failure {
-            key_raw: b"locked/c",
-            code: b"AccessDenied"
-        }]
-    );
+    let failures: Vec<_> = failures.iter().map(|f| (f.key_raw(), f.code())).collect();
+    assert_eq!(failures, [(&b"locked/c"[..], &b"AccessDenied"[..])]);
     assert_eq!(w.stat(11, "a", None), Outcome::NotFound);
     assert_eq!(w.stat(12, "dir/b&c", None), Outcome::NotFound);
     assert!(matches!(w.stat(13, "locked/c", None), Outcome::Stat(_)));
@@ -228,13 +230,13 @@ fn a_delimiter_lists_one_level() {
     let mut list = |prefix: &str, after: Option<&str>, max: u16| {
         w.s3.list_with(&mut w.io, 20, prefix, after, max, Some("/"), RX)
             .unwrap();
-        let Outcome::Listed { len } = w.last().outcome else {
+        let Outcome::Listed { len } = w.last().outcome() else {
             panic!("listing failed")
         };
         let listing = Listing::parse(&w.io.buf(RX)[..len as usize]).unwrap();
         let keys: Vec<Vec<u8>> = listing
             .entries()
-            .map(|e| e.unwrap().key_raw.to_vec())
+            .map(|e| e.unwrap().key_raw().to_vec())
             .collect();
         let prefixes: Vec<Vec<u8>> = listing
             .common_prefixes()
@@ -265,7 +267,7 @@ fn a_delimiter_lists_one_level() {
 
     // The plain listing is unchanged: every key, no prefixes.
     w.s3.list(&mut w.io, 30, "", None, 100, RX).unwrap();
-    let Outcome::Listed { len } = w.last().outcome else {
+    let Outcome::Listed { len } = w.last().outcome() else {
         panic!("listing failed")
     };
     let listing = Listing::parse(&w.io.buf(RX)[..len as usize]).unwrap();
@@ -294,7 +296,7 @@ fn a_presigned_url_names_the_bucket_host_and_the_key() {
 fn a_presigned_url_carries_a_port_that_is_not_the_default() {
     let mut w = world(8, Faults::default(), 3);
     let mut cfg = s3_config(3, false);
-    cfg.port = 9000;
+    cfg = cfg.with_port(9000);
     let s3 = S3::new(cfg);
     let creds =
         Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY").unwrap();
@@ -307,13 +309,7 @@ fn a_presigned_url_carries_a_port_that_is_not_the_default() {
     assert!(url.starts_with("http://bucket.objects.test:9000/dir/a?"));
     // Signed for the Host header a client sends to that port.
     let mut expected = [0u8; 1024];
-    let target = presign::Target {
-        scheme: "http",
-        host: "bucket.objects.test:9000",
-        root: "",
-        region: "us-test-1",
-        credentials: &creds,
-    };
+    let target = presign::Target::new("http", "bucket.objects.test:9000", "", "us-test-1", &creds);
     let m = presign::presign(&mut expected, &target, Access::Fetch, "dir/a", now, 600).unwrap();
     assert_eq!(url.as_bytes(), &expected[..m]);
 }
@@ -329,10 +325,10 @@ fn a_batch_erase_whose_checksum_is_refused_is_sent_again() {
     w.server.script(Behavior::ErrorDocument(400, "BadDigest"));
     w.s3.erase_many(&mut w.io, 10, TX, len, RX).unwrap();
     let d = w.last();
-    let Outcome::ErasedMany { len: report } = d.outcome else {
+    let Outcome::ErasedMany { len: report } = d.outcome() else {
         panic!("expected a batch result, got {d:?}")
     };
-    assert_eq!(d.attempts, 2);
+    assert_eq!(d.attempts(), 2);
     assert_eq!(
         Failures::parse(&w.io.buf(RX)[..report as usize])
             .unwrap()
@@ -349,11 +345,7 @@ fn a_batch_erase_whose_checksum_is_refused_is_sent_again() {
     w.s3.erase_many(&mut w.io, 12, TX, len, RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 12,
-            outcome: Outcome::Fatal(Fatal::Status(400)),
-            attempts: 1
-        }
+        Done::new(12, Outcome::Fatal(Fatal::Status(400)), 1)
     );
     assert!(matches!(w.stat(13, "b", None), Outcome::Stat(_)));
 }

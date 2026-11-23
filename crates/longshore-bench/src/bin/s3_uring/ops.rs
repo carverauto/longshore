@@ -40,7 +40,7 @@ fn seed(c: &mut Client, kind: &str, conns: u32, run: &str) {
             .unwrap_or_else(|e| die(format_args!("seed: {e:?}")));
         }
         for _ in 0..batch {
-            if wait(&mut c.io, &mut c.s3, &mut c.out).outcome != Outcome::Stored {
+            if wait(&mut c.io, &mut c.s3, &mut c.out).outcome() != Outcome::Stored {
                 die("could not create the objects this benchmark reads");
             }
         }
@@ -149,8 +149,8 @@ fn measure(
         while c.io.now_ns() < deadline {
             turn(&mut c.io, &mut c.s3, &mut c.out);
             while let Some(d) = c.s3.poll() {
-                let i = d.token as usize;
-                match (kind, d.outcome) {
+                let i = d.token() as usize;
+                match (kind, d.outcome()) {
                     ("put-new", Outcome::Stored) => bytes += u64::from(size),
                     ("get-range", Outcome::Fetched { len, .. }) => bytes += u64::from(len),
                     ("erase", Outcome::Erased) => {}
@@ -160,7 +160,7 @@ fn measure(
                 let us = ((c.io.now_ns() - started[i]) / 1000).max(1);
                 hist[(63 - us.leading_zeros() as usize).min(31)] += 1;
                 requests += 1;
-                attempts += u64::from(d.attempts);
+                attempts += u64::from(d.attempts());
                 starter.start(c, i as u32, started);
             }
         }

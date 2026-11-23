@@ -25,7 +25,7 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
     loop {
         s3.list(&mut io, 0, prefix, after.as_deref(), 1000, page)
             .unwrap_or_else(|e| die(format_args!("list: {e:?}")));
-        let Outcome::Listed { len } = wait(&mut io, &mut s3, &mut out).outcome else {
+        let Outcome::Listed { len } = wait(&mut io, &mut s3, &mut out).outcome() else {
             die("list failed")
         };
         let xml = io.buf(page)[..len as usize].to_vec();
@@ -34,9 +34,9 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
             .entries()
             .map(|e| {
                 let e = e.unwrap_or_else(|e| die(format_args!("listing entry: {e:?}")));
-                let mut k = vec![0u8; e.key_raw.len()];
-                let n = unescape(e.key_raw, &mut k).unwrap_or_else(|| die("bad key escape"));
-                (String::from_utf8_lossy(&k[..n]).into_owned(), e.size)
+                let mut k = vec![0u8; e.key_raw().len()];
+                let n = unescape(e.key_raw(), &mut k).unwrap_or_else(|| die("bad key escape"));
+                (String::from_utf8_lossy(&k[..n]).into_owned(), e.size())
             })
             .collect();
         if keys.is_empty() {
@@ -55,7 +55,7 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
             }
             if erase {
                 for _ in chunk {
-                    if wait(&mut io, &mut s3, &mut out).outcome != Outcome::Erased {
+                    if wait(&mut io, &mut s3, &mut out).outcome() != Outcome::Erased {
                         failed += 1;
                     }
                 }
@@ -107,10 +107,11 @@ pub(super) fn bad_checksum(size: u32) {
     let _: longshore::store::s3::Done = wait(&mut io, &mut s3, &mut out);
     println!(
         "store with a wrong checksum -> {:?} (attempts {})",
-        stored.outcome, stored.attempts
+        stored.outcome(),
+        stored.attempts()
     );
-    println!("fetch afterwards            -> {:?}", fetched.outcome);
-    let enforced = stored.outcome != Outcome::Stored && fetched.outcome == Outcome::NotFound;
+    println!("fetch afterwards            -> {:?}", fetched.outcome());
+    let enforced = stored.outcome() != Outcome::Stored && fetched.outcome() == Outcome::NotFound;
     println!("checksum_enforced={enforced}");
 }
 
@@ -166,7 +167,7 @@ pub(super) fn selftest(size: u32) {
     ];
     for (n, s) in names.iter().zip(steps.iter()) {
         match s {
-            Some(d) => println!("{n:26} -> {:?} (attempts {})", d.outcome, d.attempts),
+            Some(d) => println!("{n:26} -> {:?} (attempts {})", d.outcome(), d.attempts()),
             None => println!("{n:26} -> skipped"),
         }
     }
@@ -174,7 +175,7 @@ pub(super) fn selftest(size: u32) {
     let from = if size >= 2000 { 1000 } else { 0 };
     let sent = io.buf(tx)[from..size as usize].to_vec();
     let tail_ok = sent[..] == io.buf(rx)[from..size as usize];
-    let o = |i: usize| steps[i].map(|d| d.outcome);
+    let o = |i: usize| steps[i].map(|d| d.outcome());
     let ok = o(0) == Some(Outcome::Stored)
         && matches!(o(1), Some(Outcome::AlreadyExists { .. }))
         && matches!(o(2), Some(Outcome::Fetched { len, .. }) if len == size)

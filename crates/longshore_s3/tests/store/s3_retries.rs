@@ -19,14 +19,7 @@ fn slow_down_responses_are_retried_after_a_backoff() {
     let t0 = w.io.now_ns();
     w.s3.store(&mut w.io, 1, "k", TX, 100, Checksum::None)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 3
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 3));
     let waited = (w.io.now_ns() - t0) / MS;
     // Backoff is 100 ms then 200 ms, observed on a 10 ms tick.
     assert!(
@@ -45,11 +38,7 @@ fn server_errors_retry_immediately_and_give_up_at_the_budget() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 3
-        },
+        Done::new(1, Outcome::Stored, 3),
         "500 then a dropped connection, then success"
     );
 
@@ -60,11 +49,7 @@ fn server_errors_retry_immediately_and_give_up_at_the_budget() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 3
-        }
+        Done::new(2, Outcome::Fatal(Fatal::RetriesExhausted), 3)
     );
     assert_eq!(w.server.object_len("/k2"), None);
 }
@@ -79,11 +64,7 @@ fn definite_refusals_are_fatal_without_retry() {
             .unwrap();
         assert_eq!(
             w.last(),
-            Done {
-                token: 1,
-                outcome: Outcome::Fatal(Fatal::Status(status)),
-                attempts: 1
-            },
+            Done::new(1, Outcome::Fatal(Fatal::Status(status)), 1),
             "status {status}"
         );
     }
@@ -96,14 +77,7 @@ fn a_stalled_store_times_out_and_is_retried() {
     w.server.script(Behavior::Stall);
     w.s3.store(&mut w.io, 1, "k", TX, 10, Checksum::None)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 2
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 2));
 }
 
 /// With resets, short writes and delays, every store either succeeds and is
@@ -122,8 +96,8 @@ fn success_means_durable_under_faults() {
         w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::None)
             .unwrap();
         let d = w.last();
-        retried += u32::from(d.attempts > 1);
-        match d.outcome {
+        retried += u32::from(d.attempts() > 1);
+        match d.outcome() {
             Outcome::Stored => {
                 stored += 1;
                 let sent = w.io.buf(TX).to_vec();
@@ -164,25 +138,14 @@ fn conflict_and_request_timeout_answers_are_retried() {
     w.server.script(Behavior::Status(409));
     w.s3.store_no_clobber(&mut w.io, 1, "a", TX, 1000, Checksum::None)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 2
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 2));
     // A plain store has no conditional write to conflict with: 409 stays final.
     w.server.script(Behavior::Status(409));
     w.s3.store(&mut w.io, 2, "b", TX, 1000, Checksum::None)
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::Status(409)),
-            attempts: 1
-        }
+        Done::new(2, Outcome::Fatal(Fatal::Status(409)), 1)
     );
 
     w.server.script(Behavior::Raw(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 42\r\n\r\n<Error><Code>RequestTimeout</Code></Error>"));
@@ -191,17 +154,13 @@ fn conflict_and_request_timeout_answers_are_retried() {
     // The scripted reply closes its connection, so the retry may first meet
     // the closed connection and need one more attempt.
     let d = w.last();
-    assert!(d.outcome == Outcome::Stored && d.attempts > 1, "{d:?}");
+    assert!(d.outcome() == Outcome::Stored && d.attempts() > 1, "{d:?}");
     w.server.script(Behavior::Raw(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 39\r\n\r\n<Error><Code>InvalidArgs</Code></Error>"));
     w.s3.store(&mut w.io, 4, "d", TX, 1000, Checksum::None)
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 4,
-            outcome: Outcome::Fatal(Fatal::Status(400)),
-            attempts: 1
-        }
+        Done::new(4, Outcome::Fatal(Fatal::Status(400)), 1)
     );
 }
 
@@ -216,14 +175,7 @@ fn the_backoff_doubles_up_to_its_limit_and_no_further() {
     let t0 = w.io.now_ns();
     w.s3.store(&mut w.io, 1, "k", TX, 100, Checksum::None)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 7
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 7));
     let waited = (w.io.now_ns() - t0) / MS;
     // 100, 200, 400, 800, 800 and 800 ms, each observed on a 10 ms tick.
     assert!(
@@ -245,11 +197,7 @@ fn slow_down_responses_give_up_at_the_budget() {
             .unwrap();
         assert_eq!(
             w.last(),
-            Done {
-                token: 1,
-                outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-                attempts: 3
-            },
+            Done::new(1, Outcome::Fatal(Fatal::RetriesExhausted), 3),
             "status {status}"
         );
         assert_eq!(w.server.object_len("/k"), None);
@@ -269,11 +217,7 @@ fn each_retryable_status_is_retried_at_once() {
             .unwrap();
         assert_eq!(
             w.last(),
-            Done {
-                token: 1,
-                outcome: Outcome::Stored,
-                attempts: 2
-            },
+            Done::new(1, Outcome::Stored, 2),
             "status {status}"
         );
         assert!(

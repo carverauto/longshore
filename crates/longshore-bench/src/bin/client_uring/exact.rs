@@ -26,8 +26,8 @@ pub fn sha256_header(body: &[u8]) -> [u8; 44] {
 }
 
 fn answered(report: &Result<Report, longshore::client::Error>, status: u16) -> Answer {
-    match report.or_die("a request was sent").end {
-        End::Answered(answer) if answer.status == status => answer,
+    match report.or_die("a request was sent").end() {
+        End::Answered(answer) if answer.status() == status => answer,
         other @ (End::NotSent(_) | End::Answered(_) | End::Unknown(_)) => {
             crate::die::die(format_args!("expected an answer of {status}: {other:?}"))
         }
@@ -44,51 +44,45 @@ pub fn round_trip(client: &Client, len: usize) {
         *b = (i as u32).wrapping_mul(2246822519).to_le_bytes()[2];
     }
     let sent = body.as_slice()[..len].to_vec();
-    let options = Put {
-        no_clobber: true,
-        encryption: Some(Encryption::Aes256),
-        checksum: Checksum::Sha256(sha256(&sent)),
-    };
+    let options = Put::default()
+        .with_no_clobber(true)
+        .with_encryption(Some(Encryption::Aes256))
+        .with_checksum(Checksum::Sha256(sha256(&sent)));
     let (put, body) = client.put(key, body, len, &options, once()).wait();
     let report = put.or_die("a request was sent");
-    assert_eq!((report.sent, report.unanswered), (1, 0));
-    assert_eq!(report.request.map(|signed| signed.method), Some("PUT"));
+    assert_eq!((report.sent(), report.unanswered()), (1, 0));
+    assert_eq!(report.request().map(|signed| signed.method()), Some("PUT"));
     let stored = answered(&Ok(report), 200);
-    assert_eq!(stored.encryption, Some(ServerEncryption::Aes256));
-    assert_eq!(stored.sha256, Some(sha256(&sent)));
-    let expect = Expect {
-        etag: stored.etag,
-        version: stored.version,
-    };
-    assert!(expect.etag.is_some() && expect.version.is_some());
+    assert_eq!(stored.encryption(), Some(ServerEncryption::Aes256));
+    assert_eq!(stored.sha256(), Some(sha256(&sent)));
+    let expect = Expect::default()
+        .with_etag(stored.etag())
+        .with_version(stored.version());
+    assert!(expect.etag().is_some() && expect.version().is_some());
 
     let head = answered(&client.head(key, &expect, once()).wait(), 200);
-    assert_eq!(head.content_length, Some(len as u64));
-    assert_eq!((head.etag, head.version), (expect.etag, expect.version));
+    assert_eq!(head.content_length(), Some(len as u64));
+    assert_eq!(
+        (head.etag(), head.version()),
+        (expect.etag(), expect.version())
+    );
 
     let (whole, body) = client.get(key, None, &expect, body, once()).wait();
-    assert_eq!(answered(&whole, 200).body_len as usize, len);
+    assert_eq!(answered(&whole, 200).body_len() as usize, len);
     assert!(body.as_slice()[..len] == sent[..], "bytes differ");
     let (part, body) = client
         .get(key, Some((4096, 8191)), &expect, body, once())
         .wait();
     let part = answered(&part, 206);
-    let range = ContentRange {
-        first: 4096,
-        last: 8191,
-        size: Some(len as u64),
-    };
-    assert_eq!((part.body_len, part.content_range), (4096, Some(range)));
+    let range = ContentRange::parse(format!("bytes 4096-8191/{len}").as_bytes());
+    assert_eq!((part.body_len(), part.content_range()), (4096, range));
     assert!(body.as_slice()[..4096] == sent[4096..8192], "bytes differ");
 
     // The key is taken now, and a body that is not what its SHA-256 says
     // is refused wherever it is written.
     let (again, body) = client.put(key, body, len, &options, once()).wait();
     let _: Answer = answered(&again, 412);
-    let wrong = Put {
-        checksum: Checksum::Sha256(sha256(b"other bytes")),
-        ..options
-    };
+    let wrong = options.with_checksum(Checksum::Sha256(sha256(b"other bytes")));
     let (damaged, body) = client
         .put("exact-damaged", body, len, &wrong, once())
         .wait();
@@ -98,8 +92,11 @@ pub fn round_trip(client: &Client, len: usize) {
     let past = Budget::once(Instant::now() - Duration::from_millis(1));
     let (late, body) = client.put("exact-late", body, len, &options, past).wait();
     let late = late.or_die("a report");
-    assert_eq!((late.end, late.sent), (End::NotSent(Cause::Deadline), 0));
-    assert!(late.request.is_none());
+    assert_eq!(
+        (late.end(), late.sent()),
+        (End::NotSent(Cause::Deadline), 0)
+    );
+    assert!(late.request().is_none());
     let into = body;
     let (absent, _into) = client
         .get("exact-late", None, &Expect::default(), into, once())
@@ -125,10 +122,7 @@ pub fn deadline_stops_a_connect() {
     let client = b.build().or_die("client");
     let body = client.buffer_blocking();
     let started = Instant::now();
-    let budget = Budget {
-        attempts: 4,
-        deadline: Some(started + Duration::from_millis(300)),
-    };
+    let budget = Budget::new(4, Some(started + Duration::from_millis(300)));
     let (put, _body) = client.put("k", body, 1024, &Put::default(), budget).wait();
     let took = started.elapsed();
     let report = put.or_die("a report");
@@ -137,15 +131,15 @@ pub fn deadline_stops_a_connect() {
     // the deadline ends them.
     assert!(
         matches!(
-            report.end,
+            report.end(),
             End::NotSent(Cause::Deadline | Cause::Transport(_))
         ),
         "{report:?}"
     );
-    assert_eq!((report.sent, report.request), (0, None));
+    assert_eq!((report.sent(), report.request()), (0, None));
     assert!(took < Duration::from_secs(5), "took {took:?}");
     println!(
         "ok exact: deadline ended an unanswered connect in {took:?} as {:?}",
-        report.end
+        report.end()
     );
 }

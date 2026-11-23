@@ -262,13 +262,13 @@ pub(super) fn s3_headers<'h>(
         sha: sha_text(head.s.sha256, sha),
     };
     let m = 3 + s3_signed(head, creds, checksum, &mut signed[3..]);
-    let scope = sigv4::Scope {
-        access_key: creds.access_key(),
-        secret_key: creds.secret_key(),
-        region: &cfg.region,
-        service: "s3",
-        amz_date: date,
-    };
+    let scope = sigv4::Scope::new(
+        creds.access_key(),
+        creds.secret_key(),
+        &cfg.region,
+        "s3",
+        date,
+    );
     // A listing's target carries a query; it is signed as sorted pairs.
     let (uri, query) = match head.path.split_once('?') {
         Some((uri, query)) if matches!(head.s.kind, Kind::List | Kind::EraseMany) => (uri, query),
@@ -280,13 +280,13 @@ pub(super) fn s3_headers<'h>(
         pairs[pair_count] = kv.split_once('=').unwrap_or((kv, ""));
         pair_count += 1;
     }
-    let sreq = sigv4::Request {
-        method: head.method,
-        canonical_uri: uri,
-        query: &pairs[..pair_count],
-        headers: &signed[..m],
-        payload_hash: head.payload,
-    };
+    let sreq = sigv4::Request::new(
+        head.method,
+        uri,
+        &pairs[..pair_count],
+        &signed[..m],
+        head.payload,
+    );
     #[expect(
         clippy::expect_used,
         reason = "sixteen headers at most are signed, and the Authorization buffer fits them all"

@@ -23,7 +23,7 @@ impl World {
         self.s3
             .multipart_begin(&mut self.io, token, key, checksums)
             .unwrap();
-        match self.last().outcome {
+        match self.last().outcome() {
             Outcome::Begun { upload } => upload,
             other @ (Outcome::Stored
             | Outcome::AlreadyExists { .. }
@@ -64,18 +64,14 @@ impl World {
         match self
             .done
             .iter()
-            .find(|d| d.token == token)
-            .map(|d| d.outcome)
+            .find(|d| d.token() == token)
+            .map(|d| d.outcome())
         {
             Some(Outcome::PartStored { tag, checksum }) => {
                 // Every part here is sent with a computed CRC-64/NVME.
                 let crc = longshore_crc::crc64_nvme(&part_bytes(number));
                 assert_eq!(checksum, Some(crc));
-                Part {
-                    number,
-                    tag,
-                    checksum: checksum.map(longshore_crc::crc64_header_value),
-                }
+                Part::new(number, tag, checksum.map(longshore_crc::crc64_header_value))
             }
             other => panic!("expected a stored part for token {token}, got {other:?}"),
         }

@@ -37,42 +37,40 @@ fn main() -> Result<(), Failure> {
 
     let mut body = client.buffer_blocking();
     body.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
-    let options = Put {
-        no_clobber: true,
-        encryption: Some(Encryption::Aes256),
-        checksum: Checksum::Sha256(digest),
-    };
+    let options = Put::default()
+        .with_no_clobber(true)
+        .with_encryption(Some(Encryption::Aes256))
+        .with_checksum(Checksum::Sha256(digest));
     let (put, body) = client.put(&key, body, bytes.len(), &options, budget).wait();
     let put = put.map_err(|e| format!("nothing was sent: {e:?}"))?;
-    let signed = put.request.ok_or("nothing was sent")?;
+    let signed = put.request().ok_or("nothing was sent")?;
     println!(
         "sent {} at {} signing {}",
-        signed.method,
-        String::from_utf8_lossy(&signed.date),
-        String::from_utf8_lossy(signed.signed_headers.as_bytes()),
+        signed.method(),
+        String::from_utf8_lossy(&signed.date()),
+        String::from_utf8_lossy(signed.signed_headers().as_bytes()),
     );
     let stored = answered(&put, 200, "the write")?;
     println!(
         "stored: etag {:?} version {:?} encryption {:?} sha256 returned: {}",
-        stored.etag,
-        stored.version,
-        stored.encryption,
-        stored.sha256.is_some(),
+        stored.etag(),
+        stored.version(),
+        stored.encryption(),
+        stored.sha256().is_some(),
     );
     // What the store did not say is not assumed.
-    if stored.encryption != Some(ServerEncryption::Aes256) {
+    if stored.encryption() != Some(ServerEncryption::Aes256) {
         return Err("the store did not confirm the encryption asked for".into());
     }
-    let expect = Expect {
-        etag: Some(stored.etag.ok_or("the store returned no ETag")?),
+    let expect = Expect::default()
+        .with_etag(Some(stored.etag().ok_or("the store returned no ETag")?))
         // A bucket without versioning answers nothing, or "null".
-        version: stored.version.filter(|v| v.as_bytes() != b"null"),
-    };
+        .with_version(stored.version().filter(|v| v.as_bytes() != b"null"));
 
     let head = client.head(&key, &expect, budget).wait();
     let head = head.map_err(|e| format!("nothing was sent: {e:?}"))?;
     let described = answered(&head, 200, "the head")?;
-    if described.content_length != Some(bytes.len() as u64) || described.etag != expect.etag {
+    if described.content_length() != Some(bytes.len() as u64) || described.etag() != expect.etag() {
         return Err("the store describes some other object".into());
     }
 
@@ -122,9 +120,9 @@ fn client_from_env() -> Result<Client, Failure> {
 
 /// The answer of a report, if the store gave one with status `status`.
 fn answered(report: &Report, status: u16, what: &str) -> Result<Answer, Failure> {
-    match report.end {
-        End::Answered(answer) if answer.status == status => Ok(answer),
-        End::Answered(answer) => Err(format!("{what} was answered {}", answer.status).into()),
+    match report.end() {
+        End::Answered(answer) if answer.status() == status => Ok(answer),
+        End::Answered(answer) => Err(format!("{what} was answered {}", answer.status()).into()),
         End::NotSent(cause) => Err(format!("{what} was not sent: {cause:?}").into()),
         // Sent and not answered. For a write this is not a failure to
         // write: the object may be there.
@@ -147,12 +145,14 @@ fn read(
     let (first, last) = range.unwrap_or((0, sent.len() as u64 - 1));
     let answer = answered(&got, if range.is_some() { 206 } else { 200 }, "the read")?;
     // A ranged answer must say it carries exactly the range asked for.
-    let served = answer.content_range.map(|r| (r.first, r.last, r.size));
+    let served = answer
+        .content_range()
+        .map(|r| (r.first(), r.last(), r.size()));
     if range.is_some() && served != Some((first, last, Some(sent.len() as u64))) {
         return Err(format!("the store served {served:?}").into());
     }
-    if answer.etag != expect.etag
-        || into.as_slice()[..answer.body_len as usize] != sent[first as usize..=last as usize]
+    if answer.etag() != expect.etag()
+        || into.as_slice()[..answer.body_len() as usize] != sent[first as usize..=last as usize]
     {
         return Err("the bytes read are not the bytes written".into());
     }

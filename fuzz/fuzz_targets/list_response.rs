@@ -18,10 +18,10 @@ use list::{unescape, Listing};
 fuzz_target!(|data: &[u8]| {
     if let Ok(listing) = Listing::parse(data) {
         for e in listing.entries().flatten() {
-            assert!(!e.key_raw.is_empty());
-            let mut out = vec![0u8; e.key_raw.len()];
-            if let Some(n) = unescape(e.key_raw, &mut out) {
-                assert!(n <= e.key_raw.len());
+            assert!(!e.key_raw().is_empty());
+            let mut out = vec![0u8; e.key_raw().len()];
+            if let Some(n) = unescape(e.key_raw(), &mut out) {
+                assert!(n <= e.key_raw().len());
             }
         }
         for p in listing.common_prefixes().flatten() {

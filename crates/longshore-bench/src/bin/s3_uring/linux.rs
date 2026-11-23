@@ -211,28 +211,29 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         &limits,
         prefer_large_segments,
     );
-    let mut s3 = S3::new(Config {
-        vendor: if gcs {
-            longshore::store::s3::Vendor::Gcs
-        } else {
-            longshore::store::s3::Vendor::S3
-        },
-        host,
-        bucket_in_path,
-        port: if tls { 443 } else { 80 },
-        region: if gcs { String::new() } else { env("S3_REGION") },
-        credentials: credentials(gcs),
-        credentials_file: None,
-        requests_max: requests,
-        attempts_max: 4,
-        backoff_ns: 200 * MS,
-        backoff_max_ns: 5_000 * MS,
-        // Linode returns no checksum on fetch; set S3_REQUIRE_CHECKSUMS=1 for stores that do.
-        require_checksums: std::env::var("S3_REQUIRE_CHECKSUMS").is_ok_and(|v| v == "1"),
-        http: http(conns, &limits, buffer_size),
-        tls: tls.then(tls_setup),
-        endpoint: Endpoint::Resolved(resolver),
-    });
+    let mut s3 = S3::new(
+        Config::new(
+            if gcs {
+                longshore::store::s3::Vendor::Gcs
+            } else {
+                longshore::store::s3::Vendor::S3
+            },
+            host,
+            if gcs { String::new() } else { env("S3_REGION") },
+            credentials(gcs),
+            http(conns, &limits, buffer_size),
+            Endpoint::Resolved(resolver),
+        )
+        .with_bucket_in_path(bucket_in_path)
+        .with_port(if tls { 443 } else { 80 })
+        .with_credentials_file(None)
+        .with_requests_max(requests)
+        .with_attempts_max(4)
+        .with_backoff_ns(200 * MS)
+        .with_backoff_max_ns(5_000 * MS)
+        .with_require_checksums(std::env::var("S3_REQUIRE_CHECKSUMS").is_ok_and(|v| v == "1"))
+        .with_tls(tls.then(tls_setup)),
+    );
     s3.start(&mut io);
     io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 50 * MS })
         .or_die("submit");

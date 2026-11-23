@@ -48,7 +48,7 @@ fn store_three_at_once(w: &mut World, ns: &Nameserver) {
     }
     for _ in 0..3 {
         let d = next_done(w, ns);
-        assert_eq!((d.outcome, d.attempts), (Outcome::Stored, 1), "{d:?}");
+        assert_eq!((d.outcome(), d.attempts()), (Outcome::Stored, 1), "{d:?}");
     }
 }
 
@@ -56,7 +56,7 @@ fn store_three_at_once(w: &mut World, ns: &Nameserver) {
 fn store_many(w: &mut World, ns: &Nameserver, first: u64, n: u64) {
     for token in first..first + n {
         let d = store(w, ns, token, "k");
-        assert_eq!((d.outcome, d.attempts), (Outcome::Stored, 1), "{d:?}");
+        assert_eq!((d.outcome(), d.attempts()), (Outcome::Stored, 1), "{d:?}");
     }
 }
 

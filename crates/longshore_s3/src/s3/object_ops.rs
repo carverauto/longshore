@@ -339,13 +339,13 @@ impl S3 {
             authority[n..n + digits.len() - d].copy_from_slice(&digits[d..]);
             n += digits.len() - d;
         }
-        let target = presign::Target {
-            scheme: if self.secure { "https" } else { "http" },
-            host: crate::text::written(&authority[..n]),
-            root: &self.root,
-            region: &self.cfg.region,
-            credentials: &self.creds[self.active],
-        };
+        let target = presign::Target::new(
+            if self.secure { "https" } else { "http" },
+            crate::text::written(&authority[..n]),
+            &self.root,
+            &self.cfg.region,
+            &self.creds[self.active],
+        );
         presign::presign(out, &target, access, key, io.unix_secs(), expires_secs)
     }
 }

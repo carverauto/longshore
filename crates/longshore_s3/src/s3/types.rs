@@ -45,41 +45,25 @@ pub enum Vendor {
     Gcs,
 }
 
+/// How a store is reached and how it behaves. Made with [`Config::new`]
+/// and the `with_*` setters.
 pub struct Config {
-    pub vendor: Vendor,
-    /// Host header and DNS name. With the bucket in the host name, which is
-    /// the default, this is `bucket.endpoint`. With [`Config::bucket_in_path`]
-    /// it is the endpoint's own name.
-    pub host: String,
-    /// `Some(bucket)` addresses the bucket in the path: every request goes
-    /// to `/bucket/key` on `host`. Self-hosted S3-compatible stores commonly
-    /// expect this. `None` addresses it in the host name.
-    pub bucket_in_path: Option<String>,
-    pub port: u16,
-    /// Region used in the signature scope.
-    pub region: String,
-    /// Credentials to start with.
-    pub credentials: Credentials,
-    /// With `Some`, credentials are reread from a file and rotated in.
-    pub credentials_file: Option<CredentialsFile>,
-    /// Operations in progress at most.
-    pub requests_max: u32,
-    /// Attempts per operation, including the first.
-    pub attempts_max: u32,
-    /// First delay after a slow-down response; doubles up to `backoff_max_ns`.
-    pub backoff_ns: u64,
-    pub backoff_max_ns: u64,
-    /// The store is known to return a checksum with every whole-object
-    /// fetch. A response without a well-formed one is then treated as
-    /// damaged and fetched again, instead of being accepted unverified.
-    pub require_checksums: bool,
-    pub http: client::ClientConfig,
-    /// With `Some`, connections use TLS: the handshake setup, and the first
-    /// of the `2 * http.connections_max` pool buffers the record layer uses.
+    pub(crate) vendor: Vendor,
+    pub(crate) host: String,
+    pub(crate) bucket_in_path: Option<String>,
+    pub(crate) port: u16,
+    pub(crate) region: String,
+    pub(crate) credentials: Credentials,
+    pub(crate) credentials_file: Option<CredentialsFile>,
+    pub(crate) requests_max: u32,
+    pub(crate) attempts_max: u32,
+    pub(crate) backoff_ns: u64,
+    pub(crate) backoff_max_ns: u64,
+    pub(crate) require_checksums: bool,
+    pub(crate) http: client::ClientConfig,
     #[cfg(feature = "tls")]
-    pub tls: Option<(longshore_tls::handshake::ClientSetup, u32)>,
-    /// Where the store is. With `Resolved`, host index 0 of the resolver is used.
-    pub endpoint: Endpoint,
+    pub(crate) tls: Option<(longshore_tls::handshake::ClientSetup, u32)>,
+    pub(crate) endpoint: Endpoint,
 }
 
 /// A credentials file to watch. It is reread every `reread_ns`. When its
@@ -87,14 +71,11 @@ pub struct Config {
 /// a one-key listing and adopted only if the store accepts them.
 #[derive(Clone, Copy, Debug)]
 pub struct CredentialsFile {
-    pub file: FileId,
-    /// A pool buffer for reading the file and for the validation listing.
-    pub buf: BufId,
-    pub reread_ns: u64,
-    /// `Io` token for the file read.
-    pub token: u64,
-    /// How new credentials are tried before they replace the ones in use.
-    pub validate: Validate,
+    pub(crate) file: FileId,
+    pub(crate) buf: BufId,
+    pub(crate) reread_ns: u64,
+    pub(crate) token: u64,
+    pub(crate) validate: Validate,
 }
 
 /// The request that proves new credentials before they are adopted.
@@ -233,9 +214,9 @@ pub enum Fatal {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Done {
-    pub token: u64,
-    pub outcome: Outcome,
-    pub attempts: u32,
+    pub(crate) token: u64,
+    pub(crate) outcome: Outcome,
+    pub(crate) attempts: u32,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -280,5 +261,85 @@ pub fn bucket_in_host(vendor: Vendor, host: &str) -> &str {
             }
             endpoint.map_or(first, |offset| &host[..offset - 1])
         }
+    }
+}
+
+impl CredentialsFile {
+    /// Watch `file`, rereading it into `buf` every `reread_ns` with `token`, and try new credentials as `validate` says.
+    #[inline]
+    pub const fn new(
+        file: FileId,
+        buf: BufId,
+        reread_ns: u64,
+        token: u64,
+        validate: Validate,
+    ) -> Self {
+        CredentialsFile {
+            file,
+            buf,
+            reread_ns,
+            token,
+            validate,
+        }
+    }
+
+    /// The registered file holding the credentials.
+    #[inline]
+    pub const fn file(self) -> FileId {
+        self.file
+    }
+
+    /// A pool buffer for reading the file and for the validation listing.
+    #[inline]
+    pub const fn buf(self) -> BufId {
+        self.buf
+    }
+
+    /// How often the file is reread.
+    #[inline]
+    pub const fn reread_ns(self) -> u64 {
+        self.reread_ns
+    }
+
+    /// `Io` token for the file read.
+    #[inline]
+    pub const fn token(self) -> u64 {
+        self.token
+    }
+
+    /// How new credentials are tried before they replace the ones in use.
+    #[inline]
+    pub const fn validate(self) -> Validate {
+        self.validate
+    }
+}
+
+impl Done {
+    /// Operation `token` ended with `outcome` after `attempts` requests.
+    #[inline]
+    pub const fn new(token: u64, outcome: Outcome, attempts: u32) -> Done {
+        Done {
+            token,
+            outcome,
+            attempts,
+        }
+    }
+
+    /// The operation's token, as submitted.
+    #[inline]
+    pub const fn token(self) -> u64 {
+        self.token
+    }
+
+    /// How the operation ended.
+    #[inline]
+    pub const fn outcome(self) -> Outcome {
+        self.outcome
+    }
+
+    /// Requests the operation sent.
+    #[inline]
+    pub const fn attempts(self) -> u32 {
+        self.attempts
     }
 }

@@ -79,30 +79,30 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
         .tls_batch(256 * 1024)
         .build()
         .unwrap();
-    let mut s3 = S3::new(Config {
-        vendor: Vendor::Gcs,
-        host: "bucket.storage.test".into(),
-        bucket_in_path: None,
-        port: 80,
-        region: "auto".into(),
-        credentials: Credentials::bearer(TOKEN_A).unwrap(),
-        credentials_file: Some(CredentialsFile {
-            file: token_file,
-            buf: TOKEN_BUF,
-            reread_ns: REREAD_MS * MS,
-            token: 1 << 51,
-            validate: longshore_s3::s3::Validate::List(longshore_s3::s3::KeyPrefix::EMPTY),
-        }),
-        requests_max: 4,
-        attempts_max,
-        backoff_ns: 50 * MS,
-        backoff_max_ns: 400 * MS,
-        require_checksums: true,
-        http,
-        #[cfg(feature = "tls")]
-        tls: None,
-        endpoint: Endpoint::Fixed(ADDR),
-    });
+    let mut s3 = S3::new(
+        Config::new(
+            Vendor::Gcs,
+            "bucket.storage.test".into(),
+            "auto".into(),
+            Credentials::bearer(TOKEN_A).unwrap(),
+            http,
+            Endpoint::Fixed(ADDR),
+        )
+        .with_bucket_in_path(None)
+        .with_port(80)
+        .with_credentials_file(Some(CredentialsFile::new(
+            token_file,
+            TOKEN_BUF,
+            REREAD_MS * MS,
+            1 << 51,
+            longshore_s3::s3::Validate::List(longshore_s3::s3::KeyPrefix::EMPTY),
+        )))
+        .with_requests_max(4)
+        .with_attempts_max(attempts_max)
+        .with_backoff_ns(50 * MS)
+        .with_backoff_max_ns(400 * MS)
+        .with_require_checksums(true),
+    );
     s3.start(&mut io);
     io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();

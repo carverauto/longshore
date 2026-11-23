@@ -49,13 +49,7 @@ pub fn rig_with(lanes: usize, operations: u32) -> Rig {
                     .unwrap(),
             );
             let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
-            let layout = Layout {
-                operations,
-                first_buffer: TX,
-                buffers: 2,
-                token_base: 7 << 40,
-                heartbeat_ns: 10 * MS,
-            };
+            let layout = Layout::new(operations, TX, 2, 7 << 40, 10 * MS);
             let (mut worker, lane) = Worker::new(&mut io, S3::new(s3_config(3, false)), layout)
                 .expect("the simulator can be woken");
             worker.start(&mut io);

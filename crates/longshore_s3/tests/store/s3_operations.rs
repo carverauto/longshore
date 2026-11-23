@@ -16,21 +16,14 @@ fn store_fetch_range_and_erase() {
     w.fill_tx(BUF, 5);
     w.s3.store(&mut w.io, 1, "dir/key one.bin", TX, BUF, Checksum::None)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 1));
     // The key is percent-encoded on the wire; '/' is kept.
     assert_eq!(w.server.object_len("/dir/key%20one.bin"), Some(BUF));
 
     w.s3.fetch(&mut w.io, 2, "dir/key one.bin", None, RX)
         .unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: BUF,
             verified: false
@@ -42,7 +35,7 @@ fn store_fetch_range_and_erase() {
     w.s3.fetch(&mut w.io, 3, "dir/key one.bin", Some((100, 199)), RX)
         .unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: 100,
             verified: false
@@ -55,17 +48,10 @@ fn store_fetch_range_and_erase() {
     );
 
     w.s3.erase(&mut w.io, 4, "dir/key one.bin").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Erased);
+    assert_eq!(w.last().outcome(), Outcome::Erased);
     w.s3.fetch(&mut w.io, 5, "dir/key one.bin", None, RX)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 5,
-            outcome: Outcome::NotFound,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(5, Outcome::NotFound, 1));
     assert_eq!(
         w.s3.connects(),
         1,
@@ -79,18 +65,14 @@ fn store_no_clobber_keeps_the_existing_object() {
     w.fill_tx(1000, 1);
     w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     let first = w.io.buf(TX)[..1000].to_vec();
     w.fill_tx(500, 2);
     w.s3.store_no_clobber(&mut w.io, 2, "k", TX, 500, Checksum::None)
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::AlreadyExists { after_retry: false },
-            attempts: 1
-        }
+        Done::new(2, Outcome::AlreadyExists { after_retry: false }, 1)
     );
     assert_eq!(
         w.server.object("/k"),
@@ -100,7 +82,7 @@ fn store_no_clobber_keeps_the_existing_object() {
     // A plain store does replace it.
     w.s3.store(&mut w.io, 3, "k", TX, 500, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     assert_eq!(w.server.object_len("/k"), Some(500));
 }
 
@@ -131,16 +113,12 @@ fn a_ranged_fetch_answered_with_the_whole_object_is_refused() {
     w.fill_tx(1000, 1);
     w.s3.store(&mut w.io, 1, "k", TX, 1000, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     w.server.script(Behavior::StatusWithBody(200, 1000));
     w.s3.fetch(&mut w.io, 2, "k", Some((100, 199)), RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::RangeIgnored),
-            attempts: 1
-        }
+        Done::new(2, Outcome::Fatal(Fatal::RangeIgnored), 1)
     );
     assert_eq!(
         w.s3.fetch(&mut w.io, 3, "k", Some((200, 100)), RX),
@@ -149,7 +127,7 @@ fn a_ranged_fetch_answered_with_the_whole_object_is_refused() {
     );
     w.s3.fetch(&mut w.io, 4, "k", Some((100, 100)), RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: 1,
             verified: false
@@ -179,11 +157,7 @@ fn an_erase_reads_the_error_code_and_not_the_key_echoed_beside_it() {
     w.s3.erase(&mut w.io, 1, "NoSuchKey.bin").unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Fatal(Fatal::Status(404)),
-            attempts: 1
-        }
+        Done::new(1, Outcome::Fatal(Fatal::Status(404)), 1)
     );
     // The code itself still means the object is gone.
     w.server.script(raw(
@@ -191,7 +165,7 @@ fn an_erase_reads_the_error_code_and_not_the_key_echoed_beside_it() {
         "<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>",
     ));
     w.s3.erase(&mut w.io, 2, "absent").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Erased);
+    assert_eq!(w.last().outcome(), Outcome::Erased);
 }
 
 /// A key is refused by its length once encoded, at exactly the limit: one

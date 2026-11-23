@@ -40,11 +40,7 @@ fn recognises_an_error_document() {
 }
 
 fn part(number: u32, tag: PartTag) -> Part {
-    Part {
-        number,
-        tag,
-        checksum: None,
-    }
+    Part::new(number, tag, None)
 }
 
 #[test]

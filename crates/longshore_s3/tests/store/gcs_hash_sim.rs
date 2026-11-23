@@ -48,7 +48,7 @@ fn fetch_with(hash_lines: &[String]) -> (Done, bool) {
         Checksum::Compute,
     )
     .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n", SCRIPTED.len());
     for line in hash_lines {
         response += &format!("x-goog-hash: {line}\r\n");
@@ -65,14 +65,14 @@ fn fetch_with(hash_lines: &[String]) -> (Done, bool) {
 }
 
 fn verified_at_once(len: usize) -> Done {
-    Done {
-        token: 2,
-        outcome: Outcome::Fetched {
+    Done::new(
+        2,
+        Outcome::Fetched {
             len: len as u32,
             verified: true,
         },
-        attempts: 1,
-    }
+        1,
+    )
 }
 
 #[test]
@@ -111,14 +111,14 @@ fn a_missing_malformed_or_wrong_checksum_is_fetched_again() {
     ] {
         let (done, scripted) = fetch_with(&lines);
         assert_eq!(
-            done.outcome,
+            done.outcome(),
             Outcome::Fetched {
                 len: STORED.len() as u32,
                 verified: true
             },
             "{lines:?}"
         );
-        assert!(done.attempts > 1 && !scripted, "{lines:?}: {done:?}");
+        assert!(done.attempts() > 1 && !scripted, "{lines:?}: {done:?}");
     }
 }
 

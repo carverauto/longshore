@@ -17,8 +17,8 @@ use longshore::store::report::{End, Expect, Put, Report};
 use std::time::{Duration, Instant};
 
 fn answered_status(rep: &Report) -> Option<u16> {
-    match rep.end {
-        End::Answered(a) => Some(a.status),
+    match rep.end() {
+        End::Answered(a) => Some(a.status()),
         End::NotSent(_) | End::Unknown(_) => None,
     }
 }
@@ -103,10 +103,7 @@ fn multipart_lifecycle(client: &Client, store: &HttpStoreServer, mut buf: Buffer
 /// Exact `Budget` + `Report` calls: put, head, get, and erase.
 #[cfg(unix)]
 fn exact_calls(client: &Client, store: &HttpStoreServer, mut buf: Buffer) {
-    let budget = Budget {
-        attempts: 2,
-        deadline: Some(Instant::now() + Duration::from_secs(5)),
-    };
+    let budget = Budget::new(2, Some(Instant::now() + Duration::from_secs(5)));
     buf.as_mut_slice()[..5].copy_from_slice(b"exact");
     let (put_rep, buf) = client
         .put("exact-key", buf, 5, &Put::default(), budget)

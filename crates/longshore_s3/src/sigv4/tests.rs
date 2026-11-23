@@ -30,24 +30,18 @@ fn uri_encoding_rules() {
 const DATE: &[u8; 16] = b"20150830T123600Z";
 
 fn scope() -> Scope<'static> {
-    Scope {
-        access_key: "AKIDEXAMPLE",
-        secret_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-        region: "us-east-1",
-        service: "s3",
-        amz_date: DATE,
-    }
+    Scope::new(
+        "AKIDEXAMPLE",
+        "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        "us-east-1",
+        "s3",
+        DATE,
+    )
 }
 
 fn sign(headers: &[(&str, &str)], query: &[(&str, &str)]) -> Result<[u8; 64], SignError> {
     signature(
-        &Request {
-            method: "GET",
-            canonical_uri: "/k",
-            query,
-            headers,
-            payload_hash: UNSIGNED_PAYLOAD,
-        },
+        &Request::new("GET", "/k", query, headers, UNSIGNED_PAYLOAD),
         &scope(),
     )
 }
@@ -156,13 +150,13 @@ fn refuses_more_headers_or_query_pairs_than_it_can_sort() {
 
 #[test]
 fn the_authorization_value_fits_exactly_or_is_refused() {
-    let req = Request {
-        method: "GET",
-        canonical_uri: "/k",
-        query: &[],
-        headers: &[("Host", "h"), ("X-Amz-Date", "d"), ("host", "again")],
-        payload_hash: UNSIGNED_PAYLOAD,
-    };
+    let req = Request::new(
+        "GET",
+        "/k",
+        &[],
+        &[("Host", "h"), ("X-Amz-Date", "d"), ("host", "again")],
+        UNSIGNED_PAYLOAD,
+    );
     let mut out = [0u8; 512];
     let n = authorization(&req, &scope(), &mut out).unwrap();
     let text = core::str::from_utf8(&out[..n]).unwrap();

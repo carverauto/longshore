@@ -71,8 +71,8 @@ fn arbitrary_bytes_are_safe_to_parse(tc: TestCase) {
         let errors = all.iter().filter(|f| f.is_err()).count();
         assert!(errors <= 1 && all.iter().rev().skip(1).all(|f| f.is_ok()));
         for f in all.into_iter().flatten() {
-            assert!(!f.key_raw.is_empty() && inside(f.key_raw, &data));
-            assert!(inside(f.code, &data));
+            assert!(!f.key_raw().is_empty() && inside(f.key_raw(), &data));
+            assert!(inside(f.code(), &data));
         }
     }
     for name in ["etag", "content-length", ""] {
@@ -133,11 +133,7 @@ fn a_completion_manifest_lists_its_parts(tc: TestCase) {
         let checksum = tc
             .draw(gs::booleans())
             .then(|| longshore_crc::crc64_header_value(tc.draw(gs::integers::<u64>())));
-        parts.push(Part {
-            number,
-            tag: PartTag::new(&tag).unwrap(),
-            checksum,
-        });
+        parts.push(Part::new(number, PartTag::new(&tag).unwrap(), checksum));
     }
     assert!(number <= PART_NUMBER_MAX);
     let mut out = vec![0u8; 4096];
@@ -148,16 +144,17 @@ fn a_completion_manifest_lists_its_parts(tc: TestCase) {
     assert_eq!(listed.len(), parts.len());
     for (text, part) in listed.iter().zip(&parts) {
         let numbers = between(text, "<PartNumber>", "</PartNumber>");
-        assert_eq!(numbers, [part.number.to_string()]);
+        assert_eq!(numbers, [part.number().to_string()]);
         let tags = between(text, "<ETag>", "</ETag>");
         assert_eq!(tags.len(), 1);
         assert!(!tags[0].contains(['<', '>', '"']));
-        assert_eq!(unescaped(tags[0].as_bytes()), part.tag.as_bytes());
+        assert_eq!(unescaped(tags[0].as_bytes()), part.tag().as_bytes());
         let sums: Vec<&[u8]> = between(text, "<ChecksumCRC64NVME>", "</ChecksumCRC64NVME>")
             .into_iter()
             .map(str::as_bytes)
             .collect();
-        let expected: Vec<&[u8]> = part.checksum.iter().map(|c| &c[..]).collect();
+        let checksum = part.checksum();
+        let expected: Vec<&[u8]> = checksum.iter().map(|c| &c[..]).collect();
         assert_eq!(sums, expected);
     }
     assert_eq!(multipart::write_manifest(&mut out[..n - 1], &parts), None);
@@ -173,7 +170,8 @@ fn a_completion_manifest_lists_its_parts(tc: TestCase) {
         swapped.swap(at, at + 1);
         assert_eq!(multipart::write_manifest(&mut out, &swapped), None);
         let mut repeated = parts.clone();
-        repeated[at + 1].number = repeated[at].number;
+        let next = repeated[at + 1];
+        repeated[at + 1] = Part::new(repeated[at].number(), next.tag(), next.checksum());
         assert_eq!(multipart::write_manifest(&mut out, &repeated), None);
     }
 }
@@ -230,8 +228,8 @@ fn a_report_of_failures_is_read_back(tc: TestCase) {
         .map(|f| {
             let f = f.expect("a well-formed failure");
             (
-                String::from_utf8(unescaped(f.key_raw)).unwrap(),
-                String::from_utf8(f.code.to_vec()).unwrap(),
+                String::from_utf8(unescaped(f.key_raw())).unwrap(),
+                String::from_utf8(f.code().to_vec()).unwrap(),
             )
         })
         .collect();

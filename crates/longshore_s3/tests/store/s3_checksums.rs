@@ -16,17 +16,10 @@ fn checksums_are_sent_enforced_and_verified_on_fetch() {
     w.fill_tx(BUF, 9);
     w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 1));
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: BUF,
             verified: true
@@ -35,7 +28,7 @@ fn checksums_are_sent_enforced_and_verified_on_fetch() {
     // A ranged fetch cannot be checked against a whole-object checksum.
     w.s3.fetch(&mut w.io, 3, "k", Some((0, 9)), RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: 10,
             verified: false
@@ -46,18 +39,14 @@ fn checksums_are_sent_enforced_and_verified_on_fetch() {
     let crc = longshore_crc::crc64_nvme(&w.io.buf(TX)[..BUF as usize]);
     w.s3.store(&mut w.io, 4, "k2", TX, BUF, Checksum::Provided(crc))
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     // ...and a wrong one is indistinguishable from damage in transit, so it
     // is retried and then given up on. Nothing is stored.
     w.s3.store(&mut w.io, 5, "k3", TX, BUF, Checksum::Provided(crc ^ 1))
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 5,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 3
-        }
+        Done::new(5, Outcome::Fatal(Fatal::RetriesExhausted), 3)
     );
     assert_eq!(w.server.object_len("/k3"), None);
 }
@@ -133,8 +122,8 @@ fn store_never_accepts_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tal
     w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
         .unwrap();
     let d = w.last();
-    t.retried += u32::from(d.attempts > 1);
-    match d.outcome {
+    t.retried += u32::from(d.attempts() > 1);
+    match d.outcome() {
         Outcome::Stored => {
             t.stored += 1;
             assert_eq!(
@@ -170,8 +159,8 @@ fn store_never_accepts_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tal
 fn fetch_never_returns_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tally) {
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     let fetch = w.last();
-    t.retried += u32::from(fetch.attempts > 1);
-    match fetch.outcome {
+    t.retried += u32::from(fetch.attempts() > 1);
+    match fetch.outcome() {
         Outcome::Fetched { len, verified } => {
             t.fetched += 1;
             assert!(
@@ -217,7 +206,7 @@ fn the_same_bit_flips_do_corrupt_data_with_checksums_off() {
         let sent = w.io.buf(TX).to_vec();
         w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::None)
             .unwrap();
-        if w.last().outcome == Outcome::Stored && w.server.object("/k") != Some(&sent[..]) {
+        if w.last().outcome() == Outcome::Stored && w.server.object("/k") != Some(&sent[..]) {
             damaged += 1;
         }
     }
@@ -235,14 +224,10 @@ fn a_required_checksum_that_never_arrives_is_a_failure_not_an_unverified_success
     w.fill_tx(100, 0);
     w.s3.store(&mut w.io, 1, "k", TX, 100, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::ChecksumMismatch),
-            attempts: 3
-        }
+        Done::new(2, Outcome::Fatal(Fatal::ChecksumMismatch), 3)
     );
 }

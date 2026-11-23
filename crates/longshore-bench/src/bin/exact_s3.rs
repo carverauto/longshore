@@ -87,7 +87,7 @@ mod linux {
 
     /// The answer a request ended with, if it was answered.
     fn answer(report: &Result<Report, Error>) -> Option<Answer> {
-        match report.as_ref().map(|r| r.end) {
+        match report.as_ref().map(|r| r.end()) {
             Ok(End::Answered(a)) => Some(a),
             _ => None,
         }
@@ -116,31 +116,31 @@ mod linux {
             let text = |raw: &[u8]| String::from_utf8_lossy(raw).into_owned();
             match report {
                 Err(e) => println!("{what}: nothing sent, {e:?}"),
-                Ok(r) => match r.end {
+                Ok(r) => match r.end() {
                     End::NotSent(cause) => println!("{what}: not sent, {cause:?}"),
                     End::Unknown(cause) => {
-                        println!("{what}: UNKNOWN outcome, {cause:?}, sent {}", r.sent)
+                        println!("{what}: UNKNOWN outcome, {cause:?}, sent {}", r.sent())
                     }
                     End::Answered(a) => println!(
                         "{what}: status {} etag {} version {} encryption {:?} sha256 {} crc64 {} \
                          length {:?} range {:?} body {} request-id {} malformed {} sent {} unanswered {}",
-                        a.status,
-                        a.etag.map_or("-".into(), |v| text(v.as_bytes())),
-                        a.version.map_or("-".into(), |v| text(v.as_bytes())),
-                        a.encryption,
-                        match a.sha256 {
+                        a.status(),
+                        a.etag().map_or("-".into(), |v| text(v.as_bytes())),
+                        a.version().map_or("-".into(), |v| text(v.as_bytes())),
+                        a.encryption(),
+                        match a.sha256() {
                             Some(d) if d == digest => "matches",
                             Some(_) => "DIFFERS",
                             None => "-",
                         },
-                        a.crc64.map_or("-".into(), |v| text(&v)),
-                        a.content_length,
-                        a.content_range.map(|range| (range.first, range.last, range.size)),
-                        a.body_len,
-                        a.request_id.map_or("-", |_| "present"),
-                        a.malformed,
-                        r.sent,
-                        r.unanswered,
+                        a.crc64().map_or("-".into(), |v| text(&v)),
+                        a.content_length(),
+                        a.content_range().map(|range| (range.first(), range.last(), range.size())),
+                        a.body_len(),
+                        a.request_id().map_or("-", |_| "present"),
+                        a.malformed(),
+                        r.sent(),
+                        r.unanswered(),
                     ),
                 },
             }
@@ -171,11 +171,10 @@ mod linux {
             for (name, encryption, checksum) in variants {
                 body.as_mut_slice()[..LEN].copy_from_slice(bytes);
                 let key = format!("{prefix}/{name}");
-                let options = Put {
-                    no_clobber: true,
-                    encryption,
-                    checksum,
-                };
+                let options = Put::default()
+                    .with_no_clobber(true)
+                    .with_encryption(encryption)
+                    .with_checksum(checksum);
                 let put;
                 (put, body) = client.put(&key, body, LEN, &options, once()).wait();
                 self.show(&format!("put {name}"), &put);
@@ -184,13 +183,12 @@ mod linux {
                     written.push(key);
                     continue;
                 };
-                if a.status == 200 {
+                if a.status() == 200 {
                     written.push(key.clone());
-                    let expect = Expect {
-                        etag: a.etag,
+                    let expect = Expect::default()
+                        .with_etag(a.etag())
                         // A bucket without versions answers nothing, or "null".
-                        version: a.version.filter(|v| v.as_bytes() != b"null"),
-                    };
+                        .with_version(a.version().filter(|v| v.as_bytes() != b"null"));
                     let _: &mut (String, Put, Expect) = first.get_or_insert((key, options, expect));
                 }
             }
@@ -206,12 +204,11 @@ mod linux {
             let again;
             (again, body) = client.put(&key, body, LEN, &options, once()).wait();
             self.show("put again, must be refused", &again);
-            let other = Expect {
-                etag: longshore::store::multipart::Fixed::new(
+            let other = Expect::default()
+                .with_etag(longshore::store::multipart::Fixed::new(
                     b"\"00000000000000000000000000000000\"",
-                ),
-                version: expect.version,
-            };
+                ))
+                .with_version(expect.version());
             self.show("head", &client.head(&key, &expect, once()).wait());
             self.show(
                 "head, another etag",
@@ -221,7 +218,7 @@ mod linux {
             (whole, body) = client.get(&key, None, &expect, body, once()).wait();
             self.show("get", &whole);
             let whole_ok = answer(&whole).is_some_and(|a| {
-                a.status == 200 && body.as_slice()[..a.body_len as usize] == bytes[..]
+                a.status() == 200 && body.as_slice()[..a.body_len() as usize] == bytes[..]
             });
             let part;
             (part, body) = client
@@ -229,8 +226,8 @@ mod linux {
                 .wait();
             self.show("get bytes 1000-1999", &part);
             let part_ok = answer(&part).is_some_and(|a| {
-                let got = &body.as_slice()[..a.body_len as usize];
-                match a.status {
+                let got = &body.as_slice()[..a.body_len() as usize];
+                match a.status() {
                     206 => got == &bytes[1000..2000],
                     200 => got == &bytes[..],
                     _ => false,
@@ -246,11 +243,10 @@ mod linux {
         /// A body sent with the SHA-256 of other bytes.
         fn put_wrong_sha256(&self, mut body: Buffer, written: &mut Vec<String>) -> Buffer {
             let (client, prefix, bytes) = (&self.client, &self.prefix, &self.bytes);
-            let wrong = Put {
-                no_clobber: true,
-                encryption: None,
-                checksum: Checksum::Sha256(sha256(b"other bytes")),
-            };
+            let wrong = Put::default()
+                .with_no_clobber(true)
+                .with_encryption(None)
+                .with_checksum(Checksum::Sha256(sha256(b"other bytes")));
             let wrong_key = format!("{prefix}/wrong-sha256");
             body.as_mut_slice()[..LEN].copy_from_slice(bytes);
             let damaged;
@@ -271,7 +267,7 @@ mod linux {
                 .put(&late_key, body, LEN, &Put::default(), past)
                 .wait();
             self.show("put after its deadline", &late);
-            !matches!(late, Ok(r) if matches!(r.end, End::NotSent(_)) && r.request.is_none())
+            !matches!(late, Ok(r) if matches!(r.end(), End::NotSent(_)) && r.request().is_none())
         }
     }
 

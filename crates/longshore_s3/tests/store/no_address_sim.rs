@@ -43,7 +43,7 @@ fn operations_end_when_the_name_never_resolves() {
     let done = run_until_done(&mut io, &mut s3, 2);
     for d in &done {
         assert_eq!(
-            (d.outcome, d.attempts),
+            (d.outcome(), d.attempts()),
             (Outcome::Fatal(Fatal::NoAddress), 0),
             "{d:?}"
         );
@@ -89,24 +89,24 @@ fn s3_behind_a_silent_nameserver() -> S3 {
         .tls_batch(256 * 1024)
         .build()
         .unwrap();
-    S3::new(Config {
-        vendor: Vendor::S3,
-        host: "bucket.objects.test".into(),
-        bucket_in_path: None,
-        port: 80,
-        region: "us-test-1".into(),
-        credentials: Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
-        credentials_file: None,
-        requests_max: 2,
-        attempts_max: 3,
-        backoff_ns: 100 * MS,
-        backoff_max_ns: 800 * MS,
-        require_checksums: false,
-        http,
-        #[cfg(feature = "tls")]
-        tls: None,
-        endpoint: Endpoint::Resolved(resolver),
-    })
+    S3::new(
+        Config::new(
+            Vendor::S3,
+            "bucket.objects.test".into(),
+            "us-test-1".into(),
+            Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
+            http,
+            Endpoint::Resolved(resolver),
+        )
+        .with_bucket_in_path(None)
+        .with_port(80)
+        .with_credentials_file(None)
+        .with_requests_max(2)
+        .with_attempts_max(3)
+        .with_backoff_ns(100 * MS)
+        .with_backoff_max_ns(800 * MS)
+        .with_require_checksums(false),
+    )
 }
 
 /// Drives the store with allocation forbidden until `n` operations have

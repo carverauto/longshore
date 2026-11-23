@@ -55,7 +55,7 @@ fn upload(r: &mut Rig, client: &longshore_s3::client::Client, key: &str) -> (Vec
             }
         }
     }
-    parts.sort_by_key(|p| p.number);
+    parts.sort_by_key(|p| p.number());
     assert_eq!(parts.len(), 2, "the parts did not end");
     let (completed, _scratch) = r.run(client.upload_complete(key, &id, &parts, scratch.unwrap()));
     assert_eq!(completed, Ok(()));
@@ -69,9 +69,9 @@ fn parts_stored_together_become_one_object() {
     let (object, parts) = upload(&mut r, &client, "video/a");
     assert_eq!(r.lanes[0].server.object("/video/a"), Some(&object[..]));
     // Each part went with a checksum, and reports it for the completion.
-    assert!(parts.iter().all(|p| p.checksum.is_some()));
-    assert_eq!(parts[0].number, 1);
-    assert_eq!(parts[1].number, 2);
+    assert!(parts.iter().all(|p| p.checksum().is_some()));
+    assert_eq!(parts[0].number(), 1);
+    assert_eq!(parts[1].number(), 2);
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn a_handle_with_checksums_off_uploads_without_them() {
     let client = r.client.clone().with_checksums(false);
     let (object, parts) = upload(&mut r, &client, "video/b");
     assert_eq!(r.lanes[0].server.object("/video/b"), Some(&object[..]));
-    assert!(parts.iter().all(|p| p.checksum.is_none()));
+    assert!(parts.iter().all(|p| p.checksum().is_none()));
 }
 
 #[test]
@@ -112,11 +112,7 @@ fn requests_that_cannot_be_sent_fail_at_once_and_return_the_buffer() {
     let (long, body) = r.run(r.client.upload_part("video/d", &id, 1, body, size + 1));
     assert_eq!(long, Err(Error::TooLong));
 
-    let part = |number| Part {
-        number,
-        tag: PartTag::new(b"\"tag\"").unwrap(),
-        checksum: None,
-    };
+    let part = |number| Part::new(number, PartTag::new(b"\"tag\"").unwrap(), None);
     let (unordered, body) =
         r.run(
             r.client

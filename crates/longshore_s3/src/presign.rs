@@ -40,17 +40,11 @@ pub enum PresignError {
 /// Where the object is and who signs for it.
 #[derive(Debug, Clone, Copy)]
 pub struct Target<'a> {
-    /// `https` or `http`.
-    pub scheme: &'a str,
-    /// The host, as in the `Host` header: `bucket.endpoint`, or the endpoint
-    /// alone when the bucket is in `root`, with `:port` if the port is not
-    /// the scheme's default.
-    pub host: &'a str,
-    /// What the path starts with: empty when the bucket is in the host
-    /// name, `/bucket` when it is addressed in the path.
-    pub root: &'a str,
-    pub region: &'a str,
-    pub credentials: &'a Credentials,
+    pub(crate) scheme: &'a str,
+    pub(crate) host: &'a str,
+    pub(crate) root: &'a str,
+    pub(crate) region: &'a str,
+    pub(crate) credentials: &'a Credentials,
 }
 
 /// Write a presigned URL for `key` into `out` and return its length. The URL
@@ -216,3 +210,56 @@ fn write_url(
 
 #[cfg(test)]
 mod tests;
+
+impl<'a> Target<'a> {
+    /// The object store at `host` under `root`, signed for by `credentials` in `region`.
+    #[inline]
+    pub const fn new(
+        scheme: &'a str,
+        host: &'a str,
+        root: &'a str,
+        region: &'a str,
+        credentials: &'a Credentials,
+    ) -> Self {
+        Target {
+            scheme,
+            host,
+            root,
+            region,
+            credentials,
+        }
+    }
+
+    /// `https` or `http`.
+    #[inline]
+    pub const fn scheme(self) -> &'a str {
+        self.scheme
+    }
+
+    /// The host, as in the `Host` header: `bucket.endpoint`, or the endpoint
+    /// alone when the bucket is in `root`, with `:port` if the port is not
+    /// the scheme's default.
+    #[inline]
+    pub const fn host(self) -> &'a str {
+        self.host
+    }
+
+    /// What the path starts with: empty when the bucket is in the host
+    /// name, `/bucket` when it is addressed in the path.
+    #[inline]
+    pub const fn root(self) -> &'a str {
+        self.root
+    }
+
+    /// Region used in the signature scope.
+    #[inline]
+    pub const fn region(self) -> &'a str {
+        self.region
+    }
+
+    /// Who signs the URL.
+    #[inline]
+    pub const fn credentials(self) -> &'a Credentials {
+        self.credentials
+    }
+}

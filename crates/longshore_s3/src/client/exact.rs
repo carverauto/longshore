@@ -16,21 +16,17 @@ use std::time::Instant;
 /// How far one `put`, `head` or `get` may go.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Budget {
-    /// Requests the operation may send, counting the first. Zero is read
-    /// as one, and more than the client's own limit of four as four. With
-    /// one, a request is signed once and sent at most once.
-    pub attempts: u32,
-    /// No request is started at or after this instant, and one in progress
-    /// is cancelled at the I/O thread's next timer turn, which comes every
-    /// 50 ms. The operation ends when the kernel has let go of the request,
-    /// so it ends shortly after the deadline, not at it. The time a call
-    /// spends waiting for a buffer or an operation slot is not bounded by
-    /// this: a request that reaches the I/O thread after the deadline is
-    /// simply not sent.
-    pub deadline: Option<Instant>,
+    pub(crate) attempts: u32,
+    pub(crate) deadline: Option<Instant>,
 }
 
 impl Budget {
+    /// At most `attempts` requests, none started at or after `deadline`.
+    #[inline]
+    pub const fn new(attempts: u32, deadline: Option<Instant>) -> Self {
+        Budget { attempts, deadline }
+    }
+
     /// As many attempts as the client makes for its other operations, and
     /// no deadline.
     pub const UNLIMITED: Budget = Budget {
@@ -156,5 +152,27 @@ impl Client {
         let (lane, buf, alive) = into.into_parts();
         let kind = Kind::Get { range };
         Pending::new((lane, alive), key, kind, Some(buf), 0, None, report_of).within(budget, expect)
+    }
+}
+
+impl Budget {
+    /// Requests the operation may send, counting the first. Zero is read
+    /// as one, and more than the client's own limit of four as four. With
+    /// one, a request is signed once and sent at most once.
+    #[inline]
+    pub const fn attempts(self) -> u32 {
+        self.attempts
+    }
+
+    /// No request is started at or after this instant, and one in progress
+    /// is cancelled at the I/O thread's next timer turn, which comes every
+    /// 50 ms. The operation ends when the kernel has let go of the request,
+    /// so it ends shortly after the deadline, not at it. The time a call
+    /// spends waiting for a buffer or an operation slot is not bounded by
+    /// this: a request that reaches the I/O thread after the deadline is
+    /// simply not sent.
+    #[inline]
+    pub const fn deadline(self) -> Option<Instant> {
+        self.deadline
     }
 }

@@ -46,10 +46,14 @@ fn path_server(mut io: SimIo, bucket: &'static str) -> (SimIo, Server) {
 /// sockets and head buffers after the first's, so two can share one world.
 fn store_config(bucket: &str, second: bool) -> Config {
     let mut cfg = s3_config(3, false);
-    cfg.host = "objects.test".into();
-    cfg.bucket_in_path = Some(bucket.into());
+    cfg = cfg.with_host("objects.test".into());
+    cfg = cfg.with_bucket_in_path(Some(bucket.into()));
     if second {
-        cfg.http = http_config(1 + 2 * CONNS, LIMITS.buffers() + CONNS, 3 << 40);
+        cfg = cfg.with_http(http_config(
+            1 + 2 * CONNS,
+            LIMITS.buffers() + CONNS,
+            3 << 40,
+        ));
     }
     cfg
 }
@@ -87,7 +91,7 @@ fn put(w: &mut World, token: u64, key: &str) {
     w.fill_tx(LEN, token as u8);
     w.s3.store(&mut w.io, token, key, TX, LEN, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+    assert_eq!(w.last().outcome(), Outcome::Stored, "{key}");
 }
 
 #[test]
@@ -100,22 +104,25 @@ fn objects_are_stored_fetched_and_erased_under_the_bucket() {
 
     w.s3.fetch(&mut w.io, 2, "dir/key one.bin", Some((10, 19)), RX)
         .unwrap();
-    assert!(matches!(w.last().outcome, Outcome::Fetched { len: 10, .. }));
+    assert!(matches!(
+        w.last().outcome(),
+        Outcome::Fetched { len: 10, .. }
+    ));
     assert!(w.io.buf(RX)[..10] == sent[10..20]);
 
     w.s3.store_no_clobber(&mut w.io, 3, "dir/key one.bin", TX, LEN, Checksum::None)
         .unwrap();
     assert!(
-        matches!(w.last().outcome, Outcome::AlreadyExists { .. }),
+        matches!(w.last().outcome(), Outcome::AlreadyExists { .. }),
         "{:?}",
         w.done.last()
     );
 
     w.s3.erase(&mut w.io, 4, "dir/key one.bin").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Erased);
+    assert_eq!(w.last().outcome(), Outcome::Erased);
     w.s3.fetch(&mut w.io, 5, "dir/key one.bin", None, RX)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::NotFound);
+    assert_eq!(w.last().outcome(), Outcome::NotFound);
 }
 
 #[test]
@@ -125,14 +132,14 @@ fn a_listing_names_keys_without_the_bucket() {
         put(&mut w, i as u64, key);
     }
     w.s3.list(&mut w.io, 10, "logs/", None, 100, RX).unwrap();
-    let Outcome::Listed { len } = w.last().outcome else {
+    let Outcome::Listed { len } = w.last().outcome() else {
         panic!("list failed: {:?}", w.done.last())
     };
     let xml = w.io.buf(RX)[..len as usize].to_vec();
     let listing = Listing::parse(&xml).unwrap();
     let keys: Vec<String> = listing
         .entries()
-        .map(|e| String::from_utf8(e.unwrap().key_raw.to_vec()).unwrap())
+        .map(|e| String::from_utf8(e.unwrap().key_raw().to_vec()).unwrap())
         .collect();
     assert_eq!(keys, ["logs/a", "logs/b"]);
 }
@@ -142,7 +149,7 @@ fn a_copy_names_its_source_by_the_bucket_in_the_path() {
     let mut w = world_in_path(3);
     put(&mut w, 1, "a/src");
     w.s3.copy(&mut w.io, 2, "a/src", "b/dst").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Copied);
+    assert_eq!(w.last().outcome(), Outcome::Copied);
     assert_eq!(w.server.object_len("/b/dst"), Some(LEN));
 }
 
@@ -222,11 +229,11 @@ fn a_copy_names_a_dotted_bucket_in_the_host_whole() {
     server.verify_requests(signed_and_copied_from_dotted);
     let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
     let mut cfg = s3_config(3, false);
-    cfg.host = format!("{DOTTED}.s3.us-test-1.amazonaws.com");
+    cfg = cfg.with_host(format!("{DOTTED}.s3.us-test-1.amazonaws.com"));
     let mut w = finish_world(io, server, cfg);
     put(&mut w, 1, "a/src");
     w.s3.copy(&mut w.io, 2, "a/src", "b/dst").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Copied);
+    assert_eq!(w.last().outcome(), Outcome::Copied);
     assert_eq!(w.server.object_len("/b/dst"), Some(LEN));
 }
 
@@ -238,7 +245,7 @@ fn a_batch_erase_goes_to_the_bucket() {
     let n = write_manifest(w.io.buf(TX), &["x/1", "x/2"]).unwrap();
     w.s3.erase_many(&mut w.io, 3, TX, n as u32, RX).unwrap();
     assert!(
-        matches!(w.last().outcome, Outcome::ErasedMany { .. }),
+        matches!(w.last().outcome(), Outcome::ErasedMany { .. }),
         "{:?}",
         w.done.last()
     );
@@ -264,7 +271,7 @@ fn a_presigned_url_has_the_endpoint_as_host_and_the_bucket_in_its_path() {
 #[should_panic(expected = "not a bucket name")]
 fn a_bucket_name_that_could_not_be_one_is_refused_when_the_store_is_built() {
     let mut cfg = s3_config(3, false);
-    cfg.bucket_in_path = Some("Bad/Name".into());
+    cfg = cfg.with_bucket_in_path(Some("Bad/Name".into()));
     let _: S3 = S3::new(cfg);
 }
 
@@ -278,7 +285,7 @@ fn unreserved_characters_reach_the_path_and_the_url_unencoded() {
     w.s3.fetch(&mut w.io, 2, "dir/a.b~c_d.txt", None, RX)
         .unwrap();
     assert!(matches!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched { len: LEN, .. }
     ));
 
@@ -309,7 +316,7 @@ fn a_store_for_another_bucket_does_not_reach_the_served_one() {
         .store(&mut w.io, 1, "shared", TX, LEN, Checksum::None)
         .unwrap();
     run_both(&mut w, &mut media, 1);
-    assert_eq!(w.done[0].outcome, Outcome::Stored);
+    assert_eq!(w.done[0].outcome(), Outcome::Stored);
     assert_eq!(w.server.object_len("/shared"), Some(LEN));
 
     // The other bucket's store keeps its own prefix: the server, which strips
@@ -317,13 +324,13 @@ fn a_store_for_another_bucket_does_not_reach_the_served_one() {
     w.s3.store(&mut w.io, 2, "mine", TX, LEN, Checksum::None)
         .unwrap();
     run_both(&mut w, &mut media, 2);
-    assert_eq!(w.done[1].outcome, Outcome::Stored);
+    assert_eq!(w.done[1].outcome(), Outcome::Stored);
     assert_eq!(w.server.object_len("/media-2/mine"), Some(LEN));
     assert_eq!(w.server.object_len("/mine"), None);
 
     w.s3.fetch(&mut w.io, 3, "shared", None, RX).unwrap();
     run_both(&mut w, &mut media, 3);
-    assert_eq!(w.done[2].outcome, Outcome::NotFound);
+    assert_eq!(w.done[2].outcome(), Outcome::NotFound);
 }
 
 /// The longest bucket name and the longest key fit the path together.

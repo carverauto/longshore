@@ -72,16 +72,16 @@ fn put_head_get_exact(
         .put("exact-k", buf, payload.len(), &Put::default(), budget)
         .wait();
     let rep = put_res.unwrap();
-    assert!(matches!(rep.end, End::Answered(a) if a.status == 200));
+    assert!(matches!(rep.end(), End::Answered(a) if a.status() == 200));
 
     let head_res = block_on(client.head("exact-k", &Expect::default(), budget)).unwrap();
-    assert!(matches!(head_res.end, End::Answered(a) if a.status == 200));
+    assert!(matches!(head_res.end(), End::Answered(a) if a.status() == 200));
 
     let (get_res, buf) = client
         .get("exact-k", None, &Expect::default(), buf, budget)
         .wait();
     let gre = get_res.unwrap();
-    assert!(matches!(gre.end, End::Answered(a) if a.status == 200));
+    assert!(matches!(gre.end(), End::Answered(a) if a.status() == 200));
     assert_eq!(&buf.as_slice()[..payload.len()], &payload);
     buf
 }

@@ -21,14 +21,7 @@ fn retried_no_clobber_store_recognises_its_own_object() {
     w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     // PUT (applied, response lost), PUT (412), HEAD (checksums agree).
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 3
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 3));
     let sent = w.io.buf(TX)[..1000].to_vec();
     assert_eq!(w.server.object("/k"), Some(&sent[..]));
 }
@@ -41,7 +34,7 @@ fn retried_no_clobber_store_rejects_a_different_object() {
     w.fill_tx(1000, 7);
     w.s3.store(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     let theirs = w.io.buf(TX)[..1000].to_vec();
 
     w.fill_tx(1000, 8);
@@ -50,11 +43,7 @@ fn retried_no_clobber_store_rejects_a_different_object() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::AlreadyExists { after_retry: false },
-            attempts: 3
-        }
+        Done::new(2, Outcome::AlreadyExists { after_retry: false }, 3)
     );
     assert_eq!(
         w.server.object("/k"),
@@ -74,11 +63,7 @@ fn retried_no_clobber_store_without_a_checksum_is_undecided() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 2
-        }
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 2)
     );
 
     // This server keeps no checksums.
@@ -91,11 +76,7 @@ fn retried_no_clobber_store_without_a_checksum_is_undecided() {
         .unwrap();
     assert_eq!(
         checksumless.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 3
-        }
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 3)
     );
 }
 
@@ -117,7 +98,11 @@ fn no_clobber_stores_under_faults_are_never_falsely_refused() {
             w.s3.store_no_clobber(&mut w.io, i as u64, key, TX, 1000, Checksum::Compute)
                 .unwrap();
             let d = w.last();
-            assert_eq!(d.outcome, Outcome::Stored, "seed {seed}, key {key}: {d:?}");
+            assert_eq!(
+                d.outcome(),
+                Outcome::Stored,
+                "seed {seed}, key {key}: {d:?}"
+            );
         }
         comparisons += w.s3.store_comparisons();
     }
@@ -144,11 +129,7 @@ fn a_failed_comparison_still_reports_that_an_object_exists() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 3
-        }
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 3)
     );
 
     // Throttled on the last attempt the budget allows.
@@ -167,11 +148,7 @@ fn a_failed_comparison_still_reports_that_an_object_exists() {
         .unwrap();
     assert_eq!(
         throttled_last.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 3
-        }
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 3)
     );
 
     // Throttled with attempts to spare: the comparison is simply tried again.
@@ -188,14 +165,7 @@ fn a_failed_comparison_still_reports_that_an_object_exists() {
         .s3
         .store_no_clobber(&mut throttled_spare.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
-    assert_eq!(
-        throttled_spare.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 4
-        }
-    );
+    assert_eq!(throttled_spare.last(), Done::new(1, Outcome::Stored, 4));
 }
 
 /// The object is gone by the time the comparison asks about it: the refusal
@@ -215,14 +185,7 @@ fn an_object_that_vanishes_before_the_comparison_is_stored_again() {
     w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     // PUT (applied, lost), PUT (412), HEAD (404), PUT (412), HEAD (ours).
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 5
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 5));
     assert_eq!(w.s3.store_comparisons(), 2);
     let sent = w.io.buf(TX)[..1000].to_vec();
     assert_eq!(w.server.object("/k"), Some(&sent[..]));
@@ -243,10 +206,6 @@ fn an_object_that_vanishes_before_the_comparison_is_stored_again() {
         .unwrap();
     assert_eq!(
         out_of_attempts.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 3
-        }
+        Done::new(1, Outcome::Fatal(Fatal::RetriesExhausted), 3)
     );
 }

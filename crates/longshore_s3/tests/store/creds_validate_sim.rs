@@ -52,7 +52,7 @@ fn they_are_adopted_when_the_trial_listing_names_a_prefix_they_may_list() {
         ),
         (KEY_B, 1, 0)
     );
-    assert_eq!(w.store().outcome, Outcome::Stored);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
 }
 
 #[test]
@@ -60,17 +60,17 @@ fn with_no_trial_request_the_file_is_adopted_as_it_is() {
     // The server would refuse any listing these keys made.
     let mut w = restricted(&Validate::Nothing);
     assert_eq!((w.s3.access_key(), w.s3.credential_rotations()), (KEY_B, 1));
-    assert_eq!(w.store().outcome, Outcome::Stored);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
     // Nothing proves them: a key the server refuses is adopted too, and
     // operations fail until the file is corrected.
     w.server.allow_access_keys(&[KEY_B]);
     w.io.set_file(w.creds, Some(file("AKIDWRONG").as_bytes()));
     w.settle(2 * REREAD_MS);
     assert_eq!(w.s3.access_key(), "AKIDWRONG");
-    assert!(matches!(w.store().outcome, Outcome::Fatal(_)));
+    assert!(matches!(w.store().outcome(), Outcome::Fatal(_)));
     w.io.set_file(w.creds, Some(file(KEY_B).as_bytes()));
     w.settle(2 * REREAD_MS);
-    assert_eq!(w.store().outcome, Outcome::Stored);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
 }
 
 #[test]
@@ -100,6 +100,6 @@ fn a_prefix_at_the_limit_is_listed_however_long_it_encodes() {
             "prefix of {} bytes",
             prefix.len()
         );
-        assert_eq!(w.store().outcome, Outcome::Stored);
+        assert_eq!(w.store().outcome(), Outcome::Stored);
     }
 }

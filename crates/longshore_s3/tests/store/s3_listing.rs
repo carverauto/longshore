@@ -29,7 +29,7 @@ fn list_page(
     max: u16,
 ) -> (Vec<(String, u64)>, bool) {
     w.s3.list(&mut w.io, 900, prefix, after, max, RX).unwrap();
-    let Outcome::Listed { len } = w.last().outcome else {
+    let Outcome::Listed { len } = w.last().outcome() else {
         panic!("list failed: {:?}", w.done.last())
     };
     let xml = w.io.buf(RX)[..len as usize].to_vec();
@@ -39,8 +39,8 @@ fn list_page(
         .map(|e| {
             let e = e.unwrap();
             let mut out = [0u8; 256];
-            let n = unescape(e.key_raw, &mut out).unwrap();
-            (String::from_utf8(out[..n].to_vec()).unwrap(), e.size)
+            let n = unescape(e.key_raw(), &mut out).unwrap();
+            (String::from_utf8(out[..n].to_vec()).unwrap(), e.size())
         })
         .collect();
     (keys, listing.is_truncated())
@@ -53,7 +53,7 @@ fn list_pages_through_keys_by_prefix_in_order() {
         w.fill_tx(100 + i as u32, 0);
         w.s3.store(&mut w.io, i as u64, key, TX, 100 + i as u32, Checksum::None)
             .unwrap();
-        assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+        assert_eq!(w.last().outcome(), Outcome::Stored, "{key}");
     }
     // Everything, in one page.
     let (all, truncated) = list_page(&mut w, "", None, 1000);
@@ -91,7 +91,7 @@ fn list_pages_through_keys_by_prefix_in_order() {
     assert_eq!(list_page(&mut w, "nope/", None, 10), (vec![], false));
     // Listing after erasing reflects the erase.
     w.s3.erase(&mut w.io, 50, "logs/2026/a.bin").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Erased);
+    assert_eq!(w.last().outcome(), Outcome::Erased);
     assert_eq!(list_page(&mut w, "logs/2026/", None, 10).0.len(), 2);
 }
 
@@ -101,13 +101,13 @@ fn list_is_retried_like_any_other_request() {
     w.fill_tx(10, 0);
     w.s3.store(&mut w.io, 1, "k", TX, 10, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     w.server.script(Behavior::Status(503));
     w.server.script(Behavior::CloseBeforeResponse);
     w.s3.list(&mut w.io, 2, "", None, 10, RX).unwrap();
     let d = w.last();
     assert!(
-        matches!(d.outcome, Outcome::Listed { .. }) && d.attempts == 3,
+        matches!(d.outcome(), Outcome::Listed { .. }) && d.attempts() == 3,
         "{d:?}"
     );
     assert_eq!(
@@ -132,7 +132,7 @@ fn delimited_page(
         }
     }
     .unwrap();
-    let Outcome::Listed { len } = w.last().outcome else {
+    let Outcome::Listed { len } = w.last().outcome() else {
         panic!("list failed: {:?}", w.done.last())
     };
     let xml = w.io.buf(RX)[..len as usize].to_vec();
@@ -144,7 +144,7 @@ fn delimited_page(
     };
     let keys = listing
         .entries()
-        .map(|e| text(e.unwrap().key_raw))
+        .map(|e| text(e.unwrap().key_raw()))
         .collect();
     let prefixes = listing
         .common_prefixes()
@@ -165,7 +165,7 @@ fn a_delimiter_listing_pages_by_continuation_token_past_common_prefixes() {
         w.fill_tx(10, 0);
         w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
             .unwrap();
-        assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+        assert_eq!(w.last().outcome(), Outcome::Stored, "{key}");
     }
     // One entry per page, so every page but the last ends on something,
     // and the first two end on a common prefix.
@@ -196,7 +196,7 @@ fn a_continuation_token_is_not_a_key_and_an_empty_one_is_refused() {
         w.fill_tx(10, 0);
         w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
             .unwrap();
-        assert_eq!(w.last().outcome, Outcome::Stored);
+        assert_eq!(w.last().outcome(), Outcome::Stored);
     }
     let (_, prefixes, token) = delimited_page(&mut w, None, 1);
     assert_eq!(prefixes, ["logs/"]);
@@ -206,7 +206,7 @@ fn a_continuation_token_is_not_a_key_and_an_empty_one_is_refused() {
     // the token route gives the next prefix, and this does not.
     w.s3.list_with(&mut w.io, 902, "", Some(&token), 1, Some("/"), RX)
         .unwrap();
-    let Outcome::Listed { len } = w.last().outcome else {
+    let Outcome::Listed { len } = w.last().outcome() else {
         panic!()
     };
     let xml = w.io.buf(RX)[..len as usize].to_vec();
@@ -234,7 +234,7 @@ fn a_page_that_ends_on_a_long_common_prefix_resumes_by_its_token() {
         w.fill_tx(10, 0);
         w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
             .unwrap();
-        assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+        assert_eq!(w.last().outcome(), Outcome::Stored, "{key}");
     }
     let (_, prefixes, token) = delimited_page(&mut w, None, 1);
     assert_eq!(prefixes, [format!("{long}/")]);
@@ -262,7 +262,7 @@ fn a_page_of_no_keys_is_asked_for_as_a_page_of_one() {
         w.fill_tx(10, 0);
         w.s3.store(&mut w.io, i as u64, key, TX, 10, Checksum::None)
             .unwrap();
-        assert_eq!(w.last().outcome, Outcome::Stored, "{key}");
+        assert_eq!(w.last().outcome(), Outcome::Stored, "{key}");
     }
     assert_eq!(
         list_page(&mut w, "", None, 0),

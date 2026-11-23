@@ -21,16 +21,11 @@ const DEFAULT_WAITERS: usize = 256;
 /// How a worker lays its lane out over the store it is given.
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
-    /// Operations in progress at most. The store must allow as many.
-    pub operations: u32,
-    /// The first buffer lent to callers, and how many follow it. They must
-    /// be large buffers of the `Io`, used by nothing else.
-    pub first_buffer: BufId,
-    pub buffers: u32,
-    /// Tokens used are `token_base` and `token_base + 1`.
-    pub token_base: u64,
-    /// How often the store's own timers run.
-    pub heartbeat_ns: u64,
+    pub(crate) operations: u32,
+    pub(crate) first_buffer: BufId,
+    pub(crate) buffers: u32,
+    pub(crate) token_base: u64,
+    pub(crate) heartbeat_ns: u64,
 }
 
 pub struct Worker {
@@ -319,5 +314,58 @@ impl Worker {
     /// The store this worker runs, for its counters.
     pub fn store(&self) -> &S3 {
         &self.s3
+    }
+}
+
+impl Layout {
+    /// `operations` in progress at most, the `buffers` large buffers from
+    /// `first_buffer` lent to callers, the tokens `token_base` and
+    /// `token_base + 1`, and the store's timers every `heartbeat_ns`.
+    #[inline]
+    pub const fn new(
+        operations: u32,
+        first_buffer: BufId,
+        buffers: u32,
+        token_base: u64,
+        heartbeat_ns: u64,
+    ) -> Layout {
+        Layout {
+            operations,
+            first_buffer,
+            buffers,
+            token_base,
+            heartbeat_ns,
+        }
+    }
+
+    /// Operations in progress at most. The store must allow as many.
+    #[inline]
+    pub const fn operations(self) -> u32 {
+        self.operations
+    }
+
+    /// The first buffer lent to callers. They must be large buffers of the
+    /// `Io`, used by nothing else.
+    #[inline]
+    pub const fn first_buffer(self) -> BufId {
+        self.first_buffer
+    }
+
+    /// How many buffers follow [`Layout::first_buffer`].
+    #[inline]
+    pub const fn buffers(self) -> u32 {
+        self.buffers
+    }
+
+    /// Tokens used are `token_base` and `token_base + 1`.
+    #[inline]
+    pub const fn token_base(self) -> u64 {
+        self.token_base
+    }
+
+    /// How often the store's own timers run.
+    #[inline]
+    pub const fn heartbeat_ns(self) -> u64 {
+        self.heartbeat_ns
     }
 }

@@ -28,24 +28,20 @@ fn auth(req: &Request) -> String {
 /// with headers and query given out of order.
 #[test]
 fn matches_the_documented_string_to_sign() {
-    let req = Request {
-        method: "GET",
-        content_length: 0,
-        content_type: "",
-        if_none_match: "",
-        range: "",
-        ms_headers: &[
+    let req = Request::new("GET", "myaccount", "/mycontainer")
+        .with_content_length(0)
+        .with_content_type("")
+        .with_if_none_match("")
+        .with_range("")
+        .with_ms_headers(&[
             ("x-ms-version", "2015-02-21"),
             ("x-ms-date", "Fri, 26 Jun 2015 23:39:12 GMT"),
-        ],
-        account: "myaccount",
-        path: "/mycontainer",
-        query: &[
+        ])
+        .with_query(&[
             ("timeout", "20"),
             ("restype", "container"),
             ("comp", "metadata"),
-        ],
-    };
+        ]);
     assert_eq!(string(&req), "GET\n\n\n\n\n\n\n\n\n\n\n\nx-ms-date:Fri, 26 Jun 2015 23:39:12 GMT\nx-ms-version:2015-02-21\n/myaccount/mycontainer\ncomp:metadata\nrestype:container\ntimeout:20");
 }
 
@@ -53,44 +49,40 @@ fn matches_the_documented_string_to_sign() {
 /// strings written out by hand from the reference's format.
 #[test]
 fn signs_a_conditional_store_and_a_ranged_listing() {
-    let put = Request {
-        method: "PUT",
-        content_length: 1000,
-        content_type: "application/octet-stream",
-        if_none_match: "*",
-        range: "",
-        ms_headers: &[
-            ("x-ms-version", "2021-08-06"),
-            ("x-ms-date", "Thu, 12 Nov 2026 00:00:00 GMT"),
-            ("x-ms-content-crc64", "AAECAwQFBgc="),
-            ("x-ms-blob-type", "BlockBlob"),
-        ],
-        account: "devstoreaccount1",
-        path: "/devstoreaccount1/c/dir/key%20one.bin",
-        query: &[],
-    };
+    let put = Request::new(
+        "PUT",
+        "devstoreaccount1",
+        "/devstoreaccount1/c/dir/key%20one.bin",
+    )
+    .with_content_length(1000)
+    .with_content_type("application/octet-stream")
+    .with_if_none_match("*")
+    .with_range("")
+    .with_ms_headers(&[
+        ("x-ms-version", "2021-08-06"),
+        ("x-ms-date", "Thu, 12 Nov 2026 00:00:00 GMT"),
+        ("x-ms-content-crc64", "AAECAwQFBgc="),
+        ("x-ms-blob-type", "BlockBlob"),
+    ])
+    .with_query(&[]);
     assert_eq!(
         auth(&put),
         "SharedKey devstoreaccount1:RbW9TuWFizrXjiz+s/tlneXSP4Tml/WpYSIBWPo9CH4="
     );
-    let get = Request {
-        method: "GET",
-        content_length: 0,
-        content_type: "",
-        if_none_match: "",
-        range: "bytes=100-199",
-        ms_headers: &[
+    let get = Request::new("GET", "devstoreaccount1", "/devstoreaccount1/c")
+        .with_content_length(0)
+        .with_content_type("")
+        .with_if_none_match("")
+        .with_range("bytes=100-199")
+        .with_ms_headers(&[
             ("x-ms-date", "Thu, 12 Nov 2026 00:00:00 GMT"),
             ("x-ms-version", "2021-08-06"),
-        ],
-        account: "devstoreaccount1",
-        path: "/devstoreaccount1/c",
-        query: &[
+        ])
+        .with_query(&[
             ("restype", "container"),
             ("prefix", "a/b"),
             ("comp", "list"),
-        ],
-    };
+        ]);
     assert_eq!(
         auth(&get),
         "SharedKey devstoreaccount1:H3nu4vUIlnLpvaPAcogehwXE57twFbKei+/c7KayIWo="
@@ -99,17 +91,13 @@ fn signs_a_conditional_store_and_a_ranged_listing() {
 
 #[test]
 fn refuses_what_does_not_fit() {
-    let base = Request {
-        method: "GET",
-        content_length: 0,
-        content_type: "",
-        if_none_match: "",
-        range: "",
-        ms_headers: &[],
-        account: "a",
-        path: "/c",
-        query: &[],
-    };
+    let base = Request::new("GET", "a", "/c")
+        .with_content_length(0)
+        .with_content_type("")
+        .with_if_none_match("")
+        .with_range("")
+        .with_ms_headers(&[])
+        .with_query(&[]);
     assert_eq!(
         string_to_sign(
             &Request {
@@ -173,17 +161,13 @@ fn decodes_account_keys_and_refuses_malformed_ones() {
 /// empty line where any other is written out in full.
 #[test]
 fn every_field_has_its_own_line() {
-    let req = Request {
-        method: "PUT",
-        content_length: u64::MAX,
-        content_type: "text/plain",
-        if_none_match: "*",
-        range: "bytes=0-9",
-        ms_headers: &[("x-ms-b", "2"), ("x-ms-a", "1")],
-        account: "acct",
-        path: "/c/k",
-        query: &[("b", "2"), ("a", "1")],
-    };
+    let req = Request::new("PUT", "acct", "/c/k")
+        .with_content_length(u64::MAX)
+        .with_content_type("text/plain")
+        .with_if_none_match("*")
+        .with_range("bytes=0-9")
+        .with_ms_headers(&[("x-ms-b", "2"), ("x-ms-a", "1")])
+        .with_query(&[("b", "2"), ("a", "1")]);
     assert_eq!(
         string(&req),
         "PUT\n\n\n18446744073709551615\n\ntext/plain\n\n\n\n*\n\nbytes=0-9\n\
@@ -207,17 +191,13 @@ fn every_field_has_its_own_line() {
 /// and a string or a header value fits its buffer to the byte.
 #[test]
 fn what_fits_exactly_is_signed() {
-    let base = Request {
-        method: "GET",
-        content_length: 0,
-        content_type: "",
-        if_none_match: "",
-        range: "",
-        ms_headers: &[("x-ms-a", "v"); HEADERS_MAX],
-        account: "a",
-        path: "/c",
-        query: &[("q", "v"); QUERY_MAX],
-    };
+    let base = Request::new("GET", "a", "/c")
+        .with_content_length(0)
+        .with_content_type("")
+        .with_if_none_match("")
+        .with_range("")
+        .with_ms_headers(&[("x-ms-a", "v"); HEADERS_MAX])
+        .with_query(&[("q", "v"); QUERY_MAX]);
     let mut out = [0u8; STRING_MAX];
     let n = string_to_sign(&base, &mut out).unwrap();
     assert_eq!(string_to_sign(&base, &mut out[..n]), Ok(n));

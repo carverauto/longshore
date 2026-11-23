@@ -16,10 +16,7 @@ use longshore_s3::report::{
     Answer, Cause, ContentRange, Encryption, End, Expect, Limit, Put, Report, ServerEncryption,
 };
 
-const ONCE: Limit = Limit {
-    attempts: 1,
-    deadline_ns: None,
-};
+const ONCE: Limit = Limit::new(1, None);
 const LEN: u32 = 1000;
 /// SHA-256 of nothing, in hex, as FIPS 180-4's examples give it.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -40,7 +37,7 @@ fn strict_world(seed: u64) -> World {
 
 #[cfg(test)]
 fn report(w: &mut World) -> Report {
-    match w.last().outcome {
+    match w.last().outcome() {
         Outcome::Report(report) => report,
         other @ (Outcome::Stored
         | Outcome::AlreadyExists { .. }
@@ -60,7 +57,7 @@ fn report(w: &mut World) -> Report {
 
 #[cfg(test)]
 fn answer(w: &mut World) -> Answer {
-    match report(w).end {
+    match report(w).end() {
         End::Answered(answer) => answer,
         other @ (End::NotSent(_) | End::Unknown(_)) => panic!("not answered: {other:?}"),
     }
@@ -69,11 +66,10 @@ fn answer(w: &mut World) -> Answer {
 /// The options of an archive write: only if absent, encrypted, and with
 /// the caller's SHA-256 of what is in the send buffer.
 fn archive(w: &mut World) -> Put {
-    Put {
-        no_clobber: true,
-        encryption: Some(Encryption::Aes256),
-        checksum: Checksum::Sha256(sha256(&w.io.buf(TX)[..LEN as usize])),
-    }
+    Put::default()
+        .with_no_clobber(true)
+        .with_encryption(Some(Encryption::Aes256))
+        .with_checksum(Checksum::Sha256(sha256(&w.io.buf(TX)[..LEN as usize])))
 }
 
 #[test]
@@ -85,49 +81,50 @@ fn a_write_is_read_back_under_the_identity_the_store_gave_it() {
     w.s3.put(&mut w.io, 1, "clips/a", TX, LEN, &options, ONCE)
         .unwrap();
     let put = report(&mut w);
-    let End::Answered(stored) = put.end else {
+    let End::Answered(stored) = put.end() else {
         panic!("{put:?}")
     };
-    assert_eq!((put.sent, put.unanswered), (1, 0));
-    assert_eq!(stored.status, 200);
-    assert_eq!(stored.encryption, Some(ServerEncryption::Aes256));
-    assert_eq!(stored.sha256, Some(sha256(&body)));
-    assert_eq!(stored.version, Fixed::new(b"sim-v1"));
-    assert!(stored.request_id.is_some() && !stored.malformed);
-    let expect = Expect {
-        etag: stored.etag,
-        version: stored.version,
-    };
-    assert!(expect.etag.is_some(), "the store names what it stored");
+    assert_eq!((put.sent(), put.unanswered()), (1, 0));
+    assert_eq!(stored.status(), 200);
+    assert_eq!(stored.encryption(), Some(ServerEncryption::Aes256));
+    assert_eq!(stored.sha256(), Some(sha256(&body)));
+    assert_eq!(stored.version(), Fixed::new(b"sim-v1"));
+    assert!(stored.request_id().is_some() && !stored.malformed());
+    let expect = Expect::default()
+        .with_etag(stored.etag())
+        .with_version(stored.version());
+    assert!(expect.etag().is_some(), "the store names what it stored");
 
     w.s3.head(&mut w.io, 2, "clips/a", &expect, ONCE).unwrap();
     let head = answer(&mut w);
-    assert_eq!((head.status, head.body_len), (200, 0));
-    assert_eq!(head.content_length, Some(u64::from(LEN)));
-    assert_eq!((head.etag, head.version), (expect.etag, expect.version));
-    assert_eq!(head.encryption, Some(ServerEncryption::Aes256));
-    assert_eq!(head.sha256, Some(sha256(&body)));
+    assert_eq!((head.status(), head.body_len()), (200, 0));
+    assert_eq!(head.content_length(), Some(u64::from(LEN)));
+    assert_eq!(
+        (head.etag(), head.version()),
+        (expect.etag(), expect.version())
+    );
+    assert_eq!(head.encryption(), Some(ServerEncryption::Aes256));
+    assert_eq!(head.sha256(), Some(sha256(&body)));
 
     w.s3.get(&mut w.io, 3, "clips/a", None, &expect, RX, ONCE)
         .unwrap();
     let whole = answer(&mut w);
-    assert_eq!((whole.status, whole.body_len), (200, LEN));
-    assert_eq!(whole.etag, expect.etag);
+    assert_eq!((whole.status(), whole.body_len()), (200, LEN));
+    assert_eq!(whole.etag(), expect.etag());
     assert_eq!(&w.io.buf(RX)[..LEN as usize], &body[..]);
 
     w.s3.get(&mut w.io, 4, "clips/a", Some((100, 299)), &expect, RX, ONCE)
         .unwrap();
     let part = answer(&mut w);
-    assert_eq!((part.status, part.body_len), (206, 200));
+    assert_eq!((part.status(), part.body_len()), (206, 200));
     assert_eq!(
-        part.content_range,
-        Some(ContentRange {
-            first: 100,
-            last: 299,
-            size: Some(u64::from(LEN))
-        })
+        part.content_range(),
+        ContentRange::parse(format!("bytes 100-299/{LEN}").as_bytes())
     );
-    assert_eq!((part.etag, part.version), (expect.etag, expect.version));
+    assert_eq!(
+        (part.etag(), part.version()),
+        (expect.etag(), expect.version())
+    );
     assert_eq!(&w.io.buf(RX)[..200], &body[100..300]);
     assert_eq!(w.server.requests(), 4, "one request each");
 }
@@ -143,49 +140,48 @@ fn the_request_evidence_is_the_hash_of_the_canonical_request_that_was_sent() {
     w.s3.put(&mut w.io, 1, "clips/a", TX, LEN, &options, ONCE)
         .unwrap();
     let put = report(&mut w);
-    let signed = put.request.expect("a request was sent");
-    let End::Answered(stored) = put.end else {
+    let signed = put.request().expect("a request was sent");
+    let End::Answered(stored) = put.end() else {
         panic!("{put:?}")
     };
     let names = "host;if-none-match;x-amz-checksum-sha256;x-amz-content-sha256;x-amz-date;\
                  x-amz-server-side-encryption";
-    assert_eq!(signed.method, "PUT");
-    assert_eq!(signed.signed_headers.as_bytes(), names.as_bytes());
+    assert_eq!(signed.method(), "PUT");
+    assert_eq!(signed.signed_headers().as_bytes(), names.as_bytes());
     let canonical = format!(
         "PUT\n/clips/a\n\nhost:bucket.objects.test\nif-none-match:*\n\
          x-amz-checksum-sha256:{}\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:{}\n\
          x-amz-server-side-encryption:AES256\n\n{names}\nUNSIGNED-PAYLOAD",
         core::str::from_utf8(&checksum).unwrap(),
-        core::str::from_utf8(&signed.date).unwrap(),
+        core::str::from_utf8(&signed.date()).unwrap(),
     );
     assert_eq!(
-        signed.canonical_request_sha256,
+        signed.canonical_request_sha256(),
         sha256(canonical.as_bytes())
     );
 
-    let expect = Expect {
-        etag: stored.etag,
-        version: stored.version,
-    };
+    let expect = Expect::default()
+        .with_etag(stored.etag())
+        .with_version(stored.version());
     w.s3.get(&mut w.io, 2, "clips/a", Some((100, 299)), &expect, RX, ONCE)
         .unwrap();
-    let get_signed = report(&mut w).request.expect("a request was sent");
+    let get_signed = report(&mut w).request().expect("a request was sent");
     let get_names = "host;if-match;range;x-amz-content-sha256;x-amz-date";
-    assert_eq!(get_signed.method, "GET");
-    assert_eq!(get_signed.signed_headers.as_bytes(), get_names.as_bytes());
+    assert_eq!(get_signed.method(), "GET");
+    assert_eq!(get_signed.signed_headers().as_bytes(), get_names.as_bytes());
     let get_canonical = format!(
         "GET\n/clips/a\nversionId=sim-v1\nhost:bucket.objects.test\nif-match:{}\n\
          range:bytes=100-299\nx-amz-content-sha256:{EMPTY}\nx-amz-date:{}\n\n{get_names}\n{EMPTY}",
-        core::str::from_utf8(stored.etag.unwrap().as_bytes()).unwrap(),
-        core::str::from_utf8(&get_signed.date).unwrap(),
+        core::str::from_utf8(stored.etag().unwrap().as_bytes()).unwrap(),
+        core::str::from_utf8(&get_signed.date()).unwrap(),
     );
     assert_eq!(
-        get_signed.canonical_request_sha256,
+        get_signed.canonical_request_sha256(),
         sha256(get_canonical.as_bytes())
     );
     // Nothing of the credentials is in the evidence.
     let mut digest = [0u8; 64];
-    hex(&get_signed.canonical_request_sha256, &mut digest);
+    hex(&get_signed.canonical_request_sha256(), &mut digest);
     let shown = format!("{get_signed:?}{}", core::str::from_utf8(&digest).unwrap());
     assert!(!shown.contains("AKIDEXAMPLE") && !shown.contains("wJalrXUtnFEMI"));
 }
@@ -198,19 +194,19 @@ fn a_refused_write_reports_the_refusal_and_leaves_the_object_alone() {
     let options = archive(&mut w);
     w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, ONCE)
         .unwrap();
-    assert_eq!(answer(&mut w).status, 200);
+    assert_eq!(answer(&mut w).status(), 200);
 
     w.fill_tx(LEN, 6);
     let overwrite = archive(&mut w);
     w.s3.put(&mut w.io, 2, "k", TX, LEN, &overwrite, ONCE)
         .unwrap();
     let refused = report(&mut w);
-    let End::Answered(a) = refused.end else {
+    let End::Answered(a) = refused.end() else {
         panic!("{refused:?}")
     };
-    assert_eq!(a.status, 412);
+    assert_eq!(a.status(), 412);
     // One request, answered: the object there is someone else's.
-    assert_eq!((refused.sent, refused.unanswered), (1, 0));
+    assert_eq!((refused.sent(), refused.unanswered()), (1, 0));
     assert_eq!(w.server.object("/k"), Some(&first[..]));
     assert_eq!(w.server.requests(), 2, "no request is made to compare");
 }
@@ -220,11 +216,11 @@ fn a_body_that_does_not_match_its_sha256_is_refused_by_the_store() {
     let mut w = strict_world(4);
     w.fill_tx(LEN, 7);
     let mut options = archive(&mut w);
-    options.checksum = Checksum::Sha256(sha256(b"some other bytes"));
+    options = options.with_checksum(Checksum::Sha256(sha256(b"some other bytes")));
     w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, ONCE)
         .unwrap();
     let a = answer(&mut w);
-    assert_eq!((a.status, a.etag), (400, None));
+    assert_eq!((a.status(), a.etag()), (400, None));
     assert_eq!(w.server.object("/k"), None);
 }
 
@@ -238,25 +234,26 @@ fn reads_of_another_object_or_version_are_refused_not_served() {
     let stored = answer(&mut w);
     w.io.buf(RX)[..LEN as usize].fill(0xEE);
 
-    let other_tag = Expect {
-        etag: Fixed::new(b"\"0000000000000000\""),
-        version: stored.version,
-    };
+    let other_tag = Expect::default()
+        .with_etag(Fixed::new(b"\"0000000000000000\""))
+        .with_version(stored.version());
     w.s3.head(&mut w.io, 2, "k", &other_tag, ONCE).unwrap();
-    assert_eq!(answer(&mut w).status, 412);
+    assert_eq!(answer(&mut w).status(), 412);
     w.s3.get(&mut w.io, 3, "k", Some((0, 9)), &other_tag, RX, ONCE)
         .unwrap();
     let a = answer(&mut w);
-    assert_eq!((a.status, a.body_len, a.content_range), (412, 0, None));
+    assert_eq!(
+        (a.status(), a.body_len(), a.content_range()),
+        (412, 0, None)
+    );
 
-    let other_version = Expect {
-        etag: stored.etag,
-        version: Fixed::new(b"sim-v7"),
-    };
+    let other_version = Expect::default()
+        .with_etag(stored.etag())
+        .with_version(Fixed::new(b"sim-v7"));
     w.s3.get(&mut w.io, 4, "k", None, &other_version, RX, ONCE)
         .unwrap();
     let by_version = answer(&mut w);
-    assert_eq!((by_version.status, by_version.body_len), (404, 0));
+    assert_eq!((by_version.status(), by_version.body_len()), (404, 0));
     assert!(
         w.io.buf(RX)[..LEN as usize].iter().all(|b| *b == 0xEE),
         "no byte of the object was delivered"
@@ -273,38 +270,37 @@ fn a_version_id_of_the_longest_length_s3_gives_is_sent_back() {
     let stored = answer(&mut w);
     // S3 version ids run to 1024 bytes, and '/' and '+' are percent-encoded.
     let long = "/a+a".repeat(256);
-    let unknown = Expect {
-        etag: stored.etag,
-        version: Fixed::new(long.as_bytes()),
-    };
-    assert!(unknown.version.is_some());
+    let unknown = Expect::default()
+        .with_etag(stored.etag())
+        .with_version(Fixed::new(long.as_bytes()));
+    assert!(unknown.version().is_some());
 
     w.s3.head(&mut w.io, 2, "k", &unknown, ONCE).unwrap();
     let r = report(&mut w);
-    assert_eq!((r.sent, r.unanswered), (1, 0));
+    assert_eq!((r.sent(), r.unanswered()), (1, 0));
     // The whole id went out encoded as SigV4 asks: written out by hand here.
-    let signed = r.request.expect("a request was sent");
+    let signed = r.request().expect("a request was sent");
     let names = "host;if-match;x-amz-checksum-mode;x-amz-content-sha256;x-amz-date";
     let canonical = format!(
         "HEAD\n/k\nversionId={}\nhost:bucket.objects.test\nif-match:{}\n\
          x-amz-checksum-mode:ENABLED\nx-amz-content-sha256:{EMPTY}\nx-amz-date:{}\n\n{names}\n{EMPTY}",
         "%2Fa%2Ba".repeat(256),
-        core::str::from_utf8(stored.etag.unwrap().as_bytes()).unwrap(),
-        core::str::from_utf8(&signed.date).unwrap(),
+        core::str::from_utf8(stored.etag().unwrap().as_bytes()).unwrap(),
+        core::str::from_utf8(&signed.date()).unwrap(),
     );
-    assert_eq!(signed.signed_headers.as_bytes(), names.as_bytes());
+    assert_eq!(signed.signed_headers().as_bytes(), names.as_bytes());
     assert_eq!(
-        signed.canonical_request_sha256,
+        signed.canonical_request_sha256(),
         sha256(canonical.as_bytes())
     );
-    let End::Answered(a) = r.end else {
+    let End::Answered(a) = r.end() else {
         panic!("{r:?}")
     };
     // The store read the id and had no such version of the object.
-    assert_eq!(a.status, 404);
+    assert_eq!(a.status(), 404);
     w.s3.get(&mut w.io, 3, "k", None, &unknown, RX, ONCE)
         .unwrap();
-    assert_eq!(answer(&mut w).status, 404);
+    assert_eq!(answer(&mut w).status(), 404);
     assert_eq!(w.server.requests(), 3);
 }
 
@@ -319,18 +315,17 @@ fn an_entity_tag_longer_than_the_one_stored_does_not_match_it() {
     w.io.buf(RX)[..LEN as usize].fill(0xEE);
     let mut tag = [b'7'; 200];
     (tag[0], tag[199]) = (b'"', b'"');
-    let other_tag = Expect {
-        etag: Fixed::new(&tag),
-        version: stored.version,
-    };
-    assert!(other_tag.etag.is_some());
+    let other_tag = Expect::default()
+        .with_etag(Fixed::new(&tag))
+        .with_version(stored.version());
+    assert!(other_tag.etag().is_some());
 
     w.s3.head(&mut w.io, 2, "k", &other_tag, ONCE).unwrap();
-    assert_eq!(answer(&mut w).status, 412);
+    assert_eq!(answer(&mut w).status(), 412);
     w.s3.get(&mut w.io, 3, "k", None, &other_tag, RX, ONCE)
         .unwrap();
     let a = answer(&mut w);
-    assert_eq!((a.status, a.body_len), (412, 0));
+    assert_eq!((a.status(), a.body_len()), (412, 0));
     assert!(w.io.buf(RX)[..LEN as usize].iter().all(|b| *b == 0xEE));
 }
 
@@ -354,14 +349,10 @@ fn a_range_the_store_cuts_short_is_reported_as_served() {
     )
     .unwrap();
     let a = answer(&mut w);
-    assert_eq!((a.status, a.body_len), (206, 100));
+    assert_eq!((a.status(), a.body_len()), (206, 100));
     assert_eq!(
-        a.content_range,
-        Some(ContentRange {
-            first: 900,
-            last: 999,
-            size: Some(u64::from(LEN))
-        })
+        a.content_range(),
+        ContentRange::parse(format!("bytes 900-999/{LEN}").as_bytes())
     );
     assert_eq!(
         w.s3.get(
@@ -382,26 +373,28 @@ fn what_the_store_does_not_send_is_not_reported() {
     let mut w = world_with(7, Faults::default(), 4, true);
     w.server.ignore_encryption();
     w.fill_tx(LEN, 10);
-    let options = Put {
-        no_clobber: true,
-        encryption: Some(Encryption::Aes256),
-        checksum: Checksum::Compute,
-    };
+    let options = Put::default()
+        .with_no_clobber(true)
+        .with_encryption(Some(Encryption::Aes256))
+        .with_checksum(Checksum::Compute);
     w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, ONCE)
         .unwrap();
     let a = answer(&mut w);
-    assert_eq!(a.status, 200);
+    assert_eq!(a.status(), 200);
     // Encryption was asked for and versions were not kept: the answer
     // carries neither, whatever was asked.
-    assert_eq!((a.encryption, a.version, a.sha256), (None, None, None));
-    assert!(!a.malformed);
+    assert_eq!(
+        (a.encryption(), a.version(), a.sha256()),
+        (None, None, None)
+    );
+    assert!(!a.malformed());
 
     // A whole object stored with a CRC-64/NVME is checked against it.
     w.s3.get(&mut w.io, 2, "k", None, &Expect::default(), RX, ONCE)
         .unwrap();
     let fetched = answer(&mut w);
-    assert_eq!((fetched.status, fetched.verified), (200, Some(true)));
-    assert!(fetched.crc64.is_some());
+    assert_eq!((fetched.status(), fetched.verified()), (200, Some(true)));
+    assert!(fetched.crc64().is_some());
 }
 
 #[test]
@@ -420,11 +413,11 @@ fn one_attempt_sends_one_request_whatever_the_store_does() {
         // Sent and not answered: the caller is told it cannot know, and
         // the store shows that it could have gone either way.
         assert!(
-            matches!(r.end, End::Unknown(Cause::Transport(_))),
+            matches!(r.end(), End::Unknown(Cause::Transport(_))),
             "{behavior:?}: {r:?}"
         );
-        assert_eq!((r.sent, r.unanswered), (1, 1), "{behavior:?}");
-        assert!(r.request.is_some());
+        assert_eq!((r.sent(), r.unanswered()), (1, 1), "{behavior:?}");
+        assert!(r.request().is_some());
         assert_eq!(w.server.requests(), 1, "{behavior:?}: nothing was retried");
         assert_eq!(w.server.object("/k").is_some(), stored, "{behavior:?}");
     }
@@ -438,7 +431,7 @@ fn one_attempt_sends_one_request_whatever_the_store_does() {
         .unwrap();
     let r = report(&mut w);
     assert!(
-        matches!(r.end, End::Answered(a) if a.status == 503),
+        matches!(r.end(), End::Answered(a) if a.status() == 503),
         "{r:?}"
     );
     assert_eq!((w.server.requests(), w.server.object("/k")), (1, None));
@@ -446,10 +439,7 @@ fn one_attempt_sends_one_request_whatever_the_store_does() {
 
 #[test]
 fn more_attempts_retry_and_do_not_hide_a_request_that_went_unanswered() {
-    let twice = Limit {
-        attempts: 2,
-        deadline_ns: None,
-    };
+    let twice = Limit::new(2, None);
     let mut w = strict_world(10);
     w.fill_tx(LEN, 13);
     let options = archive(&mut w);
@@ -458,10 +448,10 @@ fn more_attempts_retry_and_do_not_hide_a_request_that_went_unanswered() {
         .unwrap();
     let r = report(&mut w);
     assert!(
-        matches!(r.end, End::Answered(a) if a.status == 200),
+        matches!(r.end(), End::Answered(a) if a.status() == 200),
         "{r:?}"
     );
-    assert_eq!((r.sent, r.unanswered), (2, 0));
+    assert_eq!((r.sent(), r.unanswered()), (2, 0));
 
     // The first request is carried out and its answer lost. The second is
     // refused because the object exists. Nothing is compared or concluded:
@@ -471,10 +461,10 @@ fn more_attempts_retry_and_do_not_hide_a_request_that_went_unanswered() {
         .unwrap();
     let refused = report(&mut w);
     assert!(
-        matches!(refused.end, End::Answered(a) if a.status == 412),
+        matches!(refused.end(), End::Answered(a) if a.status() == 412),
         "{refused:?}"
     );
-    assert_eq!((refused.sent, refused.unanswered), (2, 1));
+    assert_eq!((refused.sent(), refused.unanswered()), (2, 1));
     assert_eq!(w.server.requests(), 4);
 }
 
@@ -483,24 +473,17 @@ fn a_deadline_already_past_sends_nothing() {
     let mut w = strict_world(11);
     w.fill_tx(LEN, 14);
     let options = archive(&mut w);
-    let past = Limit {
-        attempts: 1,
-        deadline_ns: Some(w.io.now_ns()),
-    };
+    let past = Limit::new(1, Some(w.io.now_ns()));
     w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, past)
         .unwrap();
+    let r = report(&mut w);
     assert_eq!(
-        report(&mut w),
-        Report {
-            end: End::NotSent(Cause::Deadline),
-            request: None,
-            sent: 0,
-            unanswered: 0
-        }
+        (r.end(), r.request(), r.sent(), r.unanswered()),
+        (End::NotSent(Cause::Deadline), None, 0, 0)
     );
     w.s3.head(&mut w.io, 2, "k", &Expect::default(), past)
         .unwrap();
-    assert_eq!(report(&mut w).end, End::NotSent(Cause::Deadline));
+    assert_eq!(report(&mut w).end(), End::NotSent(Cause::Deadline));
     assert_eq!((w.server.requests(), w.server.accepted()), (0, 0));
 }
 
@@ -510,10 +493,7 @@ fn a_deadline_stops_a_request_the_store_never_answers() {
     w.fill_tx(LEN, 15);
     let options = archive(&mut w);
     let start = w.io.now_ns();
-    let limit = Limit {
-        attempts: 4,
-        deadline_ns: Some(start + 300 * MS),
-    };
+    let limit = Limit::new(4, Some(start + 300 * MS));
     w.server.script(Behavior::Stall);
     w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, limit)
         .unwrap();
@@ -521,9 +501,9 @@ fn a_deadline_stops_a_request_the_store_never_answers() {
     // The request went out, so the store may have acted: the operation
     // ends unknown, at the deadline and not at the request timeout of a
     // second, and it does not try again although attempts remain.
-    assert_eq!(r.end, End::Unknown(Cause::Deadline));
-    assert_eq!((r.sent, r.unanswered), (1, 1));
-    assert!(r.request.is_some());
+    assert_eq!(r.end(), End::Unknown(Cause::Deadline));
+    assert_eq!((r.sent(), r.unanswered()), (1, 1));
+    assert!(r.request().is_some());
     let took = w.io.now_ns() - start;
     assert!((300 * MS..400 * MS).contains(&took), "took {took} ns");
     assert_eq!(w.server.requests(), 1);
@@ -532,7 +512,7 @@ fn a_deadline_stops_a_request_the_store_never_answers() {
     assert_eq!(w.s3.in_progress(), 0);
     w.s3.put(&mut w.io, 2, "k", TX, LEN, &options, ONCE)
         .unwrap();
-    assert_eq!(answer(&mut w).status, 200);
+    assert_eq!(answer(&mut w).status(), 200);
 }
 
 #[test]
@@ -542,10 +522,7 @@ fn a_deadline_ends_a_wait_between_attempts() {
     let options = archive(&mut w);
     let start = w.io.now_ns();
     // The store asks for a pause that is longer than the time left.
-    let limit = Limit {
-        attempts: 4,
-        deadline_ns: Some(start + 50 * MS),
-    };
+    let limit = Limit::new(4, Some(start + 50 * MS));
     w.server.script(Behavior::Status(503));
     w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, limit)
         .unwrap();
@@ -553,10 +530,10 @@ fn a_deadline_ends_a_wait_between_attempts() {
     // The one request sent was answered, and the next was never made: the
     // operation ends with that answer, not as unknown.
     assert!(
-        matches!(r.end, End::Answered(a) if a.status == 503),
+        matches!(r.end(), End::Answered(a) if a.status() == 503),
         "{r:?}"
     );
-    assert_eq!((r.sent, r.unanswered), (1, 0));
+    assert_eq!((r.sent(), r.unanswered()), (1, 0));
     assert!(w.io.now_ns() - start < 100 * MS, "it ended at the deadline");
     assert_eq!((w.server.requests(), w.server.object("/k")), (1, None));
 }

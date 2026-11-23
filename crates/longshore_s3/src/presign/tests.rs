@@ -18,13 +18,13 @@ fn example_creds() -> Credentials {
 }
 
 fn target(creds: &Credentials) -> Target<'_> {
-    Target {
-        scheme: "https",
-        host: "examplebucket.s3.amazonaws.com",
-        root: "",
-        region: "us-east-1",
-        credentials: creds,
-    }
+    Target::new(
+        "https",
+        "examplebucket.s3.amazonaws.com",
+        "",
+        "us-east-1",
+        creds,
+    )
 }
 
 #[test]

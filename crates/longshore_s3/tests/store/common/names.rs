@@ -126,11 +126,12 @@ pub fn resolved_world(
     io.bind_udp(NS_SOCK, NS);
     Nameserver::recv(&mut io);
     let mut cfg = s3_config(3, false);
-    cfg.endpoint = Endpoint::Resolved(
+    let host = cfg.host().to_owned();
+    cfg = cfg.with_endpoint(Endpoint::Resolved(
         Resolver::new(
             longshore_dns::Config::new(
                 vec![NS],
-                vec![cfg.host.clone()],
+                vec![host],
                 [
                     Sock::new(LIMITS.sockets_max()),
                     Sock::new(LIMITS.sockets_max() + 1),
@@ -145,7 +146,7 @@ pub fn resolved_world(
             .with_timeout_ns(200 * MS),
         )
         .expect("resolver config"),
-    );
+    ));
     let mut s3 = S3::new(cfg);
     s3.start(&mut io);
     io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })

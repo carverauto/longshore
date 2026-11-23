@@ -23,7 +23,7 @@ fn world_with_object(seed: u64, attempts_max: u32, enforce: bool) -> (World, Vec
     let sent = w.io.buf(TX)[..LEN as usize].to_vec();
     w.s3.store(&mut w.io, 1, "k", TX, LEN, Checksum::Compute)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     (w, sent)
 }
 
@@ -38,11 +38,7 @@ fn a_fetch_of_more_than_the_buffer_holds_is_refused_once() {
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::Transport(Error::BodyTooLarge)),
-            attempts: 1
-        }
+        Done::new(2, Outcome::Fatal(Fatal::Transport(Error::BodyTooLarge)), 1)
     );
     // One byte more than fits is refused; exactly what fits is not.
     w.server.script(Behavior::Raw(Box::leak(
@@ -52,16 +48,16 @@ fn a_fetch_of_more_than_the_buffer_holds_is_refused_once() {
     )));
     w.s3.fetch(&mut w.io, 3, "k", None, RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fatal(Fatal::Transport(Error::BodyTooLarge))
     );
     w.fill_tx(BUF, 3);
     w.s3.store(&mut w.io, 4, "full", TX, BUF, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     w.s3.fetch(&mut w.io, 5, "full", None, RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: BUF,
             verified: false
@@ -79,10 +75,13 @@ fn a_response_that_is_not_http_is_fatal() {
         w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
         let d = w.last();
         assert!(
-            matches!(d.outcome, Outcome::Fatal(Fatal::Transport(Error::Head(_)))),
+            matches!(
+                d.outcome(),
+                Outcome::Fatal(Fatal::Transport(Error::Head(_)))
+            ),
             "{behavior:?}: {d:?}"
         );
-        assert_eq!(d.attempts, 1, "{behavior:?}");
+        assert_eq!(d.attempts(), 1, "{behavior:?}");
         assert_eq!(w.s3.in_progress(), 0);
     }
 }
@@ -98,14 +97,14 @@ fn a_body_cut_short_is_fetched_again_in_full() {
         w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
         assert_eq!(
             w.last(),
-            Done {
-                token: 2,
-                outcome: Outcome::Fetched {
+            Done::new(
+                2,
+                Outcome::Fetched {
                     len: LEN,
                     verified: enforce
                 },
-                attempts: 2
-            },
+                2
+            ),
             "checksums {enforce}"
         );
         assert!(w.io.buf(RX)[..LEN as usize] == sent[..]);
@@ -117,11 +116,7 @@ fn a_body_cut_short_is_fetched_again_in_full() {
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 2
-        }
+        Done::new(2, Outcome::Fatal(Fatal::RetriesExhausted), 2)
     );
 }
 
@@ -137,14 +132,14 @@ fn a_chunked_body_arrives_as_the_object() {
         w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
         assert_eq!(
             w.last(),
-            Done {
-                token: 2,
-                outcome: Outcome::Fetched {
+            Done::new(
+                2,
+                Outcome::Fetched {
                     len: LEN,
                     verified: false
                 },
-                attempts: 1
-            },
+                1
+            ),
             "chunks of {chunk}"
         );
         assert!(
@@ -159,14 +154,14 @@ fn a_chunked_body_arrives_as_the_object() {
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fetched {
+        Done::new(
+            2,
+            Outcome::Fetched {
                 len: LEN,
                 verified: true
             },
-            attempts: 2
-        }
+            2
+        )
     );
     assert!(w.io.buf(RX)[..LEN as usize] == sent[..]);
 }
@@ -180,7 +175,7 @@ fn a_fetch_that_is_never_answered_times_out() {
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     let d = w.last();
     assert_eq!(
-        (d.outcome, d.attempts),
+        (d.outcome(), d.attempts()),
         (
             Outcome::Fetched {
                 len: LEN,
@@ -196,10 +191,6 @@ fn a_fetch_that_is_never_answered_times_out() {
     w.s3.fetch(&mut w.io, 3, "k", None, RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 3,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 2
-        }
+        Done::new(3, Outcome::Fatal(Fatal::RetriesExhausted), 2)
     );
 }

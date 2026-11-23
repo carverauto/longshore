@@ -20,10 +20,8 @@ pub enum ListError {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Entry<'a> {
-    /// The key as it appears in the XML, possibly with character references
-    /// (`&amp;`, `&#34;`). Use [`unescape`] to decode it.
-    pub key_raw: &'a [u8],
-    pub size: u64,
+    pub(crate) key_raw: &'a [u8],
+    pub(crate) size: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -244,3 +242,18 @@ pub fn unescape(raw: &[u8], out: &mut [u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests;
+
+impl<'a> Entry<'a> {
+    /// The key as it appears in the XML, possibly with character references
+    /// (`&amp;`, `&#34;`). Use [`unescape`] to decode it.
+    #[inline]
+    pub const fn key_raw(self) -> &'a [u8] {
+        self.key_raw
+    }
+
+    /// The object's length in bytes.
+    #[inline]
+    pub const fn size(self) -> u64 {
+        self.size
+    }
+}

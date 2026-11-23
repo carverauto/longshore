@@ -38,7 +38,7 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
         ),
         (KEY_A, 0, 1)
     );
-    assert_eq!(w.store().outcome, Outcome::Stored);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
 
     // The file now names a key the server does not accept yet.
     w.io.set_file(w.creds, Some(file(KEY_B).as_bytes()));
@@ -50,7 +50,7 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
     );
     assert!(w.s3.credential_failures() >= 2);
     assert_eq!(
-        w.store().outcome,
+        w.store().outcome(),
         Outcome::Stored,
         "requests keep working on the old credentials"
     );
@@ -62,8 +62,8 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
 
     // The old key is revoked; requests are signed with the new one.
     w.server.allow_access_keys(&[KEY_B]);
-    assert_eq!(w.store().outcome, Outcome::Stored);
-    assert_eq!(w.store().attempts, 1);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
+    assert_eq!(w.store().attempts(), 1);
 
     // An unchanged file causes no further validation requests.
     let (requests, failures) = (w.server.requests(), w.s3.credential_failures());
@@ -86,7 +86,7 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
     w.settle(REREAD_MS + 50);
     assert_eq!((w.s3.access_key(), w.s3.credential_rotations()), (KEY_B, 1));
     assert!(w.s3.credential_failures() > failures);
-    assert_eq!(w.store().outcome, Outcome::Stored);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
 }
 
 /// A file longer than one read takes cannot be known to be complete, even
@@ -131,7 +131,7 @@ fn rotation_under_load_fails_no_request() {
         for i in 0..120 {
             let d = w.store();
             assert_eq!(
-                d.outcome,
+                d.outcome(),
                 Outcome::Stored,
                 "seed {seed}, request {i}, stage {stage}: {d:?}"
             );
@@ -166,7 +166,7 @@ fn temporary_keys_send_their_session_token_and_rotate_with_it() {
     // The server now insists on a token. The configured keys have none.
     w.server.require_session_token("token-one");
     assert_eq!(
-        w.store().outcome,
+        w.store().outcome(),
         Outcome::Fatal(longshore_s3::s3::Fatal::Status(403))
     );
 
@@ -177,12 +177,12 @@ fn temporary_keys_send_their_session_token_and_rotate_with_it() {
     w.io.set_file(w.creds, Some(with_token("token-one").as_bytes()));
     w.settle(REREAD_MS + 50);
     assert_eq!(w.s3.credential_rotations(), 1);
-    assert_eq!(w.store().outcome, Outcome::Stored);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
 
     // The token is replaced, as it is every few hours in practice.
     w.server.require_session_token("token-two");
     w.io.set_file(w.creds, Some(with_token("token-two").as_bytes()));
     w.settle(REREAD_MS + 50);
     assert_eq!(w.s3.credential_rotations(), 2);
-    assert_eq!(w.store().outcome, Outcome::Stored);
+    assert_eq!(w.store().outcome(), Outcome::Stored);
 }

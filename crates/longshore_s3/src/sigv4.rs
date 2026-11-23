@@ -12,6 +12,8 @@
 
 use crate::crypto::{hex, hmac_sha256, Sha256};
 
+mod parts;
+
 pub const HEADERS_MAX: usize = 16;
 pub const QUERY_MAX: usize = 16;
 /// Value of `x-amz-content-sha256` when the body is not signed.
@@ -28,24 +30,19 @@ pub enum SignError {
 }
 
 pub struct Request<'a> {
-    pub method: &'a str,
-    /// Already URI-encoded path, e.g. from [`uri_encode`] with `encode_slash = false`.
-    pub canonical_uri: &'a str,
-    /// Already URI-encoded names and values, in any order.
-    pub query: &'a [(&'a str, &'a str)],
-    /// Headers to sign, in any order and any case. Must include `host`.
-    pub headers: &'a [(&'a str, &'a str)],
-    /// Value for the last line of the canonical request.
-    pub payload_hash: &'a str,
+    pub(crate) method: &'a str,
+    pub(crate) canonical_uri: &'a str,
+    pub(crate) query: &'a [(&'a str, &'a str)],
+    pub(crate) headers: &'a [(&'a str, &'a str)],
+    pub(crate) payload_hash: &'a str,
 }
 
 pub struct Scope<'a> {
-    pub access_key: &'a str,
-    pub secret_key: &'a str,
-    pub region: &'a str,
-    pub service: &'a str,
-    /// `YYYYMMDDTHHMMSSZ`.
-    pub amz_date: &'a [u8; 16],
+    pub(crate) access_key: &'a str,
+    pub(crate) secret_key: &'a str,
+    pub(crate) region: &'a str,
+    pub(crate) service: &'a str,
+    pub(crate) amz_date: &'a [u8; 16],
 }
 
 /// Indices of `items` ordered by `key`, without allocating.

@@ -20,17 +20,10 @@ fn an_upload_in_parts_becomes_one_verified_object() {
     let crc = longshore_crc::crc64_nvme(&object);
     w.s3.multipart_complete(&mut w.io, 20, "big", &upload, TX, len, Some(crc))
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 20,
-            outcome: Outcome::Stored,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(20, Outcome::Stored, 1));
     w.s3.fetch(&mut w.io, 21, "big", None, RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: object.len() as u32,
             verified: true
@@ -39,11 +32,11 @@ fn an_upload_in_parts_becomes_one_verified_object() {
     assert!(w.io.buf(RX)[..object.len()] == object[..]);
     // The parts are gone and only the object is listed.
     w.s3.list(&mut w.io, 22, "", None, 100, RX).unwrap();
-    let Outcome::Listed { len: listed } = w.last().outcome else {
+    let Outcome::Listed { len: listed } = w.last().outcome() else {
         panic!("listing failed")
     };
     let listing = Listing::parse(&w.io.buf(RX)[..listed as usize]).unwrap();
-    let keys: Vec<&[u8]> = listing.entries().map(|e| e.unwrap().key_raw).collect();
+    let keys: Vec<&[u8]> = listing.entries().map(|e| e.unwrap().key_raw()).collect();
     assert_eq!(keys, [b"big"]);
 }
 
@@ -52,17 +45,17 @@ fn an_aborted_upload_leaves_nothing_and_aborting_twice_is_fine() {
     let mut w = world(2, Faults::default(), 3);
     let upload = w.begin(1, "k", false);
     w.send_part(2, "k", &upload, 1, TX);
-    assert!(matches!(w.last().outcome, Outcome::PartStored { .. }));
+    assert!(matches!(w.last().outcome(), Outcome::PartStored { .. }));
     w.s3.multipart_abort(&mut w.io, 3, "k", &upload).unwrap();
-    assert_eq!(w.last().outcome, Outcome::Aborted);
+    assert_eq!(w.last().outcome(), Outcome::Aborted);
     // The store no longer knows the upload: still aborted.
     w.s3.multipart_abort(&mut w.io, 4, "k", &upload).unwrap();
-    assert_eq!(w.last().outcome, Outcome::Aborted);
+    assert_eq!(w.last().outcome(), Outcome::Aborted);
     w.s3.fetch(&mut w.io, 5, "k", None, RX).unwrap();
-    assert_eq!(w.last().outcome, Outcome::NotFound);
+    assert_eq!(w.last().outcome(), Outcome::NotFound);
     // A part for an upload that is gone is refused, not stored.
     w.send_part(6, "k", &upload, 1, TX);
-    assert_eq!(w.last().outcome, Outcome::Fatal(Fatal::Status(404)));
+    assert_eq!(w.last().outcome(), Outcome::Fatal(Fatal::Status(404)));
     assert_eq!(
         w.s3.multipart_store_part(&mut w.io, 7, "k", &upload, 0, TX, 1, Checksum::None),
         Err(SubmitError::BadPart)
@@ -80,18 +73,18 @@ fn every_phase_is_retried_through_a_failure() {
 
     w.s3.multipart_begin(&mut w.io, 1, "k", true).unwrap();
     let d = w.last();
-    let Outcome::Begun { upload } = d.outcome else {
+    let Outcome::Begun { upload } = d.outcome() else {
         panic!("expected an upload, got {d:?}")
     };
-    assert_eq!(d.attempts, 2);
+    assert_eq!(d.attempts(), 2);
 
     w.server.script(Behavior::Status(503));
     w.server.script(Behavior::CloseBeforeResponse);
 
     w.send_part(12, "k", &upload, 2, TX);
     let part = w.last();
-    assert!(matches!(part.outcome, Outcome::PartStored { .. }));
-    assert_eq!(part.attempts, 3);
+    assert!(matches!(part.outcome(), Outcome::PartStored { .. }));
+    assert_eq!(part.attempts(), 3);
     w.send_part(11, "k", &upload, 1, TX);
     w.send_part(13, "k", &upload, 3, RX);
     w.run_until_done(w.done.len() + 2);
@@ -106,16 +99,9 @@ fn every_phase_is_retried_through_a_failure() {
     let crc = longshore_crc::crc64_nvme(&object);
     w.s3.multipart_complete(&mut w.io, 20, "k", &upload, TX, len, Some(crc))
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 20,
-            outcome: Outcome::Stored,
-            attempts: 2
-        }
-    );
+    assert_eq!(w.last(), Done::new(20, Outcome::Stored, 2));
     w.s3.fetch(&mut w.io, 21, "k", None, RX).unwrap();
-    assert!(matches!(w.last().outcome, Outcome::Fetched { .. }));
+    assert!(matches!(w.last().outcome(), Outcome::Fetched { .. }));
     assert!(w.io.buf(RX)[..object.len()] == object[..]);
 }
 
@@ -130,11 +116,7 @@ fn an_error_document_that_will_not_improve_ends_the_completion() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 20,
-            outcome: Outcome::Fatal(Fatal::ErrorDocument),
-            attempts: 1
-        }
+        Done::new(20, Outcome::Fatal(Fatal::ErrorDocument), 1)
     );
 }
 
@@ -151,7 +133,7 @@ fn a_completion_whose_response_was_lost_is_confirmed_by_the_object_checksum() {
     w.s3.multipart_complete(&mut w.io, 20, "k", &upload, TX, len, Some(crc))
         .unwrap();
     let d = w.last();
-    assert_eq!(d.outcome, Outcome::Stored);
+    assert_eq!(d.outcome(), Outcome::Stored);
     assert_eq!(w.s3.store_comparisons(), 1);
 
     // Without a checksum there is nothing to confirm it with.
@@ -161,14 +143,14 @@ fn a_completion_whose_response_was_lost_is_confirmed_by_the_object_checksum() {
 
     w.s3.multipart_complete(&mut w.io, 30, "other", &other, TX, other_len, None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Fatal(Fatal::Status(404)));
+    assert_eq!(w.last().outcome(), Outcome::Fatal(Fatal::Status(404)));
 
     // A wrong whole-object checksum is refused by the store.
     let third = w.begin(3, "third", true);
     let (third_len, _) = w.three_parts("third", &third);
     w.s3.multipart_complete(&mut w.io, 40, "third", &third, TX, third_len, Some(crc ^ 1))
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Fatal(Fatal::Status(400)));
+    assert_eq!(w.last().outcome(), Outcome::Fatal(Fatal::Status(400)));
 }
 
 #[test]
@@ -191,11 +173,7 @@ fn a_damaged_part_is_refused_and_an_overlong_upload_id_is_an_error() {
     .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 2
-        }
+        Done::new(2, Outcome::Fatal(Fatal::RetriesExhausted), 2)
     );
 
     // An upload id longer than the type holds is reported, never cut short.
@@ -212,7 +190,7 @@ fn a_damaged_part_is_refused_and_an_overlong_upload_id_is_an_error() {
     )));
 
     w.s3.multipart_begin(&mut w.io, 3, "k2", false).unwrap();
-    assert_eq!(w.last().outcome, Outcome::Fatal(Fatal::BadResponse));
+    assert_eq!(w.last().outcome(), Outcome::Fatal(Fatal::BadResponse));
 }
 
 #[test]
@@ -232,17 +210,13 @@ fn a_part_sent_without_a_checksum_is_listed_without_one() {
         Checksum::None,
     )
     .unwrap();
-    let Outcome::PartStored { tag, checksum } = w.last().outcome else {
+    let Outcome::PartStored { tag, checksum } = w.last().outcome() else {
         panic!("expected a stored part, got {:?}", w.last())
     };
     assert_eq!(checksum, None);
-    let part = Part {
-        number: 1,
-        tag,
-        checksum: None,
-    };
+    let part = Part::new(1, tag, None);
     let len = write_manifest(w.io.buf(TX), &[part]).unwrap() as u32;
     w.s3.multipart_complete(&mut w.io, 3, "plain", &upload, TX, len, None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
 }

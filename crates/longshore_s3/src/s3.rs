@@ -59,6 +59,7 @@ impl S3 {
 
 mod attempt;
 mod checksum;
+mod config;
 mod consts;
 mod exact;
 mod head;

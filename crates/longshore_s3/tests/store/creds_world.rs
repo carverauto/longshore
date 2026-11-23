@@ -72,30 +72,30 @@ pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate
         .tls_batch(1 << 20)
         .build()
         .unwrap();
-    let mut s3 = S3::new(Config {
-        vendor: longshore_s3::s3::Vendor::S3,
-        host: "bucket.objects.test".into(),
-        bucket_in_path: None,
-        port: 80,
-        region: "us-test-1".into(),
-        credentials: Credentials::new(KEY_A, &format!("secret-for-{KEY_A}")).unwrap(),
-        credentials_file: Some(CredentialsFile {
-            file: creds,
-            buf: CREDS_BUF,
-            reread_ns: REREAD_MS * MS,
-            token: CREDS_TOKEN,
-            validate: *validate,
-        }),
-        requests_max: 4,
-        attempts_max: 3,
-        backoff_ns: 50 * MS,
-        backoff_max_ns: 400 * MS,
-        require_checksums: false,
-        http,
-        #[cfg(feature = "tls")]
-        tls: None,
-        endpoint: Endpoint::Fixed(ADDR),
-    });
+    let mut s3 = S3::new(
+        Config::new(
+            longshore_s3::s3::Vendor::S3,
+            "bucket.objects.test".into(),
+            "us-test-1".into(),
+            Credentials::new(KEY_A, &format!("secret-for-{KEY_A}")).unwrap(),
+            http,
+            Endpoint::Fixed(ADDR),
+        )
+        .with_bucket_in_path(None)
+        .with_port(80)
+        .with_credentials_file(Some(CredentialsFile::new(
+            creds,
+            CREDS_BUF,
+            REREAD_MS * MS,
+            CREDS_TOKEN,
+            *validate,
+        )))
+        .with_requests_max(4)
+        .with_attempts_max(3)
+        .with_backoff_ns(50 * MS)
+        .with_backoff_max_ns(400 * MS)
+        .with_require_checksums(false),
+    );
     s3.start(&mut io);
     io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();

@@ -61,7 +61,7 @@ fn seed(
         .or_die("store");
     }
     for _ in keys {
-        if wait(io, s3, out).outcome != Outcome::Stored {
+        if wait(io, s3, out).outcome() != Outcome::Stored {
             die("could not create objects to fetch");
         }
     }
@@ -82,12 +82,12 @@ fn measure(
         while io.now_ns() < deadline {
             turn(io, s3, out);
             while let Some(d) = s3.poll() {
-                match d.outcome {
+                match d.outcome() {
                     Outcome::Stored | Outcome::Fetched { .. } => {
                         bytes += u64::from(size);
                         requests += 1;
-                        attempts += u64::from(d.attempts);
-                        start_one(s3, io, d.token as u32);
+                        attempts += u64::from(d.attempts());
+                        start_one(s3, io, d.token() as u32);
                     }
                     Outcome::AlreadyExists { .. }
                     | Outcome::Listed { .. }

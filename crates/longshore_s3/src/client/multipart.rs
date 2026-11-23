@@ -73,11 +73,11 @@ impl Client {
             len as u32,
             early,
             |f, part_number| match f {
-                Finished::Outcome(Outcome::PartStored { tag, checksum }) => Ok(Part {
-                    number: part_number,
-                    tag: *tag,
-                    checksum: checksum.map(longshore_crc::crc64_header_value),
-                }),
+                Finished::Outcome(Outcome::PartStored { tag, checksum }) => Ok(Part::new(
+                    part_number,
+                    *tag,
+                    checksum.map(longshore_crc::crc64_header_value),
+                )),
                 other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
                     Err(error_of(other))
                 }

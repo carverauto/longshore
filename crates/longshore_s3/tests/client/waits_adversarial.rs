@@ -122,8 +122,8 @@ fn worker_abandon_with_budget_report_ops_unsent_and_sent() {
             panic!("sent get must resolve on abandon");
         };
         let rep_g = res_g.expect("report op returns Ok(Report) on sent abandon");
-        assert_eq!(rep_g.end, End::Unknown(Cause::Closed));
-        assert_eq!(rep_g.sent, 1);
+        assert_eq!(rep_g.end(), End::Unknown(Cause::Closed));
+        assert_eq!(rep_g.sent(), 1);
         assert_eq!(b_ret2.is_empty(), !quiet);
     }
 }

@@ -17,11 +17,7 @@ const V6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x80);
 const ADDR_V6: SocketAddr = SocketAddr::new(IpAddr::V6(V6), 80);
 const V4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 80);
 fn stored(token: u64, attempts: u32) -> Done {
-    Done {
-        token,
-        outcome: Outcome::Stored,
-        attempts,
-    }
+    Done::new(token, Outcome::Stored, attempts)
 }
 
 #[test]
@@ -36,7 +32,7 @@ fn operations_complete_over_a_fixed_ipv6_endpoint() {
     );
     let _: SocketAddr = server.start(&mut io, ADDR_V6).unwrap();
     let mut cfg = s3_config(3, false);
-    cfg.endpoint = Endpoint::Fixed(ADDR_V6);
+    cfg = cfg.with_endpoint(Endpoint::Fixed(ADDR_V6));
     let mut s3 = S3::new(cfg);
     s3.start(&mut io);
     io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
@@ -54,9 +50,9 @@ fn operations_complete_over_a_fixed_ipv6_endpoint() {
     assert_eq!(w.last(), stored(1, 1));
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     let d = w.last();
-    assert_eq!((d.token, d.attempts), (2, 1));
+    assert_eq!((d.token(), d.attempts()), (2, 1));
     assert!(
-        matches!(d.outcome, Outcome::Fetched { len: 100, .. }),
+        matches!(d.outcome(), Outcome::Fetched { len: 100, .. }),
         "{d:?}"
     );
 }

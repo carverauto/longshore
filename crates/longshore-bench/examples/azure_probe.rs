@@ -65,17 +65,13 @@ fn call(
     } else {
         "application/octet-stream"
     };
-    let req = Request {
-        method,
-        content_length: body.len() as u64,
-        content_type,
-        if_none_match,
-        range,
-        ms_headers: &ms,
-        account: ACCOUNT,
-        path,
-        query,
-    };
+    let req = Request::new(method, ACCOUNT, path)
+        .with_content_length(body.len() as u64)
+        .with_content_type(content_type)
+        .with_if_none_match(if_none_match)
+        .with_range(range)
+        .with_ms_headers(&ms)
+        .with_query(query);
     let mut auth = [0u8; 160];
     let n = authorization(&req, &key[..k], &mut auth).map_err(|e| format!("signable: {e:?}"))?;
 

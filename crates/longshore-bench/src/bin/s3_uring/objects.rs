@@ -106,7 +106,7 @@ impl Steps<'_> {
             )
             .or_die("store_with");
         let d = self.wait();
-        (d.outcome == Outcome::Stored, Some(d))
+        (d.outcome() == Outcome::Stored, Some(d))
     }
 
     /// Stat `key` with its response head in `rx`, and judge the result with `check`.
@@ -115,15 +115,15 @@ impl Steps<'_> {
             .stat(self.io, token, key, Some(self.rx))
             .or_die("stat");
         let d = self.wait();
-        let ok = stat_of(&d.outcome)
-            .is_some_and(|stat| check(&stat, &self.io.buf(self.rx)[..stat.head_len as usize]));
+        let ok = stat_of(&d.outcome())
+            .is_some_and(|stat| check(&stat, &self.io.buf(self.rx)[..stat.head_len() as usize]));
         (ok, Some(d))
     }
 
     fn copy(&mut self, from: &str, to: &str) -> Step {
         self.s3.copy(self.io, 2, from, to).or_die("copy");
         let d = self.wait();
-        (d.outcome == Outcome::Copied, Some(d))
+        (d.outcome() == Outcome::Copied, Some(d))
     }
 
     /// One level below `base`: the key `a` and the common prefix `sub/`,
@@ -133,11 +133,11 @@ impl Steps<'_> {
             .list_with(self.io, 4, base, None, 100, Some("/"), self.rx)
             .or_die("list_with");
         let d = self.wait();
-        let ok = listed_len(&d.outcome).is_some_and(|len| {
+        let ok = listed_len(&d.outcome()).is_some_and(|len| {
             Listing::parse(&self.io.buf(self.rx)[..len as usize]).is_ok_and(|listing| {
                 let mut keys = listing.entries();
                 let mut prefixes = listing.common_prefixes();
-                let key_ok = matches!(keys.next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
+                let key_ok = matches!(keys.next(), Some(Ok(e)) if e.key_raw() == a.as_bytes());
                 let prefix_ok = matches!(prefixes.next(), Some(Ok(p))
                     if p.strip_prefix(base.as_bytes()) == Some(b"sub/"));
                 key_ok && prefix_ok && keys.next().is_none() && prefixes.next().is_none()
@@ -156,14 +156,14 @@ impl Steps<'_> {
         let first_page = self.wait();
         let mut continuation = [0u8; 1100];
         let mut continuation_len = 0;
-        let first_ok = listed_len(&first_page.outcome).is_some_and(|len| {
+        let first_ok = listed_len(&first_page.outcome()).is_some_and(|len| {
             Listing::parse(&self.io.buf(self.rx)[..len as usize]).is_ok_and(|listing| {
                 continuation_len = listing
                     .next_token_raw()
                     .and_then(|raw| longshore::store::list::unescape(raw, &mut continuation))
                     .unwrap_or(0);
                 let one_key =
-                    matches!(listing.entries().next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
+                    matches!(listing.entries().next(), Some(Ok(e)) if e.key_raw() == a.as_bytes());
                 listing.is_truncated() && one_key && listing.common_prefixes().next().is_none()
             })
         });
@@ -175,7 +175,7 @@ impl Steps<'_> {
                         .list_continue(self.io, 4, base, t, 1, Some("/"), self.rx)
                         .is_ok()
             })
-            && listed_len(&self.wait().outcome).is_some_and(|len| {
+            && listed_len(&self.wait().outcome()).is_some_and(|len| {
                 Listing::parse(&self.io.buf(self.rx)[..len as usize]).is_ok_and(|listing| {
                     let mut prefixes = listing.common_prefixes();
                     let prefix_ok = matches!(prefixes.next(), Some(Ok(p))
@@ -191,7 +191,7 @@ impl Steps<'_> {
     fn erase(&mut self, token: u64, key: &str) -> Step {
         self.s3.erase(self.io, token, key).or_die("erase");
         let d = self.wait();
-        (d.outcome == Outcome::Erased, Some(d))
+        (d.outcome() == Outcome::Erased, Some(d))
     }
 
     /// Both keys and one that was never there, in one batch.
@@ -202,7 +202,7 @@ impl Steps<'_> {
             .erase_many(self.io, 5, self.tx, manifest_len, self.rx)
             .or_die("erase_many");
         let d = self.wait();
-        let ok = erased_many_len(&d.outcome).is_some_and(|len| {
+        let ok = erased_many_len(&d.outcome()).is_some_and(|len| {
             Failures::parse(&self.io.buf(self.rx)[..len as usize])
                 .is_ok_and(|mut failures| failures.next().is_none())
         });
@@ -212,7 +212,7 @@ impl Steps<'_> {
     fn stat_gone(&mut self, key: &str) -> Step {
         self.s3.stat(self.io, 7, key, None).or_die("stat");
         let d = self.wait();
-        (d.outcome == Outcome::NotFound, Some(d))
+        (d.outcome() == Outcome::NotFound, Some(d))
     }
 }
 
@@ -234,7 +234,7 @@ fn report(gcs: bool, results: &[Step; 8], url: &[u8], url_len: Option<usize>, ms
         match done {
             Some(d) => {
                 ok &= step_ok;
-                let text = format!("{:?} (attempts {})", d.outcome, d.attempts);
+                let text = format!("{:?} (attempts {})", d.outcome(), d.attempts());
                 lines.push((name, *step_ok, text));
             }
             None => lines.push((name, true, "skipped".to_string())),
@@ -298,14 +298,14 @@ pub(super) fn objects(size: u32) {
         };
         results[0] = c.store_with(&a, &options);
         results[1] = c.stat(1, &a, |stat, head| {
-            stat.size == u64::from(size)
-                && stat.tag.is_some()
+            stat.size() == u64::from(size)
+                && stat.tag().is_some()
                 && header_in(head, "content-type") == Some(b"application/x-longshore-check")
                 && header_in(head, meta_name) == Some(b"longshore check")
         });
         results[2] = c.copy(&a, &b);
         results[3] = c.stat(3, &b, |stat, head| {
-            stat.size == u64::from(size) && header_in(head, meta_name) == Some(b"longshore check")
+            stat.size() == u64::from(size) && header_in(head, meta_name) == Some(b"longshore check")
         });
         results[4] = c.list(&base, &a);
         if gcs {

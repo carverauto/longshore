@@ -43,7 +43,7 @@ struct Sums {
 fn begin(r: &mut Ring, key: &str, sums: bool) -> UploadId {
     r.s3.multipart_begin(&mut r.io, 0, key, sums)
         .or_die("multipart_begin");
-    match r.wait().outcome {
+    match r.wait().outcome() {
         Outcome::Begun { upload } => upload,
         other @ (Outcome::Stored
         | Outcome::AlreadyExists { .. }
@@ -88,14 +88,14 @@ fn store_parts(
     let mut attempts = 0;
     for _ in 0..PARTS {
         let d = r.wait();
-        attempts += d.attempts;
-        match d.outcome {
+        attempts += d.attempts();
+        match d.outcome() {
             Outcome::PartStored { tag, checksum: crc } => {
-                parts[d.token as usize - 1] = Some(Part {
-                    number: d.token as u32,
+                parts[d.token() as usize - 1] = Some(Part::new(
+                    d.token() as u32,
                     tag,
-                    checksum: crc.map(longshore::checksum::crc64_header_value),
-                })
+                    crc.map(longshore::checksum::crc64_header_value),
+                ))
             }
             other @ (Outcome::Stored
             | Outcome::AlreadyExists { .. }
@@ -109,7 +109,7 @@ fn store_parts(
             | Outcome::Copied
             | Outcome::ErasedMany { .. }
             | Outcome::Report(_)
-            | Outcome::Fatal(_)) => die(format_args!("part {} -> {other:?}", d.token)),
+            | Outcome::Fatal(_)) => die(format_args!("part {} -> {other:?}", d.token())),
         }
     }
     (parts.map(Option::unwrap), attempts)
@@ -160,7 +160,7 @@ fn read_back(r: &mut Ring, key: &str, bufs: &[BufId], size: u32) -> bool {
         )
         .or_die("fetch");
         let d = r.wait();
-        read_ok &= matches!(d.outcome, Outcome::Fetched { len, .. } if len == size);
+        read_ok &= matches!(d.outcome(), Outcome::Fetched { len, .. } if len == size);
         let (a, b) = (bufs[part as usize - 1], spare);
         let sent = checksum_of(&r.io.buf(a)[..size as usize]);
         read_ok &= sent == checksum_of(&r.io.buf(b)[..size as usize]);
@@ -174,8 +174,8 @@ fn abandon(r: &mut Ring, key: &str, buf: BufId, size: u32, sums: Sums) -> Done {
     r.s3.multipart_store_part(&mut r.io, 1, key, &abandoned, 1, buf, size, sums.checksum)
         .or_die("multipart_store_part");
     let part = r.wait();
-    if !matches!(part.outcome, Outcome::PartStored { .. }) {
-        die(format_args!("part before abort -> {:?}", part.outcome));
+    if !matches!(part.outcome(), Outcome::PartStored { .. }) {
+        die(format_args!("part before abort -> {:?}", part.outcome()));
     }
     r.s3.multipart_abort(&mut r.io, 40, key, &abandoned)
         .or_die("multipart_abort");
@@ -229,14 +229,15 @@ pub(super) fn multipart(size: u32) {
     println!("parts={PARTS} part_bytes={size} part_checksums={sums} part_attempts={attempts}");
     println!(
         "complete                   -> {:?} (attempts {})",
-        stored.outcome, stored.attempts
+        stored.outcome(),
+        stored.attempts()
     );
-    println!("erase                      -> {:?}", erased.outcome);
-    println!("abort                      -> {:?}", aborted.outcome);
-    let ok = stored.outcome == Outcome::Stored
+    println!("erase                      -> {:?}", erased.outcome());
+    println!("abort                      -> {:?}", aborted.outcome());
+    let ok = stored.outcome() == Outcome::Stored
         && read_ok
-        && erased.outcome == Outcome::Erased
-        && aborted.outcome == Outcome::Aborted;
+        && erased.outcome() == Outcome::Erased
+        && aborted.outcome() == Outcome::Aborted;
     println!(
         "bytes_match={read_ok} connections={} elapsed_ms={ms} allocation_sealed=true",
         r.s3.connects()

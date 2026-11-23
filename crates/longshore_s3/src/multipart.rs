@@ -58,15 +58,9 @@ pub type PartTag = Fixed<PART_TAG_MAX>;
 /// One part as the completion document lists it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Part {
-    /// 1 to [`PART_NUMBER_MAX`].
-    pub number: u32,
-    pub tag: PartTag,
-    /// The part's CRC-64/NVME in base64, as it was sent with the part
-    /// (`longshore_crc::crc64_header_value`). A store that keeps a
-    /// checksum for the upload refuses a completion that leaves it out of
-    /// any part. `None` for a part sent without one, and always on Google
-    /// Cloud Storage, whose part checksums are CRC-32C.
-    pub checksum: Option<[u8; 12]>,
+    pub(crate) number: u32,
+    pub(crate) tag: PartTag,
+    pub(crate) checksum: Option<[u8; 12]>,
 }
 
 /// The text of the first `<name>...</name>` element in `doc`.
@@ -156,3 +150,37 @@ pub fn write_manifest(out: &mut [u8], parts: &[Part]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests;
+
+impl Part {
+    /// Part `number` as the store tagged it, with the checksum it was sent with.
+    #[inline]
+    pub const fn new(number: u32, tag: PartTag, checksum: Option<[u8; 12]>) -> Self {
+        Part {
+            number,
+            tag,
+            checksum,
+        }
+    }
+
+    /// 1 to [`PART_NUMBER_MAX`].
+    #[inline]
+    pub const fn number(self) -> u32 {
+        self.number
+    }
+
+    /// What the store returned for the part.
+    #[inline]
+    pub const fn tag(self) -> PartTag {
+        self.tag
+    }
+
+    /// The part's CRC-64/NVME in base64, as it was sent with the part
+    /// (`longshore_crc::crc64_header_value`). A store that keeps a
+    /// checksum for the upload refuses a completion that leaves it out of
+    /// any part. `None` for a part sent without one, and always on Google
+    /// Cloud Storage, whose part checksums are CRC-32C.
+    #[inline]
+    pub const fn checksum(self) -> Option<[u8; 12]> {
+        self.checksum
+    }
+}
