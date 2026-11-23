@@ -34,12 +34,13 @@ fn on_path(size: u32) -> Segment {
 
 /// A resolver for host 0's three A records, preferring large segments and
 /// keeping at least `keep` addresses, or with no preference.
+#[cfg(test)]
 fn resolved(keep: Option<usize>) -> (SimIo, Resolver, Server, Completions) {
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
     let mut s = Server::start(&mut io, NS1);
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.prefer_large_segments = keep;
-    let mut r = Resolver::new(cfg);
+    let mut r = Resolver::new(cfg).expect("resolver config");
     r.start(&mut io);
     let mut out = Completions::new(8);
     pump(&mut io, &mut r, &mut s, &mut out, 100 * MS);

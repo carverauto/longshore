@@ -36,7 +36,7 @@ fn lookups_always_have_an_address_whatever_was_measured(tc: TestCase) {
     let mut cfg = config(&[NS1], SEC, Family::V4);
     let mut keep = tc.draw(gs::optional(gs::integers::<usize>().max_value(9)));
     cfg.prefer_large_segments = keep;
-    let mut r = Resolver::new(cfg);
+    let mut r = Resolver::new(cfg).expect("resolver config");
     r.start(&mut io);
     pump(&mut io, &mut r, &mut s, &mut Completions::new(8), 20 * MS);
     let all = zone_addrs(0);

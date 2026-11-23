@@ -15,4 +15,4 @@
 pub mod codec;
 pub mod resolver;
 
-pub use resolver::{Config, Family, Resolver};
+pub use resolver::{Config, ConfigError, Family, Resolver};

@@ -48,7 +48,8 @@ fn operations_end_when_the_name_never_resolves() {
         rx_bufs: [LIMITS.small(1), LIMITS.small(2)],
         tx_buf: LIMITS.small(3),
         token_base: 3 << 40,
-    });
+    })
+    .expect("resolver config");
     let http = client::Config {
         connections_max: 1,
         first_sock: 0,

@@ -132,18 +132,21 @@ pub fn resolved_world(
     io.bind_udp(NS_SOCK, NS);
     Nameserver::recv(&mut io);
     let mut cfg = s3_config(3, false);
-    cfg.endpoint = Endpoint::Resolved(Resolver::new(longshore_dns::Config {
-        servers: vec![NS],
-        hosts: vec![cfg.host.clone()],
-        family,
-        prefer_large_segments,
-        refresh_ns: 30_000 * MS,
-        timeout_ns: 200 * MS,
-        socks: [Sock(LIMITS.sockets_max), Sock(LIMITS.sockets_max + 1)],
-        rx_bufs: [WIDE.small(CONNS), WIDE.small(CONNS + 1)],
-        tx_buf: WIDE.small(CONNS + 2),
-        token_base: 3 << 40,
-    }));
+    cfg.endpoint = Endpoint::Resolved(
+        Resolver::new(longshore_dns::Config {
+            servers: vec![NS],
+            hosts: vec![cfg.host.clone()],
+            family,
+            prefer_large_segments,
+            refresh_ns: 30_000 * MS,
+            timeout_ns: 200 * MS,
+            socks: [Sock(LIMITS.sockets_max), Sock(LIMITS.sockets_max + 1)],
+            rx_bufs: [WIDE.small(CONNS), WIDE.small(CONNS + 1)],
+            tx_buf: WIDE.small(CONNS + 2),
+            token_base: 3 << 40,
+        })
+        .expect("resolver config"),
+    );
     let mut s3 = S3::new(cfg);
     s3.start(&mut io);
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })

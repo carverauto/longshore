@@ -136,7 +136,7 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
     };
     let endpoint = match b.address {
         Some(addr) => Endpoint::Fixed(addr),
-        None => Endpoint::Resolved(Resolver::new(longshore_dns::Config {
+        None => match Resolver::new(longshore_dns::Config {
             servers: b.nameservers.clone(),
             hosts: vec![b.host.clone()],
             family: b.family,
@@ -147,7 +147,16 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
             rx_bufs: [limits.small(conns), limits.small(conns + 1)],
             tx_buf: limits.small(conns + 2),
             token_base: 3 << 40,
-        })),
+        }) {
+            Ok(resolver) => Endpoint::Resolved(resolver),
+            Err(e) => {
+                // The host name or the nameservers cannot be used: the
+                // builder is told why, as for any other start-up failure.
+                let refused = std::io::Error::new(std::io::ErrorKind::InvalidInput, e);
+                let _: Option<()> = ready.send(Err(refused)).ok();
+                return;
+            }
+        },
     };
     let s3 = S3::new(Config {
         vendor: Vendor::S3,

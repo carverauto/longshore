@@ -264,7 +264,7 @@ pub fn world_for(
 ) -> (SimIo, Resolver, Server, Completions) {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let s = Server::start(&mut io, bind);
-    let mut r = Resolver::new(config(servers, refresh, family));
+    let mut r = Resolver::new(config(servers, refresh, family)).expect("resolver config");
     r.start(&mut io);
     (io, r, s, Completions::new(8))
 }

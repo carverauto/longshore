@@ -12,6 +12,7 @@
 mod common;
 use common::*;
 use longshore_common::io::Completion;
+use longshore_dns::ConfigError;
 
 const BASE: u64 = 1 << 40;
 const K_CONNECT: u64 = BASE;
@@ -83,7 +84,7 @@ fn with_both_nameservers_dead_each_is_tried_once_per_host() {
 /// queries time out, one failure each, and nothing spins on the dead socket.
 #[test]
 fn a_nameserver_that_cannot_be_connected_costs_timeouts_and_no_more() {
-    let mut r = Resolver::new(config(&[NS1], SEC, Family::V4));
+    let mut r = Resolver::new(config(&[NS1], SEC, Family::V4)).expect("resolver config");
     r.start(&mut SimIo::new(LIMITS, 1, Faults::default()));
     // A world in which that connect did not happen: the resolver is told
     // it failed, and its socket slot is not a socket.
@@ -104,7 +105,7 @@ fn a_nameserver_that_cannot_be_connected_costs_timeouts_and_no_more() {
 
 #[test]
 fn only_tokens_in_the_resolvers_range_are_its_own() {
-    let mut r = Resolver::new(config(&[NS1], SEC, Family::V4));
+    let mut r = Resolver::new(config(&[NS1], SEC, Family::V4)).expect("resolver config");
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
     for foreign in [0, 1, BASE - 1, BASE + 256, BASE + 257, u64::MAX] {
         assert!(
@@ -131,7 +132,7 @@ fn only_tokens_in_the_resolvers_range_are_its_own() {
 fn a_completion_for_a_server_it_does_not_have_is_ignored() {
     let strays = || (2..8).chain(10..16).map(|k| BASE + k);
     {
-        let mut r = Resolver::new(config(&[NS1], SEC, Family::V4));
+        let mut r = Resolver::new(config(&[NS1], SEC, Family::V4)).expect("resolver config");
         let mut io = SimIo::new(LIMITS, 1, Faults::default());
         for token in strays() {
             for result in [0, 12, 512, -5] {
@@ -168,7 +169,7 @@ fn a_completion_for_a_server_it_does_not_have_is_ignored() {
 fn a_host_is_found_by_name_whatever_its_case_or_trailing_dot() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.hosts = vec!["S3.Example.com.".into(), "blob.example.net".into()];
-    let r = Resolver::new(cfg);
+    let r = Resolver::new(cfg).expect("resolver config");
     assert_eq!(r.host_index("s3.example.com"), Some(0));
     assert_eq!(r.host_index("s3.EXAMPLE.com."), Some(0));
     assert_eq!(r.host_index("BLOB.example.net."), Some(1));
@@ -193,7 +194,9 @@ fn a_receive_buffer_smaller_than_a_message_is_refused_at_start() {
         ..LIMITS
     };
     let mut io = SimIo::new(limits, 1, Faults::default());
-    Resolver::new(config(&[NS1], SEC, Family::V4)).start(&mut io);
+    Resolver::new(config(&[NS1], SEC, Family::V4))
+        .expect("resolver config")
+        .start(&mut io);
 }
 
 #[test]
@@ -209,47 +212,49 @@ fn a_send_buffer_smaller_than_the_longest_query_is_refused_at_start() {
     let mut io = SimIo::new(limits, 1, Faults::default());
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.tx_buf = limits.small(0);
-    Resolver::new(cfg).start(&mut io);
+    Resolver::new(cfg).expect("resolver config").start(&mut io);
 }
 
 #[test]
-#[should_panic(expected = "one or two nameservers")]
 fn no_nameserver_is_refused() {
-    let _: Resolver = Resolver::new(config(&[], SEC, Family::V4));
+    let refused = Resolver::new(config(&[], SEC, Family::V4)).err();
+    assert_eq!(refused, Some(ConfigError::Servers(0)));
 }
 
 #[test]
-#[should_panic(expected = "one or two nameservers")]
 fn three_nameservers_are_refused() {
-    let _: Resolver = Resolver::new(config(&[NS1, NS2, NOWHERE], SEC, Family::V4));
+    let refused = Resolver::new(config(&[NS1, NS2, NOWHERE], SEC, Family::V4)).err();
+    assert_eq!(refused, Some(ConfigError::Servers(3)));
 }
 
 #[test]
-#[should_panic(expected = "at least one hostname")]
 fn no_hostname_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.hosts.clear();
-    let _: Resolver = Resolver::new(cfg);
+    assert_eq!(Resolver::new(cfg).err(), Some(ConfigError::NoHosts));
 }
 
 #[test]
-#[should_panic(expected = "invalid hostname \"not a host\"")]
 fn a_hostname_that_is_not_one_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V6);
     cfg.hosts.push("not a host".into());
-    let _: Resolver = Resolver::new(cfg);
+    let refused = Resolver::new(cfg).err();
+    assert_eq!(refused, Some(ConfigError::Hostname("not a host".into())));
+    assert_eq!(
+        refused.map(|e| e.to_string()),
+        Some("invalid hostname \"not a host\"".into())
+    );
 }
 
 #[test]
-#[should_panic]
 fn a_refresh_interval_of_zero_is_refused() {
-    let _: Resolver = Resolver::new(config(&[NS1], 0, Family::V4));
+    let refused = Resolver::new(config(&[NS1], 0, Family::V4)).err();
+    assert_eq!(refused, Some(ConfigError::ZeroInterval));
 }
 
 #[test]
-#[should_panic]
 fn an_answer_timeout_of_zero_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.timeout_ns = 0;
-    let _: Resolver = Resolver::new(cfg);
+    assert_eq!(Resolver::new(cfg).err(), Some(ConfigError::ZeroInterval));
 }

@@ -16,11 +16,12 @@
 //! types are asked for and which family lookups hand out first.
 
 use crate::codec::{encode_query_for, parse_response_for, DnsError, MESSAGE_MAX};
-use longshore_common::io::{BufId, Completion, Io, Op, Sock, Token};
-use std::net::SocketAddr;
+use longshore_common::io::{Completion, Io, Op, Token};
 
+mod config;
 mod family;
 mod lookup;
+pub use config::{Config, ConfigError};
 pub use family::Family;
 use family::{set_of, Host, Set};
 
@@ -29,37 +30,6 @@ pub const SERVERS_MAX: usize = 2;
 /// Operations the resolver keeps in flight at most: one receive per server,
 /// one send, one timer. Connects happen before any of those.
 pub const OPS_IN_FLIGHT_MAX: u32 = SERVERS_MAX as u32 + 2;
-
-pub struct Config {
-    /// One or two nameservers. On a timeout the next one is tried.
-    pub servers: Vec<SocketAddr>,
-    pub hosts: Vec<String>,
-    pub family: Family,
-    /// Prefer addresses whose connections have large TCP segments. `None`
-    /// turns this off and every address is handed out in rotation.
-    /// `Some(n)` hands out the addresses whose measured segment size is at
-    /// least half the largest seen and a quarter of the path's limit, and
-    /// keeps at least `n` addresses in use by admitting the next largest. Sizes come from
-    /// [`Resolver::connected`]. An address not yet measured is handed out
-    /// like the large ones, so that it gets measured.
-    ///
-    /// This puts a host's connections on fewer of its addresses.
-    pub prefer_large_segments: Option<usize>,
-    /// Every host is re-resolved this often, whatever its TTL says.
-    pub refresh_ns: u64,
-    /// How long to wait for one answer.
-    pub timeout_ns: u64,
-    /// One socket slot and one receive buffer per server.
-    pub socks: [Sock; SERVERS_MAX],
-    /// Each must hold [`MESSAGE_MAX`] bytes: that much is asked of every
-    /// receive. Checked when the resolver starts.
-    pub rx_bufs: [BufId; SERVERS_MAX],
-    /// Must hold the longest query: 18 bytes more than the longest
-    /// hostname, so 271 at most. Checked when the resolver starts.
-    pub tx_buf: BufId,
-    /// Tokens used are `token_base..token_base + 256`.
-    pub token_base: u64,
-}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Phase {
@@ -112,32 +82,21 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    pub fn new(cfg: Config) -> Resolver {
-        assert!(
-            (1..=SERVERS_MAX).contains(&cfg.servers.len()),
-            "one or two nameservers"
-        );
-        assert!(!cfg.hosts.is_empty(), "at least one hostname");
-        assert!(cfg.timeout_ns > 0 && cfg.refresh_ns > 0);
-        let mut probe = [0u8; MESSAGE_MAX];
+    /// A resolver for `cfg`, or why `cfg` cannot be used.
+    pub fn new(cfg: Config) -> Result<Resolver, ConfigError> {
+        cfg.check()?;
         let preferred = cfg.family.records()[0];
         let hosts = cfg
             .hosts
             .iter()
-            .map(|h| {
-                assert!(
-                    encode_query_for(h, 0, preferred, &mut probe).is_ok(),
-                    "invalid hostname {h:?}"
-                );
-                Host {
-                    name: h.clone(),
-                    sets: [Set::EMPTY; 2],
-                    active: set_of(preferred),
-                    path_limit: 0,
-                }
+            .map(|h| Host {
+                name: h.clone(),
+                sets: [Set::EMPTY; 2],
+                active: set_of(preferred),
+                path_limit: 0,
             })
             .collect();
-        Resolver {
+        Ok(Resolver {
             cfg,
             hosts,
             phase: Phase::Connecting { remaining: 0 },
@@ -152,7 +111,7 @@ impl Resolver {
             cycles: 0,
             family_switches: 0,
             early_refreshes: 0,
-        }
+        })
     }
 
     /// Begin resolving. Call once.

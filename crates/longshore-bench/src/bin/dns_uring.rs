@@ -64,10 +64,7 @@ fn main() {
         ops_max: 8,
         ..Limits::BASE
     })
-    .unwrap_or_else(|e| {
-        eprintln!("dns_uring: {e}");
-        std::process::exit(1);
-    });
+    .unwrap_or_else(|e| die::die(e));
     let n = hosts.len();
     let mut r = Resolver::new(Config {
         servers,
@@ -80,7 +77,8 @@ fn main() {
         rx_bufs: [BufId(0), BufId(1)],
         tx_buf: BufId(2),
         token_base: 1 << 40,
-    });
+    })
+    .unwrap_or_else(|e| die::die(e));
     let mut out = Completions::new(8);
     let t0 = io.now_ns();
     r.start(&mut io);

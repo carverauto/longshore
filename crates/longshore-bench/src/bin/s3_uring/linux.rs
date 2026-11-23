@@ -122,7 +122,8 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         rx_bufs: [limits.small(conns), limits.small(conns + 1)],
         tx_buf: limits.small(conns + 2),
         token_base: 3 << 40,
-    });
+    })
+    .unwrap_or_else(|e| die(e));
     let http = client::Config {
         connections_max: conns,
         first_sock: 0,

@@ -135,7 +135,7 @@ fn unknown_host_counts_as_failure_and_does_not_block_the_others() {
     let mut s = Server::start(&mut io, NS1);
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.hosts.insert(0, "missing.example.org".into());
-    let mut r = Resolver::new(cfg);
+    let mut r = Resolver::new(cfg).expect("resolver config");
     r.start(&mut io);
     let mut out = Completions::new(8);
     pump(&mut io, &mut r, &mut s, &mut out, 200 * MS);
