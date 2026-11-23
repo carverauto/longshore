@@ -26,11 +26,6 @@ use std::net::SocketAddr;
 /// `x-goog-hash: crc32c=...`.
 pub type ChecksumFn = fn(&[u8]) -> [u8; 12];
 
-/// Judges a request by its method, its target exactly as sent, the bytes of
-/// its head and the parsed fields. Called while requests run, so it must
-/// not allocate.
-pub type VerifyFn = fn(method: &[u8], target: &[u8], head: &[u8], fields: &Fields) -> bool;
-
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub listener: Sock,
@@ -50,133 +45,6 @@ pub struct Config {
     /// `BadDigest` error document, and GET returns the stored value.
     pub checksum: Option<ChecksumFn>,
 }
-
-/// How to treat the next request. Queued with [`Server::script`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Behavior {
-    Normal,
-    /// Respond with this status and an empty body.
-    Status(u16),
-    /// Respond with this status and a body of this many filler bytes, as
-    /// real stores do with their error documents.
-    StatusWithBody(u16, u32),
-    /// Close the connection without responding.
-    CloseBeforeResponse,
-    /// Over TLS: answer with a fatal alert of this description, then close.
-    TlsAlert(u8),
-    /// Carry out the request, then close without responding: the response is lost.
-    ApplyThenClose,
-    /// Send the head and half the body, then close.
-    TruncateBody,
-    /// Read the request and never respond.
-    Stall,
-    /// Respond with bytes that are not HTTP.
-    GarbageHead,
-    /// Respond with a head that never ends.
-    EndlessHead,
-    /// Send exactly these bytes as the whole response, then close.
-    Raw(&'static [u8]),
-    /// Respond with this status and an error document naming this code.
-    /// Real stores can do this with status 200.
-    ErrorDocument(u16, &'static str),
-    /// Respond with chunked transfer encoding and an empty body.
-    Chunked,
-    /// Serve a GET of a stored object with chunked transfer encoding, in
-    /// chunks of this many bytes, on a connection that stays open.
-    ChunkedBody(u32),
-    /// Respond with chunked transfer encoding whose first chunk size is not a number.
-    BadChunk,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum State {
-    Free,
-    /// Reserved for the accept in flight.
-    Accepting,
-    /// Accepted; the TLS handshake is in progress.
-    #[cfg(feature = "tls")]
-    Handshake,
-    RecvHead {
-        have: u32,
-    },
-    RecvBody {
-        have: u32,
-    },
-    SendHead {
-        off: u32,
-    },
-    SendBody {
-        off: u32,
-    },
-    Stalled,
-    Closing,
-}
-
-const TARGET_MAX: usize = 256;
-/// A listing's request target: a prefix of up to `TARGET_MAX` bytes with
-/// every byte percent-encoded, and a continuation token for a cursor of up
-/// to `TARGET_MAX` bytes.
-const LIST_TARGET_MAX: usize = 4 * TARGET_MAX + b"continuation-token=t&".len() + 2 * TARGET_MAX;
-/// Room for the headers that describe an object: content type and metadata.
-const DESCRIBING_MAX: usize = 192;
-
-#[derive(Clone, Copy)]
-struct Conn {
-    state: State,
-    target: [u8; LIST_TARGET_MAX],
-    target_len: usize,
-    method: [u8; 8],
-    method_len: usize,
-    request_len: u32,
-    head_len: u32,
-    body_len: u32,
-    close_after: bool,
-    /// `If-None-Match: *` was sent: store only if the object does not exist.
-    if_none_match: bool,
-    /// `Range: bytes=a-b`, inclusive.
-    range: Option<(u32, u32)>,
-    /// Checksum header value sent with the request.
-    claimed: Option<[u8; 12]>,
-    /// Checksum header value to send with the response.
-    reply_checksum: Option<[u8; 12]>,
-    /// The request carried `x-amz-checksum-mode: ENABLED`.
-    checksum_mode: bool,
-    /// The request's access key is on the allowed list (or no list is set).
-    authorized: bool,
-    /// The request carried a bearer token: answer in Google Cloud Storage's dialect.
-    bearer: bool,
-    /// `ETag` to send with the response: a stored part's tag.
-    reply_tag: Option<[u8; multipart::TAG_LEN]>,
-    /// The request's content type and metadata headers, as raw lines.
-    describing: [u8; DESCRIBING_MAX],
-    describing_len: usize,
-    /// The request's copy source, `/bucket/key`, if it is a copy.
-    copy_source: [u8; TARGET_MAX],
-    copy_source_len: usize,
-    /// The object whose tag, date and describing headers go on the response.
-    reply_object: Option<u32>,
-    /// What the request asked about the object's identity.
-    asked: identity::Asked,
-}
-
-struct Object {
-    target: [u8; TARGET_MAX],
-    target_len: usize,
-    len: u32,
-    data: Box<[u8]>,
-    used: bool,
-    checksum: Option<[u8; 12]>,
-    /// Content type and metadata headers it was stored with, as raw lines.
-    describing: [u8; DESCRIBING_MAX],
-    describing_len: usize,
-    /// Its version, encryption and SHA-256.
-    kept: identity::Kept,
-}
-
-const K_RECV: u64 = 0;
-const K_SEND: u64 = 1;
-const K_CLOSE: u64 = 2;
-const SCRIPT_MAX: usize = 32;
 
 pub struct Server {
     cfg: Config,
@@ -220,18 +88,30 @@ pub struct Server {
     pub closed: u64,
 }
 
+mod behavior;
 mod build;
+mod conn;
+mod consts;
 mod describing;
 mod events;
 mod identity;
-pub use identity::Sha256Fn;
 mod listing;
 mod multipart;
+mod object;
 mod objects;
 mod request;
 mod scripted;
+mod state;
 mod transport;
 mod xml;
+
+pub use behavior::Behavior;
+use conn::Conn;
+use consts::{DESCRIBING_MAX, K_CLOSE, K_RECV, K_SEND, LIST_TARGET_MAX, SCRIPT_MAX, TARGET_MAX};
+pub use identity::Sha256Fn;
+use object::Object;
+pub use request::VerifyFn;
+use state::State;
 
 impl Server {
     /// A plain-HTTP server.

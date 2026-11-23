@@ -7,6 +7,11 @@
 
 use super::*;
 
+/// Judges a request by its method, its target exactly as sent, the bytes of
+/// its head and the parsed fields. Called while requests run, so it must
+/// not allocate.
+pub type VerifyFn = fn(method: &[u8], target: &[u8], head: &[u8], fields: &Fields) -> bool;
+
 impl Server {
     /// Record on connection `i` what the request head in `buf` asks for.
     /// Returns whether its method or target is too long to keep.

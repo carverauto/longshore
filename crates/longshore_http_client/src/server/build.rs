@@ -23,7 +23,9 @@ impl Server {
             streams,
             #[cfg(feature = "tls")]
             tls: tls.map(|t| t.0),
-            objects: (0..cfg.objects_max).map(|_| Object::empty(&cfg)).collect(),
+            objects: (0..cfg.objects_max)
+                .map(|_| Object::empty(cfg.buffer_size))
+                .collect(),
             uploads: [0; multipart::UPLOADS_MAX],
             uploads_begun: 0,
             erase_denied: "",
@@ -43,52 +45,6 @@ impl Server {
             accepted: 0,
             requests: 0,
             closed: 0,
-        }
-    }
-}
-
-impl Conn {
-    /// A connection slot with nothing on it.
-    const FREE: Conn = Conn {
-        state: State::Free,
-        target: [0; LIST_TARGET_MAX],
-        target_len: 0,
-        method: [0; 8],
-        method_len: 0,
-        request_len: 0,
-        head_len: 0,
-        body_len: 0,
-        close_after: false,
-        if_none_match: false,
-        range: None,
-        claimed: None,
-        reply_checksum: None,
-        checksum_mode: false,
-        authorized: true,
-        bearer: false,
-        reply_tag: None,
-        describing: [0; DESCRIBING_MAX],
-        describing_len: 0,
-        copy_source: [0; TARGET_MAX],
-        copy_source_len: 0,
-        reply_object: None,
-        asked: identity::Asked::NOTHING,
-    };
-}
-
-impl Object {
-    /// An unused object slot, with room for one buffer of data.
-    fn empty(cfg: &Config) -> Object {
-        Object {
-            target: [0; TARGET_MAX],
-            target_len: 0,
-            len: 0,
-            data: vec![0u8; cfg.buffer_size as usize].into_boxed_slice(),
-            used: false,
-            checksum: None,
-            describing: [0; DESCRIBING_MAX],
-            describing_len: 0,
-            kept: Default::default(),
         }
     }
 }
