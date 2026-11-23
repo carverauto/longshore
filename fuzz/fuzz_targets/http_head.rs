@@ -11,7 +11,9 @@ use libfuzzer_sys::fuzz_target;
 // Compiled straight from its source file; see fuzz/Cargo.toml. The inline
 // module sets the directory, so `head.rs` finds its own submodules under
 // `src/head/` as it does in the crate.
-#[allow(dead_code)]
+// Only the parsers are used here; the rest of the module, its writer
+// included, is unused in this binary.
+#[allow(dead_code, unused_imports)]
 #[path = "../../crates/longshore_http_client/src/"]
 mod http {
     pub mod head;

@@ -13,6 +13,7 @@ help:
 	@echo '    make count   	Count LoC across the project.'
 	@echo '    make fix   		Fixes linting issues as reported by clippy.'
 	@echo '    make format   	Formats all code according to cargo fmt style.'
+	@echo '    make fuzz   		Fuzzes every parser for 60 s each (FUZZ_SECONDS, FUZZ_TARGETS).'
 	@echo '    make update   	Update rust, pulls from git remote.'
 	@echo '    make test   	Tests across all crates.'
 
@@ -40,3 +41,7 @@ update:
 .PHONY: test
 test:
 	@source scripts/test.sh
+
+.PHONY: fuzz
+fuzz:
+	@source scripts/fuzz.sh
