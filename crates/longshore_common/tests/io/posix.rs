@@ -58,6 +58,28 @@ fn pair(io: &mut PosixIo, out: &mut Completions, listener: Sock, server: Sock, c
     }
 }
 
+/// How long a Send must stay pending before the test treats the socket as full.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Ticks without blocking until a completion arrives or `window` passes.
+fn completion_within(
+    io: &mut PosixIo,
+    out: &mut Completions,
+    window: std::time::Duration,
+) -> Option<longshore_common::io::Completion> {
+    let start = std::time::Instant::now();
+    loop {
+        io.tick(false, out).unwrap();
+        if let Some(c) = out.pop() {
+            return Some(c);
+        }
+        if start.elapsed() >= window {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn both_directions_wait_independently_on_one_socket() {
     let mut io = PosixIo::new(LIMITS).unwrap();
@@ -65,6 +87,10 @@ fn both_directions_wait_independently_on_one_socket() {
     pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
 
     // Fill Sock(2)'s send buffer until Send stalls waiting for writability.
+    // One tick without a completion is not enough: on macOS a loopback socket
+    // turns writable again within a fraction of a millisecond, several times,
+    // while the kernel moves data into the peer and auto-tunes both buffers.
+    // A Send counts as stalled only when it stays pending for `SETTLE`.
     io.buf(BufId(0)).fill(0xab);
     let mut tok = 10u64;
     let mut pending_send_tok = None;
@@ -80,8 +106,8 @@ fn both_directions_wait_independently_on_one_socket() {
             },
         )
         .unwrap();
-        io.tick(false, &mut out).unwrap();
-        if let Some(c) = out.pop() {
+        if let Some(c) = completion_within(&mut io, &mut out, SETTLE) {
+            assert_eq!(c.token.0, tok);
             assert!(c.result > 0, "send failed: {}", c.result);
             tok += 1;
         } else {
@@ -90,7 +116,7 @@ fn both_directions_wait_independently_on_one_socket() {
             break;
         }
     }
-    let send_tok = pending_send_tok.expect("expected socket send buffer to fill");
+    let mut send_tok = pending_send_tok.expect("expected socket send buffer to fill");
 
     // Now submit Recv on the same Sock(2) while Send is still waiting.
     let recv_tok = tok;
@@ -105,8 +131,46 @@ fn both_directions_wait_independently_on_one_socket() {
         },
     )
     .unwrap();
+    // Both must now be pending. Under load the kernel can drain a "full"
+    // loopback socket later than `SETTLE`, so a Send that completes anyway is
+    // replaced by another until one stays pending: the test then starts from
+    // a Send that is really waiting, however long the drain took.
+    let mut both_pending = false;
+    for _ in 0..256 {
+        match completion_within(&mut io, &mut out, SETTLE) {
+            None => {
+                both_pending = true;
+                break;
+            }
+            Some(c) if c.token.0 == send_tok => {
+                assert!(c.result > 0, "send failed: {}", c.result);
+                send_tok = tok;
+                tok += 1;
+                io.submit(
+                    Token(send_tok),
+                    Op::Send {
+                        sock: Sock(2),
+                        buf: BufId(0),
+                        off: 0,
+                        len: 65536,
+                        zero_copy: false,
+                    },
+                )
+                .unwrap();
+            }
+            Some(c) => panic!(
+                "unexpected completion: token {} result {}",
+                c.token.0, c.result
+            ),
+        }
+    }
+    assert!(
+        both_pending,
+        "a Send and a Recv must both be pending on Sock(2)"
+    );
 
-    // Send 5 bytes from peer Sock(1) -> Sock(2); Recv must complete while Send remains pending.
+    // Send 5 bytes from peer Sock(1) -> Sock(2); Recv must complete although a
+    // Send on the same socket is pending.
     io.buf(BufId(2))[..5].copy_from_slice(b"hello");
     io.submit(
         Token(tok),
@@ -135,7 +199,9 @@ fn both_directions_wait_independently_on_one_socket() {
             }
         }
     }
-    assert!(!saw_send, "send completed before peer drained");
+    // The stalled Send may complete here too, without Sock(1) reading: the
+    // segment carrying the reply can also carry an acknowledgement that frees
+    // room in Sock(2)'s send buffer (about 1 run in 40 on macOS loopback).
 
     // Drain Sock(1) until the blocked Send on Sock(2) completes.
     while !saw_send {
