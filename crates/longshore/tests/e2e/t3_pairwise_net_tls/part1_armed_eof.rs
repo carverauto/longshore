@@ -27,7 +27,7 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         .unwrap();
     for i in 0..4u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,

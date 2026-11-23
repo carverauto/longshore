@@ -176,7 +176,7 @@ impl Posix {
             }
             raw[0..4].copy_from_slice(&0x07ffu32.to_le_bytes());
             raw[4..8].copy_from_slice(&(st.st_blksize as u32).to_le_bytes());
-            raw[16..20].copy_from_slice(&(st.st_nlink as u32).to_le_bytes());
+            raw[16..20].copy_from_slice(&u32::from(st.st_nlink).to_le_bytes());
             raw[20..24].copy_from_slice(&st.st_uid.to_le_bytes());
             raw[24..28].copy_from_slice(&st.st_gid.to_le_bytes());
             raw[28..30].copy_from_slice(&st.st_mode.to_le_bytes());

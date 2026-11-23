@@ -250,7 +250,7 @@ pub(crate) fn base64_decode<const N: usize>(text: &[u8]) -> Option<[u8; N]> {
             b'/' => 63,
             _ => return None,
         };
-        bits = bits << 6 | v as u32;
+        bits = bits << 6 | u32::from(v);
         count += 6;
         if count >= 8 {
             count -= 8;

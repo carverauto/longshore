@@ -14,7 +14,7 @@ impl Client {
             .token
             .0
             .checked_sub(self.cfg.token_base)
-            .filter(|r| *r < self.cfg.connections_max as u64 * 8)
+            .filter(|r| *r < u64::from(self.cfg.connections_max) * 8)
         else {
             return Handled::NotMine;
         };

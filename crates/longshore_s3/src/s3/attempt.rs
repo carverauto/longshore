@@ -27,10 +27,10 @@ impl S3 {
                 .cfg
                 .http
                 .request_timeout_ns
-                .saturating_mul(self.cfg.attempts_max as u64)
+                .saturating_mul(u64::from(self.cfg.attempts_max))
                 / self.cfg.backoff_ns.max(1))
             .max(1);
-            if self.slots[i].address_waits as u64 >= waits_max {
+            if u64::from(self.slots[i].address_waits) >= waits_max {
                 return self.fail_unsent(i, Fatal::NoAddress);
             }
             self.slots[i].address_waits += 1;

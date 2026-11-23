@@ -168,7 +168,7 @@ fn fields(buf: &[u8], start: usize, end: usize, http10: bool) -> Result<Fields, 
             let n = value
                 .iter()
                 .try_fold(0u64, |n, d| {
-                    n.checked_mul(10)?.checked_add((d - b'0') as u64)
+                    n.checked_mul(10)?.checked_add(u64::from(d - b'0'))
                 })
                 .ok_or(HttpError::BadContentLength)?;
             if f.content_length.is_some_and(|prev| prev != n) {
@@ -235,7 +235,7 @@ pub fn parse_response(buf: &[u8], limit: usize) -> Result<Option<ResponseHead>, 
     let http10 = version(&line[..8])?;
     let status = line[9..12]
         .iter()
-        .fold(0u16, |n, d| n * 10 + (d - b'0') as u16);
+        .fold(0u16, |n, d| n * 10 + u16::from(d - b'0'));
     if status < 100 {
         return Err(HttpError::BadStartLine);
     }
@@ -317,7 +317,7 @@ impl<'a> HeadWriter<'a> {
         };
         w.bad |= !(100..1000).contains(&status) || reason.bytes().any(|b| b < 0x20 || b == 0x7f);
         w.put(b"HTTP/1.1 ");
-        w.put_u64(status as u64);
+        w.put_u64(u64::from(status));
         w.put(b" ");
         w.put(reason.as_bytes());
         w.put(b"\r\n");

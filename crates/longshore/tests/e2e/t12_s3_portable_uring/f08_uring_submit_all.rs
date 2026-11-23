@@ -97,7 +97,7 @@ fn t1_f08_1_uring_batch_eight_mixed_ops_consumed_and_completed() {
         let p = dir.file_path(&format!("f{i}.bin"));
         let plen = write_nul_path(&mut io, BufId(i), 0, p.to_str().unwrap());
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::FileOpen {
                 slot: FileSlot(i),
                 path_buf: BufId(i),
@@ -107,7 +107,7 @@ fn t1_f08_1_uring_batch_eight_mixed_ops_consumed_and_completed() {
             },
         )
         .unwrap();
-        io.submit(Token(20 + i as u64), Op::Timeout { nanos: 0 })
+        io.submit(Token(20 + u64::from(i)), Op::Timeout { nanos: 0 })
             .unwrap();
     }
 
@@ -115,8 +115,11 @@ fn t1_f08_1_uring_batch_eight_mixed_ops_consumed_and_completed() {
     assert!(cs.iter().all(|c| c.result == 0), "unexpected: {cs:?}");
 
     for i in 0..4u32 {
-        io.submit(Token(30 + i as u64), Op::FileClose { slot: FileSlot(i) })
-            .unwrap();
+        io.submit(
+            Token(30 + u64::from(i)),
+            Op::FileClose { slot: FileSlot(i) },
+        )
+        .unwrap();
     }
     let closed = drive_until(&mut io, &mut out, 1_000, |v| v.len() == 4).unwrap();
     assert!(closed.iter().all(|c| c.result == 0));

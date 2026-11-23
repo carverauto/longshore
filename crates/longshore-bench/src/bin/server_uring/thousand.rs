@@ -131,7 +131,7 @@ pub(super) fn thousand_idle_connections<IO: Io>(
         for k in 0..16u32 {
             c0.buf(BufId(0))[0] = k as u8;
             c0.submit(
-                Token(20_000 + k as u64),
+                Token(20_000 + u64::from(k)),
                 Op::Send {
                     sock: Sock(k),
                     buf: BufId(0),
@@ -172,7 +172,7 @@ pub(super) fn thousand_idle_connections<IO: Io>(
         for k in 0..16u32 {
             c1.buf(BufId(0))[0] = (0x80 + k) as u8;
             c1.submit(
-                Token(21_000 + k as u64),
+                Token(21_000 + u64::from(k)),
                 Op::Send {
                     sock: Sock(484 + k),
                     buf: BufId(0),

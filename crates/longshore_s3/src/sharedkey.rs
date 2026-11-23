@@ -171,14 +171,14 @@ pub fn decode_key(text: &str, out: &mut [u8; KEY_MAX]) -> Option<usize> {
         return None;
     }
     let value = |c: u8| -> Option<u32> {
-        Some(match c {
+        Some(u32::from(match c {
             b'A'..=b'Z' => c - b'A',
             b'a'..=b'z' => c - b'a' + 26,
             b'0'..=b'9' => c - b'0' + 52,
             b'+' => 62,
             b'/' => 63,
             _ => return None,
-        } as u32)
+        }))
     };
     let mut n = 0;
     for (i, quad) in text.chunks(4).enumerate() {

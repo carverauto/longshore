@@ -186,7 +186,7 @@ impl Worker {
         }
         let key = core::str::from_utf8(&r.key[..r.key_len as usize]).unwrap_or("");
         let buf = BufId(self.layout.first_buffer.0 + r.buf);
-        let token = r.op as u64;
+        let token = u64::from(r.op);
         let sent = match r.kind {
             Kind::Store {
                 no_clobber: false,

@@ -44,7 +44,7 @@ fn t2_f23_1_sim_armed_accept_under_connect_refused_produces_only_valid_slots() {
     let mut refused = 0usize;
     for i in 0..8u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,
@@ -52,10 +52,13 @@ fn t2_f23_1_sim_armed_accept_under_connect_refused_produces_only_valid_slots() {
         )
         .unwrap();
         let cs = drive_until(&mut io, &mut out, 30, |v| {
-            v.iter().any(|c| c.token == Token(10 + i as u64))
+            v.iter().any(|c| c.token == Token(10 + u64::from(i)))
         })
         .unwrap();
-        let cc = cs.iter().find(|c| c.token == Token(10 + i as u64)).unwrap();
+        let cc = cs
+            .iter()
+            .find(|c| c.token == Token(10 + u64::from(i)))
+            .unwrap();
         if cc.result < 0 {
             refused += 1;
         } else {

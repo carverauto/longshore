@@ -180,7 +180,7 @@ impl<'a> Iterator for Entries<'a> {
             let size = size
                 .iter()
                 .try_fold(0u64, |n, d| {
-                    n.checked_mul(10)?.checked_add((d - b'0') as u64)
+                    n.checked_mul(10)?.checked_add(u64::from(d - b'0'))
                 })
                 .ok_or(ListError::Malformed)?;
             Ok(Entry { key_raw, size })

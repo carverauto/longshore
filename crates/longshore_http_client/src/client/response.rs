@@ -159,7 +159,7 @@ impl Client {
                 head.fields.content_length.unwrap_or(0)
             };
             let extra = have - head_len;
-            if extra as u64 > body_len {
+            if u64::from(extra) > body_len {
                 // Bytes beyond the declared body: the framing cannot be trusted.
                 return self.fail(io, i, Error::Head(HttpError::BadFraming));
             }
@@ -174,12 +174,12 @@ impl Client {
                     return self.fail(io, i, Error::BodyTooLarge);
                 }
                 c.body_len = body_len as u32;
-                if extra as u64 == body_len {
+                if u64::from(extra) == body_len {
                     return self.succeed(io, i);
                 }
                 return self.drain(io, i, extra);
             };
-            if body_len > self.cfg.buffer_size as u64 {
+            if body_len > u64::from(self.cfg.buffer_size) {
                 return self.fail(io, i, Error::BodyTooLarge);
             }
             c.body_len = body_len as u32;
@@ -194,7 +194,7 @@ impl Client {
                 io.buf(dst)[moved..moved + n].copy_from_slice(&tmp[..n]);
                 moved += n;
             }
-            if extra as u64 == body_len {
+            if u64::from(extra) == body_len {
                 return self.succeed(io, i);
             }
             return self.recv_body(io, i, extra);

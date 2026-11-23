@@ -120,8 +120,8 @@ impl Server {
         };
         if too_long
             || head.fields.chunked
-            || body_len > self.cfg.buffer_size as u64
-            || extra as u64 > body_len
+            || body_len > u64::from(self.cfg.buffer_size)
+            || u64::from(extra) > body_len
         {
             return self.status(io, i, 400, "Bad Request", 0, 0, true);
         }
@@ -136,7 +136,7 @@ impl Server {
             io.buf(self.body_buf(i))[moved..moved + n].copy_from_slice(&tmp[..n]);
             moved += n;
         }
-        if (extra as u64) < body_len {
+        if u64::from(extra) < body_len {
             self.conns[i].state = State::RecvBody { have: extra };
             self.recv_into(io, i, self.body_buf(i), extra, body_len as u32 - extra);
         } else {
@@ -150,7 +150,7 @@ impl Server {
             .token
             .0
             .checked_sub(self.cfg.token_base)
-            .filter(|r| *r <= self.cfg.connections_max as u64 * 8)
+            .filter(|r| *r <= u64::from(self.cfg.connections_max) * 8)
         else {
             return false;
         };

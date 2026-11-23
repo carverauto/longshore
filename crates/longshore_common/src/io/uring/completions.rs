@@ -14,8 +14,8 @@ impl UringIo {
         let mut sqe = self.fixed(Sock(s.sock));
         sqe.opcode = IORING_OP_CONNECT;
         sqe.addr = &s.addr as *const sockaddr_any as u64;
-        sqe.off = s.addr_len as u64;
-        sqe.user_data = i as u64;
+        sqe.off = u64::from(s.addr_len);
+        sqe.user_data = u64::from(i);
         sqe
     }
 
@@ -33,7 +33,7 @@ impl UringIo {
     ) -> Option<io_uring_sqe> {
         let opts = self.no_delay || self.keep_alive;
         let kind = (SOCK_STREAM | SOCK_CLOEXEC) as i32;
-        let fd = unsafe { socket(family as i32, kind, 0) };
+        let fd = unsafe { socket(i32::from(family), kind, 0) };
         if fd < 0 {
             if opts {
                 let errno = io::Error::last_os_error()
@@ -120,7 +120,7 @@ impl UringIo {
         let sqe = io_uring_sqe {
             opcode: IORING_OP_CLOSE,
             file_index: s.sock + 1,
-            user_data: PHASE_SOCK_RELEASE | i as u64,
+            user_data: PHASE_SOCK_RELEASE | u64::from(i),
             ..Default::default()
         };
         self.push(sqe)
@@ -167,7 +167,7 @@ impl UringIo {
     }
 
     pub(super) fn return_ring_buf(&mut self, ring_id: u16) {
-        let id = BufId(self.limits.ring_base() + ring_id as u32);
+        let id = BufId(self.limits.ring_base() + u32::from(ring_id));
         let len = self.limits.ring_buffer_size;
         let addr = self.buf_ptr(id, 0, len);
         self.ring_in_ring[ring_id as usize] = true;
@@ -233,7 +233,7 @@ impl UringIo {
                     let sqe = io_uring_sqe {
                         opcode: IORING_OP_CLOSE,
                         fd: s.fd,
-                        user_data: PHASE_FILE_CLOSE | i as u64,
+                        user_data: PHASE_FILE_CLOSE | u64::from(i),
                         ..Default::default()
                     };
                     return self.push(sqe);
@@ -245,7 +245,7 @@ impl UringIo {
                     fd: s.fd,
                     addr: s.file_addr,
                     len: s.file_len,
-                    user_data: PHASE_FILE_READ | i as u64,
+                    user_data: PHASE_FILE_READ | u64::from(i),
                     ..Default::default()
                 };
                 return self.push(sqe);
@@ -259,7 +259,7 @@ impl UringIo {
                 let sqe = io_uring_sqe {
                     opcode: IORING_OP_CLOSE,
                     fd: s.fd,
-                    user_data: PHASE_FILE_CLOSE | i as u64,
+                    user_data: PHASE_FILE_CLOSE | u64::from(i),
                     ..Default::default()
                 };
                 return self.push(sqe);
@@ -374,5 +374,5 @@ pub(super) fn decode_ring_buf(
         on_empty(ring_id);
         return None;
     }
-    Some(BufId(base + ring_id as u32))
+    Some(BufId(base + u32::from(ring_id)))
 }

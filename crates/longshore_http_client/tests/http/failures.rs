@@ -344,7 +344,7 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
             },
             _ => {
                 // Idle time lets closes complete and exercises reuse after a pause.
-                w.settle(len as u64 % 40);
+                w.settle(u64::from(len) % 40);
             }
         }
         w.settle(5);

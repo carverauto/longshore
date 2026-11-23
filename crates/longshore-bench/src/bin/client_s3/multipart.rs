@@ -52,7 +52,7 @@ pub fn run(client: &Client, size: usize, parts: u32, objects: u32) {
         let (completed, mut into) = client.upload_complete(&key, &id, &stored, scratch).wait();
         completed.unwrap_or_else(|e| fail("complete", e));
         for part in 1..=parts {
-            let first = (part as u64 - 1) * size as u64;
+            let first = (u64::from(part) - 1) * size as u64;
             let (fetched, buffer) = client
                 .fetch_range(&key, first, first + size as u64 - 1, into)
                 .wait();
@@ -102,7 +102,7 @@ pub fn run(client: &Client, size: usize, parts: u32, objects: u32) {
         "{{\"cmd\":\"client-multipart\",\"arch\":\"{}\",\"threads\":{},\"objects\":{objects},\"parts\":{parts},\"size\":{size},\"object_bytes\":{},\"secs\":{secs:.2},\"verified_parts\":{},\"aborted_upload_refused\":{refused}}}",
         std::env::consts::ARCH,
         client.threads(),
-        parts as u64 * size as u64,
+        u64::from(parts) * size as u64,
         objects * parts,
     );
 }

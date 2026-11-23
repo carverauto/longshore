@@ -164,7 +164,7 @@ impl S3 {
                     let body = &io.buf(buf)[..r.body_len as usize];
                     let actual = self.checksum_value(match self.cfg.vendor {
                         Vendor::S3 => longshore_crc::crc64_nvme(body),
-                        Vendor::Gcs => longshore_crc::crc32c(body) as u64,
+                        Vendor::Gcs => u64::from(longshore_crc::crc32c(body)),
                     });
                     verified = actual == expected;
                     // Corrupted in transit: fetch again rather than hand back bad bytes.

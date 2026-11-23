@@ -152,7 +152,7 @@ fn every_response_code_but_zero_is_reported() {
     let q = query("x.io", 9);
     for rcode in 1..=15u8 {
         assert_eq!(
-            parse_response(&response(&q, 0x8180 | rcode as u16, &[]), 9, "x.io"),
+            parse_response(&response(&q, 0x8180 | u16::from(rcode), &[]), 9, "x.io"),
             Err(DnsError::Rcode(rcode))
         );
     }

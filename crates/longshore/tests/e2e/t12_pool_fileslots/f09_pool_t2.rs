@@ -176,7 +176,7 @@ fn t2_f09_3_linux_rlimit_nofile_descriptive_error() {
         rlim_max: 0,
     };
     assert_eq!(unsafe { getrlimit(RLIMIT_NOFILE, &mut rlim) }, 0);
-    let total_wanted = rlim.rlim_cur.saturating_add(16).min(u32::MAX as u64) as u32;
+    let total_wanted = rlim.rlim_cur.saturating_add(16).min(u64::from(u32::MAX)) as u32;
     let sockets_max = total_wanted / 2;
     let files_max = total_wanted - sockets_max;
     let limits = Limits {

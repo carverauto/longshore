@@ -100,7 +100,7 @@ fn a_write_is_read_back_under_the_identity_the_store_gave_it() {
     w.s3.head(&mut w.io, 2, "clips/a", &expect, ONCE).unwrap();
     let head = answer(&mut w);
     assert_eq!((head.status, head.body_len), (200, 0));
-    assert_eq!(head.content_length, Some(LEN as u64));
+    assert_eq!(head.content_length, Some(u64::from(LEN)));
     assert_eq!((head.etag, head.version), (expect.etag, expect.version));
     assert_eq!(head.encryption, Some(ServerEncryption::Aes256));
     assert_eq!(head.sha256, Some(sha256(&body)));
@@ -121,7 +121,7 @@ fn a_write_is_read_back_under_the_identity_the_store_gave_it() {
         Some(ContentRange {
             first: 100,
             last: 299,
-            size: Some(LEN as u64)
+            size: Some(u64::from(LEN))
         })
     );
     assert_eq!((part.etag, part.version), (expect.etag, expect.version));
@@ -357,7 +357,7 @@ fn a_range_the_store_cuts_short_is_reported_as_served() {
         Some(ContentRange {
             first: 900,
             last: 999,
-            size: Some(LEN as u64)
+            size: Some(u64::from(LEN))
         })
     );
     assert_eq!(

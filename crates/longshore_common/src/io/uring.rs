@@ -333,7 +333,7 @@ impl UringIo {
     fn push_flushing(&mut self, sqe: io_uring_sqe) -> bool {
         let pushed = self.ring.push(sqe).is_ok()
             || (self.ring.enter(0).is_ok() && self.ring.push(sqe).is_ok());
-        self.in_flight += pushed as u32;
+        self.in_flight += u32::from(pushed);
         pushed
     }
 

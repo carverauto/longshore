@@ -123,7 +123,7 @@ fn success_means_durable_under_faults() {
         w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::None)
             .unwrap();
         let d = w.last();
-        retried += (d.attempts > 1) as u32;
+        retried += u32::from(d.attempts > 1);
         match d.outcome {
             Outcome::Stored => {
                 stored += 1;

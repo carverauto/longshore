@@ -67,7 +67,7 @@ pub fn parse_http_date(text: &[u8]) -> Option<u64> {
     }
     let number = |at: usize, width: usize| -> Option<u64> {
         text[at..at + width].iter().try_fold(0u64, |n, d| {
-            d.is_ascii_digit().then(|| n * 10 + (d - b'0') as u64)
+            d.is_ascii_digit().then(|| n * 10 + u64::from(d - b'0'))
         })
     };
     let separators = [(7, b' '), (11, b' '), (16, b' '), (19, b':'), (22, b':')];

@@ -25,7 +25,7 @@ extern "C" {
 pub(super) fn check_rlimit_nofile() {
     let mut rlim = rlimit::default();
     assert_eq!(unsafe { getrlimit(RLIMIT_NOFILE, &mut rlim) }, 0);
-    let wanted = rlim.rlim_cur.saturating_add(16).min(u32::MAX as u64) as u32;
+    let wanted = rlim.rlim_cur.saturating_add(16).min(u64::from(u32::MAX)) as u32;
     let sockets_max = wanted / 2;
     let files_max = wanted - sockets_max;
     let limits = Limits {

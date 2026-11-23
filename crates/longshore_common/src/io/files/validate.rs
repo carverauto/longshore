@@ -49,10 +49,10 @@ pub(super) fn check_non_lifecycle(
                 if !limits.is_aligned_buf(buf) {
                     return Err(-EINVAL);
                 }
-                let bs = limits.block_size as u64;
+                let bs = u64::from(limits.block_size);
                 if bs == 0
-                    || !(off as u64).is_multiple_of(bs)
-                    || !(len as u64).is_multiple_of(bs)
+                    || !u64::from(off).is_multiple_of(bs)
+                    || !u64::from(len).is_multiple_of(bs)
                     || !file_off.is_multiple_of(bs)
                 {
                     return Err(-EINVAL);
@@ -70,7 +70,7 @@ pub(super) fn check_non_lifecycle(
             len,
         } => {
             let _: bool = slot_ok(slot)?;
-            let bs = limits.block_size as u64;
+            let bs = u64::from(limits.block_size);
             if bs == 0 || !file_off.is_multiple_of(bs) || !len.is_multiple_of(bs) {
                 return Err(-EINVAL);
             }
@@ -160,7 +160,7 @@ pub(super) fn check_buf_range(limits: &Limits, buf: BufId, off: u32, len: u32) -
         return Err(-EINVAL);
     }
     let (_, size) = limits.span(buf);
-    if off as u64 + len as u64 > size as u64 {
+    if u64::from(off) + u64::from(len) > size as u64 {
         return Err(-EINVAL);
     }
     Ok(())
@@ -177,7 +177,7 @@ pub(crate) fn check_path(
         return Err(-EINVAL);
     }
     let (base, size) = limits.span(buf);
-    if off as u64 + len as u64 > size as u64 {
+    if u64::from(off) + u64::from(len) > size as u64 {
         return Err(-EINVAL);
     }
     let start = base + off as usize;

@@ -33,8 +33,8 @@ fn month_days(year: u64, month: u64) -> u64 {
 fn calendar(unix_secs: u64) -> (u64, u64, u64, usize) {
     let total = unix_secs / 86_400;
     let (mut days, mut year, mut month) = (total, 1970, 1);
-    while days >= 365 + leap(year) as u64 {
-        days -= 365 + leap(year) as u64;
+    while days >= 365 + u64::from(leap(year)) {
+        days -= 365 + u64::from(leap(year));
         year += 1;
     }
     while days >= month_days(year, month) {

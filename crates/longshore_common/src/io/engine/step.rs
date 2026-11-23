@@ -10,12 +10,12 @@ use super::*;
 impl<W: World> Engine<W> {
     pub(super) fn record_trace(&mut self, c: Completion) {
         let now = self.world.now_ns();
-        for v in [c.token.0, c.result as u32 as u64, now] {
+        for v in [c.token.0, u64::from(c.result as u32), now] {
             self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
         }
         if c.more || c.buf.is_some() {
-            let buf = c.buf.map_or(u64::MAX, |b| b.0 as u64);
-            for v in [c.more as u64, buf] {
+            let buf = c.buf.map_or(u64::MAX, |b| u64::from(b.0));
+            for v in [u64::from(c.more), buf] {
                 self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
             }
         }

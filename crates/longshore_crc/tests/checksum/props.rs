@@ -74,7 +74,7 @@ fn base64_decode(text: &[u8]) -> Vec<u8> {
         let pad = quad.iter().rev().take_while(|c| **c == b'=').count();
         let bits = quad[..4 - pad]
             .iter()
-            .fold(0u32, |acc, c| acc << 6 | value(*c) as u32)
+            .fold(0u32, |acc, c| acc << 6 | u32::from(value(*c)))
             << (6 * pad);
         out.extend_from_slice(&bits.to_be_bytes()[1..4 - pad]);
     }

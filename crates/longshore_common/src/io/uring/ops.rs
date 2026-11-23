@@ -39,7 +39,7 @@ impl UringIo {
                 };
                 io_uring_sqe {
                     opcode: IORING_OP_SOCKET,
-                    fd: family as i32,
+                    fd: i32::from(family),
                     off: kind,
                     file_index: sock.0 + 1,
                     user_data: PHASE_SOCKET,
@@ -69,7 +69,7 @@ impl UringIo {
                 s.addr_len = addr_len;
                 io_uring_sqe {
                     opcode: IORING_OP_SOCKET,
-                    fd: AF_UNIX as i32,
+                    fd: i32::from(AF_UNIX),
                     off: SOCK_STREAM,
                     file_index: sock.0 + 1,
                     user_data: PHASE_SOCKET,

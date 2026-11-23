@@ -48,7 +48,7 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
             };
             s3.store(
                 &mut io,
-                i as u64,
+                u64::from(i),
                 &key,
                 BufId(first + i),
                 seed_len,
@@ -97,7 +97,7 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
                 let n = key_for(seq, &mut key);
                 client.store_no_clobber(
                     ring,
-                    i as u64,
+                    u64::from(i),
                     core::str::from_utf8(&key[..n]).unwrap(),
                     buf,
                     size,
@@ -105,21 +105,21 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
                 )
             }
             "get-range" => {
-                let n = key_for(i as u64, &mut key);
+                let n = key_for(u64::from(i), &mut key);
                 client.fetch(
                     ring,
-                    i as u64,
+                    u64::from(i),
                     core::str::from_utf8(&key[..n]).unwrap(),
-                    Some((0, RANGE.min(size as u64) - 1)),
+                    Some((0, RANGE.min(u64::from(size)) - 1)),
                     buf,
                 )
             }
             "erase" => {
                 seq += 1;
                 let n = key_for(1_000_000_000 + seq, &mut key);
-                client.erase(ring, i as u64, core::str::from_utf8(&key[..n]).unwrap())
+                client.erase(ring, u64::from(i), core::str::from_utf8(&key[..n]).unwrap())
             }
-            _ => client.list(ring, i as u64, &list_prefix, None, 1000, buf),
+            _ => client.list(ring, u64::from(i), &list_prefix, None, 1000, buf),
         };
         if r.is_err() {
             std::process::exit(4);
@@ -140,16 +140,16 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
             while let Some(d) = s3.poll() {
                 let i = d.token as usize;
                 match (kind, d.outcome) {
-                    ("put-new", Outcome::Stored) => bytes += size as u64,
-                    ("get-range", Outcome::Fetched { len, .. }) => bytes += len as u64,
+                    ("put-new", Outcome::Stored) => bytes += u64::from(size),
+                    ("get-range", Outcome::Fetched { len, .. }) => bytes += u64::from(len),
                     ("erase", Outcome::Erased) => {}
-                    ("list-keys", Outcome::Listed { len }) => bytes += len as u64,
+                    ("list-keys", Outcome::Listed { len }) => bytes += u64::from(len),
                     _ => std::process::exit(3),
                 }
                 let us = ((io.now_ns() - started[i]) / 1000).max(1);
                 hist[(63 - us.leading_zeros() as usize).min(31)] += 1;
                 requests += 1;
-                attempts += d.attempts as u64;
+                attempts += u64::from(d.attempts);
                 start_one(&mut s3, &mut io, i as u32, &mut started);
             }
         }

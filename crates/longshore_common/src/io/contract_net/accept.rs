@@ -27,7 +27,7 @@ fn several_accepts_on_one_armed_accept<IO: Io>(
         .unwrap();
     for k in 0..3u32 {
         io.submit(
-            Token(10 + k as u64),
+            Token(10 + u64::from(k)),
             Op::Connect {
                 sock: Sock(5 + k),
                 addr: bound,
@@ -107,7 +107,7 @@ fn accept_range_full_and_armed_again<IO: Io>(
         .unwrap();
     for k in 0..2u32 {
         io.submit(
-            Token(10 + k as u64),
+            Token(10 + u64::from(k)),
             Op::Connect {
                 sock: Sock(3 + k),
                 addr: bound,

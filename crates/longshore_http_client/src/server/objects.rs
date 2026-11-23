@@ -56,7 +56,7 @@ impl Server {
             Behavior::Status(s) => return self.status(io, i, s, "Scripted", 0, 0, false),
             Behavior::StatusWithBody(s, n) => {
                 io.buf(self.body_buf(i))[..n as usize].fill(b'e');
-                return self.status(io, i, s, "Scripted", n as u64, n, false);
+                return self.status(io, i, s, "Scripted", u64::from(n), n, false);
             }
             Behavior::ErrorDocument(s, code) => {
                 return self.error_document(io, i, s, code);
@@ -249,7 +249,7 @@ impl Server {
                 } else {
                     len
                 };
-                self.status(io, i, 200, "OK", len as u64, send, truncate)
+                self.status(io, i, 200, "OK", u64::from(len), send, truncate)
             }
             b"DELETE" => {
                 match found {

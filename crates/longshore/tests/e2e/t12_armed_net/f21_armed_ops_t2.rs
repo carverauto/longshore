@@ -38,7 +38,7 @@ fn t2_f21_1_armed_accept_range_full_terminates_with_enfile_or_emfile() {
 
     for i in 0..2u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,
@@ -104,7 +104,7 @@ fn t2_f21_2_rearm_accept_after_closing_slot_accepts_next_client() {
 
     for i in 0..2u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,
@@ -189,7 +189,7 @@ fn t2_f21_3_empty_buffer_ring_returns_enobufs_and_preserves_bytes_on_rearm() {
         let msg = [b'1' + i; 10];
         write_pool_bytes(&mut io, BufId(0), 0, &msg);
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Send {
                 sock: Sock(1),
                 buf: BufId(0),

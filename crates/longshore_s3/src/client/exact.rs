@@ -53,7 +53,7 @@ impl Budget {
             deadline_ns: self.deadline.map(|deadline| {
                 let left = deadline.saturating_duration_since(Instant::now());
                 io.now_ns()
-                    .saturating_add(left.as_nanos().min(u64::MAX as u128) as u64)
+                    .saturating_add(left.as_nanos().min(u128::from(u64::MAX)) as u64)
             }),
         }
     }

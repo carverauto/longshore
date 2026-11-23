@@ -182,7 +182,7 @@ fn main() {
         assert!(refused > 0, "the first keys were supposed to be refused");
         let (adopted, _failed) = client.credential_reloads();
         assert!(
-            adopted >= threads as u64,
+            adopted >= u64::from(threads),
             "every I/O thread adopts the new keys, {adopted} of {threads} did"
         );
         assert_eq!(client.erase("rotate-probe").wait(), Ok(()));
@@ -312,7 +312,7 @@ fn main() {
                     sock: Sock(n),
                     addr: peer,
                 };
-                io.submit(Token(n as u64), to).unwrap();
+                io.submit(Token(u64::from(n)), to).unwrap();
             }
             let mut connected = 0;
             while connected < SOCKS {
@@ -331,11 +331,11 @@ fn main() {
                     off: 0,
                     len: 64,
                 };
-                io.submit(Token(1000 + n as u64), recv).unwrap();
+                io.submit(Token(1000 + u64::from(n)), recv).unwrap();
                 let hour = Op::Timeout {
                     nanos: 3_600 * 1_000_000_000,
                 };
-                io.submit(Token(2000 + n as u64), hour).unwrap();
+                io.submit(Token(2000 + u64::from(n)), hour).unwrap();
             }
             // TEST-NET-1: routed nowhere, so the connect waits.
             let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);

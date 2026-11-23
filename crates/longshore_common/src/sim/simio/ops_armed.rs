@@ -86,7 +86,7 @@ impl Virtual {
         self.ring_free_len -= 1;
         let ring_idx = self.ring_free[self.ring_free_len];
         self.ring_in_free[ring_idx as usize] = false;
-        let buf_id = BufId(self.ring_base + ring_idx as u32);
+        let buf_id = BufId(self.ring_base + u32::from(ring_idx));
         let mut n = (limits.ring_buffer_size as usize).min(avail);
         if self.rng.chance(self.faults.partial_recv) {
             n = 1 + self.rng.below(n as u64) as usize;

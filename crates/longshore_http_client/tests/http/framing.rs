@@ -171,7 +171,9 @@ fn an_unexpected_response_body_is_discarded_and_the_connection_survives() {
             body: Some((TX, 100)),
             response_buf: None,
         };
-        w.client.start(&mut w.io, 500 + body as u64, &req).unwrap();
+        w.client
+            .start(&mut w.io, 500 + u64::from(body), &req)
+            .unwrap();
         w.run_until_done(w.done.len() + 1);
         assert_eq!(
             w.done.last().unwrap().result,

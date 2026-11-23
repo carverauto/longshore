@@ -185,7 +185,7 @@ pub fn signed_headers(req: &Request, out: &mut [u8]) -> Result<usize, SignError>
         if k > 0 && req.headers[order[k - 1]].0.eq_ignore_ascii_case(name) {
             continue;
         }
-        let end = n + (k > 0) as usize + name.len();
+        let end = n + usize::from(k > 0) + name.len();
         let room = out.get_mut(n..end).ok_or(SignError::OutputTooSmall)?;
         if k > 0 {
             room[0] = b';';

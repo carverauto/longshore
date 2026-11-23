@@ -27,7 +27,7 @@ fn t3_16_stream_tls_vs_plain_armed_buffer_ring_invariant() {
 
     for i in 0..4u32 {
         sim.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,

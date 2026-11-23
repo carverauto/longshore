@@ -58,7 +58,7 @@ pub(super) fn objects(size: u32) {
             let ok = match d.outcome {
                 Outcome::Stat(stat) => {
                     let head = &io.buf(rx)[..stat.head_len as usize];
-                    stat.size == size as u64
+                    stat.size == u64::from(size)
                         && stat.tag.is_some()
                         && header_in(head, "content-type") == Some(b"application/x-longshore-check")
                         && header_in(head, meta_name) == Some(b"longshore check")
@@ -92,7 +92,7 @@ pub(super) fn objects(size: u32) {
             let ok = match d.outcome {
                 Outcome::Stat(stat) => {
                     let head = &io.buf(rx)[..stat.head_len as usize];
-                    stat.size == size as u64
+                    stat.size == u64::from(size)
                         && header_in(head, meta_name) == Some(b"longshore check")
                 }
                 Outcome::Stored

@@ -71,7 +71,7 @@ pub(super) fn multipart(size: u32) {
             let buf = bufs[part as usize - 1];
             s3.multipart_store_part(
                 &mut io,
-                part as u64,
+                u64::from(part),
                 &key,
                 &upload,
                 part,
@@ -129,12 +129,12 @@ pub(super) fn multipart(size: u32) {
         // Read each part back by range into the spare buffer and compare.
         let mut read_ok = true;
         for part in 1..=PARTS {
-            let from = (part as u64 - 1) * size as u64;
+            let from = (u64::from(part) - 1) * u64::from(size);
             s3.fetch(
                 &mut io,
                 20,
                 &key,
-                Some((from, from + size as u64 - 1)),
+                Some((from, from + u64::from(size) - 1)),
                 manifest,
             )
             .unwrap();

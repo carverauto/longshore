@@ -52,7 +52,7 @@ impl SimDisk {
         if n == 0 {
             return 0;
         }
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         let first_sec = file_off / s;
         let last_sec = (file_off + n as u64 - 1) / s;
         let ino_num = self.inodes[ii].ino;
@@ -122,7 +122,7 @@ impl SimDisk {
                     data.len() as i32
                 }
                 PlacedFault::ShortWrite => {
-                    let s = self.sector_size as u64;
+                    let s = u64::from(self.sector_size);
                     if sector_cut_bounds(file_off, data.len(), s).is_some() {
                         self.inject_short_write(ii, file_off, data, ctx)
                     } else {
@@ -133,7 +133,7 @@ impl SimDisk {
                 PlacedFault::TornReported => self.inject_torn_write(ii, file_off, data, true, ctx),
                 PlacedFault::TornSilent => self.inject_torn_write(ii, file_off, data, false, ctx),
                 PlacedFault::MisdirectedWrite => {
-                    let s = self.sector_size as u64;
+                    let s = u64::from(self.sector_size);
                     let live = self.live_size(ii);
                     let (other, ov_start, ov_count) =
                         misdirect_slot_count(live, file_off, data.len(), s);
@@ -151,7 +151,7 @@ impl SimDisk {
         if data.is_empty() {
             return 0;
         }
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         if ctx.rng.chance(ctx.faults.lost_reported) {
             ctx.counters.lost_reported += 1;
             return -EIO;

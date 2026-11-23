@@ -301,7 +301,7 @@ impl S3 {
         exact.signing = None;
         let answer = result.ok().map(|r| self.answer_of(io, &s, r));
         if sent {
-            exact.unanswered += answer.is_none() as u32;
+            exact.unanswered += u32::from(answer.is_none());
             exact.answer = answer;
         }
         let mut class = classify(&result);

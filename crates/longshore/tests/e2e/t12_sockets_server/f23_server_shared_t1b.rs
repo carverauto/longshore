@@ -134,7 +134,7 @@ fn t1_f23_4_uring_many_idle_connections_hold_zero_ring_buffers() {
         .unwrap();
     for i in 0..64u32 {
         io.submit(
-            Token(100 + i as u64),
+            Token(100 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,
@@ -143,11 +143,11 @@ fn t1_f23_4_uring_many_idle_connections_hold_zero_ring_buffers() {
         .unwrap();
         let cs = drive_until(&mut io, &mut out, 50, |v| {
             v.iter().any(|c| c.token == Token(1))
-                && v.iter().any(|c| c.token == Token(100 + i as u64))
+                && v.iter().any(|c| c.token == Token(100 + u64::from(i)))
         })
         .unwrap();
         let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
-        io.submit(Token(500 + i as u64), Op::ArmedRecv { sock: srv })
+        io.submit(Token(500 + u64::from(i)), Op::ArmedRecv { sock: srv })
             .unwrap();
     }
     write_pool_bytes_linux(&mut io, BufId(0), 0, b"still-has-ring");
@@ -198,7 +198,7 @@ fn t1_f23_5_uring_cq_burst_delivers_all_armed_completions() {
         .unwrap();
     for i in 0..8u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,

@@ -97,7 +97,7 @@ impl Chunked {
                         }
                         State::Size {
                             value: value << 4
-                                | (b as char).to_digit(16).expect("matched a hex digit") as u64,
+                                | u64::from((b as char).to_digit(16).expect("matched a hex digit")),
                             digits: digits + 1,
                         }
                     }

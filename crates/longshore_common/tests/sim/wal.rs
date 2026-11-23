@@ -47,7 +47,7 @@ const CRC32C_TABLE: [u32; 256] = {
 pub(crate) fn crc32c(bytes: &[u8]) -> u32 {
     let mut crc = !0u32;
     for &b in bytes {
-        let idx = ((crc ^ b as u32) & 0xFF) as usize;
+        let idx = ((crc ^ u32::from(b)) & 0xFF) as usize;
         crc = (crc >> 8) ^ CRC32C_TABLE[idx];
     }
     !crc
@@ -73,10 +73,10 @@ pub(crate) fn encode_record(buf: &mut [u8], rec_bytes: usize, seed: u64, seq: u6
     }
     let mut crc = !0u32;
     for &b in &buf[0..16] {
-        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ b as u32) & 0xFF) as usize];
+        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize];
     }
     for &b in &buf[HDR_SIZE..rec_bytes] {
-        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ b as u32) & 0xFF) as usize];
+        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize];
     }
     buf[16..20].copy_from_slice(&(!crc).to_le_bytes());
 }
@@ -98,10 +98,10 @@ pub(crate) fn verify_record(buf: &[u8], rec_bytes: usize, seed: u64, expected_se
     let want_crc = u32::from_le_bytes(buf[16..20].try_into().unwrap());
     let mut crc = !0u32;
     for &b in &buf[0..16] {
-        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ b as u32) & 0xFF) as usize];
+        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize];
     }
     for &b in &buf[HDR_SIZE..rec_bytes] {
-        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ b as u32) & 0xFF) as usize];
+        crc = (crc >> 8) ^ CRC32C_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize];
     }
     if !crc != want_crc {
         return false;

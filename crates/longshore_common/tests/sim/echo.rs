@@ -141,7 +141,7 @@ fn timeouts_fire_in_deadline_order_on_virtual_time() {
 fn submit_reports_busy_at_the_operation_limit() {
     use longshore_common::io::{Busy, Io, Op, Token};
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
-    for t in 0..LIMITS.ops_max as u64 {
+    for t in 0..u64::from(LIMITS.ops_max) {
         io.submit(Token(t), Op::Timeout { nanos: 1 }).unwrap();
     }
     assert_eq!(io.submit(Token(99), Op::Timeout { nanos: 1 }), Err(Busy));

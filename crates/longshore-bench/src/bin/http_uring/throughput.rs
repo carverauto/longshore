@@ -101,7 +101,7 @@ pub(super) fn bench(a: &Args, put: bool) {
                 response_buf: Some(body),
             }
         };
-        http.start(ring, i as u64, &req)
+        http.start(ring, u64::from(i), &req)
     };
     for i in 0..n {
         start_one(&mut client, &mut io, i).unwrap_or_else(|e| die(&format!("start: {e:?}")));
@@ -142,7 +142,11 @@ pub(super) fn bench(a: &Args, put: bool) {
                 if let Handled::Done(d) = client.on_completion(&mut io, c) {
                     match d.result {
                         Ok(r) if r.status == 200 => {
-                            bytes += if put { size as u64 } else { r.body_len as u64 };
+                            bytes += if put {
+                                u64::from(size)
+                            } else {
+                                u64::from(r.body_len)
+                            };
                             requests += 1;
                             restart(&mut client, &mut io, d.token as u32, &mut waiting);
                         }

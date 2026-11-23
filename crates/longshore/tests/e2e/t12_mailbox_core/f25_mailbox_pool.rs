@@ -48,7 +48,7 @@ fn t1_f25_1_blocking_caller_sends_request_and_receives_answer() {
 
     let worker = thread::spawn(move || {
         if let Recv::Message(slot) = rx.recv_parked() {
-            assert!(rx.answer(slot, 42_000 + slot as u64).is_none());
+            assert!(rx.answer(slot, 42_000 + u64::from(slot)).is_none());
         }
     });
 

@@ -25,7 +25,7 @@ const ID_PREFIX: &[u8] = b"sim-upload-";
 pub(super) fn tag(part: &[u8]) -> [u8; TAG_LEN] {
     let mut hash = 0x811c_9dc5u32;
     for b in part {
-        hash = (hash ^ *b as u32).wrapping_mul(0x0100_0193);
+        hash = (hash ^ u32::from(*b)).wrapping_mul(0x0100_0193);
     }
     let digits = format_hex((part.len() << 32) | hash as usize).0;
     let mut out = [b'"'; TAG_LEN];

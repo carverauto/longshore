@@ -302,7 +302,7 @@ impl S3 {
             if keep.is_some() {
                 let _: u32 = self.client.retire_unmeasured(0);
                 let floor = r.segment_floor(0);
-                self.small_segment_retired += self.client.retire_below(0, floor) as u64;
+                self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
             }
         }
     }
@@ -355,7 +355,7 @@ impl S3 {
                 if r.cycles != self.resolver_cycles {
                     self.resolver_cycles = r.cycles;
                     let floor = r.segment_floor(0);
-                    self.small_segment_retired += self.client.retire_below(0, floor) as u64;
+                    self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
                     let _: u32 = self.client.retire_some(0, r.probes_wanted(0) as u32);
                 }
                 return true;
@@ -374,7 +374,7 @@ impl S3 {
         if let Some((addr, segment)) = self.client.connected.take() {
             if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
                 let floor = r.connected(0, addr.ip(), segment);
-                self.small_segment_retired += self.client.retire_below(0, floor) as u64;
+                self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
             }
         }
         match handled {

@@ -46,7 +46,7 @@ impl Client {
             let _: &mut HeadWriter<'_> = w.header("Host", req.host.as_bytes());
             if req.body.is_some() || matches!(req.method, "PUT" | "POST") {
                 let _: &mut HeadWriter<'_> =
-                    w.header_u64("Content-Length", req.body.map_or(0, |b| b.1 as u64));
+                    w.header_u64("Content-Length", req.body.map_or(0, |b| u64::from(b.1)));
             }
             for (name, value) in req.headers {
                 let _: &mut HeadWriter<'_> = w.header(name, value);

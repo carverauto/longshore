@@ -235,7 +235,7 @@ fn t1_f20_5_uring_cq_sized_with_nodrop_handles_burst_without_drop() {
         .unwrap();
     for i in 0..4u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(12 + i),
                 addr,

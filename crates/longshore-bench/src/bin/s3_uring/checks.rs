@@ -74,7 +74,7 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
     println!(
         "{} {count} objects, {:.1} MiB under {prefix:?}{}",
         if erase { "erased" } else { "listed" },
-        bytes as f64 / (1 << 20) as f64,
+        bytes as f64 / f64::from(1 << 20),
         if failed > 0 {
             format!(" ({failed} FAILED)")
         } else {

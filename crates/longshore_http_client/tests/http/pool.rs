@@ -191,7 +191,7 @@ fn busy_when_every_connection_is_in_use() {
     for _ in 0..CONNS {
         w.server.script(Behavior::Stall);
     }
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(t, "GET", "/k", None).unwrap();
     }
     assert_eq!(w.start(99, "GET", "/k", None), Err(Error::Busy));
@@ -211,7 +211,7 @@ fn concurrent_requests_use_separate_connections() {
     w.fill_tx(5000, 3);
     ok(200, 0)(w.request("PUT", "/k", Some(5000)));
     // HEAD has no response body, so three can run at once without sharing a buffer.
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(200 + t, "HEAD", "/k", None).unwrap();
     }
     let before = w.done.len();
@@ -233,7 +233,7 @@ fn concurrent_requests_use_separate_connections() {
     let mut conns: Vec<u32> = seen.iter().map(|s| s.1).collect();
     conns.sort();
     assert_eq!(conns, [0, 1, 2]);
-    assert_eq!(w.client.connects, CONNS as u64);
+    assert_eq!(w.client.connects, u64::from(CONNS));
 }
 
 /// A server may close a connection while it sits idle. With the idle check

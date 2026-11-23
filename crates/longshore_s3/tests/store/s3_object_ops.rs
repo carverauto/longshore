@@ -61,7 +61,7 @@ fn stat_reports_an_object_without_fetching_it() {
     let Outcome::Stat(stat) = w.stat(2, "doc", Some(RX)) else {
         panic!("expected a stat")
     };
-    assert_eq!(stat.size, LEN as u64);
+    assert_eq!(stat.size, u64::from(LEN));
     assert_eq!(stat.modified, Some(1_445_412_480));
     assert_eq!(stat.checksum, Some(longshore_crc::crc64_header_value(crc)));
     assert!(stat.tag.is_some_and(|t| t.as_bytes().starts_with(b"\"")));

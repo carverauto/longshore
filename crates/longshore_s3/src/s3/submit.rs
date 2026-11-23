@@ -81,7 +81,7 @@ impl S3 {
             (Checksum::Compute, Some((buf, len))) if kind.stores_bytes() => {
                 Some(match self.cfg.vendor {
                     Vendor::S3 => longshore_crc::crc64_nvme(&io.buf(buf)[..len as usize]),
-                    Vendor::Gcs => longshore_crc::crc32c(&io.buf(buf)[..len as usize]) as u64,
+                    Vendor::Gcs => u64::from(longshore_crc::crc32c(&io.buf(buf)[..len as usize])),
                 })
             }
             _ => None,

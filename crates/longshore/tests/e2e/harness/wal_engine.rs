@@ -43,7 +43,7 @@ impl WalConfig {
             path_buf: BufId(2),
             scratch_buf: BufId(3),
             block_size,
-            segment_bytes: (block_size as u64) * 16,
+            segment_bytes: u64::from(block_size) * 16,
             direct: true,
             base_dir,
             base_dir_len: raw.len(),
@@ -311,7 +311,7 @@ impl WalEngine {
     ) -> io::Result<WalStats> {
         let (mut stats, block, slot, buf) = (
             WalStats::default(),
-            self.cfg.block_size as u64,
+            u64::from(self.cfg.block_size),
             self.cfg.file_slot,
             self.cfg.read_buf,
         );

@@ -101,7 +101,7 @@ pub fn run_armed_net_ring_sealed() {
             sim.buf(BufId(0))[..16].copy_from_slice(&[0x5Cu8; 16]);
             if sim
                 .submit(
-                    Token(100 + round as u64),
+                    Token(100 + u64::from(round)),
                     Op::Send {
                         sock: Sock(1),
                         buf: BufId(0),
@@ -120,7 +120,7 @@ pub fn run_armed_net_ring_sealed() {
                     return cycles;
                 }
                 while let Some(c) = out.pop() {
-                    if c.token == Token(100 + round as u64) && c.result == 16 {
+                    if c.token == Token(100 + u64::from(round)) && c.result == 16 {
                         sent_ok = true;
                     } else if c.token == Token(3) && c.result > 0 {
                         if let Some(id) = c.buf {

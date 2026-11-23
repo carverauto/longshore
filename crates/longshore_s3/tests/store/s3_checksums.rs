@@ -97,7 +97,7 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
         w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
             .unwrap();
         let d = w.last();
-        retried += (d.attempts > 1) as u32;
+        retried += u32::from(d.attempts > 1);
         match d.outcome {
             Outcome::Stored => {
                 stored += 1;
@@ -128,7 +128,7 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
         }
         w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
         let fetch = w.last();
-        retried += (fetch.attempts > 1) as u32;
+        retried += u32::from(fetch.attempts > 1);
         match fetch.outcome {
             Outcome::Fetched { len, verified } => {
                 fetched += 1;

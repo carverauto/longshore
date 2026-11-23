@@ -285,7 +285,7 @@ impl Client {
         #[cfg(feature = "tls")] tls: Option<Option<(ClientSetup, u32)>>,
     ) -> Client {
         assert!(
-            cfg.head_max <= cfg.buffer_size && cfg.head_max <= u16::MAX as u32,
+            cfg.head_max <= cfg.buffer_size && cfg.head_max <= u32::from(u16::MAX),
             "head_max must fit a pool buffer and 16 bits"
         );
         assert!(
@@ -324,7 +324,7 @@ impl Client {
         let first_tls_buf = tls.as_ref().map(|t| t.1);
         let streams = (0..cfg.connections_max)
             .map(|i| {
-                let token = |kind| Token(cfg.token_base + i as u64 * 8 + kind);
+                let token = |kind| Token(cfg.token_base + u64::from(i) * 8 + kind);
                 let s = Stream::new(Sock(cfg.first_sock + i), token(K_SEND), token(K_RECV));
                 #[cfg(feature = "tls")]
                 let s = match first_tls_buf {

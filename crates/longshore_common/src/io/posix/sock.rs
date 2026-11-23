@@ -67,7 +67,7 @@ pub(super) fn sockaddr_from(addr: SocketAddr) -> (sockaddr_storage, u32) {
 }
 
 pub(super) fn sockaddr_to(storage: &sockaddr_storage) -> io::Result<SocketAddr> {
-    let family = storage.ss_family as c_int;
+    let family = c_int::from(storage.ss_family);
     if family == AF_INET {
         let mut sa = sockaddr_in::default();
         unsafe {

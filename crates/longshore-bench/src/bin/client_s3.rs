@@ -267,7 +267,7 @@ fn main() {
                             if !ok {
                                 let _: u64 = failed.fetch_add(1, Ordering::Relaxed);
                             } else if measuring.load(Ordering::Relaxed) {
-                                let _: u64 = bytes.fetch_add(size as u64, Ordering::Relaxed);
+                                let _: u64 = bytes.fetch_add(u64::from(size), Ordering::Relaxed);
                                 let _: u64 = requests.fetch_add(1, Ordering::Relaxed);
                             }
                             if mix && ok && !op.is_put() {

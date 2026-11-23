@@ -132,7 +132,7 @@ pub fn echo<IO: Io>(
                     stats.sends += 1;
                     c_off += n;
                     if c_off == c_len {
-                        sent += c_len as u64;
+                        sent += u64::from(c_len);
                         c_off = 0;
                         c_len = fill(io, sent, total, chunk);
                     }
@@ -160,7 +160,7 @@ pub fn echo<IO: Io>(
                     {
                         return Err(EchoError::Mismatch(recvd + k as u64));
                     }
-                    recvd += n as u64;
+                    recvd += u64::from(n);
                     if recvd < total && n > 0 {
                         sub(
                             io,
@@ -235,7 +235,7 @@ pub fn echo<IO: Io>(
 
 /// Write the next chunk of the pattern into the client's send buffer.
 fn fill<IO: Io>(io: &mut IO, sent: u64, total: u64, chunk: u32) -> u32 {
-    let n = (total - sent).min(chunk as u64) as u32;
+    let n = (total - sent).min(u64::from(chunk)) as u32;
     for (k, b) in io.buf(CLIENT_TX)[..n as usize].iter_mut().enumerate() {
         *b = pattern(sent + k as u64);
     }

@@ -90,7 +90,7 @@ pub fn run(rounds: u32, bounded_memory: bool) {
             Way::Outlive => {}
             Way::Finish | Way::Detach => {
                 // Let some of the work get under way first.
-                std::thread::sleep(Duration::from_micros(200 * (round as u64 % 5)));
+                std::thread::sleep(Duration::from_micros(200 * (u64::from(round) % 5)));
             }
         }
         drop(client);

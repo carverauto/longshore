@@ -253,7 +253,7 @@ fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
         object.extend_from_slice(&w.io.buf(TX)[..3000]);
         w.s3.multipart_store_part(
             &mut w.io,
-            10 + number as u64,
+            10 + u64::from(number),
             "big",
             &upload,
             number,

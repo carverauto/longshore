@@ -283,7 +283,15 @@ fn t1_f10_5_concurrent_file_and_socket_slots_independent() {
         for s in 0..limits.files_max {
             let p = format!("{prefix}multi_{s}.dat");
             assert_eq!(
-                open_slot(io, &mut out, 10 + s as u64, FileSlot(s), BufId(0), &p, rw),
+                open_slot(
+                    io,
+                    &mut out,
+                    10 + u64::from(s),
+                    FileSlot(s),
+                    BufId(0),
+                    &p,
+                    rw
+                ),
                 0
             );
         }
@@ -357,13 +365,13 @@ fn t1_f10_5_concurrent_file_and_socket_slots_independent() {
         assert_eq!(read_pool_bytes(&mut dyn_io, BufId(1), 0, 7), b"coexist");
 
         for s in 0..limits.files_max {
-            assert_eq!(close_slot(io, &mut out, 300 + s as u64, FileSlot(s)), 0);
+            assert_eq!(close_slot(io, &mut out, 300 + u64::from(s), FileSlot(s)), 0);
         }
         for sock in [Sock(0), Sock(1), Sock(2)] {
             let _: Completion = submit_and_wait_one(
                 &mut DynIo(io),
                 &mut out,
-                Token(400 + sock.0 as u64),
+                Token(400 + u64::from(sock.0)),
                 Op::Close { sock },
                 10_000,
             )

@@ -117,7 +117,7 @@ impl Posix {
         }
 
         let ring_idx = self.ring_free[self.ring_free_len - 1];
-        let buf_id = BufId(self.ring_base + ring_idx as u32);
+        let buf_id = BufId(self.ring_base + u32::from(ring_idx));
         let range = limits.range(buf_id, 0, limits.ring_buffer_size);
         let ptr: *mut c_void = pool[range.clone()].as_mut_ptr().cast();
         let len = range.len();

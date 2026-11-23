@@ -182,7 +182,7 @@ impl Virtual {
                 let q = &mut self.socks[s];
                 let at = |udp: &SimSock, k: usize| udp.rx[(udp.rx_head + k) % SOCK_BUF];
                 let n = u16::from_le_bytes([at(q, 0), at(q, 1)]) as usize;
-                let from = u16::from_le_bytes([at(q, 2), at(q, 3)]) as u32;
+                let from = u32::from(u16::from_le_bytes([at(q, 2), at(q, 3)]));
                 let take = n.min(len as usize); // excess is discarded, as with real UDP
                 for k in 0..take {
                     pool[dst.start + k] = at(q, 4 + k);

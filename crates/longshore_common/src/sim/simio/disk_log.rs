@@ -57,7 +57,7 @@ impl SimDisk {
             }
             match entry.kind {
                 LogKind::Write { file_off, len, .. } => {
-                    sz = sz.max(file_off + len as u64);
+                    sz = sz.max(file_off + u64::from(len));
                 }
                 LogKind::Truncate => sz = 0,
                 LogKind::Extend { end } => sz = sz.max(end),

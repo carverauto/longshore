@@ -36,7 +36,7 @@ pub(super) fn name_memlock_limit(e: io::Error, pool_bytes: usize) -> io::Error {
 }
 
 fn check_nofile_limit(limits: &Limits) -> io::Result<u64> {
-    let table_len = limits.sockets_max as u64 + limits.files_max as u64;
+    let table_len = u64::from(limits.sockets_max) + u64::from(limits.files_max);
     let mut nofile = rlimit::default();
     if unsafe { getrlimit(RLIMIT_NOFILE, &mut nofile) } == 0 && table_len > nofile.rlim_cur {
         return Err(io::Error::new(
@@ -110,8 +110,8 @@ pub(super) fn cq_size(
     ring_bufs: u32,
     accept_slots: u32,
 ) -> io::Result<u32> {
-    let need = (ops_max as u64) * 2 + ring_bufs as u64 + accept_slots as u64;
-    let min = need.max(sq_entries as u64);
+    let need = u64::from(ops_max) * 2 + u64::from(ring_bufs) + u64::from(accept_slots);
+    let min = need.max(u64::from(sq_entries));
     u32::try_from(min)
         .ok()
         .and_then(|n| n.checked_next_power_of_two())

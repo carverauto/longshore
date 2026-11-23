@@ -71,7 +71,7 @@ fn t2_f20_1_small_completions_buffer_drains_multi_completion_burst() {
     for i in 0..10u8 {
         write_pool_bytes(&mut io, BufId(0), 0, &[i; 16]);
         io.submit(
-            Token(100 + i as u64),
+            Token(100 + u64::from(i)),
             Op::Send {
                 sock: Sock(1),
                 buf: BufId(0),
@@ -83,7 +83,7 @@ fn t2_f20_1_small_completions_buffer_drains_multi_completion_burst() {
         .unwrap();
         let cs = drive_until(&mut io, &mut out, 30, |v| {
             v.iter().any(|c| c.token == Token(3))
-                && v.iter().any(|c| c.token == Token(100 + i as u64))
+                && v.iter().any(|c| c.token == Token(100 + u64::from(i)))
         })
         .unwrap();
         for c in cs {

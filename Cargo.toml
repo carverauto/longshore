@@ -80,6 +80,7 @@ allow_attributes_without_reason = "deny"
 wildcard_enum_match_arm = "deny"
 let_underscore_untyped = "deny"
 shadow_unrelated = "deny"
+cast_lossless = "deny"
 
 [profile.release]
 opt-level = 3

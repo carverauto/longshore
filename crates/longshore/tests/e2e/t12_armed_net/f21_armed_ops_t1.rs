@@ -47,7 +47,7 @@ fn t1_f21_1_armed_accept_confines_slots_to_range_and_stays_armed() {
 
     for i in 0..3u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,
@@ -95,7 +95,7 @@ fn t1_f21_2_idle_armed_recv_connections_consume_zero_ring_buffers() {
     let mut server_socks = Vec::new();
     for i in 0..20u32 {
         io.submit(
-            Token(100 + i as u64),
+            Token(100 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,
@@ -104,13 +104,13 @@ fn t1_f21_2_idle_armed_recv_connections_consume_zero_ring_buffers() {
         .unwrap();
         let cs = drive_until(&mut io, &mut out, 30, |v| {
             v.iter().any(|c| c.token == Token(1))
-                && v.iter().any(|c| c.token == Token(100 + i as u64))
+                && v.iter().any(|c| c.token == Token(100 + u64::from(i)))
         })
         .unwrap();
         let accepted = cs.iter().find(|c| c.token == Token(1)).unwrap();
         let s = Sock(accepted.result as u32);
         server_socks.push(s);
-        io.submit(Token(200 + i as u64), Op::ArmedRecv { sock: s })
+        io.submit(Token(200 + u64::from(i)), Op::ArmedRecv { sock: s })
             .unwrap();
     }
 
@@ -153,7 +153,7 @@ fn t1_f21_3_armed_recv_reads_in_place_across_five_sockets() {
     let mut pairs = Vec::new();
     for i in 0..5u32 {
         io.submit(
-            Token(10 + i as u64),
+            Token(10 + u64::from(i)),
             Op::Connect {
                 sock: Sock(1 + i),
                 addr,
@@ -162,11 +162,11 @@ fn t1_f21_3_armed_recv_reads_in_place_across_five_sockets() {
         .unwrap();
         let cs = drive_until(&mut io, &mut out, 30, |v| {
             v.iter().any(|c| c.token == Token(1))
-                && v.iter().any(|c| c.token == Token(10 + i as u64))
+                && v.iter().any(|c| c.token == Token(10 + u64::from(i)))
         })
         .unwrap();
         let s = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
-        io.submit(Token(50 + i as u64), Op::ArmedRecv { sock: s })
+        io.submit(Token(50 + u64::from(i)), Op::ArmedRecv { sock: s })
             .unwrap();
         pairs.push((Sock(1 + i), s));
     }
@@ -246,7 +246,7 @@ fn t1_f21_4_give_back_recycles_ring_buffer_ids_without_leak() {
         let msg = [b'A' + round; 8];
         write_pool_bytes(&mut io, BufId(0), 0, &msg);
         io.submit(
-            Token(10 + round as u64),
+            Token(10 + u64::from(round)),
             Op::Send {
                 sock: Sock(1),
                 buf: BufId(0),

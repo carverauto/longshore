@@ -94,7 +94,7 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
         .unwrap();
     for k in 0..N {
         io.submit(
-            Token(100 + k as u64),
+            Token(100 + u64::from(k)),
             Op::Connect {
                 sock: Sock(1 + N + k),
                 addr: bound,
@@ -166,7 +166,7 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
             }
             let mut send_done = cur_tok.is_none();
             drain_until(&mut io, &mut out, |io, c| {
-                if (200..200 + N as u64).contains(&c.token.0) {
+                if (200..200 + u64::from(N)).contains(&c.token.0) {
                     let pos = (c.token.0 - 200) as usize;
                     if c.result > 0 {
                         let b = c.buf.unwrap();

@@ -232,7 +232,7 @@ impl Limits {
     pub fn range(&self, id: BufId, off: u32, len: u32) -> core::ops::Range<usize> {
         let (base, size) = self.span(id);
         assert!(
-            off as u64 + len as u64 <= size as u64,
+            u64::from(off) + u64::from(len) <= size as u64,
             "buffer range out of bounds"
         );
         base + off as usize..base + off as usize + len as usize

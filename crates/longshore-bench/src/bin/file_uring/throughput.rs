@@ -46,7 +46,7 @@ fn pass(
     shape: &Shape,
     write: bool,
 ) -> (f64, f64) {
-    let block = shape.block as u64;
+    let block = u64::from(shape.block);
     let mut free: Vec<u32> = (0..shape.depth).collect();
     let (mut next, mut done) = (0u64, 0u64);
     let (t0, cpu0) = (Instant::now(), thread_cpu_secs());
@@ -71,12 +71,12 @@ fn pass(
                     file_off: next,
                 }
             };
-            io.submit(Token(i as u64), op).unwrap();
+            io.submit(Token(u64::from(i)), op).unwrap();
             next += block;
         }
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            assert_eq!(c.result as i64, block as i64, "short or failed op");
+            assert_eq!(i64::from(c.result), block as i64, "short or failed op");
             free.push(c.token.0 as u32);
             done += block;
         }
@@ -92,7 +92,7 @@ fn pass(
 }
 
 pub(super) fn run(dir: &Path, shape: Shape) {
-    assert!(shape.size.is_multiple_of(shape.block as u64));
+    assert!(shape.size.is_multiple_of(u64::from(shape.block)));
     let limits = Limits {
         sockets_max: 2,
         buffers: 1,

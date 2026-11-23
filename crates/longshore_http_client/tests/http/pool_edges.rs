@@ -89,7 +89,7 @@ fn hosts_do_not_share_connections() {
 #[test]
 fn a_full_pool_gives_up_an_idle_connection_to_another_host() {
     let mut w = world(42, Faults::default());
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(200 + t, "HEAD", "/missing", None).unwrap();
     }
     w.run_until_done(CONNS as usize);
@@ -99,12 +99,12 @@ fn a_full_pool_gives_up_an_idle_connection_to_another_host() {
     assert_eq!(conns.into_iter().collect::<Vec<_>>(), [0, 1, 2]);
     assert_eq!(tokens.into_iter().collect::<Vec<_>>(), [200, 201, 202]);
     assert!(w.done.iter().all(|d| d.result.unwrap().status == 404));
-    assert_eq!(w.client.connects, CONNS as u64);
+    assert_eq!(w.client.connects, u64::from(CONNS));
 
     let r = request_to(&mut w, 1, "other.test", "GET", "/missing");
     assert_eq!(r.status, 404);
     w.settle(20);
-    assert_eq!(w.client.connects, CONNS as u64 + 1);
+    assert_eq!(w.client.connects, u64::from(CONNS) + 1);
     assert_eq!(w.client.open_connections(), CONNS as usize);
     assert_eq!(
         w.server.closed, 1,
@@ -115,7 +115,7 @@ fn a_full_pool_gives_up_an_idle_connection_to_another_host() {
 #[test]
 fn retired_connections_finish_their_request_and_are_not_reused() {
     let mut w = world(43, Faults::default());
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(200 + t, "HEAD", "/missing", None).unwrap();
     }
     w.run_until_done(CONNS as usize);
@@ -135,7 +135,7 @@ fn retired_connections_finish_their_request_and_are_not_reused() {
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
         w.client.connects,
-        CONNS as u64 + 1,
+        u64::from(CONNS) + 1,
         "a retired connection is replaced"
     );
 

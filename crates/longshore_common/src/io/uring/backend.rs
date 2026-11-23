@@ -175,7 +175,7 @@ impl Io for UringIo {
             | Op::FileMkdir { .. } => {}
         }
         if let Some(mut sqe) = self.prepare_sqe(i, op, token) {
-            sqe.user_data |= i as u64;
+            sqe.user_data |= u64::from(i);
             self.push(sqe);
         }
         Ok(())
@@ -205,7 +205,7 @@ impl Io for UringIo {
             let i = self.free.pop().expect("checked free.len()");
             self.init_slot(i, token);
             if let Some(mut sqe) = self.prepare_sqe(i, op, token) {
-                sqe.user_data |= i as u64;
+                sqe.user_data |= u64::from(i);
                 if idx < last {
                     sqe.flags |= IOSQE_IO_LINK;
                 }
@@ -296,7 +296,7 @@ impl UringIo {
                     flags: IOSQE_FIXED_FILE,
                     fd: sock.0 as i32,
                     off: SOCKET_URING_OP_GETSOCKOPT,
-                    addr: (level as u32 as u64) | ((optname as u32 as u64) << 32),
+                    addr: u64::from(level as u32) | (u64::from(optname as u32) << 32),
                     file_index: core::mem::size_of::<c_int>() as u32,
                     addr3: (&mut val as *mut c_int) as u64,
                     ..Default::default()

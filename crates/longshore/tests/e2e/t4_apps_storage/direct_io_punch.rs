@@ -122,7 +122,7 @@ fn verify_direct_io_punch_and_statx<IO: Io>(io: &mut IO, lim: Limits, dir_prefix
         Op::FileReserve {
             slot: FileSlot(0),
             file_off: 0,
-            len: (BLOCK as u64) * 16,
+            len: u64::from(BLOCK) * 16,
             keep_size: false,
         },
         1_000,

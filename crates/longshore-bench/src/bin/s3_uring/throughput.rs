@@ -64,7 +64,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
         for i in 0..conns {
             s3.store(
                 &mut io,
-                i as u64,
+                u64::from(i),
                 &keys[i as usize],
                 BufId(first + i),
                 size,
@@ -85,14 +85,20 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
         let r = if put {
             client.store(
                 ring,
-                i as u64,
+                u64::from(i),
                 &keys[i as usize],
                 BufId(first + i),
                 size,
                 checksum,
             )
         } else {
-            client.fetch(ring, i as u64, &keys[i as usize], None, BufId(first + i))
+            client.fetch(
+                ring,
+                u64::from(i),
+                &keys[i as usize],
+                None,
+                BufId(first + i),
+            )
         };
         if r.is_err() {
             std::process::exit(4);
@@ -111,9 +117,9 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
             while let Some(d) = s3.poll() {
                 match d.outcome {
                     Outcome::Stored | Outcome::Fetched { .. } => {
-                        bytes += size as u64;
+                        bytes += u64::from(size);
                         requests += 1;
-                        attempts += d.attempts as u64;
+                        attempts += u64::from(d.attempts);
                         start_one(&mut s3, &mut io, d.token as u32);
                     }
                     Outcome::AlreadyExists { .. }

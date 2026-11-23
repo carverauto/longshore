@@ -251,7 +251,7 @@ impl Server {
     }
 
     fn build(cfg: Config, #[cfg(feature = "tls")] tls: Option<(ServerSetup, u32)>) -> Server {
-        assert!(cfg.head_max <= cfg.buffer_size && cfg.head_max <= u16::MAX as u32);
+        assert!(cfg.head_max <= cfg.buffer_size && cfg.head_max <= u32::from(u16::MAX));
         let conn = Conn {
             state: State::Free,
             target: [0; LIST_TARGET_MAX],
@@ -294,7 +294,7 @@ impl Server {
         let first_tls_buf = tls.as_ref().map(|t| t.1);
         let streams = (0..cfg.connections_max)
             .map(|i| {
-                let token = |kind| Token(cfg.token_base + i as u64 * 8 + kind);
+                let token = |kind| Token(cfg.token_base + u64::from(i) * 8 + kind);
                 let s = Stream::new(Sock(cfg.first_sock + i), token(K_SEND), token(K_RECV));
                 #[cfg(feature = "tls")]
                 let s = match first_tls_buf {
@@ -443,7 +443,7 @@ impl Server {
     }
 
     fn accept_token(&self) -> u64 {
-        self.cfg.token_base + self.cfg.connections_max as u64 * 8
+        self.cfg.token_base + u64::from(self.cfg.connections_max) * 8
     }
 
     fn submit<IO: Io>(&self, io: &mut IO, i: usize, kind: u64, op: Op) {

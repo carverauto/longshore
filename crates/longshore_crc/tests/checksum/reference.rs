@@ -8,7 +8,7 @@
 
 pub fn crc64_update(mut crc: u64, data: &[u8]) -> u64 {
     for &b in data {
-        crc ^= b as u64;
+        crc ^= u64::from(b);
         for _ in 0..8 {
             crc = if crc & 1 == 1 {
                 (crc >> 1) ^ 0x9a6c_9329_ac4b_c9b5
@@ -22,7 +22,7 @@ pub fn crc64_update(mut crc: u64, data: &[u8]) -> u64 {
 
 pub fn crc32c_update(mut crc: u32, data: &[u8]) -> u32 {
     for &b in data {
-        crc ^= b as u32;
+        crc ^= u32::from(b);
         for _ in 0..8 {
             crc = if crc & 1 == 1 {
                 (crc >> 1) ^ 0x82f6_3b78
