@@ -219,7 +219,7 @@ mod linux {
             if unbatched {
                 s.fd = fds[i];
             } else {
-                s.fd = i as i32;
+                s.fd = fixed_fd(u32::try_from(i).expect("connection index"));
                 s.flags = IOSQE_FIXED_FILE;
             }
             if sending {

@@ -298,7 +298,7 @@ impl UringIo {
                 let sqe = io_uring_sqe {
                     opcode: IORING_OP_URING_CMD,
                     flags: IOSQE_FIXED_FILE,
-                    fd: sock.0 as i32,
+                    fd: fixed_fd(sock.0),
                     off: SOCKET_URING_OP_GETSOCKOPT,
                     addr: u64::from(level) | (u64::from(optname) << 32),
                     file_index: core::mem::size_of::<c_int>() as u32,

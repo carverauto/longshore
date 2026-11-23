@@ -171,7 +171,7 @@ fn t3_01_engine_posix_file_ops_and_tcp_in_same_tick() {
     .unwrap();
     assert_eq!(
         cs.iter().find(|c| c.token == Token(12)).unwrap().result,
-        payload.len() as i32
+        i32::try_from(payload.len()).unwrap()
     );
 
     io.submit(

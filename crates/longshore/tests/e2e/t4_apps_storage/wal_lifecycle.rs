@@ -157,7 +157,7 @@ fn run_wal_lifecycle_for_seed(seed: u64) -> (u64, u32, u64) {
             let plen = fill_payload(&mut payload, seed, step + 1);
             let seq = wal.next_seq;
             let (w, s) = wal.append_chained(&mut sim, &mut out, &payload[..plen]);
-            if seg1_dir_synced && w == BLOCK_SIZE as i32 && s == 0 {
+            if seg1_dir_synced && w == i32::try_from(BLOCK_SIZE).unwrap() && s == 0 {
                 committed_seqs[committed_count] = seq;
                 committed_count += 1;
             }
@@ -176,7 +176,7 @@ fn run_wal_lifecycle_for_seed(seed: u64) -> (u64, u32, u64) {
             let plen = fill_payload(&mut payload, seed, step + 1);
             let seq = wal.next_seq;
             let (w, s) = wal.append_chained(&mut sim, &mut out, &payload[..plen]);
-            if seg2_dir_synced && w == BLOCK_SIZE as i32 && s == 0 {
+            if seg2_dir_synced && w == i32::try_from(BLOCK_SIZE).unwrap() && s == 0 {
                 committed_seqs[committed_count] = seq;
                 committed_count += 1;
             }
@@ -210,7 +210,7 @@ fn run_wal_lifecycle_for_seed(seed: u64) -> (u64, u32, u64) {
         let tail_len = fill_payload(&mut payload, seed, 99);
         let tail_seq = wal.next_seq;
         let (w, s) = wal.append_chained(&mut sim, &mut out, &payload[..tail_len]);
-        assert_eq!((w, s), (BLOCK_SIZE as i32, 0));
+        assert_eq!((w, s), (i32::try_from(BLOCK_SIZE).unwrap(), 0));
         let _: i32 = wal.close_seg(&mut sim, &mut out);
 
         let mut saw_tail = false;

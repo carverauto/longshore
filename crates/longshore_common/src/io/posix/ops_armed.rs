@@ -13,7 +13,7 @@ use super::errno::{self, to_linux_errno};
 use super::sock::{accept_socket, open_socket, sockaddr_un_from};
 use super::{Posix, SockKind};
 use crate::io::engine::Attempt;
-use crate::io::{BufId, Limits, Sock};
+use crate::io::{count_result, BufId, Limits, Sock};
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -44,7 +44,7 @@ impl Posix {
                     s.fd = new_fd;
                     s.kind = SockKind::Open;
                     Some(Attempt {
-                        result: slot_idx as i32,
+                        result: count_result(slot_idx),
                         more: true,
                         buf: None,
                     })

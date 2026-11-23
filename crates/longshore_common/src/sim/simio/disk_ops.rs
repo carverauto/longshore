@@ -8,6 +8,7 @@
 use super::faults::{misdirect_slot_count, pick_misdirected_off, sector_cut_bounds};
 use super::log::LogKind;
 use super::{DiskFaultCtx, PlacedFault, SimDisk};
+use crate::io::count_result;
 use crate::io::files::STATX_SIZE;
 use crate::io::posix::errno::linux::{EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, EOPNOTSUPP};
 use crate::io::FileSlot;
@@ -72,7 +73,7 @@ impl SimDisk {
             pool[range.start + byte_idx] ^= bit;
             ctx.counters.bit_flip += 1;
         }
-        n as i32
+        count_result(n)
     }
 
     pub(super) fn write(
@@ -119,7 +120,7 @@ impl SimDisk {
                 }
                 PlacedFault::LostSilent => {
                     ctx.counters.lost_silent += 1;
-                    data.len() as i32
+                    count_result(data.len())
                 }
                 PlacedFault::ShortWrite => {
                     let s = u64::from(self.sector_size);
@@ -127,7 +128,7 @@ impl SimDisk {
                         self.inject_short_write(ii, file_off, data, ctx)
                     } else {
                         self.commit_write(ii, file_off, data);
-                        data.len() as i32
+                        count_result(data.len())
                     }
                 }
                 PlacedFault::TornReported => self.inject_torn_write(ii, file_off, data, true, ctx),
@@ -144,7 +145,7 @@ impl SimDisk {
                     } else {
                         self.commit_write(ii, file_off, data);
                     }
-                    data.len() as i32
+                    count_result(data.len())
                 }
             };
         }
@@ -158,7 +159,7 @@ impl SimDisk {
         }
         if ctx.rng.chance(ctx.faults.lost_silent) {
             ctx.counters.lost_silent += 1;
-            return data.len() as i32;
+            return count_result(data.len());
         }
         let cuts = sector_cut_bounds(file_off, data.len(), s);
         if cuts.is_some() && ctx.rng.chance(ctx.faults.short_write) {
@@ -176,10 +177,10 @@ impl SimDisk {
             let dst = pick_misdirected_off(ctx.rng, other, ov_start, ov_count, s);
             self.commit_write(ii, dst, data);
             ctx.counters.misdirected_write += 1;
-            return data.len() as i32;
+            return count_result(data.len());
         }
         self.commit_write(ii, file_off, data);
-        data.len() as i32
+        count_result(data.len())
     }
 
     pub(super) fn commit_write(&mut self, ii: usize, file_off: u64, data: &[u8]) {

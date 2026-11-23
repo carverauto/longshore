@@ -7,8 +7,8 @@
 
 use crate::io::engine::{Attempt, Engine, World};
 use crate::io::{
-    BufId, FileId, Limits, Op, Sock, Wake, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET, ENAMETOOLONG,
-    ENFILE, ENOBUFS, ENOENT, EPIPE,
+    count_result, BufId, FileId, Limits, Op, Sock, Wake, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET,
+    ENAMETOOLONG, ENFILE, ENOBUFS, ENOENT, EPIPE,
 };
 use crate::sim::prng::Prng;
 use std::io;

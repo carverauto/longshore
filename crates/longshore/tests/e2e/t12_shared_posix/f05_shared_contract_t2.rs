@@ -208,7 +208,7 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
             100,
         )
         .unwrap();
-        assert_eq!(s.result, msg.len() as i32);
+        assert_eq!(s.result, i32::try_from(msg.len()).unwrap());
 
         let mut got = Vec::new();
         let mut tok = 10u64;

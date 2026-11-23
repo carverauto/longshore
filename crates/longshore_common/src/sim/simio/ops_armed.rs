@@ -40,7 +40,7 @@ impl Virtual {
                 s.reset = false;
             }
             Some(Attempt {
-                result: slot_idx as i32,
+                result: count_result(slot_idx),
                 more: true,
                 buf: None,
             })
@@ -99,7 +99,7 @@ impl Virtual {
         q.rx_head = (q.rx_head + n) % SOCK_BUF;
         q.rx_len -= n;
         Some(Attempt {
-            result: n as i32,
+            result: count_result(n),
             more: true,
             buf: Some(buf_id),
         })

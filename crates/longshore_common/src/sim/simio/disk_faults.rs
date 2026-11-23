@@ -7,6 +7,7 @@
 //! persistent sector read errors, and placed-fault lookup for [`SimDisk`].
 
 use super::{DiskFaultCtx, PlacedEntry, PlacedFault, Prng, SimDisk};
+use crate::io::count_result;
 use crate::io::posix::errno::linux::EIO;
 
 #[derive(Clone, Copy)]
@@ -149,7 +150,7 @@ impl SimDisk {
             self.commit_write(ii, file_off, &data[..cut_len]);
         }
         ctx.counters.short_write += 1;
-        cut_len as i32
+        count_result(cut_len)
     }
 
     pub(super) fn inject_torn_write(
@@ -172,7 +173,7 @@ impl SimDisk {
             -EIO
         } else {
             ctx.counters.torn_silent += 1;
-            data.len() as i32
+            count_result(data.len())
         }
     }
 }

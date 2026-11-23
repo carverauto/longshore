@@ -7,7 +7,7 @@
 
 use crate::stream::{Step, Tls};
 use crate::TlsError;
-use longshore_common::io::{Io, Op, Sock, Token};
+use longshore_common::io::{count_result, Io, Op, Sock, Token};
 use longshore_tls::record::{
     record_len, CONTENT_ALERT, CONTENT_APPLICATION_DATA, CONTENT_HANDSHAKE, FRAGMENT_MAX,
     HEADER_LEN, OVERHEAD, TAG_LEN,
@@ -81,7 +81,7 @@ impl Tls {
                 .copy_from_slice(&rx[self.spill_at as usize..(self.spill_at + n) as usize]);
             self.spill_at += n;
             self.spill_len -= n;
-            return Step::Done(n as i32);
+            return Step::Done(count_result(n));
         }
         while produced < self.dst_max && !self.closed {
             let (rx, dst) = io.buf_pair(self.rx_buf, self.dst);
@@ -158,7 +158,7 @@ impl Tls {
             }
         }
         if produced > 0 {
-            return Step::Done(produced as i32);
+            return Step::Done(count_result(produced));
         }
         if self.closed || self.dst_max == 0 {
             return Step::Done(0);

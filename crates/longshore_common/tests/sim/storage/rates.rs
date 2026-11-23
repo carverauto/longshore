@@ -185,7 +185,7 @@ fn random_rates_replay_zero_stops_and_tear_invariants() {
         let wlen = (sector_size * 8) as usize;
         assert_eq!(
             write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, &vec![0xAA; wlen]),
-            wlen as i32
+            i32::try_from(wlen).unwrap()
         );
         tok += 1;
         let got = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();

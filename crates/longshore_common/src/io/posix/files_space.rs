@@ -63,13 +63,13 @@ impl Posix {
             if unsafe { fstat(fd, &mut st) } < 0 {
                 return to_linux_errno(os_errno());
             }
-            let cur_size = u64::try_from(st.st_size).unwrap_or(0);
-            if target > cur_size {
+            let cur_size = st.st_size.max(0);
+            if target_i64 > cur_size {
                 let mut fs = fstore_t {
                     fst_flags: F_ALLOCATECONTIG,
                     fst_posmode: F_PEOFPOSMODE,
                     fst_offset: 0,
-                    fst_length: (target - cur_size) as i64,
+                    fst_length: target_i64 - cur_size,
                     fst_bytesalloc: 0,
                 };
                 if unsafe { fcntl(fd, F_PREALLOCATE, &mut fs) } < 0 {

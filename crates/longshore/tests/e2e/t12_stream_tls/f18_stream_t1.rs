@@ -228,8 +228,8 @@ fn t1_f18_2_tls_stream_client_and_server_handshake_and_echo() {
             }
         }
     }
-    assert_eq!(c_step, Step::Done(msg.len() as i32));
-    assert_eq!(s_step, Step::Done(msg.len() as i32));
+    assert_eq!(c_step, Step::Done(i32::try_from(msg.len()).unwrap()));
+    assert_eq!(s_step, Step::Done(i32::try_from(msg.len()).unwrap()));
     assert_eq!(read_pool_bytes(&mut io, BufId(5), 0, msg.len()), msg);
     assert!(client.records() > 0 && server.records() > 0);
 }

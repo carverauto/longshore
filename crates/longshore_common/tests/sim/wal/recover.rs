@@ -81,7 +81,7 @@ pub(crate) fn wal_recover(
             }
             break;
         }
-        if r < rec_bytes as i32 {
+        if r < i32::try_from(rec_bytes).unwrap() {
             break;
         }
         if verify_record(&sim.buf(BufId(2))[..rec_bytes], rec_bytes, seed, seq) {
@@ -100,7 +100,7 @@ pub(crate) fn wal_recover(
                 file_off,
             },
         );
-        if r2 == rec_bytes as i32
+        if r2 == i32::try_from(rec_bytes).unwrap()
             && verify_record(&sim.buf(BufId(2))[..rec_bytes], rec_bytes, seed, seq)
         {
             recovered += 1;

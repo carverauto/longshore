@@ -164,7 +164,7 @@ fn wal_recovers_across_all_eleven_faults_and_medium_corruption_zero_alloc() {
                         file_off: 0,
                     },
                 ),
-                rec_bytes as i32
+                i32::try_from(rec_bytes).unwrap()
             );
             assert!(!super::verify_record(
                 &sim.buf(BufId(2))[..rec_bytes],

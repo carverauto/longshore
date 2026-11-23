@@ -10,12 +10,18 @@
 use super::abi_linux::*;
 use super::SockSlot;
 use crate::io::Wake;
+use core::ffi::c_int;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const WAKE_TAG: u64 = u64::MAX;
 const EVENTS_CAP: usize = 64;
+
+/// The `maxevents` argument: never more than the event buffer holds.
+fn max_events() -> c_int {
+    c_int::try_from(EVENTS_CAP).unwrap_or(c_int::MAX)
+}
 
 struct EpollWaker {
     woken: Arc<AtomicBool>,
@@ -129,8 +135,7 @@ impl Poller {
 
     pub(super) fn poll(&mut self, socks: &mut [SockSlot]) {
         loop {
-            let n =
-                unsafe { epoll_wait(self.epfd, self.events.as_mut_ptr(), EVENTS_CAP as i32, 0) };
+            let n = unsafe { epoll_wait(self.epfd, self.events.as_mut_ptr(), max_events(), 0) };
             let Ok(n) = usize::try_from(n) else {
                 if os_errno() == OS_EINTR {
                     continue;
@@ -180,7 +185,7 @@ impl Poller {
                 epoll_wait(
                     self.epfd,
                     self.events.as_mut_ptr(),
-                    EVENTS_CAP as i32,
+                    max_events(),
                     timeout_ms,
                 )
             };

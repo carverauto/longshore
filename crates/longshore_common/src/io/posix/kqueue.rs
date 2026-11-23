@@ -10,14 +10,20 @@
 use super::abi_macos::*;
 use super::SockSlot;
 use crate::io::Wake;
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
+use core::time::Duration;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const WAKE_IDENT: usize = 1;
 const EVENTS_CAP: usize = 64;
-const MAX_WAIT_SECS: u64 = 86_400;
+
+/// The `nevents` argument: never more than the event buffer holds.
+fn max_events() -> c_int {
+    c_int::try_from(EVENTS_CAP).unwrap_or(c_int::MAX)
+}
+const MAX_WAIT_SECS: i64 = 86_400;
 
 struct KqueueWaker {
     woken: Arc<AtomicBool>,
@@ -182,7 +188,7 @@ impl Poller {
                     core::ptr::null(),
                     0,
                     self.events.as_mut_ptr(),
-                    EVENTS_CAP as i32,
+                    max_events(),
                     &zero,
                 )
             };
@@ -213,13 +219,16 @@ impl Poller {
                     if rem == 0 {
                         return Ok(());
                     }
-                    let secs = rem / 1_000_000_000;
-                    if secs >= MAX_WAIT_SECS {
-                        ts.tv_sec = MAX_WAIT_SECS as i64;
-                        ts.tv_nsec = 0;
-                    } else {
-                        ts.tv_sec = secs as i64;
-                        ts.tv_nsec = (rem % 1_000_000_000) as i64;
+                    let wait = Duration::from_nanos(rem);
+                    match i64::try_from(wait.as_secs()) {
+                        Ok(secs) if secs < MAX_WAIT_SECS => {
+                            ts.tv_sec = secs;
+                            ts.tv_nsec = i64::from(wait.subsec_nanos());
+                        }
+                        Ok(_) | Err(_) => {
+                            ts.tv_sec = MAX_WAIT_SECS;
+                            ts.tv_nsec = 0;
+                        }
                     }
                     &ts as *const timespec
                 }
@@ -231,7 +240,7 @@ impl Poller {
                     core::ptr::null(),
                     0,
                     self.events.as_mut_ptr(),
-                    EVENTS_CAP as i32,
+                    max_events(),
                     ts_ptr,
                 )
             };

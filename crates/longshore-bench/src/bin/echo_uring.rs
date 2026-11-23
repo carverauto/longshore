@@ -129,7 +129,7 @@ fn main() {
         assert_eq!(read(&mut io, missing), -2, "a missing file reports ENOENT");
         for contents in ["first", "second, longer version"] {
             std::fs::write(&path, contents).unwrap();
-            assert_eq!(read(&mut io, file), contents.len() as i32);
+            assert_eq!(read(&mut io, file), i32::try_from(contents.len()).unwrap());
             assert_eq!(
                 &io.buf(BufId(0))[..contents.len()],
                 contents.as_bytes(),

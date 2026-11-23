@@ -157,7 +157,7 @@ fn run_unix_ipc_rpc<IO: Io>(io: &mut IO, lim: Limits, socket_path: &str) {
                     .unwrap();
                 } else if c.token.0 == 21 {
                     if let Step::Done(n) = cli_a_stream.on_recv(io, c.result) {
-                        assert_eq!(n, req.len() as i32);
+                        assert_eq!(n, i32::try_from(req.len()).unwrap());
                         let mut got = [0u8; 13];
                         read_pool_into(io, BufId(1), 0, &mut got);
                         assert_eq!(&got, req);

@@ -198,7 +198,7 @@ impl UringIo {
                 if core::mem::replace(&mut self.sock_stream[sock.0 as usize], false) {
                     self.push(io_uring_sqe {
                         opcode: IORING_OP_SHUTDOWN,
-                        fd: sock.0 as i32,
+                        fd: fixed_fd(sock.0),
                         flags: IOSQE_FIXED_FILE | IOSQE_IO_HARDLINK,
                         len: SHUT_RDWR,
                         user_data: INTERNAL_SHUTDOWN,
@@ -281,9 +281,11 @@ impl UringIo {
             Op::Timeout { nanos } => {
                 let s = &mut self.slots[i as usize];
                 s.state = State::Timer;
+                let wait = core::time::Duration::from_nanos(nanos);
                 s.ts = timespec {
-                    sec: (nanos / 1_000_000_000) as i64,
-                    nsec: (nanos % 1_000_000_000) as i64,
+                    // At most u64::MAX / 10^9 seconds, which always fits.
+                    sec: i64::try_from(wait.as_secs()).unwrap_or(i64::MAX),
+                    nsec: i64::from(wait.subsec_nanos()),
                 };
                 io_uring_sqe {
                     opcode: IORING_OP_TIMEOUT,

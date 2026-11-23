@@ -323,7 +323,7 @@ impl Stream {
                 t.seal_batch(io, sock, send_token);
                 return Step::Pending;
             }
-            Step::Done(t.src_len as i32)
+            Step::Done(longshore_common::io::count_result(t.src_len))
         }
     }
 

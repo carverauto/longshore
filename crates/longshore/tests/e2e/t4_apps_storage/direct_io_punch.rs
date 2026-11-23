@@ -160,7 +160,7 @@ fn verify_direct_io_punch_and_statx<IO: Io>(io: &mut IO, lim: Limits, dir_prefix
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
                 if c.token.0 == 100 + blk * 2 {
-                    assert_eq!(c.result, BLOCK as i32);
+                    assert_eq!(c.result, i32::try_from(BLOCK).unwrap());
                     w_ok = true;
                 } else if c.token.0 == 101 + blk * 2 {
                     assert_eq!(c.result, 0);
@@ -223,7 +223,7 @@ fn verify_direct_io_punch_and_statx<IO: Io>(io: &mut IO, lim: Limits, dir_prefix
             1_000,
         )
         .unwrap();
-        assert_eq!(hole_c.result, BLOCK as i32);
+        assert_eq!(hole_c.result, i32::try_from(BLOCK).unwrap());
         let mut got = [1u8; BLOCK as usize];
         read_pool_into(io, r_buf, 0, &mut got);
         assert!(
@@ -246,7 +246,7 @@ fn verify_direct_io_punch_and_statx<IO: Io>(io: &mut IO, lim: Limits, dir_prefix
         1_000,
     )
     .unwrap();
-    assert_eq!(intact_c.result, BLOCK as i32);
+    assert_eq!(intact_c.result, i32::try_from(BLOCK).unwrap());
     let mut got6 = [0u8; BLOCK as usize];
     read_pool_into(io, r_buf, 0, &mut got6);
     assert!(got6.iter().all(|&b| b == 0x36));

@@ -136,7 +136,7 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
             match c.token.0 {
                 10 => {
                     if let Step::Done(n) = cli_stream.on_send(io, c.result) {
-                        assert_eq!(n, msg.len() as i32);
+                        assert_eq!(n, i32::try_from(msg.len()).unwrap());
                         cli_sent = true;
                     }
                 }

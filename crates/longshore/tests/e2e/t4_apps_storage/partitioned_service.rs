@@ -160,7 +160,7 @@ fn handle_disk_req(
             ])
             .unwrap();
             let (write_res, sync_res) = pump_until(disk, out, 103);
-            let status = if write_res == BLOCK as i32 && sync_res == 0 {
+            let status = if write_res == i32::try_from(BLOCK).unwrap() && sync_res == 0 {
                 0
             } else if sync_res < 0 {
                 sync_res

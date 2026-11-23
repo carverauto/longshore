@@ -266,6 +266,15 @@ pub const ENFILE: i32 = 23;
 pub const EMFILE: i32 = 24;
 pub const ENAMETOOLONG: i32 = 36;
 pub const ENOBUFS: i32 = 105;
+pub const EOVERFLOW: i32 = 75;
+
+/// A byte count or slot index as a completion result. Linux never moves more
+/// than `MAX_RW_COUNT` (below `i32::MAX`) bytes in one operation; a count
+/// that does not fit the `i32` result reads as `-EOVERFLOW` instead of
+/// wrapping into something that looks like a negated errno.
+pub fn count_result<N: TryInto<i32>>(n: N) -> i32 {
+    n.try_into().unwrap_or(-EOVERFLOW)
+}
 
 /// Fixed-capacity completion buffer; `tick` never delivers more than fit.
 pub struct Completions {

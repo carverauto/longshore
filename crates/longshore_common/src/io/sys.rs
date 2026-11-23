@@ -145,6 +145,15 @@ pub const EFD_CLOEXEC: c_int = 0o2000000;
 pub const CLOCK_MONOTONIC: c_int = 1;
 pub const CLOCK_REALTIME: c_int = 0;
 
+/// `sqe.fd` for registered-file index `index` under [`IOSQE_FIXED_FILE`].
+#[expect(
+    clippy::cast_possible_wrap,
+    reason = "with IOSQE_FIXED_FILE the kernel reads the __s32 sqe.fd as an unsigned index into the registered file table"
+)]
+pub const fn fixed_fd(index: u32) -> i32 {
+    index as i32
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct io_uring_sqe {

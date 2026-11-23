@@ -164,7 +164,7 @@ fn accept_range_full_and_armed_again<IO: Io>(
     let mut fourth_ok = false;
     drain_until(&mut io, &mut out, |_, c| {
         if c.token.0 == 2 {
-            assert!(c.result == accepted[0].0 as i32);
+            assert!(c.result == i32::try_from(accepted[0].0).unwrap());
             accept2_armed = c.more;
             reused = Some(Sock(u32::try_from(c.result).unwrap()));
         } else if c.token.0 == 13 {

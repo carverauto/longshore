@@ -213,7 +213,7 @@ impl WalEngine {
             }
             false
         })?;
-        if w == block as i32 && s == 0 {
+        if w == i32::try_from(block).unwrap() && s == 0 {
             self.cursor += block as u64;
             self.next_seq += 1;
         }

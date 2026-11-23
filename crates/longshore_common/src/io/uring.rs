@@ -361,7 +361,7 @@ impl UringIo {
     fn fixed(&self, sock: Sock) -> io_uring_sqe {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         io_uring_sqe {
-            fd: sock.0 as i32,
+            fd: fixed_fd(sock.0),
             flags: IOSQE_FIXED_FILE,
             ..Default::default()
         }
@@ -370,7 +370,7 @@ impl UringIo {
     fn fixed_file(&self, slot: FileSlot) -> io_uring_sqe {
         assert!(slot.0 < self.limits.files_max, "file slot out of range");
         io_uring_sqe {
-            fd: (self.limits.sockets_max + slot.0) as i32,
+            fd: fixed_fd(self.limits.sockets_max + slot.0),
             flags: IOSQE_FIXED_FILE,
             ..Default::default()
         }

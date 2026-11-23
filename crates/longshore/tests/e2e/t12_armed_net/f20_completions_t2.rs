@@ -210,7 +210,7 @@ fn t2_f20_3_final_armed_recv_with_bytes_delivers_valid_buffer_payload() {
     })
     .unwrap();
     let c = cs.iter().find(|c| c.token == Token(3)).unwrap();
-    assert_eq!(c.result, payload.len() as i32);
+    assert_eq!(c.result, i32::try_from(payload.len()).unwrap());
     let id = c.buf.expect("buffer attached");
     assert_eq!(read_pool_bytes(&mut io, id, 0, payload.len()), payload);
     io.give_back(id);

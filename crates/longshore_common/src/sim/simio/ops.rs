@@ -101,7 +101,7 @@ impl Virtual {
                     Some(data) => {
                         let n = data.len().min(len as usize);
                         pool[dst.start..dst.start + n].copy_from_slice(&data[..n]);
-                        Some(n as i32)
+                        Some(count_result(n))
                     }
                 }
             }
@@ -156,7 +156,7 @@ impl Virtual {
                     let src = limits.range(buf, off, len);
                     self.udp_deliver(sock.0, to, pool, src);
                 }
-                Some(len as i32)
+                Some(count_result(len))
             }
             Op::Recv {
                 sock,
@@ -193,7 +193,7 @@ impl Virtual {
                     q.peer = from;
                     q.has_peer = true;
                 }
-                Some(take as i32)
+                Some(count_result(take))
             }
             Op::Send {
                 sock,
@@ -244,7 +244,7 @@ impl Virtual {
                     p.rx[(tail + k) % SOCK_BUF] = byte;
                 }
                 p.rx_len += n;
-                Some(n as i32)
+                Some(count_result(n))
             }
             Op::Recv {
                 sock,
@@ -293,7 +293,7 @@ impl Virtual {
                 }
                 q.rx_head = (q.rx_head + n) % SOCK_BUF;
                 q.rx_len -= n;
-                Some(n as i32)
+                Some(count_result(n))
             }
             Op::Close { sock } => {
                 let s = sock.0 as usize;

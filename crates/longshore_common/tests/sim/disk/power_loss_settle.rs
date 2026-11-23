@@ -41,7 +41,7 @@ fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
                             file_off: 0,
                         },
                     ),
-                    write_len as i32
+                    i32::try_from(write_len).unwrap()
                 );
                 assert_eq!(
                     drive(
@@ -69,7 +69,7 @@ fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
                             file_off: 0,
                         },
                     ),
-                    write_len as i32
+                    i32::try_from(write_len).unwrap()
                 );
                 sim.power_loss();
                 assert_eq!(
@@ -89,7 +89,7 @@ fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
                             file_off: 0,
                         },
                     ),
-                    write_len as i32
+                    i32::try_from(write_len).unwrap()
                 );
                 sim.buf(BufId(2))[..write_len as usize].to_vec()
             };

@@ -126,7 +126,7 @@ fn tls_stream_borrow_fallback_make_room_compaction_and_zero_send() {
     io.buf(C_TX)[..big.len()].copy_from_slice(&big);
     client.send(&mut io, C_TX, 0, big.len() as u32, u32::MAX);
     let (mut queued, mut client_done) = (0i32, false);
-    while queued < BUF as i32 {
+    while queued < i32::try_from(BUF).unwrap() {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
             if c.token == C_SEND {
@@ -135,7 +135,7 @@ fn tls_stream_borrow_fallback_make_room_compaction_and_zero_send() {
             }
         }
     }
-    assert_eq!(queued, BUF as i32);
+    assert_eq!(queued, i32::try_from(BUF).unwrap());
     let (mut got, mut rx_reads) = (Vec::with_capacity(big.len()), Vec::new());
     while got.len() < big.len() {
         let mut s = server.recv(&mut io, S_BUF, 0, 16_384);
@@ -144,7 +144,8 @@ fn tls_stream_borrow_fallback_make_room_compaction_and_zero_send() {
             while let Some(c) = out.pop() {
                 match c.token {
                     C_SEND => {
-                        client_done = client.on_send(&mut io, c.result) == Step::Done(BUF as i32)
+                        client_done = client.on_send(&mut io, c.result)
+                            == Step::Done(i32::try_from(BUF).unwrap())
                     }
                     S_RECV => {
                         rx_reads.push(c.result);
@@ -158,7 +159,7 @@ fn tls_stream_borrow_fallback_make_room_compaction_and_zero_send() {
         got.extend_from_slice(&io.buf(S_BUF)[..16_384]);
     }
     assert!(client_done);
-    assert_eq!(rx_reads, vec![BUF as i32, 88]);
+    assert_eq!(rx_reads, vec![i32::try_from(BUF).unwrap(), 88]);
     assert_eq!(got, big);
 }
 

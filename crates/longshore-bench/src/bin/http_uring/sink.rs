@@ -105,7 +105,7 @@ fn serve<S: Read + Write + MaybeFd>(mut s: S, get_size: u32, discard_in_kernel: 
                         },
                         None => s
                             .read(&mut scratch[..left.min(1 << 20)])
-                            .map_or(-1, |n| n as isize),
+                            .map_or(-1, |n| isize::try_from(n).unwrap_or(-1)),
                     };
                     if n <= 0 {
                         return;

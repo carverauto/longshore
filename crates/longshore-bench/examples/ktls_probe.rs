@@ -242,7 +242,8 @@ mod linux {
                 ));
             }
             let m = unsafe { memfd_create(c"longshore-ktls".as_ptr().cast(), 0) };
-            if m < 0 || unsafe { write(m, body.as_ptr().cast(), SIZE) } != SIZE as isize {
+            if m < 0 || usize::try_from(unsafe { write(m, body.as_ptr().cast(), SIZE) }) != Ok(SIZE)
+            {
                 die("memfd");
             }
             Some(m)

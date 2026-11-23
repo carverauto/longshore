@@ -162,7 +162,7 @@ impl StackWal {
             }
         }
         assert!(gw && gs, "append_chained timed out");
-        if w == self.block_size as i32 && s == 0 {
+        if w == i32::try_from(self.block_size).unwrap() && s == 0 {
             self.cursor += u64::from(self.block_size);
             self.next_seq += 1;
         }

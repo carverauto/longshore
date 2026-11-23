@@ -76,7 +76,7 @@ fn pass(
         }
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            assert_eq!(i64::from(c.result), block as i64, "short or failed op");
+            assert_eq!(u64::try_from(c.result), Ok(block), "short or failed op");
             free.push(c.token.0 as u32);
             done += block;
         }
