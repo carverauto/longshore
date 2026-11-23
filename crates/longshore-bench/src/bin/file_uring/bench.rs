@@ -123,11 +123,28 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
     };
     let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(8);
-    let path = format!("{}/bench_wal.bin\0", dir.display());
-    io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
+    open_bench_file(&mut io, &mut out, dir);
     let wbuf = limits.aligned(0);
     io.buf(wbuf).fill(0x42);
 
+    // Warmup
+    let mut warm = Vec::with_capacity(40);
+    let _: u64 = measure(&mut io, wbuf, 20, true, &mut warm);
+    let _: u64 = measure(&mut io, wbuf, 20, false, &mut warm);
+
+    run_order(&mut io, wbuf, iters, order);
+
+    io.submit(Token(99), Op::FileClose { slot: FileSlot(0) })
+        .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 0);
+}
+
+/// Open `bench_wal.bin` in `dir` for direct I/O into slot 0 and reserve its
+/// blocks.
+fn open_bench_file(io: &mut UringIo, out: &mut Completions, dir: &Path) {
+    let path = format!("{}/bench_wal.bin\0", dir.display());
+    io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
     io.submit(
         Token(1),
         Op::FileOpen {
@@ -145,7 +162,7 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
         },
     )
     .or_die("submit");
-    io.tick(true, &mut out).or_die("tick");
+    io.tick(true, out).or_die("tick");
     assert_eq!(
         out.pop().or_die("a completion").result,
         0,
@@ -163,20 +180,18 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
         },
     )
     .or_die("submit");
-    io.tick(true, &mut out).or_die("tick");
+    io.tick(true, out).or_die("tick");
     assert_eq!(out.pop().or_die("a completion").result, 0);
+}
 
-    // Warmup
-    let mut warm = Vec::with_capacity(40);
-    let _: u64 = measure(&mut io, wbuf, 20, true, &mut warm);
-    let _: u64 = measure(&mut io, wbuf, 20, false, &mut warm);
-
+/// Measure and report both modes in `order`.
+fn run_order(io: &mut UringIo, wbuf: BufId, iters: usize, order: Order) {
     // Whichever mode runs second runs on a file the first has just
     // written, so the order is the caller's choice.
     match order {
         Order::Blocks { chain_first } => {
-            run_one_mode(&mut io, wbuf, iters, chain_first);
-            run_one_mode(&mut io, wbuf, iters, !chain_first);
+            run_one_mode(io, wbuf, iters, chain_first);
+            run_one_mode(io, wbuf, iters, !chain_first);
         }
         Order::Interleaved => {
             let (mut two, mut chain) = (Vec::with_capacity(iters), Vec::with_capacity(iters));
@@ -184,17 +199,12 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
             let mut left = iters;
             while left > 0 {
                 let n = left.min(10);
-                two_enters += measure(&mut io, wbuf, n, false, &mut two);
-                chain_enters += measure(&mut io, wbuf, n, true, &mut chain);
+                two_enters += measure(io, wbuf, n, false, &mut two);
+                chain_enters += measure(io, wbuf, n, true, &mut chain);
                 left -= n;
             }
             report(false, &mut two, two_enters);
             report(true, &mut chain, chain_enters);
         }
     }
-
-    io.submit(Token(99), Op::FileClose { slot: FileSlot(0) })
-        .or_die("submit");
-    io.tick(true, &mut out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 0);
 }

@@ -64,91 +64,109 @@ fn check_sealed_o_direct(dir: &Path) {
 
     // Verify misaligned O_DIRECT write is refused with -EINVAL and valid chain succeeds under sealed.
     sealed(|| {
-        io.submit_chain(&[
-            (
-                Token(1),
-                Op::FileOpen {
-                    slot: FileSlot(0),
-                    path_buf: BufId(0),
-                    path_off: 0,
-                    path_len: path.len() as u32,
-                    flags: OpenFlags {
-                        read: true,
-                        write: true,
-                        create: true,
-                        direct: true,
-                        ..Default::default()
-                    },
+        open_write_sync_chain(&mut io, &mut out, path.len() as u32, wbuf, dir);
+        refuse_misaligned_then_read(&mut io, &mut out, wbuf, rbuf);
+    });
+    let (wb, rb) = io.buf_pair(wbuf, rbuf);
+    assert_eq!(wb, rb);
+}
+
+/// Open the path in buffer 0 for direct I/O, write `wbuf` and sync, as one
+/// linked chain.
+fn open_write_sync_chain(
+    io: &mut UringIo,
+    out: &mut Completions,
+    path_len: u32,
+    wbuf: BufId,
+    dir: &Path,
+) {
+    io.submit_chain(&[
+        (
+            Token(1),
+            Op::FileOpen {
+                slot: FileSlot(0),
+                path_buf: BufId(0),
+                path_off: 0,
+                path_len,
+                flags: OpenFlags {
+                    read: true,
+                    write: true,
+                    create: true,
+                    direct: true,
+                    ..Default::default()
                 },
-            ),
-            (
-                Token(2),
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: wbuf,
-                    off: 0,
-                    len: 4096,
-                    file_off: 0,
-                },
-            ),
-            (
-                Token(3),
-                Op::FileSync {
-                    slot: FileSlot(0),
-                    datasync: true,
-                },
-            ),
-        ])
-        .or_die("submit_chain");
-        let mut done = 0;
-        while done < 3 {
-            io.tick(true, &mut out).or_die("tick");
-            while let Some(c) = out.pop() {
-                if c.token == Token(1) {
-                    assert_eq!(c.result, 0, "O_DIRECT open failed on {}", dir.display());
-                } else if c.token == Token(2) {
-                    assert_eq!(c.result, 4096);
-                } else {
-                    assert_eq!(c.result, 0);
-                }
-                done += 1;
-            }
-        }
-        io.submit(
-            Token(4),
+            },
+        ),
+        (
+            Token(2),
             Op::FileWrite {
                 slot: FileSlot(0),
                 buf: wbuf,
                 off: 0,
-                len: 512,
-                file_off: 0,
-            },
-        )
-        .or_die("submit");
-        io.tick(true, &mut out).or_die("tick");
-        assert_eq!(out.pop().or_die("a completion").result, -EINVAL);
-
-        io.submit(
-            Token(5),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: rbuf,
-                off: 0,
                 len: 4096,
                 file_off: 0,
             },
-        )
-        .or_die("submit");
-        io.tick(true, &mut out).or_die("tick");
-        assert_eq!(out.pop().or_die("a completion").result, 4096);
+        ),
+        (
+            Token(3),
+            Op::FileSync {
+                slot: FileSlot(0),
+                datasync: true,
+            },
+        ),
+    ])
+    .or_die("submit_chain");
+    let mut done = 0;
+    while done < 3 {
+        io.tick(true, out).or_die("tick");
+        while let Some(c) = out.pop() {
+            if c.token == Token(1) {
+                assert_eq!(c.result, 0, "O_DIRECT open failed on {}", dir.display());
+            } else if c.token == Token(2) {
+                assert_eq!(c.result, 4096);
+            } else {
+                assert_eq!(c.result, 0);
+            }
+            done += 1;
+        }
+    }
+}
 
-        io.submit(Token(6), Op::FileClose { slot: FileSlot(0) })
-            .or_die("submit");
-        io.tick(true, &mut out).or_die("tick");
-        assert_eq!(out.pop().or_die("a completion").result, 0);
-    });
-    let (wb, rb) = io.buf_pair(wbuf, rbuf);
-    assert_eq!(wb, rb);
+/// A misaligned direct write is refused with `-EINVAL`; an aligned read into
+/// `rbuf` succeeds; the file closes.
+fn refuse_misaligned_then_read(io: &mut UringIo, out: &mut Completions, wbuf: BufId, rbuf: BufId) {
+    io.submit(
+        Token(4),
+        Op::FileWrite {
+            slot: FileSlot(0),
+            buf: wbuf,
+            off: 0,
+            len: 512,
+            file_off: 0,
+        },
+    )
+    .or_die("submit");
+    io.tick(true, out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, -EINVAL);
+
+    io.submit(
+        Token(5),
+        Op::FileRead {
+            slot: FileSlot(0),
+            buf: rbuf,
+            off: 0,
+            len: 4096,
+            file_off: 0,
+        },
+    )
+    .or_die("submit");
+    io.tick(true, out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 4096);
+
+    io.submit(Token(6), Op::FileClose { slot: FileSlot(0) })
+        .or_die("submit");
+    io.tick(true, out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 0);
 }
 
 fn check_submit_all_partial_refusal(dir: &Path) {
