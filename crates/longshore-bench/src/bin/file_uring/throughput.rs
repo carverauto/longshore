@@ -22,6 +22,7 @@ fn thread_cpu_secs() -> f64 {
     ts[0] as f64 + ts[1] as f64 / 1e9
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct Shape {
     pub size: u64,
     pub block: u32,

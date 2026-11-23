@@ -100,6 +100,7 @@ fn report(chained: bool, us: &mut [u64], enters_total: u64) {
 }
 
 /// How the two modes are ordered in the measured part.
+#[derive(Clone, Copy)]
 pub(super) enum Order {
     /// All of one mode, then all of the other.
     Blocks { chain_first: bool },

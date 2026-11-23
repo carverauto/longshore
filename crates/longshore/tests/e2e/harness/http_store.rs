@@ -80,7 +80,7 @@ impl HttpStoreServer {
         let state = Arc::new(Mutex::new(StoreState::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let (st, sp) = (Arc::clone(&state), Arc::clone(&stop));
-        let thread = thread::spawn(move || accept_loop(listener, st, sp, tls));
+        let thread = thread::spawn(move || accept_loop(&listener, &st, &sp, &tls));
         Ok(Self {
             addr,
             state,
@@ -124,13 +124,13 @@ impl Drop for HttpStoreServer {
     }
 }
 
-fn accept_loop(l: TcpListener, st: Arc<Mutex<StoreState>>, sp: Arc<AtomicBool>, tls: MaybeTls) {
+fn accept_loop(l: &TcpListener, st: &Arc<Mutex<StoreState>>, sp: &Arc<AtomicBool>, tls: &MaybeTls) {
     let mut workers = Vec::new();
     while !sp.load(Ordering::Acquire) {
         match l.accept() {
             Ok((s, _)) => {
-                let (st, sp, t) = (Arc::clone(&st), Arc::clone(&sp), clone_tls(&tls));
-                workers.push(thread::spawn(move || handle_conn(s, st, sp, t)));
+                let (st, sp, t) = (Arc::clone(st), Arc::clone(sp), clone_tls(tls));
+                workers.push(thread::spawn(move || handle_conn(s, &st, &sp, t)));
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(5))
@@ -162,19 +162,19 @@ fn read_more(s: &mut TcpStream, dst: &mut Vec<u8>, tmp: &mut [u8]) -> io::Result
     }
 }
 
-fn handle_conn(mut s: TcpStream, st: Arc<Mutex<StoreState>>, sp: Arc<AtomicBool>, tls: MaybeTls) {
+fn handle_conn(mut s: TcpStream, st: &Mutex<StoreState>, sp: &AtomicBool, tls: MaybeTls) {
     let _ = s.set_nonblocking(false);
     let _ = s.set_read_timeout(Some(Duration::from_millis(50)));
     #[cfg(feature = "tls")]
     if let Some(setup) = tls {
-        let _ = handle_tls(s, st, sp, setup);
+        let _ = handle_tls(s, st, sp, &setup);
         return;
     }
     #[cfg(not(feature = "tls"))]
     let () = tls;
     let (mut buf, mut tmp) = (Vec::new(), [0u8; 16 * 1024]);
     while !sp.load(Ordering::Acquire) {
-        if let Some((resp, close)) = try_http(&mut buf, &st) {
+        if let Some((resp, close)) = try_http(&mut buf, st) {
             if s.write_all(&resp).is_err() || close {
                 break;
             }
@@ -187,11 +187,11 @@ fn handle_conn(mut s: TcpStream, st: Arc<Mutex<StoreState>>, sp: Arc<AtomicBool>
 #[cfg(feature = "tls")]
 fn handle_tls(
     mut s: TcpStream,
-    st: Arc<Mutex<StoreState>>,
-    sp: Arc<AtomicBool>,
-    setup: Arc<ServerSetup>,
+    st: &Mutex<StoreState>,
+    sp: &AtomicBool,
+    setup: &ServerSetup,
 ) -> io::Result<()> {
-    let Ok(mut hs) = Handshake::server(&setup) else {
+    let Ok(mut hs) = Handshake::server(setup) else {
         return Ok(());
     };
     let (mut wire, mut plain, mut tmp) = (Vec::new(), Vec::new(), [0u8; RECORD_MAX]);
@@ -231,7 +231,7 @@ fn handle_tls(
                 plain.extend_from_slice(&tmp[..plen]);
             }
         }
-        if let Some((out, close)) = try_http(&mut plain, &st) {
+        if let Some((out, close)) = try_http(&mut plain, st) {
             for chunk in out.chunks(FRAGMENT_MAX) {
                 let Ok(slen) = tx.seal(CONTENT_APPLICATION_DATA, chunk, &mut tmp) else {
                     return Ok(());
@@ -248,7 +248,7 @@ fn handle_tls(
     Ok(())
 }
 
-fn try_http(buf: &mut Vec<u8>, state: &Arc<Mutex<StoreState>>) -> Option<(Vec<u8>, bool)> {
+fn try_http(buf: &mut Vec<u8>, state: &Mutex<StoreState>) -> Option<(Vec<u8>, bool)> {
     let head = parse_request(buf, 16 * 1024).ok()??;
     let (hl, bl) = (
         head.fields.head_len,

@@ -70,6 +70,7 @@ mutex_atomic = "deny"
 await_holding_lock = "deny"
 await_holding_refcell_ref = "deny"
 trivially_copy_pass_by_ref = "deny"
+needless_pass_by_value = "deny"
 
 [profile.release]
 opt-level = 3

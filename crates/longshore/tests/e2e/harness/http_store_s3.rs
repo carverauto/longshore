@@ -37,7 +37,7 @@ fn ok(hdrs: &str, body: &[u8]) -> Vec<u8> {
     resp("200 OK", hdrs, body)
 }
 
-fn xml_ok(xml: String) -> Vec<u8> {
+fn xml_ok(xml: &str) -> Vec<u8> {
     ok("Content-Type: application/xml\r\n", xml.as_bytes())
 }
 
@@ -72,13 +72,13 @@ pub(super) fn dispatch_s3(
             let id = format!("up-{}", st.next_id);
             st.uploads
                 .insert(id.clone(), (key.to_string(), BTreeMap::new()));
-            xml_ok(format!("<InitiateMultipartUploadResult><UploadId>{id}</UploadId></InitiateMultipartUploadResult>"))
+            xml_ok(&format!("<InitiateMultipartUploadResult><UploadId>{id}</UploadId></InitiateMultipartUploadResult>"))
         }
         "POST" if qp(q, "uploadId").is_some() => {
             match st.uploads.remove(qp(q, "uploadId").unwrap_or("")) {
                 Some((k, parts)) => {
                     let o = store_put(st, &k, parts.into_values().flatten().collect());
-                    xml_ok(format!("<CompleteMultipartUploadResult><ETag>{}</ETag></CompleteMultipartUploadResult>", o.etag))
+                    xml_ok(&format!("<CompleteMultipartUploadResult><ETag>{}</ETag></CompleteMultipartUploadResult>", o.etag))
                 }
                 None => no_up(),
             }
@@ -107,7 +107,7 @@ pub(super) fn dispatch_s3(
                 ));
             }
             xml.push_str("</ListBucketResult>");
-            xml_ok(xml)
+            xml_ok(&xml)
         }
         "GET" => match (st.objects.get(key), range) {
             (None, _) => resp(

@@ -231,12 +231,12 @@ impl Builder {
                 .spawn(move || {
                     #[cfg(target_os = "linux")]
                     if settings.portable {
-                        run::run::<PosixIo>(settings, n, report);
+                        run::run::<PosixIo>(&settings, n, report);
                     } else {
-                        run::run::<UringIo>(settings, n, report);
+                        run::run::<UringIo>(&settings, n, report);
                     }
                     #[cfg(target_os = "macos")]
-                    run::run::<PosixIo>(settings, n, report);
+                    run::run::<PosixIo>(&settings, n, report);
                 });
             match spawned {
                 Ok(j) => joins.push(j),

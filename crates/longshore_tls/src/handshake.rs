@@ -47,7 +47,7 @@ pub enum TlsError {
     Record(RecordError),
 }
 
-fn map(e: rustls::Error) -> TlsError {
+fn map(e: &rustls::Error) -> TlsError {
     match e {
         rustls::Error::InvalidCertificate(_) | rustls::Error::NoCertificatesPresented => {
             TlsError::BadCertificate
@@ -234,11 +234,11 @@ impl Handshake {
                         Conn::Client(c) => c
                             .read_tls(&mut rec)
                             .map_err(|_| TlsError::Handshake)
-                            .and_then(|_| c.process_new_packets().map(|_| ()).map_err(map)),
+                            .and_then(|_| c.process_new_packets().map(|_| ()).map_err(|e| map(&e))),
                         Conn::Server(c) => c
                             .read_tls(&mut rec)
                             .map_err(|_| TlsError::Handshake)
-                            .and_then(|_| c.process_new_packets().map(|_| ()).map_err(map)),
+                            .and_then(|_| c.process_new_packets().map(|_| ()).map_err(|e| map(&e))),
                     };
                     r?;
                     if rec.len() == before {

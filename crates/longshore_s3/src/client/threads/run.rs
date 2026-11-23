@@ -69,7 +69,7 @@ impl Backend for PosixIo {
 
 /// One I/O thread: build everything, report the lane, then run until
 /// shut down.
-pub fn run<B: Backend>(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
+pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
     #[cfg(target_os = "linux")]
     if let Some((first, step)) = b.pin {
         let cpu = first + n as usize * step;
