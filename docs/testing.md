@@ -71,6 +71,16 @@ s3_uring list some/prefix/
 exact_s3                                  # put, head and get: what the store honours and returns
 ```
 
+Without a store of your own, `scripts/self-hosted-s3.sh` starts Ceph's S3
+gateway or RustFS in a container and runs the programs against it from a
+second container, with the bucket in the path:
+
+```sh
+scripts/self-hosted-s3.sh up ceph      # or rustfs
+scripts/self-hosted-s3.sh run ceph
+scripts/self-hosted-s3.sh down
+```
+
 For Google Cloud Storage, set `S3_VENDOR=gcs` and
 `S3_ENDPOINT=storage.googleapis.com`, and give `S3_BEARER_TOKEN` in place of
 the keys.
