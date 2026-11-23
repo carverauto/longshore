@@ -159,38 +159,44 @@ fn full_queue_returns_message_and_accepts_in_band_stop() {
 
 #[test]
 fn recv_parked_and_wait_stop_without_io() {
-    let (tx, mut rx) = queue_parked::<u32>(2);
-    let tx2 = tx.clone();
-    let h = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(15));
-        tx2.try_send(5).unwrap();
-        std::thread::sleep(Duration::from_millis(15));
-        tx2.stop();
-    });
+    {
+        let (tx, mut rx) = queue_parked::<u32>(2);
+        let tx2 = tx.clone();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            tx2.try_send(5).unwrap();
+            std::thread::sleep(Duration::from_millis(15));
+            tx2.stop();
+        });
 
-    assert_eq!(rx.recv_parked(), Recv::Message(5));
-    assert_eq!(rx.recv_parked(), Recv::Stop);
-    h.join().unwrap();
+        assert_eq!(rx.recv_parked(), Recv::Message(5));
+        assert_eq!(rx.recv_parked(), Recv::Stop);
+        h.join().unwrap();
+    }
 
     // Closing before stop() still lets wait_stop() wake when stop() arrives.
-    let (tx, mut rx) = queue_parked::<u32>(2);
-    rx.close(|_| {});
-    let h = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(15));
-        tx.stop();
-    });
-    rx.wait_stop();
-    h.join().unwrap();
+    {
+        let (tx, mut rx) = queue_parked::<u32>(2);
+        rx.close(|_| {});
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            tx.stop();
+        });
+        rx.wait_stop();
+        h.join().unwrap();
+    }
 
     // Dropping all senders wakes wait_stop() too.
-    let (tx, mut rx) = queue_parked::<u32>(2);
-    rx.close(|_| {});
-    let h = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(15));
-        drop(tx);
-    });
-    rx.wait_stop();
-    h.join().unwrap();
+    {
+        let (tx, mut rx) = queue_parked::<u32>(2);
+        rx.close(|_| {});
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            drop(tx);
+        });
+        rx.wait_stop();
+        h.join().unwrap();
+    }
 }
 
 #[test]

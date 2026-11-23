@@ -94,7 +94,7 @@ fn lookups_always_have_an_address_whatever_was_measured(tc: TestCase) {
                 sizes[k]
             );
         }
-        let handed = seen.iter().filter(|s| **s).count();
+        let handed = seen.iter().filter(|used| **used).count();
         match keep {
             None => {
                 assert_eq!((floor, r.probes_wanted(0)), (0, 0));
@@ -106,7 +106,7 @@ fn lookups_always_have_an_address_whatever_was_measured(tc: TestCase) {
                         handed >= keep.clamp(1, 3),
                         "{handed} in use, {keep} asked for, sizes {sizes:?}"
                     );
-                    let top = sizes.iter().position(|s| *s == largest).unwrap();
+                    let top = sizes.iter().position(|size| *size == largest).unwrap();
                     assert!(seen[top], "the largest is in use: {sizes:?}");
                     assert_eq!(r.probes_wanted(0), 0);
                 }

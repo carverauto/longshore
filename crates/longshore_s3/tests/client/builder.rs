@@ -61,12 +61,12 @@ fn ordinary_settings_pass_the_checks() {
 
 #[test]
 fn a_credentials_file_must_be_an_absolute_path() {
-    let mut b = settings("bucket.s3.example.com");
-    b.credentials_file = Some("relative/credentials".into());
-    assert!(refused(b));
-    let mut b = settings("bucket.s3.example.com");
-    b.credentials_file = Some("/etc/longshore/credentials".into());
-    assert!(!refused(b));
+    let mut relative = settings("bucket.s3.example.com");
+    relative.credentials_file = Some("relative/credentials".into());
+    assert!(refused(relative));
+    let mut absolute = settings("bucket.s3.example.com");
+    absolute.credentials_file = Some("/etc/longshore/credentials".into());
+    assert!(!refused(absolute));
 }
 
 #[test]
@@ -102,21 +102,21 @@ fn tls_without_the_feature_is_refused_with_a_setting_error_naming_tls() {
 
 #[test]
 fn builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure() {
-    let mut b = settings("bucket.s3.example.com");
-    b.operations = 0;
-    assert!(refused(b));
+    let mut no_operations = settings("bucket.s3.example.com");
+    no_operations.operations = 0;
+    assert!(refused(no_operations));
 
-    let mut b = settings("bucket.s3.example.com");
-    b.buffers = 0;
-    assert!(refused(b));
+    let mut no_buffers = settings("bucket.s3.example.com");
+    no_buffers.buffers = 0;
+    assert!(refused(no_buffers));
 
-    let mut b = settings("bucket.s3.example.com");
-    b.buffer_size = 8191;
-    assert!(refused(b));
+    let mut small_buffers = settings("bucket.s3.example.com");
+    small_buffers.buffer_size = 8191;
+    assert!(refused(small_buffers));
 
-    let mut b = settings(&"a".repeat(254));
-    b.address = Some("192.0.2.1:80".parse().unwrap());
-    assert!(refused(b));
+    let mut long_host = settings(&"a".repeat(254));
+    long_host.address = Some("192.0.2.1:80".parse().unwrap());
+    assert!(refused(long_host));
 
     #[cfg(unix)]
     {
@@ -124,9 +124,9 @@ fn builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure()
         use std::os::unix::ffi::OsStrExt;
         use std::path::PathBuf;
 
-        let mut b = settings("bucket.s3.example.com");
-        b.credentials_file = Some(PathBuf::from(OsStr::from_bytes(b"/etc/\xff/creds")));
-        assert!(refused(b));
+        let mut non_utf8 = settings("bucket.s3.example.com");
+        non_utf8.credentials_file = Some(PathBuf::from(OsStr::from_bytes(b"/etc/\xff/creds")));
+        assert!(refused(non_utf8));
     }
 
     // Subprocess partial multi-thread start failure cleanup under lowered RLIMIT_NOFILE.
@@ -146,18 +146,18 @@ fn builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure()
             fn setrlimit(resource: i32, rlim: *const Rlimit) -> i32;
         }
         if std::env::var_os("LONGSHORE_S3_PARTIAL_START").is_some() {
-            let mut b = settings("bucket.s3.example.com");
-            b.address = Some("127.0.0.1:1".parse().unwrap());
-            b.threads = 32;
-            b.connections = 1;
-            b.buffers = 1;
-            b.operations = 1;
-            b.waiters = 1;
+            let mut partial = settings("bucket.s3.example.com");
+            partial.address = Some("127.0.0.1:1".parse().unwrap());
+            partial.threads = 32;
+            partial.connections = 1;
+            partial.buffers = 1;
+            partial.operations = 1;
+            partial.waiters = 1;
             #[cfg(target_os = "linux")]
             {
-                b.portable = true;
+                partial.portable = true;
             }
-            assert!(matches!(b.build(), Err(BuildError::Io(_))));
+            assert!(matches!(partial.build(), Err(BuildError::Io(_))));
             return;
         }
         let exe = std::env::current_exe().unwrap();

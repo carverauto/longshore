@@ -43,7 +43,7 @@ fn wal_recovers_across_all_eleven_faults_and_medium_corruption_zero_alloc() {
         assert!(sim.disk_fault_counters().short_write >= 4);
 
         // 2. sync_fail (AS_EIO) poisons uncommitted writes even after a later succeeding sync.
-        let (mut sim, mut out) = setup_wal(202, sector_size, 0);
+        (sim, out) = setup_wal(202, sector_size, 0);
         sealed(|| {
             let mut tok = 100u64;
             let mut sync_failed = false;
@@ -90,7 +90,7 @@ fn wal_recovers_across_all_eleven_faults_and_medium_corruption_zero_alloc() {
         assert_eq!(sim.disk_fault_counters().sync_fail, 1);
 
         // 3. corrupt_medium_bit persists and truncates recovery at corrupted record.
-        let (mut sim, mut out) = setup_wal(303, sector_size, 0);
+        (sim, out) = setup_wal(303, sector_size, 0);
         sealed(|| {
             let mut tok = 100u64;
             let mut sync_failed = false;
@@ -112,7 +112,7 @@ fn wal_recovers_across_all_eleven_faults_and_medium_corruption_zero_alloc() {
         });
 
         // 4. bit_flip transient read fault recovers on retry.
-        let (mut sim, mut out) = setup_wal(404, sector_size, 0);
+        (sim, out) = setup_wal(404, sector_size, 0);
         sealed(|| {
             let mut tok = 100u64;
             let mut sync_failed = false;
@@ -187,7 +187,7 @@ fn wal_recovers_across_all_eleven_faults_and_medium_corruption_zero_alloc() {
         assert_eq!(sim.disk_fault_counters().bit_flip, 1);
 
         // 5. reserve_refused, punch_refused, read_error repair, and silent faults.
-        let (mut sim, mut out) = setup_wal(505, sector_size, 0);
+        (sim, out) = setup_wal(505, sector_size, 0);
         sealed(|| {
             let mut tok = 100u64;
             let mut sync_failed = false;

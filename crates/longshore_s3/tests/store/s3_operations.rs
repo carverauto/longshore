@@ -201,7 +201,7 @@ fn a_key_is_accepted_up_to_the_encoded_limit_and_refused_one_byte_past_it() {
     let mut w = world(41, Faults::default(), 1);
     let limit = KEY_ENCODED_MAX - 1;
     let mut token = 0;
-    let mut submit = |w: &mut World, key: &str| {
+    let mut submit = |key: &str| {
         token += 1;
         let result = w.s3.erase(&mut w.io, token, key);
         if result.is_ok() {
@@ -211,25 +211,19 @@ fn a_key_is_accepted_up_to_the_encoded_limit_and_refused_one_byte_past_it() {
         result
     };
     // Bytes that stay as they are.
-    assert_eq!(submit(&mut w, &"a".repeat(limit)), Ok(()));
-    assert_eq!(
-        submit(&mut w, &"a".repeat(limit + 1)),
-        Err(SubmitError::BadKey)
-    );
+    assert_eq!(submit(&"a".repeat(limit)), Ok(()));
+    assert_eq!(submit(&"a".repeat(limit + 1)), Err(SubmitError::BadKey));
     // Slashes are kept, not encoded.
-    assert_eq!(submit(&mut w, &"a/".repeat(limit / 2)), Ok(()));
+    assert_eq!(submit(&"a/".repeat(limit / 2)), Ok(()));
     // Two bytes that become six: 85 of them are 510 bytes, 86 are 516.
-    assert_eq!(submit(&mut w, &"é".repeat(limit / 6)), Ok(()));
-    assert_eq!(
-        submit(&mut w, &"é".repeat(limit / 6 + 1)),
-        Err(SubmitError::BadKey)
-    );
+    assert_eq!(submit(&"é".repeat(limit / 6)), Ok(()));
+    assert_eq!(submit(&"é".repeat(limit / 6 + 1)), Err(SubmitError::BadKey));
     // One byte short of the limit, then a byte that needs three.
     assert_eq!(
-        submit(&mut w, &("a".repeat(limit - 1) + " ")),
+        submit(&("a".repeat(limit - 1) + " ")),
         Err(SubmitError::BadKey)
     );
-    assert_eq!(submit(&mut w, &("a".repeat(limit - 3) + " ")), Ok(()));
+    assert_eq!(submit(&("a".repeat(limit - 3) + " ")), Ok(()));
     // A refused key takes no slot.
     assert_eq!(w.s3.in_progress(), 0);
 }

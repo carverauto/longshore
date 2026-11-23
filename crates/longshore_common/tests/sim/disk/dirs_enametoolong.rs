@@ -154,7 +154,7 @@ fn zero_fault_nested_subdir_long_child_unlink_or_rename_then_rename_dir_survives
     });
 
     // Variant 2: Move nested child out to /f before Rename("/d", "/longdir").
-    let mut sim = setup_enametoolong_sim(109, 18, 4);
+    sim = setup_enametoolong_sim(109, 18, 4);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d");
         sync_dir_path(&mut sim, &mut out, 10, "/");
@@ -207,7 +207,7 @@ fn poisoned_or_unsynced_unlink_long_child_then_rename_dir_and_sync_root_survives
 
     // Unsynced Unlink("/d/1234567890123") settled via power_loss across multiple seeds.
     for seed in 131..147u64 {
-        let mut sim = setup_enametoolong_sim(seed, 16, 1);
+        sim = setup_enametoolong_sim(seed, 16, 1);
         sealed(|| {
             mkdir_path(&mut sim, &mut out, 1, "/d");
             sync_dir_path(&mut sim, &mut out, 10, "/");

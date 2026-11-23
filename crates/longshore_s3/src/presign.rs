@@ -89,7 +89,7 @@ pub fn presign(
     let path = core::str::from_utf8(&path[..path_len]).expect("encoded keys are ASCII");
 
     let mut credential = [0u8; 256];
-    let mut n = 0;
+    let mut credential_len = 0;
     for piece in [
         creds.access_key().as_bytes(),
         b"%2F",
@@ -99,12 +99,12 @@ pub fn presign(
         b"%2Fs3%2Faws4_request",
     ] {
         credential
-            .get_mut(n..n + piece.len())
+            .get_mut(credential_len..credential_len + piece.len())
             .ok_or(PresignError::OutputTooSmall)?
             .copy_from_slice(piece);
-        n += piece.len();
+        credential_len += piece.len();
     }
-    let credential = core::str::from_utf8(&credential[..n]).expect("ASCII");
+    let credential = core::str::from_utf8(&credential[..credential_len]).expect("ASCII");
 
     let mut expires = [0u8; 10];
     let mut d = expires.len();

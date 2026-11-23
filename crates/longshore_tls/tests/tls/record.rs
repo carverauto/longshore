@@ -55,8 +55,12 @@ fn seals_the_rfc_8448_records_byte_for_byte() {
         &hex(RECORD_0)[..],
         "application data record, sequence 0"
     );
-    let n = d.seal(CONTENT_ALERT, &[1, 0], &mut out).unwrap();
-    assert_eq!(&out[..n], &hex(RECORD_1)[..], "alert record, sequence 1");
+    let alert_len = d.seal(CONTENT_ALERT, &[1, 0], &mut out).unwrap();
+    assert_eq!(
+        &out[..alert_len],
+        &hex(RECORD_1)[..],
+        "alert record, sequence 1"
+    );
     assert_eq!(d.sequence(), 2);
 }
 

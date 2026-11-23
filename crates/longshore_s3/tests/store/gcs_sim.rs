@@ -215,12 +215,12 @@ fn corruption_in_transit_never_reaches_the_store_or_the_caller() {
                 "seed {seed}: a damaged body was stored"
             );
             w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
-            let d = w.last();
+            let fetch = w.last();
             assert!(
-                matches!(d.outcome, Outcome::Fetched { .. } | Outcome::Fatal(_)),
-                "seed {seed}: {d:?}"
+                matches!(fetch.outcome, Outcome::Fetched { .. } | Outcome::Fatal(_)),
+                "seed {seed}: {fetch:?}"
             );
-            if let Outcome::Fetched { len, verified } = d.outcome {
+            if let Outcome::Fetched { len, verified } = fetch.outcome {
                 fetched += 1;
                 assert!(
                     verified && len == 8000 && w.io.buf(RX)[..8000] == sent[..],

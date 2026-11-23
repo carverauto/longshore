@@ -193,8 +193,8 @@ fn a_read_that_must_not_wait_says_what_is_there() {
 #[test]
 fn a_full_socket_stalls_the_sender_until_the_reader_makes_room() {
     let mut w = World::connected(4);
-    let chunk = |w: &mut World, k: u8| {
-        w.io.buf(BufId(0)).fill(k);
+    let chunk = |world: &mut World, k: u8| {
+        world.io.buf(BufId(0)).fill(k);
         Op::Send {
             sock: A,
             buf: BufId(0),
@@ -260,7 +260,7 @@ fn a_connect_given_up_before_it_is_accepted_leaves_nothing_to_accept() {
     w.io.submit(Token(1), accept).unwrap();
     assert_eq!(w.idle(50), NOTHING, "a cancelled connect is not accepted");
     // The slot is free again: a new connect on it meets the waiting accept.
-    let mut seen = w.run(&[(4, connect)]);
+    seen = w.run(&[(4, connect)]);
     seen.extend(w.idle(20));
     seen.sort();
     assert_eq!(seen, [(1, 0), (4, 0)]);

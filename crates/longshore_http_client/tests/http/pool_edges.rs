@@ -140,23 +140,23 @@ fn retired_connections_finish_their_request_and_are_not_reused() {
     );
 
     // Retiring while a request is in flight does not disturb that request.
-    let mut w = world(43, Faults::default());
-    ok(404, 0)(w.request("GET", "/missing", None));
-    w.start(300, "GET", "/missing", None).unwrap();
-    assert_eq!(w.client.retire_some(0, 1), 1);
-    w.run_until_done(2);
-    ok(404, 0)(w.done[1].result);
-    assert_eq!(w.client.connects, 1);
-    ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!(w.client.connects, 2);
+    let mut in_flight = world(43, Faults::default());
+    ok(404, 0)(in_flight.request("GET", "/missing", None));
+    in_flight.start(300, "GET", "/missing", None).unwrap();
+    assert_eq!(in_flight.client.retire_some(0, 1), 1);
+    in_flight.run_until_done(2);
+    ok(404, 0)(in_flight.done[1].result);
+    assert_eq!(in_flight.client.connects, 1);
+    ok(404, 0)(in_flight.request("GET", "/missing", None));
+    assert_eq!(in_flight.client.connects, 2);
 
     // Unmeasured connections: this one was opened to an address that
     // reports no segment size.
-    let mut w = world(43, Faults::default());
-    ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!(w.client.retire_unmeasured(1), 0);
-    assert_eq!(w.client.retire_unmeasured(0), 1);
-    assert_eq!(w.client.retire_unmeasured(0), 0, "already retired");
+    let mut unmeasured = world(43, Faults::default());
+    ok(404, 0)(unmeasured.request("GET", "/missing", None));
+    assert_eq!(unmeasured.client.retire_unmeasured(1), 0);
+    assert_eq!(unmeasured.client.retire_unmeasured(0), 1);
+    assert_eq!(unmeasured.client.retire_unmeasured(0), 0, "already retired");
 }
 
 /// `reused` tells a retry layer whether a close is the usual stale
@@ -219,17 +219,20 @@ fn only_a_failed_connect_names_the_address() {
     );
     assert_eq!(w.client.connect_failure.take(), Some(ADDR));
 
-    let mut w = world(7, Faults::default());
-    w.server.script(Behavior::GarbageHead);
+    let mut answered = world(7, Faults::default());
+    answered.server.script(Behavior::GarbageHead);
     assert_eq!(
-        w.request("GET", "/k", None),
+        answered.request("GET", "/k", None),
         Err(Error::Head(HttpError::BadStartLine))
     );
     assert_eq!(
-        w.client.connect_failure, None,
+        answered.client.connect_failure, None,
         "the address answered; it is the response that was bad"
     );
-    w.server.script(Behavior::Stall);
-    assert_eq!(w.request("GET", "/k", None), Err(Error::Timeout));
-    assert_eq!(w.client.connect_failure, None, "a timeout after connecting");
+    answered.server.script(Behavior::Stall);
+    assert_eq!(answered.request("GET", "/k", None), Err(Error::Timeout));
+    assert_eq!(
+        answered.client.connect_failure, None,
+        "a timeout after connecting"
+    );
 }

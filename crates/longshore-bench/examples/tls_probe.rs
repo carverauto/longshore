@@ -81,10 +81,10 @@ fn main() {
     let secrets = conn.dangerous_extract_secrets().expect("extract secrets");
     let ((tx_seq, tx_secret), (rx_seq, rx_secret)) = (secrets.tx, secrets.rx);
     let (mut tx, mut rx) = (Direction::new(), Direction::new());
-    let (s, k, iv) = keys(&tx_secret);
-    tx.set_keys(s, &k, &iv, tx_seq).unwrap();
-    let (s, k, iv) = keys(&rx_secret);
-    rx.set_keys(s, &k, &iv, rx_seq).unwrap();
+    let (tx_suite, tx_key, tx_iv) = keys(&tx_secret);
+    tx.set_keys(tx_suite, &tx_key, &tx_iv, tx_seq).unwrap();
+    let (rx_suite, rx_key, rx_iv) = keys(&rx_secret);
+    rx.set_keys(rx_suite, &rx_key, &rx_iv, rx_seq).unwrap();
     println!("keys extracted");
 
     let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
@@ -102,14 +102,14 @@ fn main() {
             if inbox.len() < len {
                 break;
             }
-            let (ctype, n) = rx
+            let (ctype, opened) = rx
                 .open(&inbox[..len], &mut out[..len - HEADER_LEN - TAG_LEN])
                 .expect("record must authenticate");
             let _: std::vec::Drain<'_, u8> = inbox.drain(..len);
             match ctype {
                 CONTENT_APPLICATION_DATA => {
                     counts[0] += 1;
-                    plain.extend_from_slice(&out[..n]);
+                    plain.extend_from_slice(&out[..opened]);
                 }
                 // Session tickets arrive after the handshake; nothing to do with them.
                 CONTENT_HANDSHAKE => counts[1] += 1,
@@ -122,7 +122,7 @@ fn main() {
         }
         match sock.read(&mut chunk) {
             Ok(0) | Err(_) => break,
-            Ok(n) => inbox.extend_from_slice(&chunk[..n]),
+            Ok(read) => inbox.extend_from_slice(&chunk[..read]),
         }
     }
     let text = String::from_utf8_lossy(&plain);

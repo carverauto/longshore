@@ -87,10 +87,10 @@ fn a_header_given_by_name_may_not_repeat_one_given_by_its_method() {
     let by_name = Options::new().header("x-amz-meta-owner", "b").unwrap();
     assert!(by_name.metadata("owner", "a").is_none());
     assert!(by_name.metadata("other", "a").is_some());
-    let by_name = Options::new()
+    let by_class = Options::new()
         .header("x-goog-storage-class", "COLDLINE")
         .unwrap();
-    assert!(by_name.storage_class("STANDARD").is_none());
+    assert!(by_class.storage_class("STANDARD").is_none());
     // A name that only resembles one is its own header.
     let o = Options::new()
         .metadata("owner", "a")
@@ -167,7 +167,7 @@ fn names_and_values_at_their_limits() {
         assert!(Options::new().header("x-bad", bad).is_none(), "{bad:?}");
     }
     // A refusal leaves the value it was asked of as it was.
-    let o = Options::new().content_type("a/b").unwrap();
-    assert!(o.header("bad name", "x").is_none());
-    assert_eq!(wire(&o, "x-amz-"), ["content-type: a/b"]);
+    let typed = Options::new().content_type("a/b").unwrap();
+    assert!(typed.header("bad name", "x").is_none());
+    assert_eq!(wire(&typed, "x-amz-"), ["content-type: a/b"]);
 }

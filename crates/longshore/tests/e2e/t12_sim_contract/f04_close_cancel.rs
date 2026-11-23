@@ -242,10 +242,13 @@ fn t1_f04_5_cancel_waiting_connect_frees_slot() {
         },
     )
     .unwrap();
-    let mut cs = drive_until(&mut io, &mut out, 100, |v| v.len() == 2).unwrap();
-    cs.sort_by_key(|c| c.token.0);
+    let mut connected = drive_until(&mut io, &mut out, 100, |v| v.len() == 2).unwrap();
+    connected.sort_by_key(|c| c.token.0);
     assert_eq!(
-        cs.iter().map(|c| (c.token.0, c.result)).collect::<Vec<_>>(),
+        connected
+            .iter()
+            .map(|c| (c.token.0, c.result))
+            .collect::<Vec<_>>(),
         vec![(3, 0), (4, 0)]
     );
 }

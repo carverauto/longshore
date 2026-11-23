@@ -13,14 +13,18 @@ fn parses_the_shared_credentials_format() {
         ("AKIDEXAMPLE", "wJalr/K7MDENG+bPxRfiCY")
     );
     // No sections at all.
-    let c = Credentials::parse(b"aws_secret_access_key = s\r\naws_access_key_id = a\r\n").unwrap();
-    assert_eq!((c.access_key(), c.secret_key()), ("a", "s"));
+    let unsectioned =
+        Credentials::parse(b"aws_secret_access_key = s\r\naws_access_key_id = a\r\n").unwrap();
+    assert_eq!(
+        (unsectioned.access_key(), unsectioned.secret_key()),
+        ("a", "s")
+    );
     // A later value replaces an earlier one.
-    let c = Credentials::parse(
+    let repeated = Credentials::parse(
         b"aws_access_key_id=old\naws_access_key_id=new\naws_secret_access_key=s",
     )
     .unwrap();
-    assert_eq!(c.access_key(), "new");
+    assert_eq!(repeated.access_key(), "new");
 }
 
 #[test]
@@ -65,7 +69,7 @@ fn bearer_tokens_are_held_whole_or_refused() {
     let c = Credentials::parse_bearer(format!("  {token}\n").as_bytes()).unwrap();
     assert_eq!((c.access_key(), c.secret_key()), ("", token.as_str()));
     assert_eq!(
-        Credentials::bearer(&"x".repeat(TOKEN_MAX)).map(|c| c.secret_key().len()),
+        Credentials::bearer(&"x".repeat(TOKEN_MAX)).map(|held| held.secret_key().len()),
         Some(TOKEN_MAX)
     );
     for bad in [
@@ -99,8 +103,11 @@ fn a_section_header_with_a_comment_still_ends_the_default_section() {
         (c.access_key(), c.secret_key()),
         ("AKIDDEFAULT", "secretdefault")
     );
-    let c = Credentials::parse(b"[prod]\naws_access_key_id = P\naws_secret_access_key = p\n[default] # mine\naws_access_key_id = D\naws_secret_access_key = d\n").unwrap();
-    assert_eq!((c.access_key(), c.secret_key()), ("D", "d"));
+    let after_prod = Credentials::parse(b"[prod]\naws_access_key_id = P\naws_secret_access_key = p\n[default] # mine\naws_access_key_id = D\naws_secret_access_key = d\n").unwrap();
+    assert_eq!(
+        (after_prod.access_key(), after_prod.secret_key()),
+        ("D", "d")
+    );
 }
 
 #[test]
@@ -169,16 +176,16 @@ fn which_lines_are_in_scope() {
     .unwrap();
     assert_eq!(pair(c), ("DEF".to_string(), "top".to_string()));
     // A `[default]` section given twice is read both times.
-    let c = Credentials::parse(
+    let twice = Credentials::parse(
         b"[default]\naws_access_key_id = ONE\n[other]\naws_access_key_id = NO\n[default]\naws_secret_access_key = two\n",
     )
     .unwrap();
-    assert_eq!(pair(c), ("ONE".to_string(), "two".to_string()));
+    assert_eq!(pair(twice), ("ONE".to_string(), "two".to_string()));
     // Spaces inside the brackets do not make it another section.
-    let c =
+    let spaced =
         Credentials::parse(b"[other]\n[ default ]\naws_access_key_id=A\naws_secret_access_key=s\n")
             .unwrap();
-    assert_eq!(pair(c), ("A".to_string(), "s".to_string()));
+    assert_eq!(pair(spaced), ("A".to_string(), "s".to_string()));
     for other in ["[Default]", "[profile default]", "[default2]"] {
         let text = format!("{other}\naws_access_key_id=A\naws_secret_access_key=s\n");
         assert!(Credentials::parse(text.as_bytes()).is_none(), "{other}");

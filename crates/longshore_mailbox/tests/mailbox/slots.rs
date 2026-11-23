@@ -133,31 +133,40 @@ fn call_future_await_wait_and_detach_tag_order() {
     // Blocking wait() path via worker thread.
     let tx2 = tx.clone();
     let h = std::thread::spawn(move || {
-        while let Recv::Message((slot, val)) = rx.recv_parked() {
-            if val == 999 {
-                let tag = rx.answer(slot, Ok(val));
+        while let Recv::Message((worker_slot, arg)) = rx.recv_parked() {
+            if arg == 999 {
+                let tag = rx.answer(worker_slot, Ok(arg));
                 assert_eq!(tag, Some(77));
                 // Verify slot was already freed into pool before tag returned.
-                let mut cx = Context::from_waker(Waker::noop());
+                let mut check_cx = Context::from_waker(Waker::noop());
                 let check_id = waiter_id();
-                assert_eq!(rx.pool().poll_take(check_id, &mut cx), Poll::Ready(slot));
-                rx.pool().give(slot);
+                assert_eq!(
+                    rx.pool().poll_take(check_id, &mut check_cx),
+                    Poll::Ready(worker_slot)
+                );
+                rx.pool().give(worker_slot);
                 break;
             }
-            assert_eq!(rx.answer(slot, Ok(val * 2)), None);
+            assert_eq!(rx.answer(worker_slot, Ok(arg * 2)), None);
         }
     });
 
-    assert_eq!(tx2.call(|slot| (slot, 10), Err(())).wait(), Ok(20));
+    assert_eq!(
+        tx2.call(|call_slot| (call_slot, 10), Err(())).wait(),
+        Ok(20)
+    );
 
     // Caller attaches tag 77 and detaches before answer.
     let mut waiter = SlotWaiter::new();
-    let mut cx = Context::from_waker(Waker::noop());
-    let Poll::Ready(Some(slot)) = waiter.poll_one(tx2.pool(), || !tx2.is_closed(), &mut cx) else {
+    let mut noop_cx = Context::from_waker(Waker::noop());
+    let Poll::Ready(Some(detach_slot)) =
+        waiter.poll_one(tx2.pool(), || !tx2.is_closed(), &mut noop_cx)
+    else {
         panic!("slot expected");
     };
-    tx2.send_slot(slot, Some(77), (slot, 999)).unwrap();
-    assert_eq!(tx2.detach(slot), None);
+    tx2.send_slot(detach_slot, Some(77), (detach_slot, 999))
+        .unwrap();
+    assert_eq!(tx2.detach(detach_slot), None);
     h.join().unwrap();
 }
 

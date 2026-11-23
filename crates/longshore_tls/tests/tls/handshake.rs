@@ -47,18 +47,18 @@ fn run_writing(
     let (mut at_server, mut at_client) = (0usize, 0usize);
     let mut buf = vec![0u8; room];
     for _ in 0..200_000 {
-        let n = client.write(&mut buf);
-        to_server.extend_from_slice(&buf[..n]);
-        let n = server.write(&mut buf);
-        to_client.extend_from_slice(&buf[..n]);
+        let client_out = client.write(&mut buf);
+        to_server.extend_from_slice(&buf[..client_out]);
+        let server_out = server.write(&mut buf);
+        to_client.extend_from_slice(&buf[..server_out]);
         at_server = (at_server + step).min(to_server.len());
         at_client = (at_client + step).min(to_client.len());
-        let used = server.read(&to_server[..at_server])?;
-        let _: std::vec::Drain<'_, u8> = to_server.drain(..used);
-        at_server -= used;
-        let used = client.read(&to_client[..at_client])?;
-        let _: std::vec::Drain<'_, u8> = to_client.drain(..used);
-        at_client -= used;
+        let server_used = server.read(&to_server[..at_server])?;
+        let _: std::vec::Drain<'_, u8> = to_server.drain(..server_used);
+        at_server -= server_used;
+        let client_used = client.read(&to_client[..at_client])?;
+        let _: std::vec::Drain<'_, u8> = to_client.drain(..client_used);
+        at_client -= client_used;
         if client.is_done() && server.is_done() && to_server.is_empty() {
             return Ok(to_client);
         }
@@ -113,16 +113,16 @@ fn handshake_completes_and_the_record_layer_takes_over_in_both_directions() {
             .into_iter()
             .enumerate()
         {
-            let n = ctx.seal(CONTENT_APPLICATION_DATA, msg, &mut rec).unwrap();
+            let c_len = ctx.seal(CONTENT_APPLICATION_DATA, msg, &mut rec).unwrap();
             assert_eq!(
-                srx.open(&rec[..n], &mut out),
+                srx.open(&rec[..c_len], &mut out),
                 Ok((CONTENT_APPLICATION_DATA, msg.len())),
                 "step {step} round {round} client to server"
             );
             assert_eq!(&out[..msg.len()], msg);
-            let n = stx.seal(CONTENT_APPLICATION_DATA, msg, &mut rec).unwrap();
+            let s_len = stx.seal(CONTENT_APPLICATION_DATA, msg, &mut rec).unwrap();
             assert_eq!(
-                crx.open(&rec[..n], &mut out),
+                crx.open(&rec[..s_len], &mut out),
                 Ok((CONTENT_APPLICATION_DATA, msg.len())),
                 "step {step} round {round} server to client"
             );
@@ -143,9 +143,9 @@ fn an_untrusted_certificate_is_refused() {
     );
     assert_eq!(run(&mut c, &mut s, 4096), Err(TlsError::BadCertificate));
     // And the public root set does not include a self-signed test certificate.
-    let cs = ClientSetup::with_public_roots();
-    let (mut c, mut s) = (
-        Handshake::client(&cs, NAME).unwrap(),
+    let public_cs = ClientSetup::with_public_roots();
+    (c, s) = (
+        Handshake::client(&public_cs, NAME).unwrap(),
         Handshake::server(&ss).unwrap(),
     );
     assert_eq!(run(&mut c, &mut s, 4096), Err(TlsError::BadCertificate));
@@ -167,9 +167,9 @@ fn a_certificate_for_another_name_is_refused() {
 fn finish_before_completion_and_garbage_input_are_errors() {
     let id = identity(NAME);
     let cs = ClientSetup::with_roots(&[&id.cert]).unwrap();
-    let c = Handshake::client(&cs, NAME).unwrap();
+    let unfinished = Handshake::client(&cs, NAME).unwrap();
     assert_eq!(
-        c.finish(&mut Direction::new(), &mut Direction::new()),
+        unfinished.finish(&mut Direction::new(), &mut Direction::new()),
         Err(TlsError::NotDone)
     );
     let mut c = Handshake::client(&cs, NAME).unwrap();
@@ -240,12 +240,12 @@ fn the_handshake_runs_inside_a_sealed_region_and_records_stay_allocation_free() 
         for _ in 0..1000 {
             an += c.write(&mut a[an..]);
             bn += s.write(&mut b[bn..]);
-            let used = s.read(&a[..an]).unwrap();
-            a.copy_within(used..an, 0);
-            an -= used;
-            let used = c.read(&b[..bn]).unwrap();
-            b.copy_within(used..bn, 0);
-            bn -= used;
+            let s_used = s.read(&a[..an]).unwrap();
+            a.copy_within(s_used..an, 0);
+            an -= s_used;
+            let c_used = c.read(&b[..bn]).unwrap();
+            b.copy_within(c_used..bn, 0);
+            bn -= c_used;
             if c.is_done() && s.is_done() && an == 0 {
                 break;
             }

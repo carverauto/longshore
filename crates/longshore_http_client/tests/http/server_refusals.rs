@@ -30,10 +30,10 @@ fn answer_to(request: &[u8]) -> String {
     let World {
         io, server, out, ..
     } = &mut w;
-    let complete = |io: &mut SimIo, got: u32| {
-        io.buf(RX)[..got as usize]
+    let complete = |sim: &mut SimIo, len: u32| {
+        sim.buf(RX)[..len as usize]
             .windows(4)
-            .any(|w| w == b"\r\n\r\n")
+            .any(|window| window == b"\r\n\r\n")
     };
     sealed(|| {
         while !complete(io, got) {
@@ -90,7 +90,10 @@ fn answer_to(request: &[u8]) -> String {
         }
     });
     let head = &w.io.buf(RX)[..got as usize];
-    let end = head.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let end = head
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap();
     String::from_utf8_lossy(&head[..end]).into_owned()
 }
 

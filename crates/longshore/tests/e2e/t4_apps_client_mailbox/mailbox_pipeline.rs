@@ -157,8 +157,8 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     let mut held = Vec::with_capacity(4);
     let mut w_hold = SlotWaiter::new();
     while held.len() < 4 {
-        let slot = block_on(core::future::poll_fn(|cx| {
-            w_hold.poll_one(tx0.pool(), || !tx0.is_closed(), cx)
+        let slot = block_on(core::future::poll_fn(|poll_cx| {
+            w_hold.poll_one(tx0.pool(), || !tx0.is_closed(), poll_cx)
         }))
         .expect("tx0 pool should yield all 4 slots");
         held.push(slot);

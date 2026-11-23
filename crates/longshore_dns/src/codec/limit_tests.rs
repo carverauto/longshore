@@ -92,11 +92,11 @@ fn label_types_that_do_not_exist_are_refused() {
             "question label {bad:#x}"
         );
         // And as an answer's owner name.
-        let mut r = response(&q, 0x8180, &[]);
-        record(&mut r, &[bad, b'x', 0], 1, &[1, 2, 3, 4]);
-        r[7] = 1;
+        let mut bad_owner = response(&q, 0x8180, &[]);
+        record(&mut bad_owner, &[bad, b'x', 0], 1, &[1, 2, 3, 4]);
+        bad_owner[7] = 1;
         assert_eq!(
-            parse_response(&r, 7, "x.io"),
+            parse_response(&bad_owner, 7, "x.io"),
             Err(DnsError::BadCompression),
             "owner label {bad:#x}"
         );
@@ -133,16 +133,16 @@ fn records_of_another_class_are_not_addresses() {
     r[class_at + 1] = 3; // CHAOS
     assert_eq!(parse_response(&r, 7, "x.io"), Err(DnsError::NoAddresses));
     // Nor is a question of another class ours, or two questions.
-    let mut r = response(&q, 0x8180, &[(1, &[192, 0, 2, 7])]);
-    r[q.len() - 1] = 3;
+    let mut question_class = response(&q, 0x8180, &[(1, &[192, 0, 2, 7])]);
+    question_class[q.len() - 1] = 3;
     assert_eq!(
-        parse_response(&r, 7, "x.io"),
+        parse_response(&question_class, 7, "x.io"),
         Err(DnsError::QuestionMismatch)
     );
-    let mut r = response(&q, 0x8180, &[(1, &[192, 0, 2, 7])]);
-    r[5] = 2;
+    let mut two_questions = response(&q, 0x8180, &[(1, &[192, 0, 2, 7])]);
+    two_questions[5] = 2;
     assert_eq!(
-        parse_response(&r, 7, "x.io"),
+        parse_response(&two_questions, 7, "x.io"),
         Err(DnsError::QuestionMismatch)
     );
 }

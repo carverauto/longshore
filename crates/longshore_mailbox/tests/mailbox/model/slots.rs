@@ -105,18 +105,20 @@ fn slots_detach_frees_slot_before_returning_tag() {
 
         // Single-waiter check: pool.give(slot) has already executed by the time
         // answer() returns Some(tag).
-        let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
-        let Poll::Ready(Some(s)) = w1.poll_one(tx.pool(), || !tx.is_closed(), &mut cx) else {
+        let (tx_single, mut rx_single) = mailbox_parked::<u32, u32>(cfg);
+        let Poll::Ready(Some(s)) =
+            w1.poll_one(tx_single.pool(), || !tx_single.is_closed(), &mut cx)
+        else {
             panic!("slot");
         };
-        tx.send_slot(s, Some(88), s).unwrap();
-        assert_eq!(tx.detach(s), None);
-        let Recv::Message(s_rx) = rx.recv_parked() else {
+        tx_single.send_slot(s, Some(88), s).unwrap();
+        assert_eq!(tx_single.detach(s), None);
+        let Recv::Message(s_rx) = rx_single.recv_parked() else {
             panic!("msg");
         };
-        assert_eq!(rx.answer(s_rx, 1), Some(88));
+        assert_eq!(rx_single.answer(s_rx, 1), Some(88));
         assert_eq!(
-            rx.pool().poll_take(999, &mut cx),
+            rx_single.pool().poll_take(999, &mut cx),
             Poll::Ready(s_rx),
             "slot must be returned to pool before tag is returned"
         );
@@ -158,8 +160,8 @@ fn slots_close_answers_first_then_unanswered_without_overwriting() {
 
         let h = loom::thread::spawn(move || {
             let mut f = pin!(tx2.call(|s| (s, 20), Err(())));
-            let mut cx = Context::from_waker(Waker::noop());
-            if let Poll::Ready(res) = f.as_mut().poll(&mut cx) {
+            let mut thread_cx = Context::from_waker(Waker::noop());
+            if let Poll::Ready(res) = f.as_mut().poll(&mut thread_cx) {
                 return res;
             }
             block_on(f)
@@ -228,14 +230,14 @@ fn slots_poll_many_races_give_and_stop() {
         });
 
         let mut w_many = SlotWaiter::new();
-        let res = block_on(core::future::poll_fn(|cx| {
+        let res = block_on(core::future::poll_fn(|poll_cx| {
             w_many.poll_many(
                 &[&tx0, &tx1],
                 0,
                 |s| s.pool(),
                 |s| !s.is_closed(),
                 false,
-                cx,
+                poll_cx,
             )
         }));
 
@@ -281,8 +283,8 @@ fn slots_poll_one_races_stop_and_give() {
         });
 
         let mut w = SlotWaiter::new();
-        let got = block_on(core::future::poll_fn(|cx| {
-            w.poll_one(tx.pool(), || !tx.is_closed(), cx)
+        let got = block_on(core::future::poll_fn(|poll_cx| {
+            w.poll_one(tx.pool(), || !tx.is_closed(), poll_cx)
         }));
         h_give.join().unwrap();
         h_stop.join().unwrap();

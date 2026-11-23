@@ -106,12 +106,12 @@ fn optional_headers_are_sent_again_on_a_retry() {
     assert_eq!(header_in(head, "x-amz-meta-owner"), Some(&b"team a"[..]));
     // A plain store of the same key afterwards carries none of them.
     w.put(3, "k", 2);
-    let Outcome::Stat(stat) = w.stat(4, "k", Some(RX)) else {
+    let Outcome::Stat(plain) = w.stat(4, "k", Some(RX)) else {
         panic!("expected a stat")
     };
-    let head = &w.io.buf(RX)[..stat.head_len as usize];
-    assert_eq!(header_in(head, "x-amz-meta-owner"), None);
-    assert_eq!(header_in(head, "content-type"), None);
+    let plain_head = &w.io.buf(RX)[..plain.head_len as usize];
+    assert_eq!(header_in(plain_head, "x-amz-meta-owner"), None);
+    assert_eq!(header_in(plain_head, "content-type"), None);
 }
 
 #[test]
@@ -170,17 +170,17 @@ fn a_copy_answered_with_an_error_document_is_not_a_copy() {
     w.server
         .script(Behavior::ErrorDocument(200, "AccessDenied"));
     w.s3.copy(&mut w.io, 3, "src", "other").unwrap();
-    let d = w.last();
+    let denied = w.last();
     assert_eq!(
-        (d.outcome, d.attempts),
+        (denied.outcome, denied.attempts),
         (Outcome::Fatal(Fatal::ErrorDocument), 1)
     );
     assert!(w.server.object("/other").is_none());
     // The response to a copy is lost: the retry copies again, harmlessly.
     w.server.script(Behavior::ApplyThenClose);
     w.s3.copy(&mut w.io, 4, "src", "third").unwrap();
-    let d = w.last();
-    assert_eq!((d.outcome, d.attempts), (Outcome::Copied, 2));
+    let recopied = w.last();
+    assert_eq!((recopied.outcome, recopied.attempts), (Outcome::Copied, 2));
 }
 
 #[test]
@@ -196,11 +196,11 @@ fn a_batch_erase_reports_the_keys_it_could_not_erase() {
     w.server.script(Behavior::Status(503));
     w.s3.erase_many(&mut w.io, 10, TX, len, RX).unwrap();
     let d = w.last();
-    let Outcome::ErasedMany { len } = d.outcome else {
+    let Outcome::ErasedMany { len: report } = d.outcome else {
         panic!("expected a batch result, got {d:?}")
     };
     assert_eq!(d.attempts, 2);
-    let failures: Vec<_> = Failures::parse(&w.io.buf(RX)[..len as usize])
+    let failures: Vec<_> = Failures::parse(&w.io.buf(RX)[..report as usize])
         .unwrap()
         .map(|f| f.unwrap())
         .collect();
@@ -222,7 +222,7 @@ fn a_delimiter_lists_one_level() {
     for (token, key) in [(1, "a/1"), (2, "a/2"), (3, "b/1"), (4, "top")] {
         w.put(token, key, token as u8);
     }
-    let list = |w: &mut World, prefix: &str, after: Option<&str>, max: u16| {
+    let mut list = |prefix: &str, after: Option<&str>, max: u16| {
         w.s3.list_with(&mut w.io, 20, prefix, after, max, Some("/"), RX)
             .unwrap();
         let Outcome::Listed { len } = w.last().outcome else {
@@ -239,24 +239,24 @@ fn a_delimiter_lists_one_level() {
             .collect();
         (keys, prefixes, listing.is_truncated)
     };
-    let (keys, prefixes, truncated) = list(&mut w, "", None, 100);
+    let (mut keys, mut prefixes, mut truncated) = list("", None, 100);
     assert_eq!(keys, [b"top"]);
     assert_eq!(prefixes, [b"a/", b"b/"]);
     assert!(!truncated);
 
     // Below a prefix the keys themselves are listed.
-    let (keys, prefixes, _) = list(&mut w, "a/", None, 100);
+    (keys, prefixes, _) = list("a/", None, 100);
     assert_eq!(keys, [b"a/1", b"a/2"]);
     assert!(prefixes.is_empty());
 
     // Paging by the last key, with pages that end on plain keys.
-    let (keys, prefixes, truncated) = list(&mut w, "a/", None, 1);
+    (keys, prefixes, truncated) = list("a/", None, 1);
     assert_eq!(keys, [b"a/1"]);
     assert!(prefixes.is_empty() && truncated);
-    let (keys, prefixes, truncated) = list(&mut w, "a/", Some("a/1"), 1);
+    (keys, prefixes, truncated) = list("a/", Some("a/1"), 1);
     assert_eq!(keys, [b"a/2"]);
     assert!(prefixes.is_empty() && !truncated);
-    let (keys, prefixes, truncated) = list(&mut w, "", Some("b/1"), 1);
+    (keys, prefixes, truncated) = list("", Some("b/1"), 1);
     assert_eq!(keys, [b"top"]);
     assert!(prefixes.is_empty() && !truncated);
 
@@ -322,7 +322,7 @@ fn a_presigned_url_carries_a_port_that_is_not_the_default() {
 fn a_batch_erase_whose_checksum_is_refused_is_sent_again() {
     let mut w = world_with(9, Faults::default(), 3, true);
     w.put(1, "a", 1);
-    let len = write_manifest(w.io.buf(TX), &["a"]).unwrap() as u32;
+    let mut len = write_manifest(w.io.buf(TX), &["a"]).unwrap() as u32;
     w.server.script(Behavior::ErrorDocument(400, "BadDigest"));
     w.s3.erase_many(&mut w.io, 10, TX, len, RX).unwrap();
     let d = w.last();
@@ -340,7 +340,7 @@ fn a_batch_erase_whose_checksum_is_refused_is_sent_again() {
 
     // Any other refusal is final.
     w.put(2, "b", 2);
-    let len = write_manifest(w.io.buf(TX), &["b"]).unwrap() as u32;
+    len = write_manifest(w.io.buf(TX), &["b"]).unwrap() as u32;
     w.server
         .script(Behavior::ErrorDocument(400, "MalformedXML"));
     w.s3.erase_many(&mut w.io, 12, TX, len, RX).unwrap();

@@ -93,19 +93,23 @@ fn addresses_whose_segments_are_alike_all_stay_in_use() {
 
 #[test]
 fn a_minimum_number_of_addresses_is_kept_by_admitting_the_next_largest() {
-    let (_io, mut r, _s, _out) = resolved(Some(2));
     let all = zone_addrs(0);
-    for (ip, size) in [(all[0], 1200), (all[1], LARGE), (all[2], SMALL)] {
-        let _: u32 = r.connected(0, ip, seg(size));
+    {
+        let (_io, mut r, _s, _out) = resolved(Some(2));
+        for (ip, size) in [(all[0], 1200), (all[1], LARGE), (all[2], SMALL)] {
+            let _: u32 = r.connected(0, ip, seg(size));
+        }
+        assert_eq!(r.segment_floor(0), SMALL);
+        assert_eq!(handed_out(&mut r, 9), [all[1], all[2]]);
     }
-    assert_eq!(r.segment_floor(0), SMALL);
-    assert_eq!(handed_out(&mut r, 9), [all[1], all[2]]);
     // Asking for more addresses than there are keeps them all.
-    let (_io, mut r, _s, _out) = resolved(Some(8));
-    for (ip, size) in [(all[0], 1200), (all[1], LARGE), (all[2], SMALL)] {
-        let _: u32 = r.connected(0, ip, seg(size));
+    {
+        let (_io, mut r, _s, _out) = resolved(Some(8));
+        for (ip, size) in [(all[0], 1200), (all[1], LARGE), (all[2], SMALL)] {
+            let _: u32 = r.connected(0, ip, seg(size));
+        }
+        assert_eq!(handed_out(&mut r, 9), all);
     }
-    assert_eq!(handed_out(&mut r, 9), all);
 }
 
 #[test]

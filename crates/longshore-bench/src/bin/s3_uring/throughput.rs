@@ -81,10 +81,10 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
     while !s3.ready() {
         turn(&mut io, &mut s3, &mut out);
     }
-    let start_one = |s3: &mut S3, io: &mut UringIo, i: u32| {
+    let start_one = |client: &mut S3, ring: &mut UringIo, i: u32| {
         let r = if put {
-            s3.store(
-                io,
+            client.store(
+                ring,
                 i as u64,
                 &keys[i as usize],
                 BufId(first + i),
@@ -92,7 +92,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
                 checksum,
             )
         } else {
-            s3.fetch(io, i as u64, &keys[i as usize], None, BufId(first + i))
+            client.fetch(ring, i as u64, &keys[i as usize], None, BufId(first + i))
         };
         if r.is_err() {
             std::process::exit(4);

@@ -145,8 +145,8 @@ pub fn run_mini_fileserver<IO: Io>(
     let mut collected = Vec::new();
     let mut sent_ok = false;
     while collected.len() < 256 || !sent_ok {
-        let cs = drive_until(io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
-        for c in cs {
+        let batch = drive_until(io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
+        for c in batch {
             if c.token.0 == 20 {
                 assert_eq!(c.result, 256);
                 sent_ok = true;

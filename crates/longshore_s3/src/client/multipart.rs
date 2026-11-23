@@ -72,9 +72,9 @@ impl Client {
             Some(buf),
             len as u32,
             early,
-            |f, number| match f {
+            |f, part_number| match f {
                 Finished::Outcome(Outcome::PartStored { tag, checksum }) => Ok(Part {
-                    number,
+                    number: part_number,
                     tag: *tag,
                     checksum: checksum.map(longshore_crc::crc64_header_value),
                 }),

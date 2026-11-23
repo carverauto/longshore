@@ -278,7 +278,7 @@ pub fn bucket_in_host(vendor: Vendor, host: &str) -> &str {
                 }
                 at += label.len() + 1;
             }
-            endpoint.map_or(first, |at| &host[..at - 1])
+            endpoint.map_or(first, |offset| &host[..offset - 1])
         }
     }
 }

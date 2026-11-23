@@ -141,32 +141,32 @@ fn bench(c: &mut Criterion) {
         } else {
             format!("{size}B")
         };
-        let mut g = c.benchmark_group(format!("crc64_nvme/{label}"));
-        let _: &mut BenchmarkGroup<'_, WallTime> = g.throughput(Throughput::Bytes(size as u64));
+        let mut g64 = c.benchmark_group(format!("crc64_nvme/{label}"));
+        let _: &mut BenchmarkGroup<'_, WallTime> = g64.throughput(Throughput::Bytes(size as u64));
         for (name, f) in crc64 {
             let _: &mut BenchmarkGroup<'_, WallTime> =
-                g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
+                g64.bench_function(name, |b| b.iter(|| f(black_box(&data))));
         }
         for k in &kernels {
-            let _: &mut BenchmarkGroup<'_, WallTime> = g
+            let _: &mut BenchmarkGroup<'_, WallTime> = g64
                 .bench_function(format!("longshore {}", k.name), |b| {
                     b.iter(|| !k.crc64_update(!0, black_box(&data)))
                 });
         }
-        g.finish();
-        let mut g = c.benchmark_group(format!("crc32c/{label}"));
-        let _: &mut BenchmarkGroup<'_, WallTime> = g.throughput(Throughput::Bytes(size as u64));
+        g64.finish();
+        let mut g32 = c.benchmark_group(format!("crc32c/{label}"));
+        let _: &mut BenchmarkGroup<'_, WallTime> = g32.throughput(Throughput::Bytes(size as u64));
         for (name, f) in crc32c {
             let _: &mut BenchmarkGroup<'_, WallTime> =
-                g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
+                g32.bench_function(name, |b| b.iter(|| f(black_box(&data))));
         }
         for k in &kernels {
-            let _: &mut BenchmarkGroup<'_, WallTime> = g
+            let _: &mut BenchmarkGroup<'_, WallTime> = g32
                 .bench_function(format!("longshore {}", k.name), |b| {
                     b.iter(|| !k.crc32c_update(!0, black_box(&data)))
                 });
         }
-        g.finish();
+        g32.finish();
     }
 }
 

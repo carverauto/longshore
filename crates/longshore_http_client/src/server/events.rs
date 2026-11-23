@@ -159,7 +159,7 @@ impl Server {
             let i = self
                 .conns
                 .iter()
-                .position(|c| c.state == State::Accepting)
+                .position(|conn| conn.state == State::Accepting)
                 .expect("an accept was in flight");
             if c.result < 0 {
                 self.conns[i].state = State::Free;

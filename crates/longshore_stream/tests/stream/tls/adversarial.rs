@@ -92,8 +92,8 @@ fn tls_stream_borrow_fallback_make_room_compaction_and_zero_send() {
     // 3. Zero-length TLS send completes Done(0); negative on_send returns Done(err).
     client.send(&mut io, C_TX, 0, 0, u32::MAX);
     io.tick(true, &mut out).unwrap();
-    let c = out.pop().unwrap();
-    assert_eq!(client.on_send(&mut io, c.result), Step::Done(0));
+    let empty_send = out.pop().unwrap();
+    assert_eq!(client.on_send(&mut io, empty_send.result), Step::Done(0));
     assert_eq!(client.on_send(&mut io, -EPIPE), Step::Done(-EPIPE));
 
     // 4. Spill triggers IdleCheck::Dirty; dst_max == 0 preserves spill; draining restores Clean.
@@ -196,8 +196,11 @@ fn tls_stream_idle_edges_corrupt_records_handshake_errors_and_reset_reuse() {
     }
     assert_eq!(server.check_idle(&mut io, SCRATCH, 0), IdleCheck::Pending);
     io.tick(true, &mut out).unwrap();
-    let c = out.pop().unwrap();
-    assert_eq!(server.on_idle_check(&mut io, c.result), IdleCheck::Dirty);
+    let idle_check = out.pop().unwrap();
+    assert_eq!(
+        server.on_idle_check(&mut io, idle_check.result),
+        IdleCheck::Dirty
+    );
 
     // 2. Partial record on -EAGAIN -> IdleCheck::Closed.
     let (mut io2, _client2, mut server2, _, _) =

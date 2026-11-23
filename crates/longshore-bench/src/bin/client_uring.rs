@@ -212,8 +212,8 @@ fn main() {
                     } else {
                         client.buffer_blocking()
                     };
-                    for (i, b) in body.as_mut_slice().iter_mut().enumerate() {
-                        *b = pattern(caller, round, i);
+                    for (i, byte) in body.as_mut_slice().iter_mut().enumerate() {
+                        *byte = pattern(caller, round, i);
                     }
                     let (stored, body) = if asynchronous {
                         block_on(client.store(&key, body, len))
@@ -233,14 +233,14 @@ fn main() {
                         .as_slice()
                         .iter()
                         .enumerate()
-                        .all(|(i, b)| *b == pattern(caller, round, i));
+                        .all(|(i, byte)| *byte == pattern(caller, round, i));
                     assert!(ok, "caller {caller} round {round}: bytes differ");
                     let (ranged, into) = client.fetch_range(&key, 100, 199, into).wait();
                     assert_eq!(ranged, Ok(Some(100)));
                     assert!(into.as_slice()[..100]
                         .iter()
                         .enumerate()
-                        .all(|(i, b)| *b == pattern(caller, round, 100 + i)));
+                        .all(|(i, byte)| *byte == pattern(caller, round, 100 + i)));
                     drop(into);
                 }
                 assert_eq!(client.erase(&key).wait(), Ok(()));

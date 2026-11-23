@@ -172,22 +172,22 @@ impl Server {
         }
         if let Some((first, last)) = range {
             let mut value = [0u8; 48];
-            let mut n = 0;
+            let mut len = 0;
             for part in [
                 (b"bytes ".as_slice(), None),
                 (b"", Some(first)),
                 (b"-", Some(last)),
                 (b"/", Some(o.len)),
             ] {
-                value[n..n + part.0.len()].copy_from_slice(part.0);
-                n += part.0.len();
+                value[len..len + part.0.len()].copy_from_slice(part.0);
+                len += part.0.len();
                 if let Some(v) = part.1 {
                     let (d, at) = decimal(v);
-                    value[n..n + d.len() - at].copy_from_slice(&d[at..]);
-                    n += d.len() - at;
+                    value[len..len + d.len() - at].copy_from_slice(&d[at..]);
+                    len += d.len() - at;
                 }
             }
-            let _: &mut HeadWriter<'_> = w.header("Content-Range", &value[..n]);
+            let _: &mut HeadWriter<'_> = w.header("Content-Range", &value[..len]);
         }
         let (d, at) = decimal(self.requests as u32);
         let mut id = *b"sim-request-0000000000";

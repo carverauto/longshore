@@ -191,8 +191,8 @@ fn arbitrary_answer_sections_are_safe(tc: TestCase) {
             assert!((1..=ADDRS_MAX.min(count as usize)).contains(&a.len));
             for addr in a.as_slice() {
                 let octets = match addr {
-                    IpAddr::V4(a) => a.octets().to_vec(),
-                    IpAddr::V6(a) => a.octets().to_vec(),
+                    IpAddr::V4(v4) => v4.octets().to_vec(),
+                    IpAddr::V6(v6) => v6.octets().to_vec(),
                 };
                 assert_eq!(addr.is_ipv6(), record == Record::Aaaa);
                 assert!(

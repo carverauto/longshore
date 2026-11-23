@@ -273,14 +273,13 @@ fn resets_never_hang_a_request_or_leak_a_slot() {
 fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
     use hegel::generators as gs;
     let seed = tc.draw(gs::integers::<u64>());
-    let ppm =
-        |tc: &hegel::TestCase, max: u32| tc.draw(gs::integers::<u32>().min_value(0).max_value(max));
+    let ppm = |max: u32| tc.draw(gs::integers::<u32>().min_value(0).max_value(max));
     let faults = Faults {
-        reset: ppm(&tc, 20_000),
-        short_send: ppm(&tc, 500_000),
-        partial_recv: ppm(&tc, 500_000),
-        delay: ppm(&tc, 400_000),
-        connect_refused: ppm(&tc, 100_000),
+        reset: ppm(20_000),
+        short_send: ppm(500_000),
+        partial_recv: ppm(500_000),
+        delay: ppm(400_000),
+        connect_refused: ppm(100_000),
         ..Faults::default()
     };
     let ops = tc.draw(
@@ -321,14 +320,14 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
             1 => match w.request("GET", "/k", None) {
                 Ok(r) if r.status == 200 => {
                     let got = w.io.buf(RX)[..r.body_len as usize].to_vec();
-                    let matches = |(len, pattern): (u32, u8), w: &mut World| {
-                        w.fill_tx(len, pattern);
-                        len == r.body_len && w.io.buf(TX)[..len as usize] == got[..]
+                    let matches = |(put_len, put_pattern): (u32, u8)| {
+                        w.fill_tx(put_len, put_pattern);
+                        put_len == r.body_len && w.io.buf(TX)[..put_len as usize] == got[..]
                     };
                     let candidates: Vec<(u32, u8)> =
                         known.into_iter().chain(maybe.iter().copied()).collect();
                     assert!(
-                        candidates.into_iter().any(|c| matches(c, &mut w)),
+                        candidates.into_iter().any(matches),
                         "seed {seed} step {step}: GET returned {} bytes matching no PUT",
                         r.body_len
                     );

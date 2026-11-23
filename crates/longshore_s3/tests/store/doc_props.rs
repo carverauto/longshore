@@ -254,7 +254,7 @@ fn a_report_of_failures_is_read_back(tc: TestCase) {
 fn a_header_is_found_in_a_head_by_name(tc: TestCase) {
     const NAME: &[u8] = b"abcdefghijklmnopqrstuvwxyz-";
     const VALUE: &[u8] = b"abcXYZ019/+=;:,.\"'()*_~ ";
-    let pick = |tc: &TestCase, alphabet: &[u8], min: usize| -> String {
+    let pick = |alphabet: &[u8], min: usize| -> String {
         tc.draw(gs::binary().min_size(min).max_size(12))
             .iter()
             .map(|b| alphabet[*b as usize % alphabet.len()] as char)
@@ -262,7 +262,7 @@ fn a_header_is_found_in_a_head_by_name(tc: TestCase) {
     };
     let headers: Vec<(String, String)> = (0..tc
         .draw(gs::integers::<usize>().min_value(0).max_value(6)))
-        .map(|i| (format!("h{i}{}", pick(&tc, NAME, 0)), pick(&tc, VALUE, 0)))
+        .map(|i| (format!("h{i}{}", pick(NAME, 0)), pick(VALUE, 0)))
         .collect();
     let mut head = String::from("HTTP/1.1 200 OK\r\n");
     for (name, value) in &headers {

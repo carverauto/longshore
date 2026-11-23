@@ -61,7 +61,7 @@ pub(super) fn bench(a: &Args, put: bool) {
     };
     let mut out = Completions::new(64);
     let size = a.size;
-    let start_one = |client: &mut Client, io: &mut UringIo, i: u32| {
+    let start_one = |http: &mut Client, ring: &mut UringIo, i: u32| {
         let body = BufId(i);
         let link = i as usize % addrs.len();
         let (addr, host_id) = (addrs[link], link as u16);
@@ -71,7 +71,7 @@ pub(super) fn bench(a: &Args, put: bool) {
         let checksum: [(&str, &[u8]); 1];
         let headers: &[(&str, &[u8])] = if put && crc {
             sum = longshore::checksum::crc64_header_value(longshore::checksum::crc64_nvme(
-                &io.buf(body)[..size as usize],
+                &ring.buf(body)[..size as usize],
             ));
             checksum = [("x-amz-checksum-crc64nvme", &sum)];
             &checksum
@@ -101,7 +101,7 @@ pub(super) fn bench(a: &Args, put: bool) {
                 response_buf: Some(body),
             }
         };
-        client.start(io, i as u64, &req)
+        http.start(ring, i as u64, &req)
     };
     for i in 0..n {
         start_one(&mut client, &mut io, i).unwrap_or_else(|e| die(&format!("start: {e:?}")));
@@ -123,11 +123,11 @@ pub(super) fn bench(a: &Args, put: bool) {
         let (mut bytes, mut requests) = (0u64, 0u64);
         // Formatting would allocate; report start errors other than Busy by exit code.
         let restart =
-            |client: &mut Client, io: &mut UringIo, i: u32, waiting: &mut [bool]| match start_one(
-                client, io, i,
+            |http: &mut Client, ring: &mut UringIo, i: u32, retry: &mut [bool]| match start_one(
+                http, ring, i,
             ) {
-                Ok(()) => waiting[i as usize] = false,
-                Err(Error::Busy) => waiting[i as usize] = true,
+                Ok(()) => retry[i as usize] = false,
+                Err(Error::Busy) => retry[i as usize] = true,
                 Err(_) => std::process::exit(3),
             };
         while io.now_ns() < deadline {
@@ -162,10 +162,10 @@ pub(super) fn bench(a: &Args, put: bool) {
     let wall = (io.now_ns() - t0) as f64 / 1e9;
     let cpu = thread_cpu_secs() - cpu0;
     let core = match (a.cpu, core0) {
-        (Some(c), Some((b0, t0))) => {
-            let (b1, t1) = core_busy_and_total(c);
-            if t1 > t0 {
-                (b1 - b0) as f64 / (t1 - t0) as f64
+        (Some(c), Some((b0, total0))) => {
+            let (b1, total1) = core_busy_and_total(c);
+            if total1 > total0 {
+                (b1 - b0) as f64 / (total1 - total0) as f64
             } else {
                 0.0
             }

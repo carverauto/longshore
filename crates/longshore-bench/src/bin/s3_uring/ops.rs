@@ -88,15 +88,15 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
     };
     let mut seq = 0u64;
     let mut started = vec![0u64; conns as usize];
-    let mut start_one = |s3: &mut S3, io: &mut UringIo, i: u32, started: &mut [u64]| {
+    let mut start_one = |client: &mut S3, ring: &mut UringIo, i: u32, start_ns: &mut [u64]| {
         let mut key = [0u8; 96];
         let buf = BufId(first + i);
         let r = match kind {
             "put-new" => {
                 seq += 1;
                 let n = key_for(seq, &mut key);
-                s3.store_no_clobber(
-                    io,
+                client.store_no_clobber(
+                    ring,
                     i as u64,
                     core::str::from_utf8(&key[..n]).unwrap(),
                     buf,
@@ -106,8 +106,8 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
             }
             "get-range" => {
                 let n = key_for(i as u64, &mut key);
-                s3.fetch(
-                    io,
+                client.fetch(
+                    ring,
                     i as u64,
                     core::str::from_utf8(&key[..n]).unwrap(),
                     Some((0, RANGE.min(size as u64) - 1)),
@@ -117,14 +117,14 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
             "erase" => {
                 seq += 1;
                 let n = key_for(1_000_000_000 + seq, &mut key);
-                s3.erase(io, i as u64, core::str::from_utf8(&key[..n]).unwrap())
+                client.erase(ring, i as u64, core::str::from_utf8(&key[..n]).unwrap())
             }
-            _ => s3.list(io, i as u64, &list_prefix, None, 1000, buf),
+            _ => client.list(ring, i as u64, &list_prefix, None, 1000, buf),
         };
         if r.is_err() {
             std::process::exit(4);
         }
-        started[i as usize] = io.now_ns();
+        start_ns[i as usize] = ring.now_ns();
     };
     for i in 0..conns {
         start_one(&mut s3, &mut io, i, &mut started);

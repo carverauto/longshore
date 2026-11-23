@@ -108,8 +108,8 @@ fn main() {
         let path = format!("/tmp/longshore-echo-uring-{}.txt", std::process::id());
         let missing = io.register_file("/nonexistent/longshore-file").unwrap();
         let file = io.register_file(&path).unwrap();
-        let mut read = |io: &mut UringIo, f| {
-            io.submit(
+        let mut read = |ring: &mut UringIo, f| {
+            ring.submit(
                 Token(1),
                 Op::ReadFile {
                     file: f,
@@ -120,7 +120,7 @@ fn main() {
             )
             .unwrap();
             loop {
-                io.tick(true, &mut out).unwrap();
+                ring.tick(true, &mut out).unwrap();
                 if let Some(c) = out.pop() {
                     return c.result;
                 }
@@ -292,10 +292,10 @@ fn main() {
     {
         use longshore::io::{Io, Op, Sock, Token};
         let open_fds = || std::fs::read_dir("/proc/self/fd").unwrap().count();
-        let mut run = |io: &mut UringIo, op: Op| {
-            io.submit(Token(1), op).unwrap();
+        let mut run = |ring: &mut UringIo, op: Op| {
+            ring.submit(Token(1), op).unwrap();
             loop {
-                io.tick(true, &mut out).unwrap();
+                ring.tick(true, &mut out).unwrap();
                 if let Some(c) = out.pop() {
                     break c.result;
                 }

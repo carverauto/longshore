@@ -218,8 +218,8 @@ fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
             },
         )
         .unwrap();
-        let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-        if cs.iter().any(|c| c.token == send_tok && c.result > 0) {
+        let drained = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
+        if drained.iter().any(|c| c.token == send_tok && c.result > 0) {
             send_done = true;
             break;
         }

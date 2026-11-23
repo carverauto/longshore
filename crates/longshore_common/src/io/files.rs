@@ -157,12 +157,11 @@ impl FileTable {
                 path_len,
                 flags,
             } => {
-                let s = self.slots.get(slot.0 as usize).ok_or(-EBADF)?;
+                let s = self.slots.get_mut(slot.0 as usize).ok_or(-EBADF)?;
                 validate::check_path(pool, limits, path_buf, path_off, path_len)?;
                 if !s.is_free_for_open() {
                     return Err(-EBUSY);
                 }
-                let s = &mut self.slots[slot.0 as usize];
                 s.opens += 1;
                 s.direct = flags.direct;
                 s.next_direct = flags.direct;
@@ -231,8 +230,7 @@ impl FileTable {
                     path_len,
                     flags,
                 } => {
-                    let s = self.sync_sim(slot, g).map_err(|e| (idx, e))?;
-                    let can_open = s.sim_can_open;
+                    let can_open = self.sync_sim(slot, g).map_err(|e| (idx, e))?.sim_can_open;
                     validate::check_path(pool, limits, path_buf, path_off, path_len)
                         .map_err(|e| (idx, e))?;
                     if !can_open {
@@ -246,8 +244,8 @@ impl FileTable {
                     }
                 }
                 Op::FileClose { slot } => {
-                    let s = self.sync_sim(slot, g).map_err(|e| (idx, e))?;
-                    if !s.sim_active {
+                    let active = self.sync_sim(slot, g).map_err(|e| (idx, e))?.sim_active;
+                    if !active {
                         Err(-EBADF)
                     } else {
                         let s = &mut self.slots[slot.0 as usize];

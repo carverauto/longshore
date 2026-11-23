@@ -90,8 +90,8 @@ fn t2_f03_3_read_file_absent_returns_enoent() {
         },
     )
     .unwrap();
-    let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!(cs[0].result, 2);
+    let read = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
+    assert_eq!(read[0].result, 2);
     assert_eq!(&io.buf(BufId(0))[..2], b"ok");
 }
 
@@ -136,6 +136,6 @@ fn t2_f03_5_connect_refused_fault_leaves_slot_reusable() {
         },
     )
     .unwrap();
-    let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!(cs[0].result, 0);
+    let reused = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
+    assert_eq!(reused[0].result, 0);
 }

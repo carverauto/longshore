@@ -273,14 +273,14 @@ pub fn raw_exchange(
         out,
         ..
     } = &mut w;
-    let recv = |io: &mut SimIo, got: u32| {
-        io.submit(
+    let recv = |sim: &mut SimIo, at: u32| {
+        sim.submit(
             Token(RECV),
             Op::Recv {
                 sock: PEER_SOCK,
                 buf: TX,
-                off: got,
-                len: IN_MAX - got,
+                off: at,
+                len: IN_MAX - at,
             },
         )
         .unwrap()

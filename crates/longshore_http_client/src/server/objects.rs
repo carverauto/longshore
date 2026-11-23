@@ -26,9 +26,9 @@ impl Server {
             Behavior::CloseBeforeResponse => return self.close(io, i),
             Behavior::TlsAlert(description) => {
                 // Sent like a two-byte head; the connection closes after it.
-                let c = &mut self.conns[i];
-                (c.head_len, c.body_len, c.close_after) = (2, 0, true);
-                c.state = State::SendHead { off: 0 };
+                let conn = &mut self.conns[i];
+                (conn.head_len, conn.body_len, conn.close_after) = (2, 0, true);
+                conn.state = State::SendHead { off: 0 };
                 let buf = self.head_buf(i);
                 return self.streams[i].send_alert(io, buf, 0, 2, description);
             }

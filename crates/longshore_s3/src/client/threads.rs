@@ -252,8 +252,8 @@ impl Builder {
         drop(ready);
         let mut lanes = Vec::new();
         let mut failed = None;
-        for started in started.iter().take(self.threads as usize) {
-            match started {
+        for reply in started.iter().take(self.threads as usize) {
+            match reply {
                 Ok(lane) => lanes.push(lane),
                 Err(e) => failed = Some(e),
             }

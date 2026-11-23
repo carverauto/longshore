@@ -130,7 +130,7 @@ fn poisoned_unlink_or_nonempty_dir_rename_then_mkdir_or_replace_survives() {
     });
 
     // 2. Poisoned Rename("/d", "/z") of non-empty dir -> recreate file "/d" -> sync -> power_loss.
-    let mut sim = make_sim(73, 512, 16, 16 * 1024);
+    sim = make_sim(73, 512, 16, 16 * 1024);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d");
         sync_dir_path(&mut sim, &mut out, 10, "/");
@@ -160,7 +160,7 @@ fn poisoned_unlink_or_nonempty_dir_rename_then_mkdir_or_replace_survives() {
     });
 
     // 3. Poisoned Rename("/d", "/z") of non-empty dir -> Rename("/z/sub", "/d") -> sync -> power_loss.
-    let mut sim = make_sim(79, 512, 16, 16 * 1024);
+    sim = make_sim(79, 512, 16, 16 * 1024);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d");
         sync_dir_path(&mut sim, &mut out, 10, "/");
@@ -243,7 +243,7 @@ fn dir_log_overflow_and_sync_dir_reclaim_overwritten_durable_inodes() {
         read_error_sectors: 4,
         sector_size: 512,
     };
-    let mut sim = SimIo::new(base_limits(), 89, Faults::default());
+    sim = SimIo::new(base_limits(), 89, Faults::default());
     sim.setup_disk(cfg_b);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d1");
@@ -295,7 +295,7 @@ fn dir_log_overflow_and_sync_dir_reclaim_overwritten_durable_inodes() {
         read_error_sectors: 4,
         sector_size: 512,
     };
-    let mut sim = SimIo::new(base_limits(), 97, Faults::default());
+    sim = SimIo::new(base_limits(), 97, Faults::default());
     sim.setup_disk(cfg_c);
     sealed(|| {
         create_write_sync(&mut sim, &mut out, 1, "/a", 0xAA);

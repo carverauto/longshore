@@ -74,7 +74,7 @@ fn t1_f11_4_punch_hole_zeros_preserving_size() {
             stat_size(io, &mut out, 4, BufId(0), BufId(1), &path),
             Ok(8192)
         );
-        let mut d = DynIo(io);
+        d = DynIo(io);
         assert_eq!(
             submit_and_wait_one(
                 &mut d,
@@ -138,7 +138,7 @@ fn t1_f11_5_mkdir_rename_over_unlink_status() {
             open_slot(io, &mut out, 2, FileSlot(0), BufId(0), &f_src, rw),
             0
         );
-        let mut d = DynIo(io);
+        d = DynIo(io);
         write_pool_bytes(&mut d, BufId(1), 0, b"winner-content");
         assert_eq!(
             submit_and_wait_one(
@@ -164,7 +164,7 @@ fn t1_f11_5_mkdir_rename_over_unlink_status() {
             open_slot(io, &mut out, 5, FileSlot(0), BufId(0), &f_dst, rw),
             0
         );
-        let mut d = DynIo(io);
+        d = DynIo(io);
         write_pool_bytes(&mut d, BufId(1), 0, b"old");
         assert_eq!(
             submit_and_wait_one(
@@ -186,7 +186,7 @@ fn t1_f11_5_mkdir_rename_over_unlink_status() {
         );
         assert_eq!(close_slot(io, &mut out, 7, FileSlot(0)), 0);
 
-        let mut d = DynIo(io);
+        d = DynIo(io);
         let l_old = write_nul_path(&mut d, BufId(0), 0, &f_src);
         let l_new = write_nul_path(&mut d, BufId(1), 0, &f_dst);
         assert_eq!(
@@ -225,7 +225,7 @@ fn t1_f11_5_mkdir_rename_over_unlink_status() {
             open_slot(io, &mut out, 11, FileSlot(0), BufId(0), &f_dst, ro),
             0
         );
-        let mut d = DynIo(io);
+        d = DynIo(io);
         assert_eq!(
             submit_and_wait_one(
                 &mut d,
@@ -247,7 +247,7 @@ fn t1_f11_5_mkdir_rename_over_unlink_status() {
         assert_eq!(read_pool_bytes(&mut d, BufId(1), 0, 14), b"winner-content");
         assert_eq!(close_slot(io, &mut out, 13, FileSlot(0)), 0);
 
-        let mut d = DynIo(io);
+        d = DynIo(io);
         let l_un = write_nul_path(&mut d, BufId(0), 0, &f_dst);
         assert_eq!(
             submit_and_wait_one(

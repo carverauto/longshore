@@ -216,10 +216,10 @@ fn t1_f14_5_disk_ops_zero_alloc_under_alloc_guard() {
     }
 
     sealed(|| {
-        let mut drive_one = |sim: &mut SimIo, tok: u64, op: Op| -> i32 {
-            sim.submit(Token(tok), op).expect("submit");
+        let mut drive_one = |disk: &mut SimIo, tok: u64, op: Op| -> i32 {
+            disk.submit(Token(tok), op).expect("submit");
             loop {
-                sim.tick(true, &mut out).expect("tick");
+                disk.tick(true, &mut out).expect("tick");
                 if let Some(c) = out.pop() {
                     if c.token == Token(tok) {
                         return c.result;

@@ -93,8 +93,8 @@ fn t1_f20_2_single_shot_ops_always_deliver_final_without_buf() {
         },
     )
     .unwrap();
-    let cs = drive_until(&mut io, &mut out, 20, |v| v.len() == 1).unwrap();
-    assert_eq!(cs[0], Completion::new(Token(4), 11));
+    let sent = drive_until(&mut io, &mut out, 20, |v| v.len() == 1).unwrap();
+    assert_eq!(sent[0], Completion::new(Token(4), 11));
 }
 
 #[cfg(feature = "sim")]

@@ -267,7 +267,7 @@ fn run_partitioned_service(net_seed: u64, disk_seed: u64) -> (u64, u64, Vec<(u32
         let mut sent = 0usize;
         let mut put_fut = None;
         let mut put_done = false;
-        let try_dispatch = |accum: &mut Vec<u8>, pf: &mut Option<_>, cx: &mut Context<'_>| {
+        let try_dispatch = |accum: &mut Vec<u8>, pf: &mut Option<_>, task_cx: &mut Context<'_>| {
             if pf.is_none() && accum.len() >= 16 {
                 let fb: [u8; 16] = accum[..16].try_into().unwrap();
                 let _: std::vec::Drain<'_, u8> = accum.drain(..16);
@@ -281,7 +281,7 @@ fn run_partitioned_service(net_seed: u64, disk_seed: u64) -> (u64, u64, Vec<(u32
                     },
                     DiskResp::PutOk(-1),
                 ));
-                assert!(f.as_mut().poll(cx).is_pending());
+                assert!(f.as_mut().poll(task_cx).is_pending());
                 *pf = Some(f);
             }
         };

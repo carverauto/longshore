@@ -131,8 +131,8 @@ impl Tls {
                     // Copy what fits; keep the rest for the next call.
                     let take = n.min(space);
                     let from = record_at as usize + HEADER_LEN;
-                    let (rx, dst) = io.buf_pair(self.rx_buf, self.dst);
-                    dst[at..at + take].copy_from_slice(&rx[from..from + take]);
+                    let (rx_bytes, dst_bytes) = io.buf_pair(self.rx_buf, self.dst);
+                    dst_bytes[at..at + take].copy_from_slice(&rx_bytes[from..from + take]);
                     produced += take as u32;
                     self.spill_at = (from + take) as u32;
                     self.spill_len = (n - take) as u32;

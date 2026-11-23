@@ -83,13 +83,13 @@ fn listings_round_trip(tc: TestCase) {
 
     let listing = Listing::parse(xml.as_bytes()).expect("a well-formed listing must parse");
     assert_eq!(listing.is_truncated, truncated);
-    let got = listing.next_token_raw.map(|raw| {
+    let got_token = listing.next_token_raw.map(|raw| {
         let mut out = vec![0u8; raw.len()];
         let n = unescape(raw, &mut out).expect("valid references");
         String::from_utf8(out[..n].to_vec()).unwrap()
     });
-    assert_eq!(got, token);
-    let got: Vec<(String, u64)> = listing
+    assert_eq!(got_token, token);
+    let got_entries: Vec<(String, u64)> = listing
         .entries()
         .map(|e| {
             let e = e.expect("well-formed entry");
@@ -98,8 +98,8 @@ fn listings_round_trip(tc: TestCase) {
             (String::from_utf8(out[..n].to_vec()).unwrap(), e.size)
         })
         .collect();
-    assert_eq!(got, entries);
-    let got: Vec<String> = listing
+    assert_eq!(got_entries, entries);
+    let got_prefixes: Vec<String> = listing
         .common_prefixes()
         .map(|p| {
             let p = p.expect("well-formed prefix");
@@ -108,7 +108,7 @@ fn listings_round_trip(tc: TestCase) {
             String::from_utf8(out[..n].to_vec()).unwrap()
         })
         .collect();
-    assert_eq!(got, prefixes);
+    assert_eq!(got_prefixes, prefixes);
 }
 
 /// Arbitrary bytes never panic the parser, and whatever it yields points

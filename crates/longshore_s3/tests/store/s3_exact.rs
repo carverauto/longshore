@@ -166,24 +166,24 @@ fn the_request_evidence_is_the_hash_of_the_canonical_request_that_was_sent() {
     };
     w.s3.get(&mut w.io, 2, "clips/a", Some((100, 299)), &expect, RX, ONCE)
         .unwrap();
-    let signed = report(&mut w).request.expect("a request was sent");
-    let names = "host;if-match;range;x-amz-content-sha256;x-amz-date";
-    assert_eq!(signed.method, "GET");
-    assert_eq!(signed.signed_headers.as_bytes(), names.as_bytes());
-    let canonical = format!(
+    let get_signed = report(&mut w).request.expect("a request was sent");
+    let get_names = "host;if-match;range;x-amz-content-sha256;x-amz-date";
+    assert_eq!(get_signed.method, "GET");
+    assert_eq!(get_signed.signed_headers.as_bytes(), get_names.as_bytes());
+    let get_canonical = format!(
         "GET\n/clips/a\nversionId=sim-v1\nhost:bucket.objects.test\nif-match:{}\n\
-         range:bytes=100-299\nx-amz-content-sha256:{EMPTY}\nx-amz-date:{}\n\n{names}\n{EMPTY}",
+         range:bytes=100-299\nx-amz-content-sha256:{EMPTY}\nx-amz-date:{}\n\n{get_names}\n{EMPTY}",
         core::str::from_utf8(stored.etag.unwrap().as_bytes()).unwrap(),
-        core::str::from_utf8(&signed.date).unwrap(),
+        core::str::from_utf8(&get_signed.date).unwrap(),
     );
     assert_eq!(
-        signed.canonical_request_sha256,
-        sha256(canonical.as_bytes())
+        get_signed.canonical_request_sha256,
+        sha256(get_canonical.as_bytes())
     );
     // Nothing of the credentials is in the evidence.
     let mut digest = [0u8; 64];
-    hex(&signed.canonical_request_sha256, &mut digest);
-    let shown = format!("{signed:?}{}", core::str::from_utf8(&digest).unwrap());
+    hex(&get_signed.canonical_request_sha256, &mut digest);
+    let shown = format!("{get_signed:?}{}", core::str::from_utf8(&digest).unwrap());
     assert!(!shown.contains("AKIDEXAMPLE") && !shown.contains("wJalrXUtnFEMI"));
 }
 
@@ -198,8 +198,8 @@ fn a_refused_write_reports_the_refusal_and_leaves_the_object_alone() {
     assert_eq!(answer(&mut w).status, 200);
 
     w.fill_tx(LEN, 6);
-    let options = archive(&mut w);
-    w.s3.put(&mut w.io, 2, "k", TX, LEN, &options, ONCE)
+    let overwrite = archive(&mut w);
+    w.s3.put(&mut w.io, 2, "k", TX, LEN, &overwrite, ONCE)
         .unwrap();
     let refused = report(&mut w);
     let End::Answered(a) = refused.end else {
@@ -252,8 +252,8 @@ fn reads_of_another_object_or_version_are_refused_not_served() {
     };
     w.s3.get(&mut w.io, 4, "k", None, &other_version, RX, ONCE)
         .unwrap();
-    let a = answer(&mut w);
-    assert_eq!((a.status, a.body_len), (404, 0));
+    let by_version = answer(&mut w);
+    assert_eq!((by_version.status, by_version.body_len), (404, 0));
     assert!(
         w.io.buf(RX)[..LEN as usize].iter().all(|b| *b == 0xEE),
         "no byte of the object was delivered"
@@ -396,9 +396,9 @@ fn what_the_store_does_not_send_is_not_reported() {
     // A whole object stored with a CRC-64/NVME is checked against it.
     w.s3.get(&mut w.io, 2, "k", None, &Expect::default(), RX, ONCE)
         .unwrap();
-    let a = answer(&mut w);
-    assert_eq!((a.status, a.verified), (200, Some(true)));
-    assert!(a.crc64.is_some());
+    let fetched = answer(&mut w);
+    assert_eq!((fetched.status, fetched.verified), (200, Some(true)));
+    assert!(fetched.crc64.is_some());
 }
 
 #[test]
@@ -466,12 +466,12 @@ fn more_attempts_retry_and_do_not_hide_a_request_that_went_unanswered() {
     w.server.script(Behavior::ApplyThenClose);
     w.s3.put(&mut w.io, 2, "b", TX, LEN, &options, twice)
         .unwrap();
-    let r = report(&mut w);
+    let refused = report(&mut w);
     assert!(
-        matches!(r.end, End::Answered(a) if a.status == 412),
-        "{r:?}"
+        matches!(refused.end, End::Answered(a) if a.status == 412),
+        "{refused:?}"
     );
-    assert_eq!((r.sent, r.unanswered), (2, 1));
+    assert_eq!((refused.sent, refused.unanswered), (2, 1));
     assert_eq!(w.server.requests, 4);
 }
 

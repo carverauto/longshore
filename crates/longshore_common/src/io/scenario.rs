@@ -57,8 +57,9 @@ pub fn echo<IO: Io>(
     out: &mut Completions,
 ) -> Result<EchoStats, EchoError> {
     let addr = io.listen(LISTENER, addr).map_err(|_| EchoError::Driver)?;
-    let sub = |io: &mut IO, t: u64, op: Op| {
-        io.submit(Token(t), op)
+    let sub = |driver: &mut IO, t: u64, op: Op| {
+        driver
+            .submit(Token(t), op)
             .expect("echo uses at most 4 operations")
     };
     sub(

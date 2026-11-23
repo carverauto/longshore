@@ -171,12 +171,12 @@ impl Server {
         m[3] = if entry.is_some() { 0x80 } else { 0x83 };
         let mut at = n;
         let mut count = 0;
-        let mut record = |m: &mut [u8], rtype: u8, data: &[u8]| {
-            m[at..at + 4].copy_from_slice(&[0xc0, 12, 0, rtype]);
-            m[at + 4..at + 6].copy_from_slice(&[0, 1]);
-            m[at + 6..at + 10].copy_from_slice(&ttl);
-            m[at + 10..at + 12].copy_from_slice(&(data.len() as u16).to_be_bytes());
-            m[at + 12..at + 12 + data.len()].copy_from_slice(data);
+        let mut record = |msg: &mut [u8], rtype: u8, data: &[u8]| {
+            msg[at..at + 4].copy_from_slice(&[0xc0, 12, 0, rtype]);
+            msg[at + 4..at + 6].copy_from_slice(&[0, 1]);
+            msg[at + 6..at + 10].copy_from_slice(&ttl);
+            msg[at + 10..at + 12].copy_from_slice(&(data.len() as u16).to_be_bytes());
+            msg[at + 12..at + 12 + data.len()].copy_from_slice(data);
             at += 12 + data.len();
             count += 1;
         };

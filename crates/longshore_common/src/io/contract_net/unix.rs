@@ -159,12 +159,12 @@ fn unix_no_listener_and_bad_paths_leave_slot_free<IO: Io>(
     )
     .unwrap();
     let (mut a, mut b) = (false, false);
-    drain_until(&mut io, &mut out, |_, c| {
-        if c.token.0 == 5 {
-            assert_eq!(c.result, 0);
+    drain_until(&mut io, &mut out, |_, done| {
+        if done.token.0 == 5 {
+            assert_eq!(done.result, 0);
             a = true;
-        } else if c.token.0 == 6 {
-            assert_eq!(c.result, 0);
+        } else if done.token.0 == 6 {
+            assert_eq!(done.result, 0);
             b = true;
         }
         a && b

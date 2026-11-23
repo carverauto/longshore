@@ -171,11 +171,11 @@ fn cancel_stops_a_pending_operation() {
     .unwrap();
     let mut seen = vec![];
     let drain =
-        |io: &mut SimIo, out: &mut Completions, seen: &mut Vec<(u64, i32)>, until: usize| {
-            while seen.len() < until {
-                io.tick(true, out).unwrap();
-                while let Some(c) = out.pop() {
-                    seen.push((c.token.0, c.result));
+        |sim: &mut SimIo, ready: &mut Completions, log: &mut Vec<(u64, i32)>, until: usize| {
+            while log.len() < until {
+                sim.tick(true, ready).unwrap();
+                while let Some(c) = ready.pop() {
+                    log.push((c.token.0, c.result));
                 }
             }
         };
@@ -232,13 +232,13 @@ fn a_stale_peer_cannot_disturb_a_reused_slot() {
         Faults::default(),
     );
     let mut out = Completions::new(8);
-    let mut run = |io: &mut SimIo, ops: &[(u64, Op)]| -> Vec<(u64, i32)> {
+    let mut run = |sim: &mut SimIo, ops: &[(u64, Op)]| -> Vec<(u64, i32)> {
         for (t, op) in ops {
-            io.submit(Token(*t), *op).unwrap();
+            sim.submit(Token(*t), *op).unwrap();
         }
         let mut seen = vec![];
         while seen.len() < ops.len() {
-            io.tick(true, &mut out).unwrap();
+            sim.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
                 seen.push((c.token.0, c.result));
             }
@@ -404,8 +404,8 @@ fn files_are_read_whole_and_see_replacement() {
     let mut io = SimIo::new(LIMITS, 5, Faults::default());
     let mut out = Completions::new(8);
     let f = io.register_file("/etc/credentials").unwrap();
-    let mut read = |io: &mut SimIo| {
-        io.submit(
+    let mut read = |sim: &mut SimIo| {
+        sim.submit(
             Token(1),
             Op::ReadFile {
                 file: f,
@@ -416,7 +416,7 @@ fn files_are_read_whole_and_see_replacement() {
         )
         .unwrap();
         loop {
-            io.tick(true, &mut out).unwrap();
+            sim.tick(true, &mut out).unwrap();
             if let Some(c) = out.pop() {
                 return c.result;
             }
@@ -470,7 +470,7 @@ fn a_cancel_does_not_reach_an_operation_submitted_after_it() {
         .unwrap();
     io.submit(Token(1), Op::Cancel { target: Token(9) })
         .unwrap();
-    let mut results = Vec::new();
+    results.clear();
     while results.len() < 2 {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {

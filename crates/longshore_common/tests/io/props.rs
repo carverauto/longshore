@@ -18,15 +18,14 @@ use std::collections::VecDeque;
 #[hegel::test]
 fn a_segment_survives_its_trip_through_a_connect_result(tc: TestCase) {
     // Mostly sizes a connection can have, sometimes anything at all.
-    let small = gs::integers::<u32>().max_value(70_000);
+    let small = || gs::integers::<u32>().max_value(70_000);
     let size = if tc.draw(gs::booleans()) {
-        tc.draw(small)
+        tc.draw(small())
     } else {
         tc.draw(gs::integers::<u32>())
     };
-    let small = gs::integers::<u32>().max_value(70_000);
     let path_limit = if tc.draw(gs::booleans()) {
-        tc.draw(small)
+        tc.draw(small())
     } else {
         tc.draw(gs::integers::<u32>())
     };

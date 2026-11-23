@@ -172,8 +172,8 @@ fn rename_and_unlink_durable_only_after_dir_sync() {
         sync_dir(&mut sim, &mut out, tok, "/d");
         tok += 5;
 
-        let ol = put_path(&mut sim, BufId(0), "/d/a");
-        let nl = put_path(&mut sim, BufId(1), "/d/b");
+        let mut ol = put_path(&mut sim, BufId(0), "/d/a");
+        let mut nl = put_path(&mut sim, BufId(1), "/d/b");
         assert_eq!(
             drive(
                 &mut sim,
@@ -196,8 +196,8 @@ fn rename_and_unlink_durable_only_after_dir_sync() {
             saw_rename_reverted = true;
             assert_eq!(read_all(&mut sim, &mut out, tok + 30, "/d/b"), Err(-ENOENT));
             tok += 60;
-            let ol = put_path(&mut sim, BufId(0), "/d/a");
-            let nl = put_path(&mut sim, BufId(1), "/d/b");
+            ol = put_path(&mut sim, BufId(0), "/d/a");
+            nl = put_path(&mut sim, BufId(1), "/d/b");
             assert_eq!(
                 drive(
                     &mut sim,
@@ -224,7 +224,7 @@ fn rename_and_unlink_durable_only_after_dir_sync() {
         assert_eq!(read_all(&mut sim, &mut out, tok, "/d/b"), Ok(b"A".to_vec()));
         tok += 30;
 
-        let ul = put_path(&mut sim, BufId(0), "/d/b");
+        let mut ul = put_path(&mut sim, BufId(0), "/d/b");
         assert_eq!(
             drive(
                 &mut sim,
@@ -243,7 +243,7 @@ fn rename_and_unlink_durable_only_after_dir_sync() {
         if read_all(&mut sim, &mut out, tok, "/d/b") == Ok(b"A".to_vec()) {
             saw_unlink_reverted = true;
             tok += 30;
-            let ul = put_path(&mut sim, BufId(0), "/d/b");
+            ul = put_path(&mut sim, BufId(0), "/d/b");
             assert_eq!(
                 drive(
                     &mut sim,

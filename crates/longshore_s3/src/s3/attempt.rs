@@ -124,11 +124,11 @@ impl S3 {
             };
             let mut d = [0u8; 20];
             put(b"bytes=");
-            let k = digits(a, &mut d);
-            put(&d[k..]);
+            let a_start = digits(a, &mut d);
+            put(&d[a_start..]);
             put(b"-");
-            let k = digits(b, &mut d);
-            put(&d[k..]);
+            let b_start = digits(b, &mut d);
+            put(&d[b_start..]);
         }
         let range = core::str::from_utf8(&range_buf[..range_len]).expect("ASCII");
 

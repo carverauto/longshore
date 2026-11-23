@@ -25,11 +25,11 @@ fn torn_reported_torn_silent_short_write_and_overwrites() {
         -EIO
     );
     tok += 1;
-    let c = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
+    let mut c = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
     assert!(!c.is_empty() && c.len() < 16_384 && c.len().is_multiple_of(512));
     assert!(c.iter().all(|&b| b == 0xAA));
 
-    let (mut sim, mut out, mut tok) = make_storage(3, 512);
+    (sim, out, tok) = make_storage(3, 512);
     assert_eq!(
         open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
         0
@@ -46,14 +46,14 @@ fn torn_reported_torn_silent_short_write_and_overwrites() {
         8_192
     );
     tok += 1;
-    let c = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
+    c = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
     assert_eq!(c.len(), 8_192);
     let cut = c.iter().position(|&b| b == 0x11).unwrap();
     assert!(cut > 0 && cut % 512 == 0);
     assert!(c[..cut].iter().all(|&b| b == 0x22));
     assert!(c[cut..].iter().all(|&b| b == 0x11));
 
-    let (mut sim, mut out, mut tok) = make_storage(7, 512);
+    (sim, out, tok) = make_storage(7, 512);
     assert_eq!(
         open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
         0
@@ -68,7 +68,7 @@ fn torn_reported_torn_silent_short_write_and_overwrites() {
     let kept = write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, &[0xAA; 16_384]);
     assert!(kept > 0 && kept < 16_384 && kept % 512 == 0);
     tok += 1;
-    let c = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
+    c = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
     assert_eq!(c.len(), (kept as usize).max(4_096));
     assert!(c[..kept as usize].iter().all(|&b| b == 0xAA));
     assert!(c[kept as usize..].iter().all(|&b| b == 0x11));
@@ -90,7 +90,7 @@ fn sub_sector_and_one_byte_writes_never_tear_mid_sector() {
     tok += 1;
     assert_eq!(read_all(&mut sim, &mut out, tok, "/d/f"), Ok(Vec::new()));
 
-    let (mut sim, mut out, mut tok) = make_storage(5, 512);
+    (sim, out, tok) = make_storage(5, 512);
     assert_eq!(
         open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
         0

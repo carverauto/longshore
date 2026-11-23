@@ -81,13 +81,15 @@ fn retried_no_clobber_store_without_a_checksum_is_undecided() {
     );
 
     // This server keeps no checksums.
-    let mut w = world_with(14, Faults::default(), 4, false);
-    w.fill_tx(1000, 1);
-    w.server.script(Behavior::ApplyThenClose);
-    w.s3.store_no_clobber(&mut w.io, 1, "a", TX, 1000, Checksum::Compute)
+    let mut checksumless = world_with(14, Faults::default(), 4, false);
+    checksumless.fill_tx(1000, 1);
+    checksumless.server.script(Behavior::ApplyThenClose);
+    checksumless
+        .s3
+        .store_no_clobber(&mut checksumless.io, 1, "a", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
-        w.last(),
+        checksumless.last(),
         Done {
             token: 1,
             outcome: Outcome::AlreadyExists { after_retry: true },
@@ -151,19 +153,21 @@ fn a_failed_comparison_still_reports_that_an_object_exists() {
     );
 
     // Throttled on the last attempt the budget allows.
-    let mut w = world_with(23, Faults::default(), 3, true);
-    w.fill_tx(1000, 1);
+    let mut throttled_last = world_with(23, Faults::default(), 3, true);
+    throttled_last.fill_tx(1000, 1);
     for b in [
         Behavior::ApplyThenClose,
         Behavior::Normal,
         Behavior::Status(503),
     ] {
-        w.server.script(b);
+        throttled_last.server.script(b);
     }
-    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+    throttled_last
+        .s3
+        .store_no_clobber(&mut throttled_last.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
-        w.last(),
+        throttled_last.last(),
         Done {
             token: 1,
             outcome: Outcome::AlreadyExists { after_retry: true },
@@ -172,19 +176,21 @@ fn a_failed_comparison_still_reports_that_an_object_exists() {
     );
 
     // Throttled with attempts to spare: the comparison is simply tried again.
-    let mut w = world_with(24, Faults::default(), 5, true);
-    w.fill_tx(1000, 1);
+    let mut throttled_spare = world_with(24, Faults::default(), 5, true);
+    throttled_spare.fill_tx(1000, 1);
     for b in [
         Behavior::ApplyThenClose,
         Behavior::Normal,
         Behavior::Status(503),
     ] {
-        w.server.script(b);
+        throttled_spare.server.script(b);
     }
-    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+    throttled_spare
+        .s3
+        .store_no_clobber(&mut throttled_spare.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
-        w.last(),
+        throttled_spare.last(),
         Done {
             token: 1,
             outcome: Outcome::Stored,
@@ -223,19 +229,21 @@ fn an_object_that_vanishes_before_the_comparison_is_stored_again() {
     assert_eq!(w.server.object("/k"), Some(&sent[..]));
 
     // With no attempt left to store it again, nothing is known to be there.
-    let mut w = world_with(27, Faults::default(), 3, true);
-    w.fill_tx(1000, 1);
+    let mut out_of_attempts = world_with(27, Faults::default(), 3, true);
+    out_of_attempts.fill_tx(1000, 1);
     for b in [
         Behavior::ApplyThenClose,
         Behavior::Normal,
         Behavior::Status(404),
     ] {
-        w.server.script(b);
+        out_of_attempts.server.script(b);
     }
-    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+    out_of_attempts
+        .s3
+        .store_no_clobber(&mut out_of_attempts.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
-        w.last(),
+        out_of_attempts.last(),
         Done {
             token: 1,
             outcome: Outcome::Fatal(Fatal::RetriesExhausted),

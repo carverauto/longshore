@@ -147,7 +147,7 @@ fn a_signature_depends_on_content_not_on_presentation(tc: TestCase) {
         .collect();
     let base = sign("PUT", &headers, &query);
 
-    let spaces = |tc: &TestCase, min: usize| -> String {
+    let spaces = |min: usize| -> String {
         let n = tc.draw(gs::integers::<usize>().min_value(min).max_value(3));
         (0..n)
             .map(|_| if tc.draw(gs::booleans()) { ' ' } else { '\t' })
@@ -161,14 +161,14 @@ fn a_signature_depends_on_content_not_on_presentation(tc: TestCase) {
             } else {
                 name
             };
-            let mut padded = spaces(&tc, 0);
+            let mut padded = spaces(0);
             for (k, w) in value.split(' ').enumerate() {
                 if k > 0 {
-                    padded += &spaces(&tc, 1);
+                    padded += &spaces(1);
                 }
                 padded += w;
             }
-            padded += &spaces(&tc, 0);
+            padded += &spaces(0);
             (name, padded)
         })
         .collect();
@@ -193,9 +193,9 @@ fn a_signature_depends_on_content_not_on_presentation(tc: TestCase) {
         assert_ne!(sign("PUT", &dropped, &query), base);
     }
     if !query.is_empty() {
-        let mut changed = query.clone();
-        changed[0].1.push('x');
-        assert_ne!(sign("PUT", &headers, &changed), base);
+        let mut changed_query = query.clone();
+        changed_query[0].1.push('x');
+        assert_ne!(sign("PUT", &headers, &changed_query), base);
     }
 }
 

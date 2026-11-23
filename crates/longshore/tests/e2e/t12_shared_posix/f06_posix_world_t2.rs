@@ -89,8 +89,8 @@ fn t2_f06_1_posix_stale_readiness_among_real_ready_ops() {
         100,
     )
     .unwrap();
-    let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!((cs[0].token, cs[0].result), (Token(12), 4));
+    let late = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
+    assert_eq!((late[0].token, late[0].result), (Token(12), 4));
 }
 
 #[cfg(all(unix, feature = "fault-injection"))]

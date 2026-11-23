@@ -75,7 +75,7 @@ fn request_size_limits_are_exact() {
     let around = "GET /missing HTTP/1.1\r\nHost: objects.test\r\nx-pad: \r\n\r\n".len();
     let fits = "p".repeat(HEAD_MAX as usize - around);
     let over = format!("{fits}p");
-    let start = |w: &mut World, token: u64, pad: &str| {
+    let start = |world: &mut World, token: u64, pad: &str| {
         let req = Request {
             method: "GET",
             target: "/missing",
@@ -86,7 +86,7 @@ fn request_size_limits_are_exact() {
             body: None,
             response_buf: Some(RX),
         };
-        w.client.start(&mut w.io, token, &req)
+        world.client.start(&mut world.io, token, &req)
     };
     assert_eq!(start(&mut w, 1, &over), Err(Error::BadRequest));
     assert_eq!((w.client.in_flight(), w.client.connects), (0, 0));
@@ -102,22 +102,22 @@ fn request_size_limits_are_exact() {
     assert_eq!((w.client.connects, w.client.in_flight()), (1, 0));
 
     let host = |len: usize| format!("{}.test", "h".repeat(len - 5));
-    let start = |w: &mut World, host: &str| {
+    let start_host = |world: &mut World, name: &str| {
         let req = Request {
             method: "GET",
             target: "/k",
-            host,
+            host: name,
             host_id: 3,
             addr: ADDR,
             headers: &[],
             body: None,
             response_buf: Some(RX),
         };
-        w.client.start(&mut w.io, 7, &req)
+        world.client.start(&mut world.io, 7, &req)
     };
-    assert_eq!(start(&mut w, &host(254)), Err(Error::BadRequest));
+    assert_eq!(start_host(&mut w, &host(254)), Err(Error::BadRequest));
     assert_eq!(w.client.in_flight(), 0, "nothing was started");
-    assert_eq!(start(&mut w, &host(253)), Ok(()));
+    assert_eq!(start_host(&mut w, &host(253)), Ok(()));
     w.run_until_done(3);
     ok(404, 0)(w.done[2].result);
 }

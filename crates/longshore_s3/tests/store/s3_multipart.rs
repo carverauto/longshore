@@ -38,10 +38,10 @@ fn an_upload_in_parts_becomes_one_verified_object() {
     assert!(w.io.buf(RX)[..object.len()] == object[..]);
     // The parts are gone and only the object is listed.
     w.s3.list(&mut w.io, 22, "", None, 100, RX).unwrap();
-    let Outcome::Listed { len } = w.last().outcome else {
+    let Outcome::Listed { len: listed } = w.last().outcome else {
         panic!("listing failed")
     };
-    let listing = Listing::parse(&w.io.buf(RX)[..len as usize]).unwrap();
+    let listing = Listing::parse(&w.io.buf(RX)[..listed as usize]).unwrap();
     let keys: Vec<&[u8]> = listing.entries().map(|e| e.unwrap().key_raw).collect();
     assert_eq!(keys, [b"big"]);
 }
@@ -88,9 +88,9 @@ fn every_phase_is_retried_through_a_failure() {
     w.server.script(Behavior::CloseBeforeResponse);
 
     w.send_part(12, "k", &upload, 2, TX);
-    let d = w.last();
-    assert!(matches!(d.outcome, Outcome::PartStored { .. }));
-    assert_eq!(d.attempts, 3);
+    let part = w.last();
+    assert!(matches!(part.outcome, Outcome::PartStored { .. }));
+    assert_eq!(part.attempts, 3);
     w.send_part(11, "k", &upload, 1, TX);
     w.send_part(13, "k", &upload, 3, RX);
     w.run_until_done(w.done.len() + 2);
@@ -154,18 +154,18 @@ fn a_completion_whose_response_was_lost_is_confirmed_by_the_object_checksum() {
     assert_eq!(w.s3.store_comparisons, 1);
 
     // Without a checksum there is nothing to confirm it with.
-    let upload = w.begin(2, "other", false);
-    let (len, _) = w.three_parts("other", &upload);
+    let other = w.begin(2, "other", false);
+    let (other_len, _) = w.three_parts("other", &other);
     w.server.script(Behavior::ApplyThenClose);
 
-    w.s3.multipart_complete(&mut w.io, 30, "other", &upload, TX, len, None)
+    w.s3.multipart_complete(&mut w.io, 30, "other", &other, TX, other_len, None)
         .unwrap();
     assert_eq!(w.last().outcome, Outcome::Fatal(Fatal::Status(404)));
 
     // A wrong whole-object checksum is refused by the store.
-    let upload = w.begin(3, "third", true);
-    let (len, _) = w.three_parts("third", &upload);
-    w.s3.multipart_complete(&mut w.io, 40, "third", &upload, TX, len, Some(crc ^ 1))
+    let third = w.begin(3, "third", true);
+    let (third_len, _) = w.three_parts("third", &third);
+    w.s3.multipart_complete(&mut w.io, 40, "third", &third, TX, third_len, Some(crc ^ 1))
         .unwrap();
     assert_eq!(w.last().outcome, Outcome::Fatal(Fatal::Status(400)));
 }

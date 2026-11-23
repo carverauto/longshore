@@ -55,7 +55,7 @@ fn t1_f10_1_open_write_close_reopen_same_slot() {
             open_slot(io, &mut out, 4, FileSlot(0), BufId(0), &p2, rw),
             0
         );
-        let mut dyn_io = DynIo(io);
+        dyn_io = DynIo(io);
         write_pool_bytes(&mut dyn_io, BufId(1), 0, b"beta!");
         let wr2 = submit_and_wait_one(
             &mut dyn_io,
@@ -127,7 +127,7 @@ fn t1_f10_2_open_empty_truncates_existing_file_to_zero() {
         );
         assert_eq!(close_slot(io, &mut out, 5, FileSlot(0)), 0);
 
-        let mut dyn_io = DynIo(io);
+        dyn_io = DynIo(io);
         let path_len = write_nul_path(&mut dyn_io, BufId(0), 0, &path);
         let st = submit_and_wait_one(
             &mut dyn_io,
@@ -198,7 +198,7 @@ fn t1_f10_3_open_create_exclusive_then_empty() {
             open_slot(io, &mut out, 4, FileSlot(0), BufId(0), &path, empty),
             0
         );
-        let mut dyn_io = DynIo(io);
+        dyn_io = DynIo(io);
         let rd = submit_and_wait_one(
             &mut dyn_io,
             &mut out,

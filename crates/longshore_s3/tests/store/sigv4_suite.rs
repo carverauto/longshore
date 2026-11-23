@@ -46,7 +46,7 @@ fn sign(request: &str, sign_body: bool) -> (String, String) {
     let start = lines.next().unwrap();
     let (method, rest) = start.split_once(' ').unwrap();
     let target = rest.rsplit_once(' ').unwrap().0;
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let (path, raw_query) = target.split_once('?').unwrap_or((target, ""));
     let headers: Vec<(String, String)> = lines
         .take_while(|l| !l.is_empty())
         .map(|l| {
@@ -83,7 +83,7 @@ fn sign(request: &str, sign_body: bool) -> (String, String) {
         String::from_utf8(out[..n].to_vec()).unwrap()
     };
     let canonical_uri = enc(path, false);
-    let pairs: Vec<(String, String)> = query
+    let pairs: Vec<(String, String)> = raw_query
         .split('&')
         .filter(|p| !p.is_empty())
         .map(|p| p.split_once('=').unwrap_or((p, "")))

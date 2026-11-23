@@ -103,7 +103,7 @@ fn run_chaos_seed(seed: u64) -> (u64, u64) {
     }
 
     let path_buf = lim.small(0);
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/chaos.log");
+    let mut plen = write_nul_path(&mut sim, path_buf, 0, "/chaos.log");
     let open_res = submit_and_wait_one(
         &mut sim,
         &mut out,
@@ -195,7 +195,7 @@ fn run_chaos_seed(seed: u64) -> (u64, u64) {
     // Power loss mid-session, then cleanly reopen & verify fault counters accessible.
     sim.power_loss();
     sim.set_disk_faults(DiskFaults::default());
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/chaos.log");
+    plen = write_nul_path(&mut sim, path_buf, 0, "/chaos.log");
     let reopen = submit_and_wait_one(
         &mut sim,
         &mut out,

@@ -166,7 +166,7 @@ fn t2_f12_4_chain_shared_check_refusal_cancels_all_without_mutation() {
             -ECANCELED
         );
 
-        let mut d = DynIo(io);
+        d = DynIo(io);
         let st = submit_and_wait_one(
             &mut d,
             &mut out,

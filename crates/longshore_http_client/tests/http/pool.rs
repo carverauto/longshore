@@ -255,7 +255,7 @@ fn a_connection_closed_while_idle_is_replaced_before_it_is_used() {
         (1, 0, 2)
     );
 
-    let mut w = world_with(
+    let mut unchecked = world_with(
         31,
         Faults::default(),
         client::Config {
@@ -263,11 +263,11 @@ fn a_connection_closed_while_idle_is_replaced_before_it_is_used() {
             ..client_cfg()
         },
     );
-    w.server.script(Behavior::Raw(REPLY));
-    ok(200, 2)(w.request("GET", "/k", None));
-    w.settle(20);
+    unchecked.server.script(Behavior::Raw(REPLY));
+    ok(200, 2)(unchecked.request("GET", "/k", None));
+    unchecked.settle(20);
     assert_eq!(
-        w.request("GET", "/missing", None),
+        unchecked.request("GET", "/missing", None),
         Err(Error::Io(longshore_common::io::EPIPE)),
         "without the check the request goes into the closed connection"
     );

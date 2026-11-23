@@ -209,9 +209,9 @@ mod linux {
                 .unwrap_or_else(|e| die(&e.to_string()));
         }
 
-        let make = |i: usize, bufs: &mut [Vec<u8>]| -> io_uring_sqe {
+        let make = |i: usize, buffers: &mut [Vec<u8>]| -> io_uring_sqe {
             let mut s = io_uring_sqe {
-                addr: bufs[i].as_mut_ptr() as u64,
+                addr: buffers[i].as_mut_ptr() as u64,
                 len: a.chunk as u32,
                 user_data: i as u64,
                 ..Default::default()

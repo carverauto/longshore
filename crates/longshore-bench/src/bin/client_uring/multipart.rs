@@ -49,18 +49,21 @@ pub fn round_trip(client: &Client, part_len: usize) {
     drop(into);
 
     // An aborted upload is gone: completing it is refused by the store.
-    let id = client
+    let aborted = client
         .upload_begin("multipart-aborted")
         .wait()
         .expect("begin");
-    let (part, scratch) = client
-        .upload_part("multipart-aborted", &id, 1, filled(1), part_len)
+    let (part, buffer) = client
+        .upload_part("multipart-aborted", &aborted, 1, filled(1), part_len)
         .wait();
     let part = part.expect("store a part");
-    assert_eq!(client.upload_abort("multipart-aborted", &id).wait(), Ok(()));
-    let (completed, _) = client
-        .upload_complete("multipart-aborted", &id, &[part], scratch)
+    assert_eq!(
+        client.upload_abort("multipart-aborted", &aborted).wait(),
+        Ok(())
+    );
+    let (refused, _) = client
+        .upload_complete("multipart-aborted", &aborted, &[part], buffer)
         .wait();
-    assert!(matches!(completed, Err(Error::Store(_))), "{completed:?}");
+    assert!(matches!(refused, Err(Error::Store(_))), "{refused:?}");
     assert_eq!(client.erase(key).wait(), Ok(()));
 }

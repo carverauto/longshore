@@ -82,9 +82,9 @@ fn check_shutdown_before_close<IO: Io>(io: &mut IO, addr: SocketAddr) {
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(5))).unwrap();
+    let eof = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(5))).unwrap();
     assert_eq!(
-        cs[0].result, 0,
+        eof[0].result, 0,
         "peer must see EOF after shutdown-before-close"
     );
 }
@@ -161,8 +161,10 @@ fn t1_f22_2_socket_options_nodelay_and_keepalive_configure_cleanly() {
             },
         )
         .unwrap();
-    let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
-    assert!(cs.iter().any(|c| c.token == Token(4) && c.result == 7));
+    let exchanged = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
+    assert!(exchanged
+        .iter()
+        .any(|c| c.token == Token(4) && c.result == 7));
 }
 
 #[cfg(unix)]
@@ -226,8 +228,15 @@ fn t1_f22_3_unix_domain_socket_listen_connect_and_echo() {
             },
         )
         .unwrap();
-    let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
-    assert_eq!(cs.iter().find(|c| c.token == Token(4)).unwrap().result, 19);
+    let exchanged = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
+    assert_eq!(
+        exchanged
+            .iter()
+            .find(|c| c.token == Token(4))
+            .unwrap()
+            .result,
+        19
+    );
     assert_eq!(
         read_pool_bytes(&mut posix, BufId(2), 0, 19),
         b"unix-stream-payload"
@@ -283,11 +292,11 @@ fn t1_f22_4_unix_domain_armed_accept_and_recv_with_give_back() {
             },
         )
         .unwrap();
-    let cs = drive_until(&mut posix, &mut out, 50, |v| {
+    let received = drive_until(&mut posix, &mut out, 50, |v| {
         v.iter().any(|c| c.token == Token(3))
     })
     .unwrap();
-    let rc = cs.iter().find(|c| c.token == Token(3)).unwrap();
+    let rc = received.iter().find(|c| c.token == Token(3)).unwrap();
     assert!(rc.more);
     let id = rc.buf.expect("ring buf");
     assert_eq!(read_pool_bytes(&mut posix, id, 0, 10), b"armed-unix");

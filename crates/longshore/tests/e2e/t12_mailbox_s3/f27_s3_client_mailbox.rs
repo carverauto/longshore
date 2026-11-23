@@ -122,9 +122,9 @@ fn t1_f27_3_client_drop_sends_in_band_stop_and_joins_cleanly() {
     buf.as_mut_slice()[..4].copy_from_slice(b"stop");
     let p1 = client.store("drop-test", buf, 4);
     let p2 = client.erase("nonexistent");
-    let (r1, buf) = p1.wait();
+    let (r1, returned) = p1.wait();
     r1.expect("p1");
-    drop(buf);
+    drop(returned);
     p2.wait().expect("p2");
 
     // Dropping the last Client handle must send in-band stop and join all I/O threads cleanly.

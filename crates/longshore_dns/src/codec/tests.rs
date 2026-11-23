@@ -109,12 +109,15 @@ fn ignores_addresses_owned_by_other_names() {
     r[7] = 1;
     assert_eq!(parse_response(&r, 7, "x.io"), Err(DnsError::NoAddresses));
     // A CNAME from a name other than the question does not start a chain.
-    let mut r = response(&q, 0x8180, &[]);
-    record(&mut r, 14, 5, &[5, b'o', b't', b'h', b'e', b'r', 0]);
+    let mut chain = response(&q, 0x8180, &[]);
+    record(&mut chain, 14, 5, &[5, b'o', b't', b'h', b'e', b'r', 0]);
     let target = other + 12;
-    record(&mut r, target, 1, &[6, 6, 6, 6]);
-    r[7] = 2;
-    assert_eq!(parse_response(&r, 7, "x.io"), Err(DnsError::NoAddresses));
+    record(&mut chain, target, 1, &[6, 6, 6, 6]);
+    chain[7] = 2;
+    assert_eq!(
+        parse_response(&chain, 7, "x.io"),
+        Err(DnsError::NoAddresses)
+    );
 }
 
 #[test]
@@ -281,9 +284,9 @@ fn each_query_keeps_only_addresses_of_its_own_family() {
             .as_slice(),
         [IpAddr::V6(Ipv6Addr::from(V6))]
     );
-    let r = response(&query("x.io", 7), 0x8180, &both);
+    let for_a = response(&query("x.io", 7), 0x8180, &both);
     assert_eq!(
-        parse_response(&r, 7, "x.io").unwrap().as_slice(),
+        parse_response(&for_a, 7, "x.io").unwrap().as_slice(),
         [Ipv4Addr::new(192, 0, 2, 1)]
     );
 }
@@ -305,6 +308,9 @@ fn address_records_of_the_wrong_length_are_skipped() {
         parse_response_for(&r, 7, "x.io", Record::Aaaa),
         Err(DnsError::NoAddresses)
     );
-    let r = response(&query("x.io", 7), 0x8180, &[(1, &V6)]);
-    assert_eq!(parse_response(&r, 7, "x.io"), Err(DnsError::NoAddresses));
+    let for_a = response(&query("x.io", 7), 0x8180, &[(1, &V6)]);
+    assert_eq!(
+        parse_response(&for_a, 7, "x.io"),
+        Err(DnsError::NoAddresses)
+    );
 }

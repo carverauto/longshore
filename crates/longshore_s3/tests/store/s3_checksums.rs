@@ -127,9 +127,9 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
             | Outcome::Report(_)) => panic!("seed {seed}: unexpected store outcome {o:?}"),
         }
         w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
-        let d = w.last();
-        retried += (d.attempts > 1) as u32;
-        match d.outcome {
+        let fetch = w.last();
+        retried += (fetch.attempts > 1) as u32;
+        match fetch.outcome {
             Outcome::Fetched { len, verified } => {
                 fetched += 1;
                 assert!(

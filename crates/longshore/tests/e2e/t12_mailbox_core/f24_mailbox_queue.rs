@@ -100,8 +100,7 @@ fn t1_f24_1_io_receiver_wakes_blocked_tick_and_drains_message() {
     assert!(io_rx.on_completion(&mut io, c).unwrap());
     assert_eq!(io_rx.try_recv(), TryRecv::Message(0xdead_beef_u64));
     assert_eq!(io_rx.try_recv(), TryRecv::Empty);
-    let tx = h.join().unwrap();
-    drop(tx);
+    drop(h.join().unwrap());
     assert_eq!(io_rx.try_recv(), TryRecv::Closed);
 }
 

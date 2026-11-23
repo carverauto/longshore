@@ -121,10 +121,10 @@ fn raw_reply_with(cfg: client::Config, reply: &'static [u8]) -> Result<Response,
 fn a_bodyless_interim_response_is_skipped() {
     let r = raw_reply(b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
     assert_eq!(r.map(|r| (r.status, r.body_len)), Ok((200, 0)));
-    let r = raw_reply(
+    let no_content = raw_reply(
         b"HTTP/1.1 100 Continue\r\nContent-Length: 0\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n",
     );
-    assert_eq!(r.map(|r| r.status), Ok(204));
+    assert_eq!(no_content.map(|reply| reply.status), Ok(204));
 }
 
 #[test]
@@ -262,7 +262,7 @@ fn chunked_edge_cases() {
     ok(200, 0)(w.request("PUT", "/small", Some(300)));
     let sent = w.io.buf(TX)[..300].to_vec();
     w.server.script(Behavior::ChunkedBody(64));
-    let req = Request {
+    let small_get = Request {
         method: "GET",
         target: "/small",
         host: "objects.test",
@@ -272,7 +272,7 @@ fn chunked_edge_cases() {
         body: None,
         response_buf: None,
     };
-    w.client.start(&mut w.io, 700, &req).unwrap();
+    w.client.start(&mut w.io, 700, &small_get).unwrap();
     w.run_until_done(w.done.len() + 1);
     let r = w
         .done
@@ -286,7 +286,7 @@ fn chunked_edge_cases() {
     w.fill_tx(8_000, 1);
     ok(200, 0)(w.request("PUT", "/big", Some(8_000)));
     w.server.script(Behavior::ChunkedBody(1_000));
-    let req = Request {
+    let big_get = Request {
         method: "GET",
         target: "/big",
         host: "objects.test",
@@ -296,7 +296,7 @@ fn chunked_edge_cases() {
         body: None,
         response_buf: None,
     };
-    w.client.start(&mut w.io, 701, &req).unwrap();
+    w.client.start(&mut w.io, 701, &big_get).unwrap();
     w.run_until_done(w.done.len() + 1);
     assert_eq!(w.done.last().unwrap().result, Err(Error::BodyTooLarge));
     w.settle(30);
@@ -403,7 +403,7 @@ fn bytes_after_a_response_in_a_later_read_are_not_taken_for_the_next_response() 
     // real network it would be handed the leftover bytes as its response;
     // the simulator fails the send instead, because the scripted server has
     // closed. Either way it is not the 404 the request should have had.
-    let mut w = world_with(
+    let mut unchecked = world_with(
         32,
         Faults::default(),
         client::Config {
@@ -411,10 +411,10 @@ fn bytes_after_a_response_in_a_later_read_are_not_taken_for_the_next_response() 
             ..client_cfg()
         },
     );
-    w.server.script(Behavior::Raw(reply));
-    ok(200, body_len as u32)(w.request("GET", "/k", None));
+    unchecked.server.script(Behavior::Raw(reply));
+    ok(200, body_len as u32)(unchecked.request("GET", "/k", None));
     assert_eq!(
-        w.request("GET", "/missing", None),
+        unchecked.request("GET", "/missing", None),
         Err(Error::Io(longshore_common::io::EPIPE))
     );
 }

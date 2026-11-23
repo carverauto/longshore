@@ -86,9 +86,9 @@ fn call(
     for (i, (name, value)) in query.iter().enumerate() {
         target += &format!("{}{name}={value}", if i == 0 { '?' } else { '&' });
     }
-    let mut head = format!("{method} {target} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\nAuthorization: {}\r\n", body.len(), std::str::from_utf8(&auth[..n]).unwrap());
+    let mut request = format!("{method} {target} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\nAuthorization: {}\r\n", body.len(), std::str::from_utf8(&auth[..n]).unwrap());
     for (name, value) in &ms {
-        head += &format!("{name}: {value}\r\n");
+        request += &format!("{name}: {value}\r\n");
     }
     for (name, value) in [
         ("Content-Type", content_type),
@@ -96,12 +96,12 @@ fn call(
         ("Range", range),
     ] {
         if !value.is_empty() {
-            head += &format!("{name}: {value}\r\n");
+            request += &format!("{name}: {value}\r\n");
         }
     }
-    head += "\r\n";
+    request += "\r\n";
     let mut s = TcpStream::connect(addr).unwrap_or_else(|e| panic!("{addr}: {e}"));
-    s.write_all(head.as_bytes()).unwrap();
+    s.write_all(request.as_bytes()).unwrap();
     s.write_all(body).unwrap();
     let mut raw = Vec::new();
     let _: usize = s.read_to_end(&mut raw).unwrap();
@@ -176,9 +176,9 @@ fn main() {
         ),
         201,
     );
-    let r = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
-    ok &= show("store if absent", &r, 201);
-    let returned = r
+    let stored = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
+    ok &= show("store if absent", &stored, 201);
+    let returned = stored
         .header("x-ms-content-crc64")
         .unwrap_or("(none)")
         .to_string();
@@ -193,8 +193,8 @@ fn main() {
     );
     // The reference documents 412 for an unmet If-None-Match on a write;
     // the emulator answers 409 BlobAlreadyExists. The client must take both.
-    let r = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
-    ok &= show("store if absent, again", &r, r.status) && matches!(r.status, 409 | 412);
+    let again = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
+    ok &= show("store if absent, again", &again, again.status) && matches!(again.status, 409 | 412);
     ok &= show(
         "store with checksum, least significant first",
         &call(
@@ -237,18 +237,18 @@ fn main() {
         ),
         400,
     );
-    let r = call(addr, "GET", &blob, &[], &[], "", "", b"");
-    ok &= show("fetch", &r, 200) && r.body == body;
-    let r = call(addr, "GET", &blob, &[], &[], "", "bytes=100-199", b"");
-    ok &= show("fetch a range", &r, 206) && r.body == body[100..200];
-    let r = call(addr, "HEAD", &blob, &[], &[], "", "", b"");
-    ok &= show("properties", &r, 200);
+    let fetched = call(addr, "GET", &blob, &[], &[], "", "", b"");
+    ok &= show("fetch", &fetched, 200) && fetched.body == body;
+    let ranged = call(addr, "GET", &blob, &[], &[], "", "bytes=100-199", b"");
+    ok &= show("fetch a range", &ranged, 206) && ranged.body == body[100..200];
+    let props = call(addr, "HEAD", &blob, &[], &[], "", "", b"");
+    ok &= show("properties", &props, 200);
     println!(
         "  properties x-ms-content-crc64: {}   content-md5: {}",
-        r.header("x-ms-content-crc64").unwrap_or("(none)"),
-        r.header("content-md5").unwrap_or("(none)")
+        props.header("x-ms-content-crc64").unwrap_or("(none)"),
+        props.header("content-md5").unwrap_or("(none)")
     );
-    let r = call(
+    let listed = call(
         addr,
         "GET",
         &container,
@@ -262,10 +262,10 @@ fn main() {
         "",
         b"",
     );
-    ok &= show("list with a prefix", &r, 200);
+    ok &= show("list with a prefix", &listed, 200);
     println!(
         "  listing: {}",
-        String::from_utf8_lossy(&r.body)
+        String::from_utf8_lossy(&listed.body)
             .replace(['\r', '\n'], "")
             .chars()
             .take(600)

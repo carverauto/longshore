@@ -157,7 +157,7 @@ fn writer_never_emits_injected_lines(tc: TestCase) {
         Ok(n) => {
             let out = &buf[..n];
             assert_eq!(
-                out.windows(2).filter(|w| *w == b"\r\n").count(),
+                out.windows(2).filter(|pair| *pair == b"\r\n").count(),
                 3,
                 "request line, one header, blank line"
             );

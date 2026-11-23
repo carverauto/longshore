@@ -206,7 +206,7 @@ fn bench(c: &mut Criterion) {
     drop(dests);
 
     let mut bodies = sources;
-    let mut at = 0usize;
+    at = 0;
     let _: &mut BenchmarkGroup<'_, WallTime> =
         g.bench_function(format!("cold, in place: {SETS} bodies"), |b| {
             b.iter(|| {

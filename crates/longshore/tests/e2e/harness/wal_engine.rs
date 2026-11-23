@@ -148,13 +148,13 @@ impl WalEngine {
         };
         let res = self.run(io, out, op)?;
         if res >= 0 && reserve && self.cfg.segment_bytes > 0 {
-            let op = Op::FileReserve {
+            let reserve_op = Op::FileReserve {
                 slot,
                 file_off: 0,
                 len: self.cfg.segment_bytes,
                 keep_size: false,
             };
-            return self.run(io, out, op);
+            return self.run(io, out, reserve_op);
         }
         Ok(res)
     }
@@ -207,8 +207,8 @@ impl WalEngine {
         let _: usize = drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
             let cw = v.iter().find(|c| c.token == t_w);
             let cs = v.iter().find(|c| c.token == t_s);
-            if let (Some(a), Some(b)) = (cw, cs) {
-                (w, s) = (a.result, b.result);
+            if let (Some(write), Some(sync)) = (cw, cs) {
+                (w, s) = (write.result, sync.result);
                 return true;
             }
             false

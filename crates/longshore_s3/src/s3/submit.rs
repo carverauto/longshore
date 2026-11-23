@@ -243,7 +243,7 @@ impl S3 {
                 put(&mut s.path, &enc[..len])?;
                 put(&mut s.path, b"&")?;
             }
-            if let Some(delimiter) = delimiter.filter(|d| !d.is_empty()) {
+            if let Some(delimiter) = delimiter.filter(|text| !text.is_empty()) {
                 put(&mut s.path, b"delimiter=")?;
                 let mut enc = [0u8; 64];
                 let len = uri_encode(delimiter.as_bytes(), true, &mut enc)?;

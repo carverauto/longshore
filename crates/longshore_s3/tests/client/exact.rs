@@ -111,8 +111,8 @@ fn a_deadline_that_has_passed_sends_nothing_and_returns_the_buffer() {
     assert!(matches!(head, Ok(report) if report.end == End::NotSent(Cause::Deadline)));
     assert_eq!(r.lanes[0].server.requests, 0);
     // The buffer is the caller's again and carries the next operation.
-    let (put, _body) = r.run(r.client.put("k", body, LEN, &Put::default(), once()));
-    assert!(matches!(put.unwrap().end, End::Answered(a) if a.status == 200));
+    let (next, _body) = r.run(r.client.put("k", body, LEN, &Put::default(), once()));
+    assert!(matches!(next.unwrap().end, End::Answered(a) if a.status == 200));
 }
 
 #[test]

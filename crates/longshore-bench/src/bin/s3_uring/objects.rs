@@ -45,131 +45,88 @@ pub(super) fn objects(size: u32) {
     let url_len = sealed(|| {
         let mut step = |k: usize, ok: bool, d: Done| results[k] = (ok, Some(d));
 
-        s3.store_with(&mut io, 0, &a, tx, size, Checksum::Compute, &options)
-            .unwrap();
-        let d = wait(&mut io, &mut s3, &mut out);
-        step(0, d.outcome == Outcome::Stored, d);
+        {
+            s3.store_with(&mut io, 0, &a, tx, size, Checksum::Compute, &options)
+                .unwrap();
+            let d = wait(&mut io, &mut s3, &mut out);
+            step(0, d.outcome == Outcome::Stored, d);
+        }
 
-        s3.stat(&mut io, 1, &a, Some(rx)).unwrap();
-        let d = wait(&mut io, &mut s3, &mut out);
-        let ok = match d.outcome {
-            Outcome::Stat(stat) => {
-                let head = &io.buf(rx)[..stat.head_len as usize];
-                stat.size == size as u64
-                    && stat.tag.is_some()
-                    && header_in(head, "content-type") == Some(b"application/x-longshore-check")
-                    && header_in(head, meta_name) == Some(b"longshore check")
-            }
-            Outcome::Stored
-            | Outcome::AlreadyExists { .. }
-            | Outcome::Fetched { .. }
-            | Outcome::Listed { .. }
-            | Outcome::NotFound
-            | Outcome::Erased
-            | Outcome::Begun { .. }
-            | Outcome::PartStored { .. }
-            | Outcome::Aborted
-            | Outcome::Copied
-            | Outcome::ErasedMany { .. }
-            | Outcome::Report(_)
-            | Outcome::Fatal(_) => false,
-        };
-        step(1, ok, d);
+        {
+            s3.stat(&mut io, 1, &a, Some(rx)).unwrap();
+            let d = wait(&mut io, &mut s3, &mut out);
+            let ok = match d.outcome {
+                Outcome::Stat(stat) => {
+                    let head = &io.buf(rx)[..stat.head_len as usize];
+                    stat.size == size as u64
+                        && stat.tag.is_some()
+                        && header_in(head, "content-type") == Some(b"application/x-longshore-check")
+                        && header_in(head, meta_name) == Some(b"longshore check")
+                }
+                Outcome::Stored
+                | Outcome::AlreadyExists { .. }
+                | Outcome::Fetched { .. }
+                | Outcome::Listed { .. }
+                | Outcome::NotFound
+                | Outcome::Erased
+                | Outcome::Begun { .. }
+                | Outcome::PartStored { .. }
+                | Outcome::Aborted
+                | Outcome::Copied
+                | Outcome::ErasedMany { .. }
+                | Outcome::Report(_)
+                | Outcome::Fatal(_) => false,
+            };
+            step(1, ok, d);
+        }
 
-        s3.copy(&mut io, 2, &a, &b).unwrap();
-        let d = wait(&mut io, &mut s3, &mut out);
-        step(2, d.outcome == Outcome::Copied, d);
+        {
+            s3.copy(&mut io, 2, &a, &b).unwrap();
+            let d = wait(&mut io, &mut s3, &mut out);
+            step(2, d.outcome == Outcome::Copied, d);
+        }
 
-        s3.stat(&mut io, 3, &b, Some(rx)).unwrap();
-        let d = wait(&mut io, &mut s3, &mut out);
-        let ok = match d.outcome {
-            Outcome::Stat(stat) => {
-                let head = &io.buf(rx)[..stat.head_len as usize];
-                stat.size == size as u64 && header_in(head, meta_name) == Some(b"longshore check")
-            }
-            Outcome::Stored
-            | Outcome::AlreadyExists { .. }
-            | Outcome::Fetched { .. }
-            | Outcome::Listed { .. }
-            | Outcome::NotFound
-            | Outcome::Erased
-            | Outcome::Begun { .. }
-            | Outcome::PartStored { .. }
-            | Outcome::Aborted
-            | Outcome::Copied
-            | Outcome::ErasedMany { .. }
-            | Outcome::Report(_)
-            | Outcome::Fatal(_) => false,
-        };
-        step(3, ok, d);
+        {
+            s3.stat(&mut io, 3, &b, Some(rx)).unwrap();
+            let d = wait(&mut io, &mut s3, &mut out);
+            let ok = match d.outcome {
+                Outcome::Stat(stat) => {
+                    let head = &io.buf(rx)[..stat.head_len as usize];
+                    stat.size == size as u64
+                        && header_in(head, meta_name) == Some(b"longshore check")
+                }
+                Outcome::Stored
+                | Outcome::AlreadyExists { .. }
+                | Outcome::Fetched { .. }
+                | Outcome::Listed { .. }
+                | Outcome::NotFound
+                | Outcome::Erased
+                | Outcome::Begun { .. }
+                | Outcome::PartStored { .. }
+                | Outcome::Aborted
+                | Outcome::Copied
+                | Outcome::ErasedMany { .. }
+                | Outcome::Report(_)
+                | Outcome::Fatal(_) => false,
+            };
+            step(3, ok, d);
+        }
 
-        // One level below the base: one key and one common prefix.
-        s3.list_with(&mut io, 4, &base, None, 100, Some("/"), rx)
-            .unwrap();
-        let d = wait(&mut io, &mut s3, &mut out);
-        let ok = match d.outcome {
-            Outcome::Listed { len } => {
-                Listing::parse(&io.buf(rx)[..len as usize]).is_ok_and(|listing| {
-                    let mut keys = listing.entries();
-                    let mut prefixes = listing.common_prefixes();
-                    let key_ok = matches!(keys.next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
-                    let prefix_ok = matches!(prefixes.next(), Some(Ok(p))
-                        if p.strip_prefix(base.as_bytes()) == Some(b"sub/"));
-                    key_ok && prefix_ok && keys.next().is_none() && prefixes.next().is_none()
-                })
-            }
-            Outcome::Stored
-            | Outcome::AlreadyExists { .. }
-            | Outcome::Fetched { .. }
-            | Outcome::NotFound
-            | Outcome::Erased
-            | Outcome::Begun { .. }
-            | Outcome::PartStored { .. }
-            | Outcome::Aborted
-            | Outcome::Stat(_)
-            | Outcome::Copied
-            | Outcome::ErasedMany { .. }
-            | Outcome::Report(_)
-            | Outcome::Fatal(_) => false,
-        };
-        // The same level one entry at a time: the first page is cut short
-        // and returns a token, and the token brings the rest without
-        // repeating anything.
-        s3.list_with(&mut io, 4, &base, None, 1, Some("/"), rx)
-            .unwrap();
-        let first = wait(&mut io, &mut s3, &mut out);
-        let mut continuation = [0u8; 1100];
-        let mut continuation_len = 0;
-        let first_ok = match first.outcome {
-            Outcome::Listed { len } => {
-                Listing::parse(&io.buf(rx)[..len as usize]).is_ok_and(|listing| {
-                    continuation_len = listing
-                        .next_token_raw
-                        .and_then(|raw| longshore::store::list::unescape(raw, &mut continuation))
-                        .unwrap_or(0);
-                    let one_key = matches!(listing.entries().next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
-                    listing.is_truncated && one_key && listing.common_prefixes().next().is_none()
-                })
-            }
-            Outcome::Stored | Outcome::AlreadyExists { .. } | Outcome::Fetched { .. } | Outcome::NotFound | Outcome::Erased | Outcome::Begun { .. } | Outcome::PartStored { .. } | Outcome::Aborted | Outcome::Stat(_) | Outcome::Copied | Outcome::ErasedMany { .. } | Outcome::Report(_) | Outcome::Fatal(_) => false,
-        };
-        let paged_ok = first_ok
-            && core::str::from_utf8(&continuation[..continuation_len]).is_ok_and(|t| {
-                !t.is_empty()
-                    && s3
-                        .list_continue(&mut io, 4, &base, t, 1, Some("/"), rx)
-                        .is_ok()
-            })
-            && match wait(&mut io, &mut s3, &mut out).outcome {
+        {
+            // One level below the base: one key and one common prefix.
+            s3.list_with(&mut io, 4, &base, None, 100, Some("/"), rx)
+                .unwrap();
+            let d = wait(&mut io, &mut s3, &mut out);
+            let ok = match d.outcome {
                 Outcome::Listed { len } => {
                     Listing::parse(&io.buf(rx)[..len as usize]).is_ok_and(|listing| {
+                        let mut keys = listing.entries();
                         let mut prefixes = listing.common_prefixes();
+                        let key_ok =
+                            matches!(keys.next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
                         let prefix_ok = matches!(prefixes.next(), Some(Ok(p))
                             if p.strip_prefix(base.as_bytes()) == Some(b"sub/"));
-                        prefix_ok
-                            && prefixes.next().is_none()
-                            && listing.entries().next().is_none()
-                            && !listing.is_truncated
+                        key_ok && prefix_ok && keys.next().is_none() && prefixes.next().is_none()
                     })
                 }
                 Outcome::Stored
@@ -186,7 +143,61 @@ pub(super) fn objects(size: u32) {
                 | Outcome::Report(_)
                 | Outcome::Fatal(_) => false,
             };
-        step(4, ok && paged_ok, d);
+            // The same level one entry at a time: the first page is cut short
+            // and returns a token, and the token brings the rest without
+            // repeating anything.
+            s3.list_with(&mut io, 4, &base, None, 1, Some("/"), rx)
+                .unwrap();
+            let first_page = wait(&mut io, &mut s3, &mut out);
+            let mut continuation = [0u8; 1100];
+            let mut continuation_len = 0;
+            let first_ok = match first_page.outcome {
+                Outcome::Listed { len } => {
+                    Listing::parse(&io.buf(rx)[..len as usize]).is_ok_and(|listing| {
+                        continuation_len = listing
+                            .next_token_raw
+                            .and_then(|raw| longshore::store::list::unescape(raw, &mut continuation))
+                            .unwrap_or(0);
+                        let one_key = matches!(listing.entries().next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
+                        listing.is_truncated && one_key && listing.common_prefixes().next().is_none()
+                    })
+                }
+                Outcome::Stored | Outcome::AlreadyExists { .. } | Outcome::Fetched { .. } | Outcome::NotFound | Outcome::Erased | Outcome::Begun { .. } | Outcome::PartStored { .. } | Outcome::Aborted | Outcome::Stat(_) | Outcome::Copied | Outcome::ErasedMany { .. } | Outcome::Report(_) | Outcome::Fatal(_) => false,
+            };
+            let paged_ok = first_ok
+                && core::str::from_utf8(&continuation[..continuation_len]).is_ok_and(|t| {
+                    !t.is_empty()
+                        && s3
+                            .list_continue(&mut io, 4, &base, t, 1, Some("/"), rx)
+                            .is_ok()
+                })
+                && match wait(&mut io, &mut s3, &mut out).outcome {
+                    Outcome::Listed { len } => Listing::parse(&io.buf(rx)[..len as usize])
+                        .is_ok_and(|listing| {
+                            let mut prefixes = listing.common_prefixes();
+                            let prefix_ok = matches!(prefixes.next(), Some(Ok(p))
+                                if p.strip_prefix(base.as_bytes()) == Some(b"sub/"));
+                            prefix_ok
+                                && prefixes.next().is_none()
+                                && listing.entries().next().is_none()
+                                && !listing.is_truncated
+                        }),
+                    Outcome::Stored
+                    | Outcome::AlreadyExists { .. }
+                    | Outcome::Fetched { .. }
+                    | Outcome::NotFound
+                    | Outcome::Erased
+                    | Outcome::Begun { .. }
+                    | Outcome::PartStored { .. }
+                    | Outcome::Aborted
+                    | Outcome::Stat(_)
+                    | Outcome::Copied
+                    | Outcome::ErasedMany { .. }
+                    | Outcome::Report(_)
+                    | Outcome::Fatal(_) => false,
+                };
+            step(4, ok && paged_ok, d);
+        }
 
         if gcs {
             // No batch erase on this store: one request each.
@@ -196,9 +207,10 @@ pub(super) fn objects(size: u32) {
                 step(k, d.outcome == Outcome::Erased, d);
             }
         } else {
-            let len = write_manifest(io.buf(tx), &[&a, &b, "selftest/never-there"])
-                .unwrap_or_else(|| die("manifest does not fit")) as u32;
-            s3.erase_many(&mut io, 5, tx, len, rx).unwrap();
+            let manifest_len = write_manifest(io.buf(tx), &[&a, &b, "selftest/never-there"])
+                .unwrap_or_else(|| die("manifest does not fit"))
+                as u32;
+            s3.erase_many(&mut io, 5, tx, manifest_len, rx).unwrap();
             let d = wait(&mut io, &mut s3, &mut out);
             let ok = match d.outcome {
                 Outcome::ErasedMany { len } => Failures::parse(&io.buf(rx)[..len as usize])
@@ -220,9 +232,11 @@ pub(super) fn objects(size: u32) {
             step(5, ok, d);
         }
 
-        s3.stat(&mut io, 7, &a, None).unwrap();
-        let d = wait(&mut io, &mut s3, &mut out);
-        step(7, d.outcome == Outcome::NotFound, d);
+        {
+            s3.stat(&mut io, 7, &a, None).unwrap();
+            let d = wait(&mut io, &mut s3, &mut out);
+            step(7, d.outcome == Outcome::NotFound, d);
+        }
 
         s3.presign(&mut io, &mut url, Access::Fetch, &a, 60).ok()
     });

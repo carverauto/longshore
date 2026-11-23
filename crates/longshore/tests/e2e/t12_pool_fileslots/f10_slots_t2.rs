@@ -55,7 +55,7 @@ fn t2_f10_1_open_into_already_open_slot_returns_ebusy() {
         let dup = open_slot(io, &mut out, 3, FileSlot(0), BufId(0), &p2, rw);
         assert_eq!(dup, -LINUX_EBUSY);
 
-        let mut dyn_io = DynIo(io);
+        dyn_io = DynIo(io);
         assert_eq!(
             submit_and_wait_one(
                 &mut dyn_io,

@@ -144,18 +144,18 @@ fn sim_rename_enametoolong_is_atomic_and_default_flags_read() {
         ..DiskConfig::BASE
     });
     let mut out = Completions::new(8);
-    let drive = |sim: &mut SimIo, out: &mut Completions, tok: u64, op: Op| -> i32 {
-        sim.submit(Token(tok), op).unwrap();
+    let drive = |io: &mut SimIo, ready: &mut Completions, tok: u64, op: Op| -> i32 {
+        io.submit(Token(tok), op).unwrap();
         loop {
-            sim.tick(true, out).unwrap();
-            if let Some(c) = out.pop() {
+            io.tick(true, ready).unwrap();
+            if let Some(c) = ready.pop() {
                 assert_eq!(c.token, Token(tok));
                 return c.result;
             }
         }
     };
-    let put_path = |sim: &mut SimIo, buf: BufId, s: &[u8]| -> u32 {
-        sim.buf(buf)[..s.len()].copy_from_slice(s);
+    let put_path = |io: &mut SimIo, buf: BufId, s: &[u8]| -> u32 {
+        io.buf(buf)[..s.len()].copy_from_slice(s);
         s.len() as u32
     };
 

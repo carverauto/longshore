@@ -222,8 +222,8 @@ fn main() {
                     .map(|i| format!("bench/{pid}-c{c}-{i}.bin"))
                     .collect();
                 let fill = |i: usize, buffer: &mut Buffer| {
-                    for (at, b) in buffer.as_mut_slice().iter_mut().enumerate() {
-                        *b = pattern(c, i, at);
+                    for (at, byte) in buffer.as_mut_slice().iter_mut().enumerate() {
+                        *byte = pattern(c, i, at);
                     }
                 };
                 // In `mix`, the next operation on a key is a store while

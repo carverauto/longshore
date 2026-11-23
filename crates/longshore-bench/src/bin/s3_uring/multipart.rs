@@ -87,11 +87,11 @@ pub(super) fn multipart(size: u32) {
             let d = wait(&mut io, &mut s3, &mut out);
             attempts += d.attempts;
             match d.outcome {
-                Outcome::PartStored { tag, checksum } => {
+                Outcome::PartStored { tag, checksum: crc } => {
                     parts[d.token as usize - 1] = Some(Part {
                         number: d.token as u32,
                         tag,
-                        checksum: checksum.map(longshore::checksum::crc64_header_value),
+                        checksum: crc.map(longshore::checksum::crc64_header_value),
                     })
                 }
                 other @ (Outcome::Stored
@@ -111,11 +111,19 @@ pub(super) fn multipart(size: u32) {
         }
         let parts = parts.map(Option::unwrap);
         let manifest = bufs[PARTS as usize];
-        let len = write_manifest(io.buf(manifest), &parts).unwrap() as u32;
+        let manifest_len = write_manifest(io.buf(manifest), &parts).unwrap() as u32;
         // Google Cloud Storage keeps CRC-32C, so there is no CRC-64 to send it.
         let object_sum = (sums && !gcs).then(|| whole.finish());
-        s3.multipart_complete(&mut io, 10, &key, &upload, manifest, len, object_sum)
-            .unwrap();
+        s3.multipart_complete(
+            &mut io,
+            10,
+            &key,
+            &upload,
+            manifest,
+            manifest_len,
+            object_sum,
+        )
+        .unwrap();
         let stored = wait(&mut io, &mut s3, &mut out);
 
         // Read each part back by range into the spare buffer and compare.
@@ -140,14 +148,14 @@ pub(super) fn multipart(size: u32) {
         let erased = wait(&mut io, &mut s3, &mut out);
 
         // An upload that is abandoned: begin, one part, abort.
-        let upload = begin(&mut io, &mut s3, &mut out, &key, sums);
-        s3.multipart_store_part(&mut io, 1, &key, &upload, 1, bufs[0], size, checksum)
+        let abandoned = begin(&mut io, &mut s3, &mut out, &key, sums);
+        s3.multipart_store_part(&mut io, 1, &key, &abandoned, 1, bufs[0], size, checksum)
             .unwrap();
         let part = wait(&mut io, &mut s3, &mut out);
         if !matches!(part.outcome, Outcome::PartStored { .. }) {
             die(&format!("part before abort -> {:?}", part.outcome));
         }
-        s3.multipart_abort(&mut io, 40, &key, &upload).unwrap();
+        s3.multipart_abort(&mut io, 40, &key, &abandoned).unwrap();
         let aborted = wait(&mut io, &mut s3, &mut out);
         (stored, read_ok, erased, aborted, attempts)
     });

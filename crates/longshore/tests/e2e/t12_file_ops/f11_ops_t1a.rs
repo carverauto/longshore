@@ -125,7 +125,7 @@ fn t1_f11_2_sync_file_and_directory_datasync() {
         }
         assert_eq!(close_slot(io, &mut out, 20, FileSlot(0)), 0);
 
-        let mut d = DynIo(io);
+        d = DynIo(io);
         let old_len = write_nul_path(&mut d, BufId(0), 0, &p_old);
         let new_len = write_nul_path(&mut d, BufId(1), 0, &p_new);
         assert_eq!(
@@ -219,7 +219,7 @@ fn t1_f11_3_reserve_extend_and_keep_size_statx() {
             Ok(4096)
         );
 
-        let mut d = DynIo(io);
+        d = DynIo(io);
         let r2 = submit_and_wait_one(
             &mut d,
             &mut out,
@@ -240,7 +240,7 @@ fn t1_f11_3_reserve_extend_and_keep_size_statx() {
             "keep_size=true must not change logical file size"
         );
 
-        let mut d = DynIo(io);
+        d = DynIo(io);
         let rd = submit_and_wait_one(
             &mut d,
             &mut out,

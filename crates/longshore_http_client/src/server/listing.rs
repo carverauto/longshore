@@ -43,7 +43,7 @@ impl Server {
         let mut resumed = ([0u8; TARGET_MAX], 0usize);
         if let Some(hex) = token.strip_prefix(b"t") {
             for pair in hex.as_chunks::<2>().0.iter().take(TARGET_MAX) {
-                let nibble = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
+                let nibble = |digit: u8| (digit as char).to_digit(16).unwrap_or(0) as u8;
                 resumed.0[resumed.1] = nibble(pair[0]) << 4 | nibble(pair[1]);
                 resumed.1 += 1;
             }

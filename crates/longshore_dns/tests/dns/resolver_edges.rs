@@ -129,20 +129,22 @@ fn only_tokens_in_the_resolvers_range_are_its_own() {
 #[test]
 fn a_completion_for_a_server_it_does_not_have_is_ignored() {
     let strays = || (2..8).chain(10..16).map(|k| BASE + k);
-    let mut r = Resolver::new(config(&[NS1], SEC, Family::V4));
-    let mut io = SimIo::new(LIMITS, 1, Faults::default());
-    for token in strays() {
-        for result in [0, 12, 512, -5] {
-            assert!(
-                r.on_completion(&mut io, completion(token, result)),
-                "{token}"
-            );
+    {
+        let mut r = Resolver::new(config(&[NS1], SEC, Family::V4));
+        let mut io = SimIo::new(LIMITS, 1, Faults::default());
+        for token in strays() {
+            for result in [0, 12, 512, -5] {
+                assert!(
+                    r.on_completion(&mut io, completion(token, result)),
+                    "{token}"
+                );
+            }
         }
+        assert_eq!((r.failures, r.queries, r.cycles), (0, 0, 0));
+        let mut out = Completions::new(8);
+        io.tick(false, &mut out).unwrap();
+        assert!(out.is_empty(), "and it submitted nothing");
     }
-    assert_eq!((r.failures, r.queries, r.cycles), (0, 0, 0));
-    let mut out = Completions::new(8);
-    io.tick(false, &mut out).unwrap();
-    assert!(out.is_empty(), "and it submitted nothing");
 
     // The same while it is working: resolution is not disturbed.
     let (mut io, mut r, mut s, mut out) = world(1, Faults::default(), &[NS1], NS1, SEC);

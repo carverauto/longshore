@@ -188,7 +188,7 @@ fn stale_report_alone_waits_for_real_data() {
             "seed {seed}: stale report alone must yield no completion"
         );
 
-        let h = std::thread::spawn(move || {
+        let writer = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(10));
             peer.write_all(b"later").unwrap();
         });
@@ -196,6 +196,6 @@ fn stale_report_alone_waits_for_real_data() {
         let c = out.pop().expect("real completion after data arrives");
         assert_eq!((c.token.0, c.result), (2, 5), "seed {seed}");
         assert_eq!(&io.buf(BufId(0))[..5], b"later");
-        h.join().unwrap();
+        writer.join().unwrap();
     }
 }

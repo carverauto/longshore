@@ -81,8 +81,8 @@ fn t2_f22_1_unix_connect_without_listener_fails_and_frees_slot() {
             },
         )
         .unwrap();
-    let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
-    for c in cs {
+    let connected = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
+    for c in connected {
         assert_eq!(c.result, 0);
     }
 }

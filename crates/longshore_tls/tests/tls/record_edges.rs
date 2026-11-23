@@ -170,10 +170,10 @@ fn an_unkeyed_direction_opens_nothing() {
     assert_eq!(d.open(&rec, &mut [0u8; 8]), Err(RecordError::BadKey));
     assert_eq!(d.open_in_place(&mut rec), Err(RecordError::BadKey));
     // And neither does one whose keys were cleared.
-    let mut d = direction(0);
-    d.clear();
-    assert_eq!(d.open(&rec, &mut [0u8; 8]), Err(RecordError::BadKey));
-    assert_eq!(d.open_in_place(&mut rec), Err(RecordError::BadKey));
+    let mut cleared = direction(0);
+    cleared.clear();
+    assert_eq!(cleared.open(&rec, &mut [0u8; 8]), Err(RecordError::BadKey));
+    assert_eq!(cleared.open_in_place(&mut rec), Err(RecordError::BadKey));
     assert_eq!(Direction::default().sequence(), 0);
 }
 

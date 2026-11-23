@@ -58,7 +58,7 @@ fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
     let path_buf = lim.small(0);
     let w_buf = BufId(0);
     let r_buf = BufId(1);
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/wb_eio.dat");
+    let mut plen = write_nul_path(&mut sim, path_buf, 0, "/wb_eio.dat");
 
     // 1. Open and sync directory + initial file so name is durable.
     let c = submit_and_wait_one(
@@ -211,7 +211,7 @@ fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
 
     // 5. Power loss drops poisoned writes while evicted sector 0 remains durable.
     sim.power_loss();
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/wb_eio.dat");
+    plen = write_nul_path(&mut sim, path_buf, 0, "/wb_eio.dat");
     assert_eq!(
         submit_and_wait_one(
             &mut sim,

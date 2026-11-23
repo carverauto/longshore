@@ -247,8 +247,8 @@ fn posix_udp_recv_now_and_send_zero_copy_backpressure() {
     let mut up = 0;
     while up < 2 {
         io.tick(true, &mut out).unwrap();
-        while let Some(c) = out.pop() {
-            assert_eq!(c.result, 0);
+        while let Some(conn) = out.pop() {
+            assert_eq!(conn.result, 0);
             up += 1;
         }
     }
@@ -269,8 +269,8 @@ fn posix_udp_recv_now_and_send_zero_copy_backpressure() {
         )
         .unwrap();
         io.tick(false, &mut out).unwrap();
-        if let Some(c) = out.pop() {
-            assert!(c.result > 0);
+        if let Some(sent) = out.pop() {
+            assert!(sent.result > 0);
             tok += 1;
         } else {
             pending_zc = Some(tok);
@@ -293,9 +293,9 @@ fn posix_udp_recv_now_and_send_zero_copy_backpressure() {
         .unwrap();
         tok += 1;
         io.tick(true, &mut out).unwrap();
-        while let Some(c) = out.pop() {
-            if c.token.0 == zc_tok {
-                assert!(c.result > 0);
+        while let Some(drained) = out.pop() {
+            if drained.token.0 == zc_tok {
+                assert!(drained.result > 0);
                 done = true;
             }
         }

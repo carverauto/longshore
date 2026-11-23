@@ -365,33 +365,36 @@ fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
 fn an_untrusted_or_misnamed_certificate_fails_before_any_request_is_sent() {
     let (server_id, other) = (identity(NAME), identity(NAME));
     // The client trusts a different certificate.
-    let mut w = world_with(
+    let mut untrusted = world_with(
         2,
         Faults::default(),
         Some(ClientSetup::with_roots(&[&other.cert]).unwrap()),
         Some(ServerSetup::new(&[&server_id.cert], &server_id.key).unwrap()),
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        untrusted.request("GET", "/k", None),
         Err(Error::Tls(TlsError::BadCertificate))
     );
     assert_eq!(
-        w.server.requests, 0,
+        untrusted.server.requests, 0,
         "no request may reach a server the client does not trust"
     );
     // The certificate is trusted but is for another name.
     let wrong = identity("elsewhere.test");
-    let mut w = world_with(
+    let mut misnamed = world_with(
         3,
         Faults::default(),
         Some(ClientSetup::with_roots(&[&wrong.cert]).unwrap()),
         Some(ServerSetup::new(&[&wrong.cert], &wrong.key).unwrap()),
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        misnamed.request("GET", "/k", None),
         Err(Error::Tls(TlsError::BadCertificate))
     );
-    assert_eq!((w.server.requests, w.client.in_flight()), (0, 0));
+    assert_eq!(
+        (misnamed.server.requests, misnamed.client.in_flight()),
+        (0, 0)
+    );
 }
 
 #[test]
@@ -400,31 +403,31 @@ fn protocol_mismatches_fail_cleanly() {
     // TLS client, plain server. This server keeps waiting for a request head
     // that never comes, so the client's timeout ends it; a server that
     // answered in HTTP would be rejected as a bad record instead.
-    let mut w = world_with(
+    let mut tls_to_plain = world_with(
         4,
         Faults::default(),
         Some(ClientSetup::with_roots(&[&id.cert]).unwrap()),
         None,
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        tls_to_plain.request("GET", "/k", None),
         Err(Error::Timeout),
         "TLS to a plain port must fail, not hang"
     );
-    assert_eq!(w.client.in_flight(), 0);
+    assert_eq!(tls_to_plain.client.in_flight(), 0);
     // Plain client, TLS server: the server drops what is not a handshake.
-    let mut w = world_with(
+    let mut plain_to_tls = world_with(
         5,
         Faults::default(),
         None,
         Some(ServerSetup::new(&[&id.cert], &id.key).unwrap()),
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        plain_to_tls.request("GET", "/k", None),
         Err(Error::Closed { reused: false }),
         "plain request to a TLS port must fail, not hang"
     );
-    assert_eq!(w.client.in_flight(), 0);
+    assert_eq!(plain_to_tls.client.in_flight(), 0);
 }
 
 #[test]
@@ -508,13 +511,13 @@ fn a_connection_is_replaced_before_its_keys_wear_out() {
     assert_eq!(w.client.connects, w.server.accepted);
 
     // With the default limit the same work stays on one connection.
-    let mut w = world(21, Faults::default());
+    let mut default_limit = world(21, Faults::default());
     for i in 0..12u8 {
-        w.fill_tx(60_000, i);
-        ok(200, 0)(w.request("PUT", "/k", Some(60_000)));
-        ok(200, 60_000)(w.request("GET", "/k", None));
+        default_limit.fill_tx(60_000, i);
+        ok(200, 0)(default_limit.request("PUT", "/k", Some(60_000)));
+        ok(200, 60_000)(default_limit.request("GET", "/k", None));
     }
-    assert_eq!(w.client.connects, 1);
+    assert_eq!(default_limit.client.connects, 1);
 }
 
 /// A server that sends bytes past the body it declared, inside the same
@@ -537,7 +540,7 @@ fn bytes_past_the_declared_body_are_rejected_over_tls() {
     w.server.script(Behavior::Raw(honest));
     ok(200, body_len as u32)(w.request("GET", "/k", None));
 
-    let mut w = world(31, Faults::default());
+    w = world(31, Faults::default());
     w.server.script(Behavior::Raw(smuggling));
     assert_eq!(
         w.request("GET", "/k", None),

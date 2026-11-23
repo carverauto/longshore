@@ -149,7 +149,7 @@ fn dir_log_overflow_and_cross_dir_nonempty_rename_under_sync_fail() {
         );
     });
 
-    let mut sim = SimIo::new(base_limits(), 29, Faults::default());
+    sim = SimIo::new(base_limits(), 29, Faults::default());
     sim.setup_disk(cfg);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d1");

@@ -70,11 +70,11 @@ fn list_pages_through_keys_by_prefix_in_order() {
     let mut after: Option<String> = None;
     let mut pages = 0;
     loop {
-        let (page, truncated) = list_page(&mut w, "logs/", after.as_deref(), 2);
+        let (page, more) = list_page(&mut w, "logs/", after.as_deref(), 2);
         assert!(page.len() <= 2);
         seen.extend(page.iter().map(|p| p.0.clone()));
         pages += 1;
-        if !truncated {
+        if !more {
             break;
         }
         after = seen.last().cloned();

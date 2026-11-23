@@ -137,8 +137,8 @@ fn a_client_exchanges_records_with_a_rustls_server_under_each_suite() {
             let n = tx.seal(CONTENT_APPLICATION_DATA, msg, &mut rec).unwrap();
             assert_eq!(n, msg.len() + OVERHEAD);
             feed(&mut server, &rec[..n]);
-            let n = server.reader().read(&mut got).unwrap();
-            assert_eq!(&got[..n], msg, "{suite:?}: client to rustls");
+            let read = server.reader().read(&mut got).unwrap();
+            assert_eq!(&got[..read], msg, "{suite:?}: client to rustls");
         }
 
         server.writer().write_all(b"pong").unwrap();
@@ -168,8 +168,8 @@ fn a_server_hands_over_past_the_tickets_it_sent_to_a_rustls_client() {
     let setup = ServerSetup::new(&[&cert], &key).unwrap();
     let mut client = rustls_client(&cert);
     let mut server = Handshake::server(&setup).unwrap();
-    let from_client = handshake(&mut server, &mut client);
-    assert!(from_client.is_empty(), "the client has sent no data yet");
+    let leftover = handshake(&mut server, &mut client);
+    assert!(leftover.is_empty(), "the client has sent no data yet");
     let (mut tx, mut rx) = (Direction::new(), Direction::new());
     server.finish(&mut tx, &mut rx).unwrap();
     assert!(
@@ -184,8 +184,8 @@ fn a_server_hands_over_past_the_tickets_it_sent_to_a_rustls_client() {
         .unwrap();
     feed(&mut client, &rec[..n]);
     let mut got = [0u8; 64];
-    let n = client.reader().read(&mut got).unwrap();
-    assert_eq!(&got[..n], b"pong", "server to rustls");
+    let read = client.reader().read(&mut got).unwrap();
+    assert_eq!(&got[..read], b"pong", "server to rustls");
 
     client.writer().write_all(b"ping").unwrap();
     let mut from_client = Vec::new();

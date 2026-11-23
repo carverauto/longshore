@@ -81,7 +81,7 @@ fn main() {
 
     // One line per answer: everything the store said, and nothing it did not.
     let show = |what: &str, report: &Result<Report, Error>| {
-        let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+        let text = |raw: &[u8]| String::from_utf8_lossy(raw).into_owned();
         match report {
             Err(e) => println!("{what}: nothing sent, {e:?}"),
             Ok(r) => match r.end {
@@ -103,7 +103,7 @@ fn main() {
                     },
                     a.crc64.map_or("-".into(), |v| text(&v)),
                     a.content_length,
-                    a.content_range.map(|r| (r.first, r.last, r.size)),
+                    a.content_range.map(|range| (range.first, range.last, range.size)),
                     a.body_len,
                     a.request_id.map_or("-", |_| "present"),
                     a.malformed,
@@ -143,8 +143,8 @@ fn main() {
             encryption,
             checksum,
         };
-        let (put, back) = client.put(&key, body, LEN, &options, once()).wait();
-        body = back;
+        let put;
+        (put, body) = client.put(&key, body, LEN, &options, once()).wait();
         show(&format!("put {name}"), &put);
         let Some(a) = answer(&put) else {
             // An unknown outcome may have stored it: erase it all the same.
@@ -164,8 +164,8 @@ fn main() {
     let mut failed = false;
     if let Some((key, options, expect)) = first {
         println!("reading back {key}");
-        let (again, back) = client.put(&key, body, LEN, &options, once()).wait();
-        body = back;
+        let again;
+        (again, body) = client.put(&key, body, LEN, &options, once()).wait();
         show("put again, must be refused", &again);
         let other = Expect {
             etag: longshore::store::multipart::Fixed::new(b"\"00000000000000000000000000000000\""),
@@ -176,16 +176,16 @@ fn main() {
             "head, another etag",
             &client.head(&key, &other, once()).wait(),
         );
-        let (whole, back) = client.get(&key, None, &expect, body, once()).wait();
-        body = back;
+        let whole;
+        (whole, body) = client.get(&key, None, &expect, body, once()).wait();
         show("get", &whole);
         let whole_ok = answer(&whole).is_some_and(|a| {
             a.status == 200 && body.as_slice()[..a.body_len as usize] == bytes[..]
         });
-        let (part, back) = client
+        let part;
+        (part, body) = client
             .get(&key, Some((1000, 1999)), &expect, body, once())
             .wait();
-        body = back;
         show("get bytes 1000-1999", &part);
         let part_ok = answer(&part).is_some_and(|a| {
             let got = &body.as_slice()[..a.body_len as usize];
@@ -197,8 +197,8 @@ fn main() {
         });
         println!("bytes read back: whole {whole_ok}, part {part_ok}");
         failed |= !whole_ok || !part_ok;
-        let (refused, back) = client.get(&key, Some((0, 9)), &other, body, once()).wait();
-        body = back;
+        let refused;
+        (refused, body) = client.get(&key, Some((0, 9)), &other, body, once()).wait();
         show("get, another etag", &refused);
     } else {
         println!("no variant was stored: nothing to read back");
@@ -210,17 +210,19 @@ fn main() {
         encryption: None,
         checksum: Checksum::Sha256(sha256(b"other bytes")),
     };
-    let key = format!("{prefix}/wrong-sha256");
+    let wrong_key = format!("{prefix}/wrong-sha256");
     body.as_mut_slice()[..LEN].copy_from_slice(&bytes);
-    let (damaged, back) = client.put(&key, body, LEN, &wrong, once()).wait();
-    body = back;
+    let damaged;
+    (damaged, body) = client.put(&wrong_key, body, LEN, &wrong, once()).wait();
     show("put with a SHA-256 of other bytes", &damaged);
-    written.push(key);
+    written.push(wrong_key);
 
     let past = Budget::once(Instant::now() - Duration::from_millis(1));
-    let key = format!("{prefix}/late");
+    let late_key = format!("{prefix}/late");
     body.as_mut_slice()[..LEN].copy_from_slice(&bytes);
-    let (late, _body) = client.put(&key, body, LEN, &Put::default(), past).wait();
+    let (late, _body) = client
+        .put(&late_key, body, LEN, &Put::default(), past)
+        .wait();
     show("put after its deadline", &late);
     failed |= !matches!(late, Ok(r) if matches!(r.end, End::NotSent(_)) && r.request.is_none());
 

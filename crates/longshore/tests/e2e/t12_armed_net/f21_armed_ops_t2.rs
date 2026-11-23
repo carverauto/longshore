@@ -148,11 +148,11 @@ fn t2_f21_2_rearm_accept_after_closing_slot_accepts_next_client() {
         },
     )
     .unwrap();
-    let cs = drive_until(&mut io, &mut out, 40, |v| {
+    let reaccepted = drive_until(&mut io, &mut out, 40, |v| {
         v.iter().any(|c| c.token == Token(21)) && v.iter().any(|c| c.token == Token(22))
     })
     .unwrap();
-    let accepted = cs.iter().find(|c| c.token == Token(21)).unwrap();
+    let accepted = reaccepted.iter().find(|c| c.token == Token(21)).unwrap();
     assert!(accepted.more);
     assert_eq!(accepted.result as u32, first_slot.0);
 }
@@ -237,11 +237,11 @@ fn t2_f21_3_empty_buffer_ring_returns_enobufs_and_preserves_bytes_on_rearm() {
     }
     io.submit(Token(30), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
-    let cs = drive_until(&mut io, &mut out, 30, |v| {
+    let redelivered = drive_until(&mut io, &mut out, 30, |v| {
         v.iter().any(|c| c.token == Token(30))
     })
     .unwrap();
-    let delivered = cs.iter().find(|c| c.token == Token(30)).unwrap();
+    let delivered = redelivered.iter().find(|c| c.token == Token(30)).unwrap();
     assert_eq!(delivered.result, 11);
     let id = delivered.buf.unwrap();
     assert_eq!(read_pool_bytes(&mut io, id, 0, 11), b"third-chunk");

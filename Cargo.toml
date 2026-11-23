@@ -79,6 +79,7 @@ allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 wildcard_enum_match_arm = "deny"
 let_underscore_untyped = "deny"
+shadow_unrelated = "deny"
 
 [profile.release]
 opt-level = 3

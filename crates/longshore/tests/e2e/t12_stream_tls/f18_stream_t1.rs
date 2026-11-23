@@ -332,16 +332,22 @@ fn t1_f18_4_stream_idle_check_clean_dirty_and_closed() {
         drive_until(&mut io, &mut out, 20, |v| !v.is_empty()).unwrap();
     assert_eq!(client.check_idle(&mut io, BufId(0), 0), IdleCheck::Pending);
     io.tick(true, &mut out).expect("tick");
-    let c = out.pop().expect("dirty completion");
-    assert_eq!(client.on_idle_check(&mut io, c.result), IdleCheck::Dirty);
+    let dirty = out.pop().expect("dirty completion");
+    assert_eq!(
+        client.on_idle_check(&mut io, dirty.result),
+        IdleCheck::Dirty
+    );
 
     io.submit(Token(99), Op::Close { sock: SERVER }).unwrap();
     let _: Vec<longshore::io::Completion> =
         drive_until(&mut io, &mut out, 20, |v| !v.is_empty()).unwrap();
     assert_eq!(client.check_idle(&mut io, BufId(0), 0), IdleCheck::Pending);
     io.tick(true, &mut out).expect("tick");
-    let c = out.pop().expect("closed completion");
-    assert_eq!(client.on_idle_check(&mut io, c.result), IdleCheck::Closed);
+    let closed = out.pop().expect("closed completion");
+    assert_eq!(
+        client.on_idle_check(&mut io, closed.result),
+        IdleCheck::Closed
+    );
 }
 
 #[test]

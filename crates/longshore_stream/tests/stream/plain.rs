@@ -190,15 +190,18 @@ fn plain_stream_idle_check_eof_and_reset() {
         io.buf(S_BUF)[0] = b'!';
         server.send(&mut io, S_BUF, 0, 1, u32::MAX);
         io.tick(true, &mut out).unwrap();
-        let c = out.pop().unwrap();
-        assert_eq!(c.token, S_SEND);
-        assert_eq!(server.on_send(&mut io, c.result), Step::Done(1));
+        let sent = out.pop().unwrap();
+        assert_eq!(sent.token, S_SEND);
+        assert_eq!(server.on_send(&mut io, sent.result), Step::Done(1));
 
         assert_eq!(client.check_idle(&mut io, SCRATCH, 0), IdleCheck::Pending);
         io.tick(true, &mut out).unwrap();
-        let c = out.pop().unwrap();
-        assert_eq!(c.token, C_RECV);
-        assert_eq!(client.on_idle_check(&mut io, c.result), IdleCheck::Dirty);
+        let dirty = out.pop().unwrap();
+        assert_eq!(dirty.token, C_RECV);
+        assert_eq!(
+            client.on_idle_check(&mut io, dirty.result),
+            IdleCheck::Dirty
+        );
 
         // 3. Peer closes -> check_idle sees Closed, recv sees Done(0).
         io.submit(S_CLOSE, Op::Close { sock: SERVER }).unwrap();
@@ -207,13 +210,16 @@ fn plain_stream_idle_check_eof_and_reset() {
 
         assert_eq!(client.check_idle(&mut io, SCRATCH, 0), IdleCheck::Pending);
         io.tick(true, &mut out).unwrap();
-        let c = out.pop().unwrap();
-        assert_eq!(client.on_idle_check(&mut io, c.result), IdleCheck::Closed);
+        let closed = out.pop().unwrap();
+        assert_eq!(
+            client.on_idle_check(&mut io, closed.result),
+            IdleCheck::Closed
+        );
 
         assert_eq!(client.recv(&mut io, C_RX, 0, 16), Step::Pending);
         io.tick(true, &mut out).unwrap();
-        let c = out.pop().unwrap();
-        assert_eq!(client.on_recv(&mut io, c.result), Step::Done(0));
+        let eof = out.pop().unwrap();
+        assert_eq!(client.on_recv(&mut io, eof.result), Step::Done(0));
 
         client.reset();
         assert!(!client.is_tls());

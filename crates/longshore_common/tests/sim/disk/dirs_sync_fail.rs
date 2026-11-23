@@ -152,7 +152,7 @@ fn cross_dir_rename_synced_dirs_and_asymmetric_sync_fail() {
     });
 
     // Asymmetric case: only /d1 synced; /d1 sync_fail must not poison it, while /d2 sync_fail must.
-    let mut sim = make_sim(53, 512, 16, 16 * 1024);
+    sim = make_sim(53, 512, 16, 16 * 1024);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d1");
         mkdir_path(&mut sim, &mut out, 2, "/d2");

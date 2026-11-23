@@ -61,7 +61,7 @@ fn t1_f12_1_chain_write_then_sync() {
         assert_eq!(cs[pos_w].result, 23);
         assert_eq!(cs[pos_s].result, 0);
 
-        let mut d = DynIo(io);
+        d = DynIo(io);
         assert_eq!(
             submit_and_wait_one(
                 &mut d,

@@ -66,8 +66,9 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(3))).unwrap();
-    let rc = cs.iter().find(|c| c.token == Token(3)).unwrap();
+    let received =
+        drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(3))).unwrap();
+    let rc = received.iter().find(|c| c.token == Token(3)).unwrap();
     let id = rc.buf.unwrap();
     assert_eq!(
         read_pool_bytes(io, id, 0, rc.result as usize),
@@ -90,8 +91,8 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(6))).unwrap();
-    assert_eq!(cs[0].result, 0);
+    let eof = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(6))).unwrap();
+    assert_eq!(eof[0].result, 0);
     io.submit(Token(7), Op::Close { sock: Sock(1) }).unwrap();
     let _: Vec<longshore::io::Completion> =
         drive_until(io, &mut out, 30, |v| v.iter().any(|c| c.token == Token(7))).unwrap();
@@ -120,8 +121,8 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
-    for c in cs {
+    let unix_connected = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
+    for c in unix_connected {
         assert_eq!(c.result, 0);
     }
     write_pool_bytes(io, BufId(1), 0, b"unix-shared");
@@ -146,8 +147,15 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
-    assert_eq!(cs.iter().find(|c| c.token == Token(11)).unwrap().result, 11);
+    let exchanged = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
+    assert_eq!(
+        exchanged
+            .iter()
+            .find(|c| c.token == Token(11))
+            .unwrap()
+            .result,
+        11
+    );
     assert_eq!(read_pool_bytes(io, BufId(2), 0, 11), b"unix-shared");
 }
 

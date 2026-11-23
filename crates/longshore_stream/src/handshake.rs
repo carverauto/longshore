@@ -47,14 +47,14 @@ impl Stream {
                 return Step::Pending;
             }
             if hs.is_done() {
-                let hs = t.handshake.take().expect("checked above");
-                return match hs.finish(&mut t.tx, &mut t.rx) {
+                let done = t.handshake.take().expect("checked above");
+                return match done.finish(&mut t.tx, &mut t.rx) {
                     Ok(()) => Step::Done(0),
                     Err(e) => Step::Tls(e.into()),
                 };
             }
             let used = match hs.read(&io.buf(t.rx_buf)[t.rx_start as usize..t.rx_end as usize]) {
-                Ok(n) => n as u32,
+                Ok(consumed) => consumed as u32,
                 Err(e) => return Step::Tls(e.into()),
             };
             t.rx_start += used;
