@@ -127,7 +127,7 @@ fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
             break;
         }
     }
-    let send_tok = stalled_send_tok.expect("kernel send buffer should eventually backpressure");
+    let mut send_tok = stalled_send_tok.expect("kernel send buffer should eventually backpressure");
 
     // Submit Recv on the same socket Sock(2) while Send is still waiting.
     io.submit(
@@ -140,8 +140,40 @@ fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
         },
     )
     .unwrap();
+    // Both must now be pending. Under load the kernel can drain a "full"
+    // loopback socket later than `SETTLE`, so a Send that completes anyway is
+    // replaced by another until one stays pending: the test then starts from
+    // a Send that is really waiting, however long the drain took.
+    let mut both_pending = false;
+    for step in 0..256u64 {
+        match completion_within(&mut io, &mut out, SETTLE) {
+            None => {
+                both_pending = true;
+                break;
+            }
+            Some(c) if c.token == send_tok => {
+                assert!(c.result > 0, "send failed: {}", c.result);
+                send_tok = Token(1_000 + step);
+                io.submit(
+                    send_tok,
+                    Op::Send {
+                        sock: Sock(2),
+                        buf: BufId(0),
+                        off: 0,
+                        len: 65_536,
+                        zero_copy: false,
+                    },
+                )
+                .unwrap();
+            }
+            Some(c) => panic!(
+                "unexpected completion: token {} result {}",
+                c.token.0, c.result
+            ),
+        }
+    }
     assert!(
-        completion_within(&mut io, &mut out, SETTLE).is_none(),
+        both_pending,
         "a Send and a Recv must both be pending on Sock(2)"
     );
 
