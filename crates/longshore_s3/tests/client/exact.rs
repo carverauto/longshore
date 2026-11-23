@@ -111,7 +111,7 @@ fn a_deadline_that_has_passed_sends_nothing_and_returns_the_buffer() {
     );
     let head = r.run(r.client.head("k", &Expect::default(), past));
     assert!(matches!(head, Ok(report) if report.end == End::NotSent(Cause::Deadline)));
-    assert_eq!(r.lanes[0].server.requests, 0);
+    assert_eq!(r.lanes[0].server.requests(), 0);
     // The buffer is the caller's again and carries the next operation.
     let (next, _body) = r.run(r.client.put("k", body, LEN, &Put::default(), once()));
     assert!(matches!(next.unwrap().end, End::Answered(a) if a.status == 200));
@@ -136,7 +136,7 @@ fn an_error_means_nothing_was_sent() {
         r.run(r.client.head("", &Expect::default(), once())),
         Err(Error::BadKey)
     );
-    assert_eq!(r.lanes[0].server.requests, 0);
+    assert_eq!(r.lanes[0].server.requests(), 0);
 }
 
 /// The result of a request the store never answers comes when the deadline
@@ -165,7 +165,7 @@ fn a_stalled_request_ends_at_its_deadline_with_its_buffer() {
         (150 * common::MS..400 * common::MS).contains(&took),
         "{took}"
     );
-    assert_eq!(r.lanes[0].server.requests, 1, "no second attempt");
+    assert_eq!(r.lanes[0].server.requests(), 1, "no second attempt");
     let (next, _body) = r.run(r.client.put("k2", body, LEN, &Put::default(), once()));
     assert!(matches!(next.unwrap().end, End::Answered(a) if a.status == 200));
 }
@@ -181,7 +181,7 @@ fn a_failed_io_thread_reports_a_sent_request_as_unknown() {
     let client = r.client.clone();
     let mut put = pin!(client.put("k", body, LEN, &Put::default(), once()));
     let mut cx = Context::from_waker(Waker::noop());
-    while r.lanes[0].server.requests == 0 {
+    while r.lanes[0].server.requests() == 0 {
         assert!(put.as_mut().poll(&mut cx).is_pending());
         r.pump();
     }

@@ -66,11 +66,11 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
     assert_eq!(w.store().attempts, 1);
 
     // An unchanged file causes no further validation requests.
-    let (requests, failures) = (w.server.requests, w.s3.credential_failures);
+    let (requests, failures) = (w.server.requests(), w.s3.credential_failures);
     w.settle(5 * REREAD_MS);
     assert_eq!(
         (
-            w.server.requests,
+            w.server.requests(),
             w.s3.credential_rotations,
             w.s3.credential_failures
         ),

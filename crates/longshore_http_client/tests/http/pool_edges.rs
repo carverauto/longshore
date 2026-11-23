@@ -109,7 +109,8 @@ fn a_full_pool_gives_up_an_idle_connection_to_another_host() {
     assert_eq!(w.client.connects, u64::from(CONNS) + 1);
     assert_eq!(w.client.open_connections(), CONNS as usize);
     assert_eq!(
-        w.server.closed, 1,
+        w.server.closed(),
+        1,
         "the server saw the old connection close"
     );
 }

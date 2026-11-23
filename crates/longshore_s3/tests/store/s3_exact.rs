@@ -129,7 +129,7 @@ fn a_write_is_read_back_under_the_identity_the_store_gave_it() {
     );
     assert_eq!((part.etag, part.version), (expect.etag, expect.version));
     assert_eq!(&w.io.buf(RX)[..200], &body[100..300]);
-    assert_eq!(w.server.requests, 4, "one request each");
+    assert_eq!(w.server.requests(), 4, "one request each");
 }
 
 /// The canonical requests are written out here as the SigV4 specification
@@ -212,7 +212,7 @@ fn a_refused_write_reports_the_refusal_and_leaves_the_object_alone() {
     // One request, answered: the object there is someone else's.
     assert_eq!((refused.sent, refused.unanswered), (1, 0));
     assert_eq!(w.server.object("/k"), Some(&first[..]));
-    assert_eq!(w.server.requests, 2, "no request is made to compare");
+    assert_eq!(w.server.requests(), 2, "no request is made to compare");
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn a_version_id_of_the_longest_length_s3_gives_is_sent_back() {
     w.s3.get(&mut w.io, 3, "k", None, &unknown, RX, ONCE)
         .unwrap();
     assert_eq!(answer(&mut w).status, 404);
-    assert_eq!(w.server.requests, 3);
+    assert_eq!(w.server.requests(), 3);
 }
 
 #[test]
@@ -425,7 +425,7 @@ fn one_attempt_sends_one_request_whatever_the_store_does() {
         );
         assert_eq!((r.sent, r.unanswered), (1, 1), "{behavior:?}");
         assert!(r.request.is_some());
-        assert_eq!(w.server.requests, 1, "{behavior:?}: nothing was retried");
+        assert_eq!(w.server.requests(), 1, "{behavior:?}: nothing was retried");
         assert_eq!(w.server.object("/k").is_some(), stored, "{behavior:?}");
     }
 
@@ -441,7 +441,7 @@ fn one_attempt_sends_one_request_whatever_the_store_does() {
         matches!(r.end, End::Answered(a) if a.status == 503),
         "{r:?}"
     );
-    assert_eq!((w.server.requests, w.server.object("/k")), (1, None));
+    assert_eq!((w.server.requests(), w.server.object("/k")), (1, None));
 }
 
 #[test]
@@ -475,7 +475,7 @@ fn more_attempts_retry_and_do_not_hide_a_request_that_went_unanswered() {
         "{refused:?}"
     );
     assert_eq!((refused.sent, refused.unanswered), (2, 1));
-    assert_eq!(w.server.requests, 4);
+    assert_eq!(w.server.requests(), 4);
 }
 
 #[test]
@@ -501,7 +501,7 @@ fn a_deadline_already_past_sends_nothing() {
     w.s3.head(&mut w.io, 2, "k", &Expect::default(), past)
         .unwrap();
     assert_eq!(report(&mut w).end, End::NotSent(Cause::Deadline));
-    assert_eq!((w.server.requests, w.server.accepted), (0, 0));
+    assert_eq!((w.server.requests(), w.server.accepted()), (0, 0));
 }
 
 #[test]
@@ -526,7 +526,7 @@ fn a_deadline_stops_a_request_the_store_never_answers() {
     assert!(r.request.is_some());
     let took = w.io.now_ns() - start;
     assert!((300 * MS..400 * MS).contains(&took), "took {took} ns");
-    assert_eq!(w.server.requests, 1);
+    assert_eq!(w.server.requests(), 1);
     // The operation is over in the store as well: nothing of it is left
     // in progress, and its buffer carries the next operation.
     assert_eq!(w.s3.in_progress(), 0);
@@ -558,5 +558,5 @@ fn a_deadline_ends_a_wait_between_attempts() {
     );
     assert_eq!((r.sent, r.unanswered), (1, 0));
     assert!(w.io.now_ns() - start < 100 * MS, "it ended at the deadline");
-    assert_eq!((w.server.requests, w.server.object("/k")), (1, None));
+    assert_eq!((w.server.requests(), w.server.object("/k")), (1, None));
 }

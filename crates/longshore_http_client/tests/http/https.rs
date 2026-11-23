@@ -271,7 +271,7 @@ fn put_then_get_round_trips_over_tls_on_one_connection() {
     ok(200, 0)(w.request("HEAD", "/k", None));
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        (w.client.connects, w.server.accepted),
+        (w.client.connects, w.server.accepted()),
         (1, 1),
         "one handshake served every request"
     );
@@ -376,7 +376,8 @@ fn an_untrusted_or_misnamed_certificate_fails_before_any_request_is_sent() {
         Err(Error::Tls(TlsError::BadCertificate))
     );
     assert_eq!(
-        untrusted.server.requests, 0,
+        untrusted.server.requests(),
+        0,
         "no request may reach a server the client does not trust"
     );
     // The certificate is trusted but is for another name.
@@ -392,7 +393,7 @@ fn an_untrusted_or_misnamed_certificate_fails_before_any_request_is_sent() {
         Err(Error::Tls(TlsError::BadCertificate))
     );
     assert_eq!(
-        (misnamed.server.requests, misnamed.client.in_flight()),
+        (misnamed.server.requests(), misnamed.client.in_flight()),
         (0, 0)
     );
 }
@@ -508,7 +509,7 @@ fn a_connection_is_replaced_before_its_keys_wear_out() {
         "24 requests of about 5 records against a limit of 12 need several connections, not {}",
         w.client.connects
     );
-    assert_eq!(w.client.connects, w.server.accepted);
+    assert_eq!(w.client.connects, w.server.accepted());
 
     // With the default limit the same work stays on one connection.
     let mut default_limit = world(21, Faults::default());

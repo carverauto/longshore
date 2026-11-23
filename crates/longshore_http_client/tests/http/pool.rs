@@ -19,7 +19,7 @@ fn one_connection_is_reused_across_requests() {
         ok(200, 0)(w.request("PUT", "/k", Some(100)));
         ok(200, 100)(w.request("GET", "/k", None));
         assert_eq!(
-            (w.client.connects, w.server.accepted),
+            (w.client.connects, w.server.accepted()),
             (1, 1),
             "round {i} opened another connection"
         );
@@ -66,14 +66,14 @@ fn connections_are_replaced_after_max_requests_or_max_age() {
     w.settle(50);
     assert_eq!(w.client.connects, 2, "two requests per connection");
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (2, 1),
         "the used-up connection was closed, not left beside a new one"
     );
     ok(200, 10)(w.request("GET", "/k", None));
     w.settle(50);
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (3, 2),
         "a used-up connection is replaced before a free slot is opened"
     );
@@ -169,13 +169,13 @@ fn idle_connections_past_max_age_are_closed_without_a_request() {
     ok(404, 0)(w.request("GET", "/k", None));
     w.settle(100);
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (1, 0),
         "a young idle connection stays open"
     );
     w.settle(500);
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (1, 1),
         "the aged idle connection was closed by tick"
     );

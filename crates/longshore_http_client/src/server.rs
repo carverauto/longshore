@@ -54,11 +54,11 @@ pub struct Server {
     /// With `Some`, the SHA-256 header value a stored body must carry.
     sha256: Option<identity::Sha256Fn>,
     /// Connections accepted so far.
-    pub accepted: u64,
+    accepted: u64,
     /// Complete requests received so far.
-    pub requests: u64,
+    requests: u64,
     /// Connections closed so far.
-    pub closed: u64,
+    closed: u64,
 }
 
 mod behavior;
@@ -180,6 +180,21 @@ impl Server {
         assert!(token.len() <= 64);
         self.session_token.0[..token.len()].copy_from_slice(token.as_bytes());
         self.session_token.1 = token.len();
+    }
+
+    /// Connections accepted so far.
+    pub fn accepted(&self) -> u64 {
+        self.accepted
+    }
+
+    /// Complete requests received so far.
+    pub fn requests(&self) -> u64 {
+        self.requests
+    }
+
+    /// Connections closed so far.
+    pub fn closed(&self) -> u64 {
+        self.closed
     }
 
     /// Stored size of an object, for assertions.
