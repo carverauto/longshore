@@ -151,7 +151,7 @@ impl Client {
                         },
                     );
                 }
-                let off = off + c.result as u32;
+                let off = off + c.result.unsigned_abs();
                 if off < self.conns[i].head_len {
                     self.send_head(io, i, off);
                 } else if self.conns[i].body.is_some_and(|b| b.1 > 0) {
@@ -173,7 +173,7 @@ impl Client {
                         },
                     );
                 }
-                let off = off + c.result as u32;
+                let off = off + c.result.unsigned_abs();
                 if off < self.conns[i].body.map_or(0, |b| b.1) {
                     self.send_body(io, i, off);
                     Handled::Pending
@@ -184,13 +184,13 @@ impl Client {
             (K_RECV, State::RecvHead { have }) => match c.result {
                 0 => self.fail(io, i, Error::Closed { reused }),
                 r if r < 0 => self.fail(io, i, io_error(r)),
-                r => self.on_head_bytes(io, i, have + r as u32),
+                r => self.on_head_bytes(io, i, have + r.unsigned_abs()),
             },
             (K_RECV, State::RecvBody { have }) => match c.result {
                 0 => self.fail(io, i, Error::Closed { reused }),
                 r if r < 0 => self.fail(io, i, io_error(r)),
                 r => {
-                    let have = have + r as u32;
+                    let have = have + r.unsigned_abs();
                     if have == self.conns[i].body_len {
                         self.succeed(io, i)
                     } else {
@@ -202,7 +202,7 @@ impl Client {
                 0 => self.fail(io, i, Error::Closed { reused }),
                 r if r < 0 => self.fail(io, i, io_error(r)),
                 r => {
-                    let have = have + r as u32;
+                    let have = have + r.unsigned_abs();
                     if have == self.conns[i].body_len {
                         self.succeed(io, i)
                     } else {
@@ -213,12 +213,12 @@ impl Client {
             (K_RECV, State::RecvChunked { decoded }) => match c.result {
                 0 => self.fail(io, i, Error::Closed { reused }),
                 r if r < 0 => self.fail(io, i, io_error(r)),
-                r => self.on_chunked_bytes(io, i, decoded, decoded + r as u32),
+                r => self.on_chunked_bytes(io, i, decoded, decoded + r.unsigned_abs()),
             },
             (K_RECV, State::RecvChunkedTail) => match c.result {
                 0 => self.fail(io, i, Error::Closed { reused }),
                 r if r < 0 => self.fail(io, i, io_error(r)),
-                r => self.on_chunked_tail(io, i, r as u32),
+                r => self.on_chunked_tail(io, i, r.unsigned_abs()),
             },
             // A completion that no longer matches the connection's state.
             _ => Handled::Pending,

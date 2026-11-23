@@ -44,7 +44,7 @@ fn t3_16_stream_tls_vs_plain_armed_buffer_ring_invariant() {
         sim.submit(
             Token(100 + idx as u64),
             Op::ArmedRecv {
-                sock: Sock(c.result as u32),
+                sock: Sock(u32::try_from(c.result).unwrap()),
             },
         )
         .unwrap();
@@ -236,11 +236,11 @@ fn t3_17_plain_build_sockopts_tcp_and_unix_stream_echo() {
         )
         .unwrap();
         assert_eq!(
-            read_pool_bytes(&mut io, BufId(2), 0, r1.result as usize),
+            read_pool_bytes(&mut io, BufId(2), 0, usize::try_from(r1.result).unwrap()),
             b"tcp-plain"
         );
         assert_eq!(
-            read_pool_bytes(&mut io, BufId(3), 0, r2.result as usize),
+            read_pool_bytes(&mut io, BufId(3), 0, usize::try_from(r2.result).unwrap()),
             b"unix-plain"
         );
     }

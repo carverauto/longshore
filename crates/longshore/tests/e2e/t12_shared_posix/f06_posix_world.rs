@@ -241,7 +241,7 @@ fn t1_f06_3_posix_zero_copy_flag_copies_and_completes_once() {
     let mut out = Completions::new(8);
     connect_pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
 
-    let payload: Vec<u8> = (0..8192).map(|i| (i & 0xff) as u8).collect();
+    let payload: Vec<u8> = (0..8192u32).map(|i| (i & 0xff) as u8).collect();
     write_pool_bytes(&mut io, BufId(0), 0, &payload);
     let mut sent = 0usize;
     let mut tok = 10u64;
@@ -261,7 +261,7 @@ fn t1_f06_3_posix_zero_copy_flag_copies_and_completes_once() {
         )
         .unwrap();
         assert!(s.result > 0);
-        sent += s.result as usize;
+        sent += usize::try_from(s.result).unwrap();
         tok += 1;
     }
     let mut recvd = Vec::new();
@@ -280,7 +280,7 @@ fn t1_f06_3_posix_zero_copy_flag_copies_and_completes_once() {
         )
         .unwrap();
         assert!(r.result > 0);
-        recvd.extend_from_slice(&io.buf(BufId(1))[..r.result as usize]);
+        recvd.extend_from_slice(&io.buf(BufId(1))[..usize::try_from(r.result).unwrap()]);
         tok += 1;
     }
     assert_eq!(recvd, payload);

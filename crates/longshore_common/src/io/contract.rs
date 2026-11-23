@@ -299,7 +299,7 @@ pub fn recv_now_and_closed_peer<IO: Io>(make: &mut impl FnMut(Limits) -> IO, add
             .unwrap();
         let res = drain_n(&mut io, &mut out, 1)[0].1;
         assert!(res > 0, "send failed: {res}");
-        sent += res as usize;
+        sent += usize::try_from(res).unwrap();
         tok += 1;
     }
 
@@ -309,7 +309,7 @@ pub fn recv_now_and_closed_peer<IO: Io>(make: &mut impl FnMut(Limits) -> IO, add
             .unwrap();
         let n = drain_n(&mut io, &mut out, 1)[0].1;
         assert!(n > 0, "recv failed: {n}");
-        got.extend_from_slice(&io.buf(BufId(0))[..n as usize]);
+        got.extend_from_slice(&io.buf(BufId(0))[..usize::try_from(n).unwrap()]);
         tok += 1;
     }
     assert_eq!(got.as_slice(), msg);

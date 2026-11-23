@@ -56,7 +56,7 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
             if c.token.0 == 1 && c.result >= 0 {
-                srv_sock = Some(Sock(c.result as u32));
+                srv_sock = Some(Sock(u32::try_from(c.result).unwrap()));
             } else if c.token.0 == 2 {
                 assert_eq!(c.result, 0);
                 cli_ok = true;
@@ -123,7 +123,7 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
     let mut srv_got = match srv_stream.recv(io, BufId(5), 0, 1024) {
         Step::Done(n) => {
             assert!(n > 0);
-            n as usize
+            usize::try_from(n).unwrap()
         }
         Step::Pending => 0,
         other => panic!("unexpected initial recv step: {other:?}"),
@@ -143,7 +143,7 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
                 21 => {
                     if let Step::Done(n) = srv_stream.on_recv(io, c.result) {
                         assert!(n > 0);
-                        srv_got = n as usize;
+                        srv_got = usize::try_from(n).unwrap();
                     }
                 }
                 _ => {}

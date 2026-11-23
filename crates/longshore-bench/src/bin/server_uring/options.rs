@@ -45,7 +45,7 @@ pub(super) fn check_uring_getsockopt(addr: SocketAddr) {
         while let Some(c) = out.pop() {
             if c.token.0 == 1 {
                 accept_armed = c.more;
-                accepted = Some(Sock(c.result as u32));
+                accepted = Some(Sock(u32::try_from(c.result).unwrap()));
             } else if c.token.0 == 2 {
                 assert_eq!(c.result, 0);
                 connected = true;
@@ -107,7 +107,7 @@ pub(super) fn check_posix_getsockopt(addr: SocketAddr) {
         while let Some(c) = out.pop() {
             if c.token.0 == 1 {
                 accept_armed = c.more;
-                accepted = Some(Sock(c.result as u32));
+                accepted = Some(Sock(u32::try_from(c.result).unwrap()));
             } else if c.token.0 == 2 {
                 assert_eq!(c.result, 0);
                 connected = true;

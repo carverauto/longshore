@@ -221,7 +221,8 @@ impl Ring {
                 )
             };
             if r >= 0 {
-                return Ok(r as u32);
+                // At most `to_submit` (a `u32`); anything else is not a count.
+                return u32::try_from(r).map_err(|_| io::Error::from(io::ErrorKind::InvalidData));
             }
             let e = io::Error::last_os_error();
             if e.kind() != io::ErrorKind::Interrupted {

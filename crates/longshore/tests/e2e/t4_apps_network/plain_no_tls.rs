@@ -168,7 +168,7 @@ fn t4_04_plain_stream_echo_without_tls() {
             } else if c.token == Token(13) {
                 if let Step::Done(n) = s_stream.on_recv(&mut sim, c.result) {
                     assert!(n > 0);
-                    got = n as usize;
+                    got = usize::try_from(n).unwrap();
                 }
             }
         }

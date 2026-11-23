@@ -273,7 +273,7 @@ fn t1_f22_4_unix_domain_armed_accept_and_recv_with_give_back() {
     let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
     let acc = cs.iter().find(|c| c.token == Token(1)).unwrap();
     assert!(acc.more);
-    let srv_sock = Sock(acc.result as u32);
+    let srv_sock = Sock(u32::try_from(acc.result).unwrap());
     assert!((8..12).contains(&srv_sock.0));
 
     posix

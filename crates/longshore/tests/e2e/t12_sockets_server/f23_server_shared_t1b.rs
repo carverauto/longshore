@@ -85,7 +85,7 @@ fn t1_f23_3_sim_armed_recv_under_reset_delivers_prior_bytes_then_final_reset() {
         while let Some(c) = out.pop() {
             if c.token == Token(3) {
                 if let Some(id) = c.buf {
-                    let chunk = read_pool_bytes(&mut io, id, 0, c.result as usize);
+                    let chunk = read_pool_bytes(&mut io, id, 0, usize::try_from(c.result).unwrap());
                     for (idx, b) in chunk.iter().enumerate() {
                         assert_eq!(*b, (((recvd.len() + idx) / 32) & 0xff) as u8);
                     }
@@ -96,7 +96,7 @@ fn t1_f23_3_sim_armed_recv_under_reset_delivers_prior_bytes_then_final_reset() {
                     final_res = Some(c.result);
                 }
             } else if c.token.0 >= 10 && c.result > 0 {
-                sent += c.result as u64;
+                sent += u64::try_from(c.result).unwrap();
             }
         }
         if final_res.is_some() {
@@ -146,7 +146,8 @@ fn t1_f23_4_uring_many_idle_connections_hold_zero_ring_buffers() {
                 && v.iter().any(|c| c.token == Token(100 + u64::from(i)))
         })
         .unwrap();
-        let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+        let srv =
+            Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
         io.submit(Token(500 + u64::from(i)), Op::ArmedRecv { sock: srv })
             .unwrap();
     }

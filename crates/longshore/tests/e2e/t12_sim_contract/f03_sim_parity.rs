@@ -169,9 +169,9 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
         for (t, r) in drain_exact(&mut io, &mut out, submitted) {
             log.push((t, r));
             if t == rtok {
-                recvd += r as usize;
+                recvd += usize::try_from(r).unwrap();
             } else {
-                sent += r as usize;
+                sent += usize::try_from(r).unwrap();
             }
         }
     }

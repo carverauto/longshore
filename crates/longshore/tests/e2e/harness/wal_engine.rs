@@ -337,7 +337,7 @@ impl WalEngine {
                     stats.stopped_on_read_error = true;
                     break;
                 }
-                let frame = &io.buf(buf)[..res as usize];
+                let frame = &io.buf(buf)[..usize::try_from(res).unwrap()];
                 match check_frame(frame) {
                     Ok(None) => break,
                     Err(()) => {

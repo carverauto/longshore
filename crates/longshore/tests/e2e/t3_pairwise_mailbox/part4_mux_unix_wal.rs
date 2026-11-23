@@ -68,7 +68,12 @@ fn t3_28_stream_and_mailbox_receiver_multiplexed_on_one_io() {
                 }
             } else if c.token == Token(21) {
                 if let Step::Done(n) = srv.on_recv(&mut io, c.result) {
-                    got_bytes = Some(read_pool_bytes(&mut io, BufId(1), 0, n as usize));
+                    got_bytes = Some(read_pool_bytes(
+                        &mut io,
+                        BufId(1),
+                        0,
+                        usize::try_from(n).unwrap(),
+                    ));
                 }
             } else if c.token == Token(10) {
                 let _: Step = cli.on_send(&mut io, c.result);

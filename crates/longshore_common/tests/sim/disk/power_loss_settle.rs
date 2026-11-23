@@ -228,7 +228,7 @@ fn power_loss_single_sector_never_tears_and_overlapping_writes_settle_in_order()
                 file_off: 0,
             },
         );
-        let got = &sim.buf(BufId(2))[..n as usize];
+        let got = &sim.buf(BufId(2))[..usize::try_from(n).unwrap()];
         for chunk in got.chunks(512) {
             assert!(chunk.iter().all(|&b| b == chunk[0]));
         }

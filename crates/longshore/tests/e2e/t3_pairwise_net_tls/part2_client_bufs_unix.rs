@@ -163,7 +163,8 @@ fn t3_14_four_buffer_classes_isolation_and_cq_burst() {
                 .all(|t| v.iter().any(|c| c.token == Token(*t)))
         })
         .unwrap();
-        let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+        let srv =
+            Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
         io.submit(Token(4), Op::ArmedRecv { sock: srv }).unwrap();
         io.submit(
             Token(5),
@@ -240,7 +241,7 @@ fn t3_15_unix_domain_armed_recv_and_chained_file_persist() {
         v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
     })
     .unwrap();
-    let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+    let srv = Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
     assert_eq!(cs.iter().find(|c| c.token == Token(2)).unwrap().result, 0);
 
     io.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
@@ -263,7 +264,7 @@ fn t3_15_unix_domain_armed_recv_and_chained_file_persist() {
     .unwrap();
     let rc = rcs.iter().find(|c| c.token == Token(3)).unwrap();
     let rbuf = rc.buf.unwrap();
-    let got = read_pool_bytes(&mut io, rbuf, 0, rc.result as usize);
+    let got = read_pool_bytes(&mut io, rbuf, 0, usize::try_from(rc.result).unwrap());
     assert_eq!(got, msg);
     write_pool_bytes(&mut io, BufId(1), 0, &got);
     io.give_back(rbuf);

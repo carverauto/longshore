@@ -59,6 +59,13 @@ pub const IORING_OP_CLOSE: u8 = 19;
 pub const IORING_OP_STATX: u8 = 21;
 pub const IORING_OP_READ: u8 = 22;
 pub const AT_FDCWD: i32 = -100;
+/// `AT_FDCWD` as `IORING_OP_RENAMEAT` takes its new directory: in `sqe.len`, a
+/// `__u32` the kernel reads back as an `int` (`io_renameat_prep`).
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "renameat's new dirfd travels in the __u32 sqe.len; the kernel reads the bits back as int"
+)]
+pub const AT_FDCWD_SQE_LEN: u32 = AT_FDCWD as u32;
 pub const AT_REMOVEDIR: u32 = 0x200;
 pub const O_RDONLY: u32 = 0;
 pub const O_WRONLY: u32 = 1;
@@ -123,6 +130,16 @@ pub const IORING_CQE_BUFFER_SHIFT: u32 = 16;
 /// Set in `cqe.res` of a notification CQE when the kernel copied the data
 /// instead of sending it zero-copy (requires `IORING_SEND_ZC_REPORT_USAGE`).
 pub const IORING_NOTIF_USAGE_ZC_COPIED: u32 = 1 << 31;
+
+/// The flag bits a notification CQE carries in its `__s32` `res`, such as
+/// [`IORING_NOTIF_USAGE_ZC_COPIED`] in bit 31.
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "a notification CQE's __s32 res holds flag bits, not a result; bit 31 is IORING_NOTIF_USAGE_ZC_COPIED"
+)]
+pub const fn notif_flags(res: i32) -> u32 {
+    res as u32
+}
 
 pub const EFD_CLOEXEC: c_int = 0o2000000;
 pub const CLOCK_MONOTONIC: c_int = 1;

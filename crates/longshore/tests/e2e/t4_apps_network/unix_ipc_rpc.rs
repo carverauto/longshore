@@ -104,7 +104,7 @@ fn run_unix_ipc_rpc<IO: Io>(io: &mut IO, lim: Limits, socket_path: &str) {
                 match c.token.0 {
                     1 => {
                         assert!(c.more && c.result >= 0);
-                        srv_socks[srv_count] = Sock(c.result as u32);
+                        srv_socks[srv_count] = Sock(u32::try_from(c.result).unwrap());
                         srv_count += 1;
                     }
                     2 => {
@@ -139,7 +139,7 @@ fn run_unix_ipc_rpc<IO: Io>(io: &mut IO, lim: Limits, socket_path: &str) {
             while let Some(c) = out.pop() {
                 if c.token.0 == 10 && c.result > 0 {
                     let bid = c.buf.expect("ring buf");
-                    let n = c.result as u32;
+                    let n = u32::try_from(c.result).unwrap();
                     let mut tmp = [0u8; 64];
                     read_pool_into(io, bid, 0, &mut tmp[..n as usize]);
                     io.give_back(bid);

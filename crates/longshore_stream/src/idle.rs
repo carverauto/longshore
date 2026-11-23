@@ -85,7 +85,7 @@ impl Stream {
             if result <= 0 {
                 return IdleCheck::Closed;
             }
-            t.rx_end += result as u32;
+            t.rx_end += result.unsigned_abs();
             t.idle_step(io, sock, token)
         }
     }

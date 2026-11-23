@@ -84,12 +84,12 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
                 armed51 = c.more;
                 let b = c.buf.unwrap();
                 assert_eq!(b, limits.ring(0));
-                held_bytes.extend_from_slice(&io.buf(b)[..c.result as usize]);
+                held_bytes.extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
                 held = Some(b);
                 send_done
             } else if Some(c.token.0) == cur_tok {
                 assert!(c.result > 0, "hold send: {c:?}");
-                send_off += c.result as usize;
+                send_off += usize::try_from(c.result).unwrap();
                 send_done = true;
                 held.is_some()
             } else {
@@ -135,7 +135,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
                 nobufs = true;
             } else if Some(c.token.0) == cur_tok {
                 assert!(c.result > 0, "next send: {c:?}");
-                next_off += c.result as usize;
+                next_off += usize::try_from(c.result).unwrap();
                 send_done = true;
             }
             send_done && nobufs
@@ -158,7 +158,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
                 if c.result > 0 {
                     let b = c.buf.unwrap();
                     assert_eq!(b, limits.ring(0));
-                    held_bytes.extend_from_slice(&io.buf(b)[..c.result as usize]);
+                    held_bytes.extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
                     io.give_back(b);
                     got_chunk = true;
                 }

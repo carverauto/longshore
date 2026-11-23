@@ -309,38 +309,40 @@ impl Resolver {
             }
             k if k < K_SEND => {
                 let server = (k - K_RECV) as usize;
-                if c.result < 0 {
-                    self.failures += 1;
-                } else if let Phase::Querying { host, q, .. } = self.phase {
-                    let records = self.cfg.family.records();
-                    let record = records[q];
-                    let msg = &io.buf(self.cfg.rx_bufs[server])[..c.result as usize];
-                    match parse_response_for(msg, self.id, &self.hosts[host].name, record) {
-                        Ok(a) => {
-                            self.hosts[host].sets[set_of(record)].replace(a.as_slice());
-                            self.advance(io, host, q);
-                        }
-                        // The name has no records of this family. With two
-                        // families that is an answer, not a failure; it is
-                        // applied once the host's last question is answered.
-                        Err(DnsError::NoAddresses) if records.len() > 1 => {
-                            self.empty[set_of(record)] = true;
-                            self.advance(io, host, q);
-                        }
-                        // Not an answer to the outstanding query: ignore it.
-                        Err(
-                            DnsError::IdMismatch
-                            | DnsError::QuestionMismatch
-                            | DnsError::NotAResponse
-                            | DnsError::Truncated
-                            | DnsError::BadCompression,
-                        ) => {}
-                        // A definite answer we cannot use. Keep the previous addresses.
-                        Err(_) => {
-                            self.failures += 1;
-                            self.advance(io, host, q);
+                if let Ok(len) = usize::try_from(c.result) {
+                    if let Phase::Querying { host, q, .. } = self.phase {
+                        let records = self.cfg.family.records();
+                        let record = records[q];
+                        let msg = &io.buf(self.cfg.rx_bufs[server])[..len];
+                        match parse_response_for(msg, self.id, &self.hosts[host].name, record) {
+                            Ok(a) => {
+                                self.hosts[host].sets[set_of(record)].replace(a.as_slice());
+                                self.advance(io, host, q);
+                            }
+                            // The name has no records of this family. With two
+                            // families that is an answer, not a failure; it is
+                            // applied once the host's last question is answered.
+                            Err(DnsError::NoAddresses) if records.len() > 1 => {
+                                self.empty[set_of(record)] = true;
+                                self.advance(io, host, q);
+                            }
+                            // Not an answer to the outstanding query: ignore it.
+                            Err(
+                                DnsError::IdMismatch
+                                | DnsError::QuestionMismatch
+                                | DnsError::NotAResponse
+                                | DnsError::Truncated
+                                | DnsError::BadCompression,
+                            ) => {}
+                            // A definite answer we cannot use. Keep the previous addresses.
+                            Err(_) => {
+                                self.failures += 1;
+                                self.advance(io, host, q);
+                            }
                         }
                     }
+                } else {
+                    self.failures += 1;
                 }
                 self.recv(io, server);
             }

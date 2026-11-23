@@ -137,7 +137,12 @@ pub fn read_file_vec(
     if res < 0 {
         Err(res)
     } else {
-        Ok(read_pool_bytes(sim, BufId(2), 0, res as usize))
+        Ok(read_pool_bytes(
+            sim,
+            BufId(2),
+            0,
+            usize::try_from(res).unwrap(),
+        ))
     }
 }
 

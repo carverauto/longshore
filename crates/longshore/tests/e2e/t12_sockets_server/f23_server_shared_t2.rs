@@ -65,7 +65,7 @@ fn t2_f23_1_sim_armed_accept_under_connect_refused_produces_only_valid_slots() {
             accepted += 1;
         }
         for ac in cs.iter().filter(|c| c.token == Token(1)) {
-            assert!((12..20).contains(&(ac.result as u32)));
+            assert!((12..20).contains(&ac.result));
         }
     }
     assert!(accepted > 0 && refused > 0);
@@ -125,7 +125,7 @@ fn t2_f23_2_sim_armed_recv_observes_bit_flip_in_ring_buffer() {
         .unwrap();
         let rc = cs.iter().find(|c| c.token == Token(3)).unwrap();
         let id = rc.buf.unwrap();
-        let got = read_pool_bytes(&mut io, id, 0, rc.result as usize);
+        let got = read_pool_bytes(&mut io, id, 0, usize::try_from(rc.result).unwrap());
         if got != expected[..got.len()] {
             flipped_seen = true;
         }
@@ -165,7 +165,7 @@ fn t2_f23_3_sim_armed_accept_recv_give_back_close_runs_under_alloc_guard() {
                 io.tick(true, &mut out).unwrap();
                 while let Some(c) = out.pop() {
                     if c.token == Token(1) {
-                        srv_sock = Some(Sock(c.result as u32));
+                        srv_sock = Some(Sock(u32::try_from(c.result).unwrap()));
                     } else if c.token == Token(10 + round) {
                         connected = true;
                     }

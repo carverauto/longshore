@@ -80,7 +80,7 @@ pub fn run_armed_net_ring_sealed() {
             }
             while let Some(c) = out.pop() {
                 if c.token == Token(1) && c.result >= 0 {
-                    srv_opt = Some(Sock(c.result as u32));
+                    srv_opt = Some(Sock(u32::try_from(c.result).unwrap()));
                 } else if c.token == Token(2) && c.result == 0 {
                     cli_ok = true;
                 }

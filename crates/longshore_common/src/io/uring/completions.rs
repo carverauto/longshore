@@ -88,8 +88,8 @@ impl UringIo {
                     let r = unsafe {
                         getsockopt(fd, level, name, (&mut value as *mut i32).cast(), &mut len)
                     };
-                    if r == 0 && value > 0 {
-                        value as u32
+                    if r == 0 {
+                        u32::try_from(value).unwrap_or(0)
                     } else {
                         0
                     }
@@ -208,8 +208,10 @@ impl UringIo {
                 let buf = if read_buf {
                     self.decode_cqe_buf(&c)
                 } else {
-                    if c.res >= 0 && (c.res as u32) < self.limits.sockets_max {
-                        self.sock_stream[c.res as usize] = true;
+                    if let Ok(slot) = u32::try_from(c.res) {
+                        if slot < self.limits.sockets_max {
+                            self.sock_stream[slot as usize] = true;
+                        }
                     }
                     None
                 };

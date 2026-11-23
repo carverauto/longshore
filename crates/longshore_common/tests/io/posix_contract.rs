@@ -221,7 +221,7 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
     io.tick(true, &mut out).unwrap();
     let c = out.pop().expect("armed accept completion");
     assert!(c.token.0 == 3 && c.result >= 0 && c.more, "{c:?}");
-    let accepted = Sock(c.result as u32);
+    let accepted = Sock(u32::try_from(c.result).unwrap());
 
     // Send on the accepted closed-peer socket must return negative errno without SIGPIPE.
     io.buf(BufId(1))[..4].copy_from_slice(b"test");

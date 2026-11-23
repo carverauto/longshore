@@ -54,7 +54,7 @@ fn posix_tcp_options_inherited_and_verified_via_getsockopt() {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
             if c.token == Token(1) {
-                srv_armed = Some(Sock(c.result as u32));
+                srv_armed = Some(Sock(u32::try_from(c.result).unwrap()));
             } else if c.token == Token(2) {
                 assert_eq!(c.result, 0);
                 cli_ok = true;
@@ -147,7 +147,7 @@ fn posix_sealed_armed_accept_recv_give_back_and_close_cap1() {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
                 if c.token == Token(1) {
-                    srv = Some(Sock(c.result as u32));
+                    srv = Some(Sock(u32::try_from(c.result).unwrap()));
                 }
                 if c.token == Token(2) {
                     cli_ok = true;

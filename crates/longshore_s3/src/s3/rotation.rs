@@ -24,16 +24,13 @@ impl S3 {
             at: io.now_ns() + f.reread_ns,
         };
         // A read that filled the whole request may have cut the file short.
-        let result = if result >= self.credentials_read_len() as i32 {
-            -1
-        } else {
-            result
-        };
-        let text = &io.buf(f.buf)[..result.max(0) as usize];
-        let parsed = match (result < 0, self.cfg.vendor) {
-            (true, _) => None,
-            (false, Vendor::S3) => Credentials::parse(text),
-            (false, Vendor::Gcs) => Credentials::parse_bearer(text),
+        let read = usize::try_from(result)
+            .ok()
+            .filter(|&n| n < self.credentials_read_len() as usize);
+        let parsed = match (read, self.cfg.vendor) {
+            (None, _) => None,
+            (Some(n), Vendor::S3) => Credentials::parse(&io.buf(f.buf)[..n]),
+            (Some(n), Vendor::Gcs) => Credentials::parse_bearer(&io.buf(f.buf)[..n]),
         };
         let Some(candidate) = parsed else {
             self.credential_failures += 1;

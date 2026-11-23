@@ -98,7 +98,7 @@ pub(crate) fn echo_armed<IO: Io>(
                 armed = c.more;
                 if c.result > 0 {
                     let b = c.buf.unwrap();
-                    got.extend_from_slice(&io.buf(b)[..c.result as usize]);
+                    got.extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
                     io.give_back(b);
                 }
                 if !armed && got.len() < payload.len() {
@@ -109,7 +109,7 @@ pub(crate) fn echo_armed<IO: Io>(
                 true
             } else if send_in_flight && c.token.0 == cur_tok {
                 assert!(c.result > 0 && !c.more && c.buf.is_none(), "send: {c:?}");
-                sent += c.result as usize;
+                sent += usize::try_from(c.result).unwrap();
                 send_in_flight = false;
                 true
             } else {
@@ -152,7 +152,7 @@ pub(crate) fn send_all<IO: Io>(
         .unwrap();
         let c = drain_one(io, out, t);
         assert!(c.result > 0 && !c.more && c.buf.is_none(), "send: {c:?}");
-        sent += c.result as usize;
+        sent += usize::try_from(c.result).unwrap();
     }
 }
 
@@ -197,7 +197,7 @@ pub(crate) fn connect_one<IO: Io>(
     drain_until(io, out, |_, c| {
         if c.token.0 == 1 {
             assert!(c.result >= 0 && c.buf.is_none(), "accept: {c:?}");
-            accepted = Some(Sock(c.result as u32));
+            accepted = Some(Sock(u32::try_from(c.result).unwrap()));
             accept_armed = c.more;
         } else if c.token.0 == 2 {
             assert_eq!(c.result, 0);

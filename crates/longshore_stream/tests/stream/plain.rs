@@ -120,7 +120,7 @@ fn plain_stream_echo_survives_short_writes_and_partial_reads() {
                             panic!("plain send must complete immediately");
                         };
                         assert!(n > 0);
-                        c_sent += n as u32;
+                        c_sent += u32::try_from(n).unwrap();
                         if c_sent < total {
                             client.send(&mut io, C_TX, c_sent, total - c_sent, u32::MAX);
                         }
@@ -130,7 +130,7 @@ fn plain_stream_echo_survives_short_writes_and_partial_reads() {
                             panic!("plain recv must complete immediately");
                         };
                         assert!(n > 0);
-                        s_recvd += n as u32;
+                        s_recvd += u32::try_from(n).unwrap();
                         if s_recvd < total {
                             assert_eq!(
                                 server.recv(&mut io, S_BUF, s_recvd, total - s_recvd),
@@ -146,7 +146,7 @@ fn plain_stream_echo_survives_short_writes_and_partial_reads() {
                             panic!("plain send must complete immediately");
                         };
                         assert!(n > 0);
-                        s_sent += n as u32;
+                        s_sent += u32::try_from(n).unwrap();
                         if s_sent < total {
                             server.send(&mut io, S_BUF, s_sent, total - s_sent, 1024);
                         }
@@ -156,7 +156,7 @@ fn plain_stream_echo_survives_short_writes_and_partial_reads() {
                             panic!("plain recv must complete immediately");
                         };
                         assert!(n > 0);
-                        c_recvd += n as u32;
+                        c_recvd += u32::try_from(n).unwrap();
                         if c_recvd < total {
                             assert_eq!(
                                 client.recv(&mut io, C_RX, c_recvd, total - c_recvd),

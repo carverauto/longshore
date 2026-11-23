@@ -236,6 +236,22 @@ impl Completion {
     }
 }
 
+/// A `clock_gettime` reading in nanoseconds. A reading before the clock's
+/// epoch, which only `CLOCK_REALTIME` can give, counts as zero.
+#[cfg(unix)]
+pub(crate) fn clock_ns(sec: i64, nsec: i64) -> u64 {
+    match (u64::try_from(sec), u64::try_from(nsec)) {
+        (Ok(sec), Ok(nsec)) => sec * 1_000_000_000 + nsec,
+        (Err(_), _) | (_, Err(_)) => 0,
+    }
+}
+
+/// The whole seconds of a `clock_gettime` reading, zero before the epoch.
+#[cfg(unix)]
+pub(crate) fn clock_secs(sec: i64) -> u64 {
+    u64::try_from(sec).unwrap_or(0)
+}
+
 pub const ECONNRESET: i32 = 104;
 pub const ECONNREFUSED: i32 = 111;
 pub const EPIPE: i32 = 32;

@@ -90,7 +90,7 @@ impl Stream {
             return Step::Done(if result == 0 { -ECONNRESET } else { result });
         }
         if sent {
-            t.cipher_sent += result as u32;
+            t.cipher_sent += result.unsigned_abs();
             if t.cipher_sent < t.cipher_len {
                 Self::submit(
                     io,
@@ -106,7 +106,7 @@ impl Stream {
                 return Step::Pending;
             }
         } else {
-            t.rx_end += result as u32;
+            t.rx_end += result.unsigned_abs();
         }
         self.pump_handshake(io)
     }

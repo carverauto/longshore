@@ -81,6 +81,7 @@ wildcard_enum_match_arm = "deny"
 let_underscore_untyped = "deny"
 shadow_unrelated = "deny"
 cast_lossless = "deny"
+cast_sign_loss = "deny"
 
 [profile.release]
 opt-level = 3

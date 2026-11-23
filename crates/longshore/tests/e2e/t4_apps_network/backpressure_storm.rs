@@ -90,7 +90,7 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
         io.tick(true, &mut small_out).unwrap();
         while let Some(c) = small_out.pop() {
             if c.token.0 == 10 && c.result >= 0 {
-                accepted.push(Sock(c.result as u32));
+                accepted.push(Sock(u32::try_from(c.result).unwrap()));
             } else if c.token.0 >= 20 && c.token.0 < 30 && c.result == 0 {
                 conn_ok += 1;
             }

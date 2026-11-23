@@ -228,9 +228,9 @@ fn a_full_socket_stalls_the_sender_until_the_reader_makes_room() {
     while got.len() < 16 * 4096 {
         let n = w.one(recv(B, 4096));
         assert!(n > 0);
-        got.extend_from_slice(&w.io.buf(BufId(1))[..n as usize]);
+        got.extend_from_slice(&w.io.buf(BufId(1))[..usize::try_from(n).unwrap()]);
     }
-    let want: Vec<u8> = (100..16 * 4096)
+    let want: Vec<u8> = (100u32..16 * 4096)
         .map(|i| (i / 4096) as u8)
         .chain([16u8; 100])
         .collect();

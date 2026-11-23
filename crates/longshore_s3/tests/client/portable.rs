@@ -89,7 +89,9 @@ fn client_stores_and_fetches_over_loopback_on_portable_backend() {
 
     let client = b.build().expect("client build on portable backend");
 
-    let payload: Vec<u8> = (0..16_384).map(|i| ((i * 31 + 7) & 0xff) as u8).collect();
+    let payload: Vec<u8> = (0..16_384u32)
+        .map(|i| ((i * 31 + 7) & 0xff) as u8)
+        .collect();
 
     let mut body = client.buffer_blocking();
     body.as_mut_slice()[..payload.len()].copy_from_slice(&payload);

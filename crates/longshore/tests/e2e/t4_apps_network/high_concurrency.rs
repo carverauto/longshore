@@ -62,7 +62,7 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
         while let Some(c) = out.pop() {
             if c.token.0 == 1 {
                 assert!(c.more && c.result >= 0, "accept must remain armed");
-                let accepted = Sock(c.result as u32);
+                let accepted = Sock(u32::try_from(c.result).unwrap());
                 assert!(
                     accepted.0 >= ACCEPT_START && accepted.0 < ACCEPT_START + ACCEPT_LEN,
                     "accepted slot {} outside range",
@@ -186,7 +186,7 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
             if let Some(bid) = c.buf {
-                let slice = &io.buf(bid)[..c.result as usize];
+                let slice = &io.buf(bid)[..usize::try_from(c.result).unwrap()];
                 if slice.windows(25).any(|w| w == b"recovered-after-give-back") {
                     if c.token.0 >= 1000 && c.token.0 < 2000 {
                         matched_srv_sock = srv_socks[(c.token.0 - 1000) as usize];

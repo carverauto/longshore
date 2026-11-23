@@ -104,7 +104,7 @@ fn t1_f18_1_plain_stream_bidirectional_echo() {
     let mut server = Stream::new(SERVER, Token(3), Token(4));
     assert!(!client.is_tls() && client.records() == 0);
 
-    let payload: Vec<u8> = (0..5000).map(|i| (i % 251) as u8).collect();
+    let payload: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
     let (mut c_sent, mut s_recvd, mut s_sent, mut c_recvd) = (0usize, 0usize, 0usize, 0usize);
     let mut echoed = Vec::with_capacity(payload.len());
 
@@ -124,7 +124,7 @@ fn t1_f18_1_plain_stream_bidirectional_echo() {
                 1 => {
                     if let Step::Done(n) = client.on_send(&mut io, c.result) {
                         assert!(n > 0);
-                        c_sent += n as usize;
+                        c_sent += usize::try_from(n).unwrap();
                         if c_sent < payload.len() {
                             let rem = (payload.len() - c_sent).min(4096);
                             write_pool_bytes(&mut io, BufId(0), 0, &payload[c_sent..c_sent + rem]);
@@ -135,7 +135,8 @@ fn t1_f18_1_plain_stream_bidirectional_echo() {
                 4 => {
                     if let Step::Done(n) = server.on_recv(&mut io, c.result) {
                         assert!(n > 0);
-                        let got = read_pool_bytes(&mut io, BufId(1), 0, n as usize);
+                        let got =
+                            read_pool_bytes(&mut io, BufId(1), 0, usize::try_from(n).unwrap());
                         s_recvd += got.len();
                         write_pool_bytes(&mut io, BufId(3), 0, &got);
                         server.send(&mut io, BufId(3), 0, got.len() as u32, 4096);
@@ -144,7 +145,7 @@ fn t1_f18_1_plain_stream_bidirectional_echo() {
                 3 => {
                     if let Step::Done(n) = server.on_send(&mut io, c.result) {
                         assert!(n > 0);
-                        s_sent += n as usize;
+                        s_sent += usize::try_from(n).unwrap();
                         if s_recvd < payload.len() && s_sent == s_recvd {
                             assert_eq!(server.recv(&mut io, BufId(1), 0, 4096), Step::Pending);
                         }
@@ -157,9 +158,9 @@ fn t1_f18_1_plain_stream_bidirectional_echo() {
                             &mut io,
                             BufId(2),
                             0,
-                            n as usize,
+                            usize::try_from(n).unwrap(),
                         ));
-                        c_recvd += n as usize;
+                        c_recvd += usize::try_from(n).unwrap();
                         if c_recvd < payload.len() {
                             assert_eq!(client.recv(&mut io, BufId(2), 0, 4096), Step::Pending);
                         }
@@ -265,14 +266,19 @@ fn t1_f18_3_tls_stream_batch_clamping_and_zero_copy_threshold() {
         (Step::Done(0), Step::Done(0))
     );
 
-    let big: Vec<u8> = (0..(20 * 1024)).map(|i| (i * 7) as u8).collect();
+    let big: Vec<u8> = (0..(20 * 1024u32)).map(|i| (i * 7) as u8).collect();
     write_pool_bytes(&mut io, BufId(4), 0, &big);
     client.send(&mut io, BufId(4), 0, big.len() as u32, 4096);
     let mut c_done = false;
     let mut recvd = Vec::new();
     let mut s_step = server.recv(&mut io, BufId(5), 0, cap);
     if let Step::Done(n) = s_step {
-        recvd.extend_from_slice(&read_pool_bytes(&mut io, BufId(5), 0, n as usize));
+        recvd.extend_from_slice(&read_pool_bytes(
+            &mut io,
+            BufId(5),
+            0,
+            usize::try_from(n).unwrap(),
+        ));
     }
     for _ in 0..200 {
         if c_done && recvd.len() >= big.len() {
@@ -290,7 +296,12 @@ fn t1_f18_3_tls_stream_batch_clamping_and_zero_copy_threshold() {
                     s_step = server.on_recv(&mut io, c.result);
                     if let Step::Done(n) = s_step {
                         assert!(n > 0);
-                        recvd.extend_from_slice(&read_pool_bytes(&mut io, BufId(5), 0, n as usize));
+                        recvd.extend_from_slice(&read_pool_bytes(
+                            &mut io,
+                            BufId(5),
+                            0,
+                            usize::try_from(n).unwrap(),
+                        ));
                         if recvd.len() < big.len() {
                             let _: Step = server.recv(&mut io, BufId(5), 0, cap);
                         }

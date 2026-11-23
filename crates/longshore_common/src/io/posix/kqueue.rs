@@ -107,11 +107,14 @@ impl Poller {
     }
 
     pub(super) fn arm_read(&mut self, slot: usize, s: &mut SockSlot) {
-        if s.fd < 0 || s.armed_read {
+        let Ok(ident) = usize::try_from(s.fd) else {
+            return;
+        };
+        if s.armed_read {
             return;
         }
         let kev = kevent {
-            ident: s.fd as usize,
+            ident,
             filter: EVFILT_READ,
             flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
             fflags: 0,
@@ -134,11 +137,14 @@ impl Poller {
     }
 
     pub(super) fn arm_write(&mut self, slot: usize, s: &mut SockSlot) {
-        if s.fd < 0 || s.armed_write {
+        let Ok(ident) = usize::try_from(s.fd) else {
+            return;
+        };
+        if s.armed_write {
             return;
         }
         let kev = kevent {
-            ident: s.fd as usize,
+            ident,
             filter: EVFILT_WRITE,
             flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
             fflags: 0,
@@ -180,14 +186,14 @@ impl Poller {
                     &zero,
                 )
             };
-            if n < 0 {
+            let Ok(n) = usize::try_from(n) else {
                 if os_errno() == OS_EINTR {
                     continue;
                 }
                 return;
-            }
-            self.apply(n as usize, socks);
-            if (n as usize) < EVENTS_CAP {
+            };
+            self.apply(n, socks);
+            if n < EVENTS_CAP {
                 return;
             }
         }
@@ -229,15 +235,15 @@ impl Poller {
                     ts_ptr,
                 )
             };
-            if n < 0 {
+            let Ok(n) = usize::try_from(n) else {
                 let err = os_errno();
                 if err == OS_EINTR {
                     continue;
                 }
                 return Err(io::Error::from_raw_os_error(err));
-            }
+            };
             if n > 0 {
-                self.apply(n as usize, socks);
+                self.apply(n, socks);
             }
             return Ok(());
         }
@@ -250,7 +256,7 @@ impl Poller {
             }
             let idx = ev.udata as usize;
             if let Some(s) = socks.get_mut(idx) {
-                if s.fd >= 0 && s.fd as usize == ev.ident {
+                if usize::try_from(s.fd) == Ok(ev.ident) {
                     if ev.filter == EVFILT_READ {
                         s.armed_read = false;
                         s.read_ready = true;

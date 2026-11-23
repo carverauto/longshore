@@ -50,7 +50,8 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
     )
     .unwrap();
     let cs = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
-    let srv_sock = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+    let srv_sock =
+        Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
     io.submit(Token(3), Op::ArmedRecv { sock: srv_sock })
         .unwrap();
 
@@ -71,7 +72,7 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
     let rc = received.iter().find(|c| c.token == Token(3)).unwrap();
     let id = rc.buf.unwrap();
     assert_eq!(
-        read_pool_bytes(io, id, 0, rc.result as usize),
+        read_pool_bytes(io, id, 0, usize::try_from(rc.result).unwrap()),
         b"shared-armed-tcp"
     );
     io.give_back(id);
@@ -215,7 +216,7 @@ fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_fault
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
-    let expected: Vec<u8> = (0..1500).map(|i| (i % 251) as u8).collect();
+    let expected: Vec<u8> = (0..1500u32).map(|i| (i % 251) as u8).collect();
     write_pool_bytes(&mut io, BufId(0), 0, &expected);
     let mut sent = 0usize;
     let mut recvd = Vec::new();
@@ -240,7 +241,7 @@ fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_fault
             match c.token.0 {
                 4 => {
                     assert!(c.result > 0);
-                    sent += c.result as usize;
+                    sent += usize::try_from(c.result).unwrap();
                     if sent < expected.len() {
                         io.submit(
                             Token(4),
@@ -258,7 +259,12 @@ fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_fault
                 3 => {
                     assert!(c.result > 0);
                     let id = c.buf.unwrap();
-                    recvd.extend_from_slice(&read_pool_bytes(&mut io, id, 0, c.result as usize));
+                    recvd.extend_from_slice(&read_pool_bytes(
+                        &mut io,
+                        id,
+                        0,
+                        usize::try_from(c.result).unwrap(),
+                    ));
                     io.give_back(id);
                 }
                 _ => {}

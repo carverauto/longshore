@@ -115,7 +115,7 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
             if c.token.0 == 1 {
                 accept_armed = c.more;
                 if c.result >= 0 {
-                    accepted.push(Sock(c.result as u32));
+                    accepted.push(Sock(u32::try_from(c.result).unwrap()));
                 }
             } else {
                 assert_eq!(c.result, 0);
@@ -170,7 +170,8 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
                     let pos = (c.token.0 - 200) as usize;
                     if c.result > 0 {
                         let b = c.buf.unwrap();
-                        got[pos].extend_from_slice(&io.buf(b)[..c.result as usize]);
+                        got[pos]
+                            .extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
                         io.give_back(b);
                     }
                     if !c.more && got[pos].len() < wants[idx].len() {
@@ -184,7 +185,7 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
                     }
                 } else if Some(c.token.0) == cur_tok {
                     assert!(c.result > 0, "burst send: {c:?}");
-                    sent[idx] += c.result as usize;
+                    sent[idx] += usize::try_from(c.result).unwrap();
                     send_done = true;
                 }
                 send_done && (sent[idx] < wants[idx].len() || got.iter().any(|g| g == wants[idx]))

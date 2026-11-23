@@ -131,14 +131,14 @@ impl Poller {
         loop {
             let n =
                 unsafe { epoll_wait(self.epfd, self.events.as_mut_ptr(), EVENTS_CAP as i32, 0) };
-            if n < 0 {
+            let Ok(n) = usize::try_from(n) else {
                 if os_errno() == OS_EINTR {
                     continue;
                 }
                 return;
-            }
-            self.apply(n as usize, socks);
-            if (n as usize) < EVENTS_CAP {
+            };
+            self.apply(n, socks);
+            if n < EVENTS_CAP {
                 return;
             }
         }
@@ -184,15 +184,15 @@ impl Poller {
                     timeout_ms,
                 )
             };
-            if n < 0 {
+            let Ok(n) = usize::try_from(n) else {
                 let err = os_errno();
                 if err == OS_EINTR {
                     continue;
                 }
                 return Err(io::Error::from_raw_os_error(err));
-            }
+            };
             if n > 0 {
-                self.apply(n as usize, socks);
+                self.apply(n, socks);
             }
             return Ok(());
         }

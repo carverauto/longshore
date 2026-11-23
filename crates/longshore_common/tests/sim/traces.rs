@@ -183,9 +183,9 @@ fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
         submitted += 1;
         for (tok, res) in drain(&mut io, &mut out, submitted) {
             if tok == recv_tok {
-                recvd += res as usize;
+                recvd += usize::try_from(res).unwrap();
             } else {
-                sent += res as usize;
+                sent += usize::try_from(res).unwrap();
             }
         }
     }

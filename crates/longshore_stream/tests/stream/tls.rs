@@ -164,7 +164,7 @@ fn drain_recv(
             Step::Pending => return,
             Step::Done(n) => {
                 assert!(n > 0);
-                *have += n as u32;
+                *have += u32::try_from(n).unwrap();
                 if *have == total {
                     return;
                 }
@@ -209,7 +209,7 @@ fn round_trip(
                     C_SEND => match client.on_send(io, c.result) {
                         Step::Pending => {}
                         Step::Done(n) => {
-                            assert_eq!(n as u32, len);
+                            assert_eq!(u32::try_from(n).unwrap(), len);
                             c_sent_done = true;
                         }
                         Step::Tls(e) => panic!("client send tls error: {e:?}"),
@@ -226,7 +226,7 @@ fn round_trip(
                     S_SEND => match server.on_send(io, c.result) {
                         Step::Pending => {}
                         Step::Done(n) => {
-                            assert_eq!(n as u32, len);
+                            assert_eq!(u32::try_from(n).unwrap(), len);
                             s_sent_done = true;
                         }
                         Step::Tls(e) => panic!("server send tls error: {e:?}"),

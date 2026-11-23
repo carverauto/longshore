@@ -88,10 +88,9 @@ pub fn echo<IO: Io>(
         stats.ticks += 1;
         while let Some(c) = out.pop() {
             let t = c.token.0;
-            if c.result < 0 {
+            let Ok(n) = u32::try_from(c.result) else {
                 return Err(EchoError::Io(t, c.result));
-            }
-            let n = c.result as u32;
+            };
             match t {
                 T_ACCEPT => sub(
                     io,

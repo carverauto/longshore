@@ -224,7 +224,7 @@ impl Server {
                 if c.result <= 0 {
                     self.close(io, i);
                 } else {
-                    self.on_head_bytes(io, i, have + c.result as u32);
+                    self.on_head_bytes(io, i, have + c.result.unsigned_abs());
                 }
             }
             (K_RECV, State::RecvBody { have }) => {
@@ -232,7 +232,7 @@ impl Server {
                     self.close(io, i);
                     return;
                 }
-                let have = have + c.result as u32;
+                let have = have + c.result.unsigned_abs();
                 if have < self.conns[i].request_len {
                     self.conns[i].state = State::RecvBody { have };
                     self.recv_into(
@@ -252,7 +252,7 @@ impl Server {
                     self.close(io, i);
                     return;
                 }
-                let off = off + c.result as u32;
+                let off = off + c.result.unsigned_abs();
                 let conn = self.conns[i];
                 if off < conn.head_len {
                     self.conns[i].state = State::SendHead { off };
@@ -271,7 +271,7 @@ impl Server {
                     self.close(io, i);
                     return;
                 }
-                let off = off + c.result as u32;
+                let off = off + c.result.unsigned_abs();
                 let conn = self.conns[i];
                 if off < conn.body_len {
                     self.conns[i].state = State::SendBody { off };

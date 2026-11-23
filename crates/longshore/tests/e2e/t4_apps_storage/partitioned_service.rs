@@ -240,7 +240,7 @@ fn run_partitioned_service(net_seed: u64, disk_seed: u64) -> (u64, u64, Vec<(u32
         net.tick(false, &mut net_out).unwrap();
         while let Some(c) = net_out.pop() {
             if c.token.0 == 1 && c.result >= 0 {
-                accepted = Some(Sock(c.result as u32));
+                accepted = Some(Sock(u32::try_from(c.result).unwrap()));
             } else if c.token.0 == 2 && c.result == 0 {
                 connected = true;
             }
@@ -303,11 +303,13 @@ fn run_partitioned_service(net_seed: u64, disk_seed: u64) -> (u64, u64, Vec<(u32
                 net.tick(false, &mut net_out).unwrap();
                 while let Some(c) = net_out.pop() {
                     if c.token.0 >= 10 && c.token.0 < 900 && c.result > 0 {
-                        sent += c.result as usize;
+                        sent += usize::try_from(c.result).unwrap();
                         got_send = true;
                     } else if c.token.0 == 3 && c.result > 0 {
                         if let Some(bid) = c.buf {
-                            rx_accum.extend_from_slice(&net.buf(bid)[..c.result as usize]);
+                            rx_accum.extend_from_slice(
+                                &net.buf(bid)[..usize::try_from(c.result).unwrap()],
+                            );
                             net.give_back(bid);
                         }
                     }
@@ -320,7 +322,8 @@ fn run_partitioned_service(net_seed: u64, disk_seed: u64) -> (u64, u64, Vec<(u32
             while let Some(c) = net_out.pop() {
                 if c.token.0 == 3 && c.result > 0 {
                     if let Some(bid) = c.buf {
-                        rx_accum.extend_from_slice(&net.buf(bid)[..c.result as usize]);
+                        rx_accum
+                            .extend_from_slice(&net.buf(bid)[..usize::try_from(c.result).unwrap()]);
                         net.give_back(bid);
                     }
                 }

@@ -263,7 +263,7 @@ mod linux {
                 if c.flags & IORING_CQE_F_NOTIF != 0 {
                     // Second completion of a zero-copy send: buffer released.
                     notifs += 1;
-                    if c.res as u32 & IORING_NOTIF_USAGE_ZC_COPIED != 0 {
+                    if notif_flags(c.res) & IORING_NOTIF_USAGE_ZC_COPIED != 0 {
                         copied += 1;
                     }
                     continue;
@@ -280,7 +280,7 @@ mod linux {
                         }
                     ));
                 }
-                bytes += c.res as u64;
+                bytes += u64::from(c.res.unsigned_abs());
                 ops += 1;
                 ring.push(make(c.user_data as usize, &mut bufs))
                     .expect("one op in flight per connection");

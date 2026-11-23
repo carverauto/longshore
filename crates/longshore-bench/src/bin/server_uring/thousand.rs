@@ -95,7 +95,7 @@ pub(super) fn thousand_idle_connections<IO: Io>(
                 while let Some(c) = srv_out.pop() {
                     assert!(c.token.0 == 1 && c.result >= 1, "{c:?}");
                     accept_armed = c.more;
-                    accepted.push(Sock(c.result as u32));
+                    accepted.push(Sock(u32::try_from(c.result).unwrap()));
                 }
             }
         }

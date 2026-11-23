@@ -299,7 +299,7 @@ impl Stream {
             if result < 0 || (result == 0 && t.cipher_len > 0) {
                 return Step::Done(result);
             }
-            t.cipher_sent += result as u32;
+            t.cipher_sent += result.unsigned_abs();
             if t.cipher_sent < t.cipher_len {
                 Self::submit(
                     io,
@@ -366,7 +366,7 @@ impl Stream {
             if result <= 0 {
                 return Step::Done(result);
             }
-            t.rx_end += result as u32;
+            t.rx_end += result.unsigned_abs();
             t.pump_rx(io, sock, recv_token)
         }
     }

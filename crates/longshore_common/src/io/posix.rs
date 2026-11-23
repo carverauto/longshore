@@ -177,7 +177,7 @@ impl PosixIo {
 pub(super) fn monotonic_ns() -> u64 {
     let mut ts = timespec::default();
     let _: i32 = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
-    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+    crate::io::clock_ns(ts.tv_sec, ts.tv_nsec)
 }
 
 impl World for Posix {
@@ -188,7 +188,7 @@ impl World for Posix {
     fn unix_secs(&self) -> u64 {
         let mut ts = timespec::default();
         let _: i32 = unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
-        ts.tv_sec as u64
+        crate::io::clock_secs(ts.tv_sec)
     }
 
     fn register_file(&mut self, path: &str) -> io::Result<FileId> {

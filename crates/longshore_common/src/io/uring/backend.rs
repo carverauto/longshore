@@ -14,13 +14,13 @@ impl Io for UringIo {
     fn now_ns(&self) -> u64 {
         let mut ts = timespec::default();
         let _: i32 = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
-        ts.sec as u64 * 1_000_000_000 + ts.nsec as u64
+        crate::io::clock_ns(ts.sec, ts.nsec)
     }
 
     fn unix_secs(&self) -> u64 {
         let mut ts = timespec::default();
         let _: i32 = unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
-        ts.sec as u64
+        crate::io::clock_secs(ts.sec)
     }
 
     fn buf(&mut self, id: BufId) -> &mut [u8] {
@@ -290,13 +290,17 @@ impl UringIo {
         assert_eq!(self.in_flight, 0, "probe_tcp_options requires an idle ring");
         let probe_one =
             |ring: &mut Ring, level: c_int, optname: c_int| -> io::Result<Option<bool>> {
+                // The command's `level` and `optname` are `__u32` in the uapi.
+                let invalid = |_| io::Error::from(io::ErrorKind::InvalidInput);
+                let level = u32::try_from(level).map_err(invalid)?;
+                let optname = u32::try_from(optname).map_err(invalid)?;
                 let mut val: c_int = 0;
                 let sqe = io_uring_sqe {
                     opcode: IORING_OP_URING_CMD,
                     flags: IOSQE_FIXED_FILE,
                     fd: sock.0 as i32,
                     off: SOCKET_URING_OP_GETSOCKOPT,
-                    addr: u64::from(level as u32) | (u64::from(optname as u32) << 32),
+                    addr: u64::from(level) | (u64::from(optname) << 32),
                     file_index: core::mem::size_of::<c_int>() as u32,
                     addr3: (&mut val as *mut c_int) as u64,
                     ..Default::default()

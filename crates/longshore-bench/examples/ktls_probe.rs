@@ -111,10 +111,11 @@ mod linux {
     fn send_all(fd: c_int, mut bytes: &[u8], flags: c_int) {
         while !bytes.is_empty() {
             let n = unsafe { send(fd, bytes.as_ptr().cast(), bytes.len(), flags) };
-            if n <= 0 {
+            let sent = usize::try_from(n).unwrap_or(0);
+            if sent == 0 {
                 die(&format!("send: {}", std::io::Error::last_os_error()));
             }
-            bytes = &bytes[n as usize..];
+            bytes = &bytes[sent..];
         }
     }
 
@@ -257,8 +258,12 @@ mod linux {
                 None => send_all(fd, &body, 0),
                 Some(m) => {
                     let mut off: c_long = 0;
-                    while (off as usize) < SIZE {
-                        let n = unsafe { sendfile(fd, m, &mut off, SIZE - off as usize) };
+                    loop {
+                        let left = usize::try_from(off).map_or(0, |o| SIZE.saturating_sub(o));
+                        if left == 0 {
+                            break;
+                        }
+                        let n = unsafe { sendfile(fd, m, &mut off, left) };
                         if n <= 0 {
                             die(&format!("sendfile: {}", std::io::Error::last_os_error()));
                         }

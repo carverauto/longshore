@@ -32,7 +32,7 @@ fn t2_f11_1_read_at_eof_and_short_read() {
             0
         );
 
-        let payload: Vec<u8> = (0..100).map(|i| i as u8).collect();
+        let payload: Vec<u8> = (0..100u8).collect();
         let mut d = DynIo(io);
         write_pool_bytes(&mut d, BufId(0), 0, &payload);
         assert_eq!(

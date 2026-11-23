@@ -76,8 +76,12 @@ fn t1_f16_2_isolated_write_faults_and_counters() {
         assert!(r > 0 && r < 2048 && r % 512 == 0, "short_write={r}");
         sim.set_disk_faults(DiskFaults::default());
         let got = read_file_vec(&mut sim, &mut out, 11, FileSlot(0), 0, 2048).unwrap();
-        assert!(got[..r as usize].iter().all(|&b| b == 0x22));
-        assert!(got[r as usize..].iter().all(|&b| b == 0x11));
+        assert!(got[..usize::try_from(r).unwrap()]
+            .iter()
+            .all(|&b| b == 0x22));
+        assert!(got[usize::try_from(r).unwrap()..]
+            .iter()
+            .all(|&b| b == 0x11));
         assert_eq!(sim.disk_fault_counters().short_write, 1);
     }
 

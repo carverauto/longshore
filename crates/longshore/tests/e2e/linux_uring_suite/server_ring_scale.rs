@@ -53,7 +53,7 @@ fn uring_server_1000_idle_connections_zero_ring_bufs_and_cq_burst_sealed() {
             while let Some(c) = out.pop() {
                 if c.token.0 == 1 {
                     assert!(c.more && c.result >= 0);
-                    let sock = Sock(c.result as u32);
+                    let sock = Sock(u32::try_from(c.result).unwrap());
                     let idx = accepted.len();
                     accepted.push(sock);
                     ring.submit(Token(10_000 + idx as u64), Op::ArmedRecv { sock })
@@ -156,7 +156,7 @@ fn uring_tcp_nodelay_and_keepalive_getsockopt_and_cq_nodrop() {
     })
     .unwrap();
     let acc_c = cs.iter().find(|c| c.token.0 == 1).unwrap();
-    let accepted = Sock(acc_c.result as u32);
+    let accepted = Sock(u32::try_from(acc_c.result).unwrap());
     let mut accept_armed = acc_c.more;
 
     assert_eq!(ring.last_listen_tcp_options(), Some((true, true)));

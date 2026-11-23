@@ -285,7 +285,7 @@ pub(crate) fn wal_append(
             assert_eq!(s, -ECANCELED);
             return false;
         }
-        let written = w as usize;
+        let written = usize::try_from(w).unwrap();
         if written < rec_bytes - off {
             assert_eq!(s, -ECANCELED);
             off += written;

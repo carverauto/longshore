@@ -279,7 +279,7 @@ impl StackWal {
                     fault_stop = true;
                     break;
                 }
-                match check_frame(&sim.buf(self.read_buf)[..res as usize]) {
+                match check_frame(&sim.buf(self.read_buf)[..usize::try_from(res).unwrap()]) {
                     Ok(None) => break,
                     Err(()) => {
                         fault_stop = true;

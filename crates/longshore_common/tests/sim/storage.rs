@@ -193,8 +193,9 @@ pub(crate) fn read_all(
         if r <= 0 {
             break;
         }
-        res[off..off + r as usize].copy_from_slice(&sim.buf(BufId(2))[..r as usize]);
-        off += r as usize;
+        res[off..off + usize::try_from(r).unwrap()]
+            .copy_from_slice(&sim.buf(BufId(2))[..usize::try_from(r).unwrap()]);
+        off += usize::try_from(r).unwrap();
         step += 1;
     }
     assert_eq!(

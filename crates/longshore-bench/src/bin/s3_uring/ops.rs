@@ -157,9 +157,9 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
     });
     let wall = (io.now_ns() - t0) as f64 / 1e9;
     let cpu_s = thread_cpu_secs() - cpu0;
-    // The upper edge of the bucket that holds the given fraction of requests.
-    let pct = |q: f64| -> u64 {
-        let want = (requests as f64 * q).ceil() as u64;
+    // The upper edge of the bucket that holds the given percentage of requests.
+    let pct = |percent: u64| -> u64 {
+        let want = (requests * percent).div_ceil(100);
         let mut seen = 0;
         for (k, n) in hist.iter().enumerate() {
             seen += n;
@@ -175,8 +175,8 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
         requests as f64 / wall,
         cpu_s * 1e6 / requests.max(1) as f64,
         cpu_s / wall,
-        pct(0.50),
-        pct(0.99),
+        pct(50),
+        pct(99),
         bytes / requests.max(1),
         (io.enters() - enters0) as f64 / requests.max(1) as f64,
         s3.connects()

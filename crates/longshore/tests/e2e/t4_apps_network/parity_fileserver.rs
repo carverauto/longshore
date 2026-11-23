@@ -104,8 +104,8 @@ pub fn run_mini_fileserver<IO: Io>(
     .unwrap();
     for c in cs {
         match c.token.0 {
-            1 => tcp_srv = Some(Sock(c.result as u32)),
-            2 => unix_srv = Some(Sock(c.result as u32)),
+            1 => tcp_srv = Some(Sock(u32::try_from(c.result).unwrap())),
+            2 => unix_srv = Some(Sock(u32::try_from(c.result).unwrap())),
             3 => {
                 assert!(c.result >= 0);
                 c_tcp = true;
@@ -152,7 +152,7 @@ pub fn run_mini_fileserver<IO: Io>(
                 sent_ok = true;
             } else if c.token.0 == 10 && c.result > 0 {
                 let bid = c.buf.expect("armed recv buf");
-                collected.extend_from_slice(&io.buf(bid)[..c.result as usize]);
+                collected.extend_from_slice(&io.buf(bid)[..usize::try_from(c.result).unwrap()]);
                 io.give_back(bid);
             }
         }
@@ -325,7 +325,7 @@ pub fn run_mini_fileserver<IO: Io>(
             saw_eof = true;
         } else {
             assert!(rc.result > 0);
-            u_got.extend_from_slice(&io.buf(BufId(0))[..rc.result as usize]);
+            u_got.extend_from_slice(&io.buf(BufId(0))[..usize::try_from(rc.result).unwrap()]);
         }
     }
     assert_eq!(u_got, &payload[..32]);

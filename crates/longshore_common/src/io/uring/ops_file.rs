@@ -138,7 +138,7 @@ impl UringIo {
                     opcode: IORING_OP_RENAMEAT,
                     fd: AT_FDCWD,
                     addr: self.buf_ptr(old_buf, old_off, old_len),
-                    len: AT_FDCWD as u32,
+                    len: AT_FDCWD_SQE_LEN,
                     off: self.buf_ptr(new_buf, new_off, new_len),
                     ..Default::default()
                 }

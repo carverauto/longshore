@@ -39,13 +39,13 @@ fn t3_26_s3_client_portable_waiter_saturation_and_drop_stop() {
     b.connections = 4;
     let client = b.build().expect("client");
 
-    let handles: Vec<_> = (0..6)
+    let handles: Vec<_> = (0..6u32)
         .map(|i| {
             let c = client.clone();
             std::thread::spawn(move || {
                 let mut buf = c.buffer_blocking();
                 let key = format!("sat-{i}");
-                buf.as_mut_slice()[..4].copy_from_slice(&(i as u32).to_le_bytes());
+                buf.as_mut_slice()[..4].copy_from_slice(&i.to_le_bytes());
                 let (st, buf) = c.store(&key, buf, 4).wait();
                 st.expect("store under waiter saturation");
                 drop(buf);
@@ -139,7 +139,8 @@ fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
     )
     .unwrap();
     let cs = drive_until(&mut fe, &mut out_fe, 10_000, |v| v.len() == 2).unwrap();
-    let srv = Sock(cs.iter().find(|c| c.token == Token(10)).unwrap().result as u32);
+    let srv =
+        Sock(u32::try_from(cs.iter().find(|c| c.token == Token(10)).unwrap().result).unwrap());
     fe.submit(Token(12), Op::ArmedRecv { sock: srv }).unwrap();
 
     write_pool_bytes(&mut fe, BufId(0), 0, &42u64.to_le_bytes());

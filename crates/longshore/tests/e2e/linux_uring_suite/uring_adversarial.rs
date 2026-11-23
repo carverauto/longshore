@@ -128,7 +128,7 @@ fn uring_send_zc_close_cancel_and_quiesce_drop_mixed_slots() {
         v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
     })
     .unwrap();
-    let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+    let srv = Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
 
     // Arm Recv on srv, send zero-copy, then cancel/close and test quiesce on drop with mixed active ops.
     ring.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
@@ -260,7 +260,8 @@ fn uring_unix_armed_accept_recv_close_and_shutdown_eof() {
         v.iter().any(|c| c.token == Token(10)) && v.iter().any(|c| c.token == Token(11))
     })
     .unwrap();
-    let srv = Sock(cs2.iter().find(|c| c.token == Token(10)).unwrap().result as u32);
+    let srv =
+        Sock(u32::try_from(cs2.iter().find(|c| c.token == Token(10)).unwrap().result).unwrap());
     assert_eq!(cs2.iter().find(|c| c.token == Token(11)).unwrap().result, 0);
 
     ring.submit(Token(12), Op::ArmedRecv { sock: srv }).unwrap();

@@ -65,7 +65,7 @@ fn t1_f21_1_armed_accept_confines_slots_to_range_and_stays_armed() {
     for c in cs.iter().filter(|c| c.token == Token(1)) {
         assert!(c.more, "accept must remain armed");
         assert!(c.buf.is_none());
-        let slot = c.result as u32;
+        let slot = u32::try_from(c.result).unwrap();
         assert!((16..20).contains(&slot), "slot {slot} outside 16..20");
         assert!(slots.insert(slot), "duplicate accepted slot {slot}");
     }
@@ -108,7 +108,7 @@ fn t1_f21_2_idle_armed_recv_connections_consume_zero_ring_buffers() {
         })
         .unwrap();
         let accepted = cs.iter().find(|c| c.token == Token(1)).unwrap();
-        let s = Sock(accepted.result as u32);
+        let s = Sock(u32::try_from(accepted.result).unwrap());
         server_socks.push(s);
         io.submit(Token(200 + u64::from(i)), Op::ArmedRecv { sock: s })
             .unwrap();
@@ -165,7 +165,8 @@ fn t1_f21_3_armed_recv_reads_in_place_across_five_sockets() {
                 && v.iter().any(|c| c.token == Token(10 + u64::from(i)))
         })
         .unwrap();
-        let s = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+        let s =
+            Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
         io.submit(Token(50 + u64::from(i)), Op::ArmedRecv { sock: s })
             .unwrap();
         pairs.push((Sock(1 + i), s));
@@ -196,7 +197,7 @@ fn t1_f21_3_armed_recv_reads_in_place_across_five_sockets() {
         assert!(rc.more);
         let id = rc.buf.expect("buf id");
         assert_eq!(
-            read_pool_bytes(&mut io, id, 0, rc.result as usize),
+            read_pool_bytes(&mut io, id, 0, usize::try_from(rc.result).unwrap()),
             msg.as_bytes()
         );
         io.give_back(id);

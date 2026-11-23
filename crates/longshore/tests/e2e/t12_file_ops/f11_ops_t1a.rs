@@ -29,7 +29,7 @@ fn t1_f11_1_open_write_read_close_at_offset() {
             0
         );
 
-        let pattern: Vec<u8> = (0..1024).map(|i| ((i * 17) ^ 0x3C) as u8).collect();
+        let pattern: Vec<u8> = (0..1024u32).map(|i| ((i * 17) ^ 0x3C) as u8).collect();
         let mut d = DynIo(io);
         write_pool_bytes(&mut d, BufId(0), 0, &pattern);
         let wr = submit_and_wait_one(

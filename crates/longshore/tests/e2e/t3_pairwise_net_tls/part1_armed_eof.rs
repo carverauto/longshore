@@ -44,7 +44,7 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         for c in v.iter().filter(|c| c.token == Token(1)) {
             assert!(c.more, "armed accept must stay armed with more=true");
             assert!(c.result >= 8 && c.result < 14);
-            accepted.push(Sock(c.result as u32));
+            accepted.push(Sock(u32::try_from(c.result).unwrap()));
         }
         connected == 4 && accepted.len() == 4
     })
@@ -84,7 +84,7 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         let idx = (c.token.0 - 100) as usize;
         let expected = format!("msg-{idx}");
         assert_eq!(
-            read_pool_bytes(&mut io, id, 0, c.result as usize),
+            read_pool_bytes(&mut io, id, 0, usize::try_from(c.result).unwrap()),
             expected.as_bytes()
         );
         io.give_back(id);
@@ -112,7 +112,10 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
     for c in wave2.iter().filter(|c| (100..104).contains(&c.token.0)) {
         let id = c.buf.expect("recycled ring buf");
         assert!(seen_ids.contains(&id), "ring buffer should recycle");
-        assert_eq!(read_pool_bytes(&mut io, id, 0, c.result as usize), b"wave2");
+        assert_eq!(
+            read_pool_bytes(&mut io, id, 0, usize::try_from(c.result).unwrap()),
+            b"wave2"
+        );
         io.give_back(id);
     }
 }
@@ -134,7 +137,7 @@ fn verify_shutdown_before_close<IO: Io>(io: &mut IO, addr: std::net::SocketAddr)
         v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
     })
     .unwrap();
-    let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+    let srv = Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
     assert_eq!(cs.iter().find(|c| c.token == Token(2)).unwrap().result, 0);
 
     io.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();

@@ -37,7 +37,7 @@ fn socket_options_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Socket
         if c.token.0 == 1 {
             assert!(c.result >= 0);
             accept_armed = c.more;
-            accepted = Some(Sock(c.result as u32));
+            accepted = Some(Sock(u32::try_from(c.result).unwrap()));
         } else if c.token.0 == 2 {
             assert_eq!(c.result, 0);
             connected = true;
@@ -204,7 +204,7 @@ fn unix_stream_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, unix_path: &str
         if c.token.0 == 1 {
             assert!(c.result >= 0);
             accept_armed = c.more;
-            accepted = Some(Sock(c.result as u32));
+            accepted = Some(Sock(u32::try_from(c.result).unwrap()));
         } else if c.token.0 == 2 {
             assert_eq!(c.result, 0, "ConnectUnix failed: {c:?}");
             connected = true;

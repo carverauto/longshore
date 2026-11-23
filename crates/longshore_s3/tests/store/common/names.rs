@@ -53,7 +53,7 @@ impl Nameserver {
         match token {
             NS_SEND => Self::recv(io),
             NS_RECV => {
-                let n = result as usize;
+                let n = usize::try_from(result).unwrap();
                 let m = io.buf(ns_buf());
                 let rtype = m[n - 3];
                 let aaaa = rtype == 28;

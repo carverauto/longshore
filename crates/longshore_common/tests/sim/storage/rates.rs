@@ -69,9 +69,13 @@ fn torn_reported_torn_silent_short_write_and_overwrites() {
     assert!(kept > 0 && kept < 16_384 && kept % 512 == 0);
     tok += 1;
     c = read_all(&mut sim, &mut out, tok, "/d/f").unwrap();
-    assert_eq!(c.len(), (kept as usize).max(4_096));
-    assert!(c[..kept as usize].iter().all(|&b| b == 0xAA));
-    assert!(c[kept as usize..].iter().all(|&b| b == 0x11));
+    assert_eq!(c.len(), usize::try_from(kept).unwrap().max(4_096));
+    assert!(c[..usize::try_from(kept).unwrap()]
+        .iter()
+        .all(|&b| b == 0xAA));
+    assert!(c[usize::try_from(kept).unwrap()..]
+        .iter()
+        .all(|&b| b == 0x11));
 }
 
 #[test]

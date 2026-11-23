@@ -149,7 +149,7 @@ impl Server {
             return io.submit(Token(S_SEND), send).unwrap();
         }
         self.queries += 1;
-        let n = result as usize;
+        let n = usize::try_from(result).unwrap();
         let ttl = self.ttl.to_be_bytes();
         let m = io.buf(S_BUF);
         // The question name runs from byte 12 to 5 bytes before the end.

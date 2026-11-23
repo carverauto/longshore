@@ -63,7 +63,7 @@ impl Posix {
             if unsafe { fstat(fd, &mut st) } < 0 {
                 return to_linux_errno(os_errno());
             }
-            let cur_size = st.st_size.max(0) as u64;
+            let cur_size = u64::try_from(st.st_size).unwrap_or(0);
             if target > cur_size {
                 let mut fs = fstore_t {
                     fst_flags: F_ALLOCATECONTIG,
@@ -175,14 +175,14 @@ impl Posix {
                 return to_linux_errno(os_errno());
             }
             raw[0..4].copy_from_slice(&0x07ffu32.to_le_bytes());
-            raw[4..8].copy_from_slice(&(st.st_blksize as u32).to_le_bytes());
+            raw[4..8].copy_from_slice(&u32::try_from(st.st_blksize).unwrap_or(0).to_le_bytes());
             raw[16..20].copy_from_slice(&u32::from(st.st_nlink).to_le_bytes());
             raw[20..24].copy_from_slice(&st.st_uid.to_le_bytes());
             raw[24..28].copy_from_slice(&st.st_gid.to_le_bytes());
             raw[28..30].copy_from_slice(&st.st_mode.to_le_bytes());
             raw[32..40].copy_from_slice(&st.st_ino.to_le_bytes());
-            raw[40..48].copy_from_slice(&(st.st_size.max(0) as u64).to_le_bytes());
-            raw[48..56].copy_from_slice(&(st.st_blocks.max(0) as u64).to_le_bytes());
+            raw[40..48].copy_from_slice(&u64::try_from(st.st_size).unwrap_or(0).to_le_bytes());
+            raw[48..56].copy_from_slice(&u64::try_from(st.st_blocks).unwrap_or(0).to_le_bytes());
         }
         pool[out_range].copy_from_slice(&raw);
         0

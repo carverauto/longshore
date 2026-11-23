@@ -10,7 +10,12 @@ use super::*;
 impl<W: World> Engine<W> {
     pub(super) fn record_trace(&mut self, c: Completion) {
         let now = self.world.now_ns();
-        for v in [c.token.0, u64::from(c.result as u32), now] {
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "the trace hashes the bits of `result`, negated errnos included"
+        )]
+        let result_bits = c.result as u32;
+        for v in [c.token.0, u64::from(result_bits), now] {
             self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
         }
         if c.more || c.buf.is_some() {
@@ -249,7 +254,7 @@ impl<W: World> Engine<W> {
         if p.chain_id != 0 {
             let short_rw = match p.op {
                 Op::FileRead { len, .. } | Op::FileWrite { len, .. } => {
-                    result >= 0 && (result as u32) < len
+                    u32::try_from(result).is_ok_and(|done| done < len)
                 }
                 Op::Connect { .. }
                 | Op::ConnectUnix { .. }

@@ -80,7 +80,7 @@ fn t3_18_armed_recv_enobufs_under_sim_faults_and_give_back() {
                         &mut sim,
                         id,
                         0,
-                        c.result as usize,
+                        usize::try_from(c.result).unwrap(),
                     ));
                     held.push(id);
                 }
@@ -112,7 +112,7 @@ fn t3_18_armed_recv_enobufs_under_sim_faults_and_give_back() {
                             &mut sim,
                             id,
                             0,
-                            c.result as usize,
+                            usize::try_from(c.result).unwrap(),
                         ));
                         sim.give_back(id);
                     }
@@ -161,7 +161,7 @@ fn t3_19_simio_power_loss_resets_armed_ops_and_stream_rebuilds() {
     )
     .unwrap();
     let cs = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
-    let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+    let srv = Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
     sim.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
 
     let plen = write_nul_path(&mut sim, limits.small(0), 0, "/t3_19.dat");
@@ -203,7 +203,8 @@ fn t3_19_simio_power_loss_resets_armed_ops_and_stream_rebuilds() {
     )
     .unwrap();
     let cs2 = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
-    let srv2 = Sock(cs2.iter().find(|c| c.token == Token(10)).unwrap().result as u32);
+    let srv2 =
+        Sock(u32::try_from(cs2.iter().find(|c| c.token == Token(10)).unwrap().result).unwrap());
     let mut s = Stream::new(Sock(1), Token(12), Token(13));
     write_pool_bytes(&mut sim, BufId(0), 0, b"rebuilt");
     s.send(&mut sim, BufId(0), 0, 7, u32::MAX);
@@ -214,7 +215,12 @@ fn t3_19_simio_power_loss_resets_armed_ops_and_stream_rebuilds() {
     .unwrap();
     let r = cs3.iter().find(|c| c.token == Token(14)).unwrap();
     assert_eq!(
-        read_pool_bytes(&mut sim, r.buf.unwrap(), 0, r.result as usize),
+        read_pool_bytes(
+            &mut sim,
+            r.buf.unwrap(),
+            0,
+            usize::try_from(r.result).unwrap()
+        ),
         b"rebuilt"
     );
     sim.give_back(r.buf.unwrap());
@@ -292,7 +298,8 @@ fn t3_20_combined_network_and_disk_faults_deterministic_replay() {
         for c in &cs {
             log.push((c.token.0, c.result, c.more));
         }
-        let srv = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+        let srv =
+            Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
         sim.submit(Token(4), Op::ArmedRecv { sock: srv }).unwrap();
         write_pool_bytes(&mut sim, BufId(0), 0, &[0x33; 1024]);
         sim.submit(

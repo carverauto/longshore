@@ -112,7 +112,7 @@ fn t2_f18_2_tls_stream_spill_path_across_small_dst_receives() {
         (Step::Done(0), Step::Done(0))
     );
 
-    let msg: Vec<u8> = (0..4096).map(|i| (i % 199) as u8).collect();
+    let msg: Vec<u8> = (0..4096u32).map(|i| (i % 199) as u8).collect();
     write_pool_bytes(&mut io, BufId(4), 0, &msg);
     client.send(&mut io, BufId(4), 0, msg.len() as u32, 4096);
     let mut recvd = Vec::new();
@@ -120,7 +120,12 @@ fn t2_f18_2_tls_stream_spill_path_across_small_dst_receives() {
     for _ in 0..200 {
         if let Step::Done(n) = s_step {
             assert!(n > 0);
-            recvd.extend_from_slice(&read_pool_bytes(&mut io, BufId(5), 0, n as usize));
+            recvd.extend_from_slice(&read_pool_bytes(
+                &mut io,
+                BufId(5),
+                0,
+                usize::try_from(n).unwrap(),
+            ));
             if recvd.len() >= msg.len() {
                 break;
             }

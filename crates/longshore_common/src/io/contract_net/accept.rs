@@ -49,7 +49,7 @@ fn several_accepts_on_one_armed_accept<IO: Io>(
                 accept_armed = c.more;
                 if c.result >= 0 {
                     assert!(c.buf.is_none() && (1..5).contains(&c.result));
-                    accepted.push(Sock(c.result as u32));
+                    accepted.push(Sock(u32::try_from(c.result).unwrap()));
                 }
             } else {
                 assert_eq!(c.result, 0);
@@ -120,7 +120,7 @@ fn accept_range_full_and_armed_again<IO: Io>(
     drain_until(&mut io, &mut out, |_, c| {
         if c.token.0 == 1 {
             assert!(c.more && (1..3).contains(&c.result));
-            accepted.push(Sock(c.result as u32));
+            accepted.push(Sock(u32::try_from(c.result).unwrap()));
         } else {
             assert_eq!(c.result, 0);
             conns += 1;
@@ -166,7 +166,7 @@ fn accept_range_full_and_armed_again<IO: Io>(
         if c.token.0 == 2 {
             assert!(c.result == accepted[0].0 as i32);
             accept2_armed = c.more;
-            reused = Some(Sock(c.result as u32));
+            reused = Some(Sock(u32::try_from(c.result).unwrap()));
         } else if c.token.0 == 13 {
             assert_eq!(c.result, 0);
             fourth_ok = true;

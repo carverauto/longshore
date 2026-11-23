@@ -84,7 +84,7 @@ fn armed_echo_survives_delay_short_send_and_partial_recv_with_zero_alloc() {
             drain_until(&mut sim, &mut out, |_, c| {
                 if c.token.0 == 1 {
                     assert!(c.more && c.result >= 0);
-                    srv = Some(Sock(c.result as u32));
+                    srv = Some(Sock(u32::try_from(c.result).unwrap()));
                 } else if c.token.0 == 2 {
                     assert_eq!(c.result, 0);
                     connected = true;
@@ -108,7 +108,9 @@ fn armed_echo_survives_delay_short_send_and_partial_recv_with_zero_alloc() {
                         if c.token.0 == 3 {
                             if c.result > 0 {
                                 let b = c.buf.unwrap();
-                                got.extend_from_slice(&sim.buf(b)[..c.result as usize]);
+                                got.extend_from_slice(
+                                    &sim.buf(b)[..usize::try_from(c.result).unwrap()],
+                                );
                                 sim.give_back(b);
                             }
                             if !c.more && got.len() < payload.len() {
@@ -116,7 +118,7 @@ fn armed_echo_survives_delay_short_send_and_partial_recv_with_zero_alloc() {
                             }
                         } else if c.token.0 == t {
                             assert!(c.result > 0);
-                            sent += c.result as usize;
+                            sent += usize::try_from(c.result).unwrap();
                             send_done = true;
                         }
                         send_done
@@ -125,7 +127,9 @@ fn armed_echo_survives_delay_short_send_and_partial_recv_with_zero_alloc() {
                     drain_until(&mut sim, &mut out, |sim, c| {
                         if c.token.0 == 3 && c.result > 0 {
                             let b = c.buf.unwrap();
-                            got.extend_from_slice(&sim.buf(b)[..c.result as usize]);
+                            got.extend_from_slice(
+                                &sim.buf(b)[..usize::try_from(c.result).unwrap()],
+                            );
                             sim.give_back(b);
                         }
                         got.len() == payload.len()
@@ -190,7 +194,7 @@ fn armed_recv_with_resets_and_partial_reads_delivers_prefix_once_and_replays() {
                 let mut connected = false;
                 drain_until(&mut sim, &mut out, |_, c| {
                     if c.token.0 == 1 {
-                        srv = Some(Sock(c.result as u32));
+                        srv = Some(Sock(u32::try_from(c.result).unwrap()));
                     } else if c.token.0 == 2 {
                         connected = true;
                     }
@@ -213,7 +217,9 @@ fn armed_recv_with_resets_and_partial_reads_delivers_prefix_once_and_replays() {
                             if c.token.0 == 3 {
                                 if c.result > 0 {
                                     let b = c.buf.unwrap();
-                                    got.extend_from_slice(&sim.buf(b)[..c.result as usize]);
+                                    got.extend_from_slice(
+                                        &sim.buf(b)[..usize::try_from(c.result).unwrap()],
+                                    );
                                     sim.give_back(b);
                                 }
                                 if !c.more {
@@ -222,7 +228,7 @@ fn armed_recv_with_resets_and_partial_reads_delivers_prefix_once_and_replays() {
                                 }
                             } else if c.token.0 == t {
                                 if c.result > 0 {
-                                    sent += c.result as usize;
+                                    sent += usize::try_from(c.result).unwrap();
                                 } else {
                                     peer_closed = true;
                                 }
@@ -239,7 +245,9 @@ fn armed_recv_with_resets_and_partial_reads_delivers_prefix_once_and_replays() {
                             if c.token.0 == 3 {
                                 if c.result > 0 {
                                     let b = c.buf.unwrap();
-                                    got.extend_from_slice(&sim.buf(b)[..c.result as usize]);
+                                    got.extend_from_slice(
+                                        &sim.buf(b)[..usize::try_from(c.result).unwrap()],
+                                    );
                                     sim.give_back(b);
                                 }
                                 if !c.more {
@@ -298,7 +306,7 @@ fn enobufs_and_range_full_recover_under_faults() {
         let mut c1 = false;
         drain_until(&mut sim, &mut out, |_, c| {
             if c.token.0 == 1 {
-                srv = Some(Sock(c.result as u32));
+                srv = Some(Sock(u32::try_from(c.result).unwrap()));
             } else if c.token.0 == 2 {
                 c1 = true;
             }
@@ -350,7 +358,7 @@ fn enobufs_and_range_full_recover_under_faults() {
         drain_until(&mut sim, &mut out, |sim, c| {
             if c.token.0 == 5 && c.result > 0 {
                 let b = c.buf.unwrap();
-                got.extend_from_slice(&sim.buf(b)[..c.result as usize]);
+                got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result).unwrap()]);
                 held = Some(b);
                 return true;
             }
@@ -366,7 +374,7 @@ fn enobufs_and_range_full_recover_under_faults() {
         drain_until(&mut sim, &mut out, |sim, c| {
             if c.token.0 == 8 && c.result > 0 {
                 let b = c.buf.unwrap();
-                got.extend_from_slice(&sim.buf(b)[..c.result as usize]);
+                got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result).unwrap()]);
                 sim.give_back(b);
             }
             got.len() == 24

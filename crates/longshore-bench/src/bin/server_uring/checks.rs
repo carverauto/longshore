@@ -63,7 +63,7 @@ fn peer_sees_eof_on_armed_close<IO: Io>(make: &mut impl FnMut(Limits) -> IO, add
             while let Some(c) = out.pop() {
                 if c.token.0 == 1 {
                     accept_armed = c.more;
-                    srv = Some(Sock(c.result as u32));
+                    srv = Some(Sock(u32::try_from(c.result).unwrap()));
                 } else if c.token.0 == 2 {
                     assert_eq!(c.result, 0);
                     conn = true;
@@ -161,7 +161,7 @@ fn cq_driven_to_limit<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketA
             while let Some(c) = out.pop() {
                 if c.token.0 == 1 {
                     accept_armed = c.more;
-                    srv = Some(Sock(c.result as u32));
+                    srv = Some(Sock(u32::try_from(c.result).unwrap()));
                 } else if c.token.0 == 2 {
                     conn = true;
                 }
@@ -215,7 +215,7 @@ fn cq_driven_to_limit<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketA
                     } else if c.token.0 == 3 {
                         recv_armed = c.more;
                         if c.result > 0 {
-                            total_rx += c.result as usize;
+                            total_rx += usize::try_from(c.result).unwrap();
                             io.give_back(c.buf.unwrap());
                         }
                         if !recv_armed && total_rx < (round as usize + 1) * 16 {
@@ -236,7 +236,7 @@ fn cq_driven_to_limit<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketA
                 if c.token.0 == 3 {
                     recv_armed = c.more;
                     if c.result > 0 {
-                        total_rx += c.result as usize;
+                        total_rx += usize::try_from(c.result).unwrap();
                         io.give_back(c.buf.unwrap());
                     }
                 }

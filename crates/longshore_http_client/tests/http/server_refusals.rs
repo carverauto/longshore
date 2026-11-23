@@ -70,7 +70,7 @@ fn answer_to(request: &[u8]) -> String {
                     SEND => {}
                     RECV => {
                         assert!(c.result > 0, "closed before answering: {}", c.result);
-                        got += c.result as u32;
+                        got += u32::try_from(c.result).unwrap();
                         if !complete(io, got) {
                             io.submit(
                                 Token(RECV),

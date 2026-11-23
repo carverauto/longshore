@@ -110,7 +110,7 @@ fn serve<S: Read + Write + MaybeFd>(mut s: S, get_size: u32, discard_in_kernel: 
                     if n <= 0 {
                         return;
                     }
-                    left -= n as usize;
+                    left -= usize::try_from(n).unwrap();
                 }
                 let body = if is_get { get_size as usize } else { 0 };
                 if s.write_all(

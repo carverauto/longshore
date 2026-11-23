@@ -231,7 +231,7 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
                 continue;
             }
             assert!(r.result > 0);
-            got.extend_from_slice(&io.buf(BufId(0))[..r.result as usize]);
+            got.extend_from_slice(&io.buf(BufId(0))[..usize::try_from(r.result).unwrap()]);
         }
         assert_eq!(got.as_slice(), msg);
 

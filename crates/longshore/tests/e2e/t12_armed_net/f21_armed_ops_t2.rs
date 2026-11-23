@@ -116,7 +116,8 @@ fn t2_f21_2_rearm_accept_after_closing_slot_accepts_next_client() {
         v.iter().filter(|c| c.token == Token(1)).count() == 2
     })
     .unwrap();
-    let first_slot = Sock(cs.iter().find(|c| c.token == Token(1)).unwrap().result as u32);
+    let first_slot =
+        Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
 
     io.submit(
         Token(12),
@@ -154,7 +155,7 @@ fn t2_f21_2_rearm_accept_after_closing_slot_accepts_next_client() {
     .unwrap();
     let accepted = reaccepted.iter().find(|c| c.token == Token(21)).unwrap();
     assert!(accepted.more);
-    assert_eq!(accepted.result as u32, first_slot.0);
+    assert_eq!(u32::try_from(accepted.result).unwrap(), first_slot.0);
 }
 
 #[cfg(feature = "sim")]

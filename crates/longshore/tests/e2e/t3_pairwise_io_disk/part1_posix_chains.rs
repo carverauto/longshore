@@ -40,7 +40,7 @@ fn run_t3_02_backend<IO: Io>(io: &mut IO, path_a: &str) {
     .expect("open direct");
     assert_eq!(open_res, 0);
 
-    let pattern: Vec<u8> = (0..4096).map(|i| ((i * 7 + 3) & 0xff) as u8).collect();
+    let pattern: Vec<u8> = (0..4096u32).map(|i| ((i * 7 + 3) & 0xff) as u8).collect();
     write_pool_bytes(io, aligned_buf, 0, &pattern);
     let chain = [
         (

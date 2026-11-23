@@ -297,7 +297,7 @@ pub fn raw_exchange(
                     }
                     ACCEPT => recv(io, got),
                     RECV if c.result > 0 => {
-                        got += c.result as u32;
+                        got += u32::try_from(c.result).unwrap();
                         if !sent {
                             io.submit(
                                 Token(SEND),

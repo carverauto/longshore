@@ -98,7 +98,7 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
         let a = drain_one(&mut io, &mut out, 1);
         assert!(a.result >= 0 && a.more && a.buf.is_none(), "{a:?}");
         accept_armed = a.more;
-        let closed_srv = Sock(a.result as u32);
+        let closed_srv = Sock(u32::try_from(a.result).unwrap());
         io.submit(Token(20), Op::ArmedRecv { sock: closed_srv })
             .unwrap();
         let eof = drain_one(&mut io, &mut out, 20);
@@ -122,7 +122,7 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
         if c.token.0 == 1 {
             assert!(c.result >= 0 && c.buf.is_none(), "{c:?}");
             accept_armed = c.more;
-            live_srv = Some(Sock(c.result as u32));
+            live_srv = Some(Sock(u32::try_from(c.result).unwrap()));
         } else if c.token.0 == 30 {
             assert_eq!(c.result, 0);
             live_conn = true;
