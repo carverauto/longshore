@@ -75,13 +75,7 @@ impl Tls {
         let mut produced = 0u32;
         // Content left over from a record that did not fit last time.
         if self.spill_len > 0 {
-            let n = self.spill_len.min(self.dst_max);
-            let (rx, dst) = io.buf_pair(self.rx_buf, self.dst);
-            dst[self.dst_off as usize..(self.dst_off + n) as usize]
-                .copy_from_slice(&rx[self.spill_at as usize..(self.spill_at + n) as usize]);
-            self.spill_at += n;
-            self.spill_len -= n;
-            return Step::Done(count_result(n));
+            return Step::Done(count_result(self.deliver_spill(io)));
         }
         while produced < self.dst_max && !self.closed {
             let (rx, dst) = io.buf_pair(self.rx_buf, self.dst);
@@ -128,14 +122,7 @@ impl Tls {
             match ctype {
                 CONTENT_APPLICATION_DATA if direct => produced += n as u32,
                 CONTENT_APPLICATION_DATA => {
-                    // Copy what fits; keep the rest for the next call.
-                    let take = n.min(space);
-                    let from = record_at as usize + HEADER_LEN;
-                    let (rx_bytes, dst_bytes) = io.buf_pair(self.rx_buf, self.dst);
-                    dst_bytes[at..at + take].copy_from_slice(&rx_bytes[from..from + take]);
-                    produced += take as u32;
-                    self.spill_at = (from + take) as u32;
-                    self.spill_len = (n - take) as u32;
+                    produced += self.copy_and_spill(io, record_at, at, n, space);
                     // Stop only if content is left over. A record that was
                     // all padding leaves nothing, and the records behind it
                     // must still be read: waiting for the network instead
@@ -163,6 +150,45 @@ impl Tls {
         if self.closed || self.dst_max == 0 {
             return Step::Done(0);
         }
+        self.recv_more(io, sock, token)
+    }
+
+    /// Copy content left over from an earlier record into the destination;
+    /// returns the bytes delivered.
+    #[inline]
+    fn deliver_spill<IO: Io>(&mut self, io: &mut IO) -> u32 {
+        let n = self.spill_len.min(self.dst_max);
+        let (rx, dst) = io.buf_pair(self.rx_buf, self.dst);
+        dst[self.dst_off as usize..(self.dst_off + n) as usize]
+            .copy_from_slice(&rx[self.spill_at as usize..(self.spill_at + n) as usize]);
+        self.spill_at += n;
+        self.spill_len -= n;
+        n
+    }
+
+    /// Copy what fits of a record opened in place; keep the rest for the next
+    /// call. Returns the bytes delivered.
+    #[inline]
+    fn copy_and_spill<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        record_at: u32,
+        at: usize,
+        n: usize,
+        space: usize,
+    ) -> u32 {
+        let take = n.min(space);
+        let from = record_at as usize + HEADER_LEN;
+        let (rx_bytes, dst_bytes) = io.buf_pair(self.rx_buf, self.dst);
+        dst_bytes[at..at + take].copy_from_slice(&rx_bytes[from..from + take]);
+        self.spill_at = (from + take) as u32;
+        self.spill_len = (n - take) as u32;
+        take as u32
+    }
+
+    /// Make room and ask `Io` for more ciphertext.
+    #[inline]
+    fn recv_more<IO: Io>(&mut self, io: &mut IO, sock: Sock, token: Token) -> Step {
         if let Err(e) = self.make_room(io) {
             return Step::Tls(e);
         }
