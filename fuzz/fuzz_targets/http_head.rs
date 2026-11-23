@@ -8,11 +8,15 @@
 //! verdict on a prefix must not change when more bytes arrive.
 
 use libfuzzer_sys::fuzz_target;
-// Compiled straight from its source file; see fuzz/Cargo.toml.
+// Compiled straight from its source file; see fuzz/Cargo.toml. The inline
+// module sets the directory, so `head.rs` finds its own submodules under
+// `src/head/` as it does in the crate.
 #[allow(dead_code)]
-#[path = "../../crates/longshore_http_client/src/head.rs"]
-mod head;
-use head::{parse_request, parse_response};
+#[path = "../../crates/longshore_http_client/src/"]
+mod http {
+    pub mod head;
+}
+use http::head::{parse_request, parse_response};
 
 fuzz_target!(|data: &[u8]| {
     let limit = 4096;
