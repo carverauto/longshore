@@ -22,21 +22,24 @@ fn creds() -> Credentials {
 #[test]
 fn t4_14_builder_defaults_and_linux_no_silent_fallback_contract() {
     let store = HttpStoreServer::start_plain().unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds());
-    b.bucket_in_path = Some("uring-bucket".into());
-    b.tls = false;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    b.waiters = 32;
+    let b = Builder::new("127.0.0.1", "us-east-1", creds())
+        .bucket_in_path(Some("uring-bucket".into()))
+        .tls(false)
+        .port(store.port())
+        .address(Some(store.addr()))
+        .buffers(4)
+        .buffer_size(16 * 1024)
+        .connections(4)
+        .operations(8)
+        .waiters(32);
 
     // On Linux, Builder::new defaults portable = false (uses UringIo).
     #[cfg(target_os = "linux")]
     {
-        assert!(!b.portable, "Linux Builder must default portable = false");
+        assert!(
+            !b.is_portable(),
+            "Linux Builder must default portable = false"
+        );
         let client = b.clone().build().expect("Linux UringIo S3 client build");
         let mut buf = client.buffer_blocking();
         buf.as_mut_slice()[..9].copy_from_slice(b"uring-s3!");
@@ -51,9 +54,7 @@ fn t4_14_builder_defaults_and_linux_no_silent_fallback_contract() {
     // registered-range limit fails with BuildError::Io (never silent fallback to Posix).
     #[cfg(target_os = "linux")]
     {
-        let mut huge = b;
-        huge.buffers = 1;
-        huge.buffer_size = (1 << 30) + 4096;
+        let huge = b.buffers(1).buffer_size((1 << 30) + 4096);
         match huge.build() {
             Err(BuildError::Io(_)) | Err(BuildError::Setting(_)) => {}
             Ok(_) => panic!("excessive UringIo client pool must fail rather than fall back"),
@@ -64,8 +65,7 @@ fn t4_14_builder_defaults_and_linux_no_silent_fallback_contract() {
     // Non-Linux host (e.g. macOS) uses portable backend automatically and rejects pin.
     #[cfg(target_os = "macos")]
     {
-        let mut pinned = b;
-        pinned.pin = Some((0, 1));
+        let pinned = b.pin(Some((0, 1)));
         match pinned.build() {
             Err(BuildError::Setting(_)) => {}
             Ok(_) => panic!("macOS portable client must refuse pin"),

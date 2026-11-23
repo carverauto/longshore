@@ -50,42 +50,11 @@ impl SimDisk {
             return -EINVAL;
         }
         let dst = self.find_name(new);
-        if let Some(dst_ni) = dst {
-            let dst_ii = self.names[dst_ni].inode as usize;
-            let dst_is_dir = self.inodes[dst_ii].is_dir;
-            if old_is_dir && !dst_is_dir {
-                return -ENOTDIR;
-            }
-            if !old_is_dir && dst_is_dir {
-                return -EISDIR;
-            }
-            if dst_is_dir {
-                let has_child = (0..self.names.len()).any(|k| {
-                    if !self.names[k].used {
-                        return false;
-                    }
-                    let s = self.name_slice(k);
-                    s.len() > new.len() && &s[..new.len()] == new && s[new.len()] == b'/'
-                });
-                if has_child {
-                    return -ENOTEMPTY;
-                }
-            }
+        if let Err(e) = self.check_rename_dst(dst, old_is_dir, new_len) {
+            return e;
         }
-        if old_is_dir {
-            for k in 0..self.names.len() {
-                if !self.names[k].used {
-                    continue;
-                }
-                let s_len = self.names[k].len as usize;
-                let base = k * self.max_name_len;
-                let is_child = s_len > old_len
-                    && self.name_bytes[base..base + old_len] == self.scratch_a[..old_len]
-                    && self.name_bytes[base + old_len] == b'/';
-                if is_child && new_len + (s_len - old_len) > self.max_name_len {
-                    return -ENAMETOOLONG;
-                }
-            }
+        if old_is_dir && !self.children_fit(old_len, new_len) {
+            return -ENAMETOOLONG;
         }
         let mut replaced_ii = None;
         if let Some(dst_ni) = dst {
@@ -95,24 +64,7 @@ impl SimDisk {
             replaced_ii = Some(dst_ii);
         }
         if old_is_dir {
-            for k in 0..self.names.len() {
-                if !self.names[k].used || k == old_ni {
-                    continue;
-                }
-                let s_len = self.names[k].len as usize;
-                let base = k * self.max_name_len;
-                let is_child = s_len > old_len
-                    && self.name_bytes[base..base + old_len] == self.scratch_a[..old_len]
-                    && self.name_bytes[base + old_len] == b'/';
-                if is_child {
-                    let tail = s_len - old_len;
-                    self.name_bytes
-                        .copy_within(base + old_len..base + s_len, base + new_len);
-                    self.name_bytes[base..base + new_len]
-                        .copy_from_slice(&self.scratch_b[..new_len]);
-                    self.names[k].len = (new_len + tail) as u16;
-                }
-            }
+            self.move_children(old_ni, old_len, new_len);
         }
         let base = old_ni * self.max_name_len;
         self.name_bytes[base..base + new_len].copy_from_slice(&self.scratch_b[..new_len]);
@@ -135,6 +87,82 @@ impl SimDisk {
             self.free_inode_if_dead(dst_ii);
         }
         0
+    }
+
+    /// Refuses a rename onto name `dst` (the `new_len`-byte path in scratch
+    /// B) that swaps a directory for a file or replaces a non-empty one.
+    fn check_rename_dst(
+        &self,
+        dst: Option<usize>,
+        old_is_dir: bool,
+        new_len: usize,
+    ) -> Result<(), i32> {
+        let Some(dst_ni) = dst else {
+            return Ok(());
+        };
+        let new = &self.scratch_b[..new_len];
+        let dst_ii = self.names[dst_ni].inode as usize;
+        let dst_is_dir = self.inodes[dst_ii].is_dir;
+        if old_is_dir && !dst_is_dir {
+            return Err(-ENOTDIR);
+        }
+        if !old_is_dir && dst_is_dir {
+            return Err(-EISDIR);
+        }
+        if dst_is_dir {
+            let has_child = (0..self.names.len()).any(|k| {
+                if !self.names[k].used {
+                    return false;
+                }
+                let s = self.name_slice(k);
+                s.len() > new.len() && &s[..new.len()] == new && s[new.len()] == b'/'
+            });
+            if has_child {
+                return Err(-ENOTEMPTY);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether every name under the directory in scratch A (`old_len` bytes)
+    /// still fits once that prefix becomes the `new_len`-byte path.
+    fn children_fit(&self, old_len: usize, new_len: usize) -> bool {
+        for k in 0..self.names.len() {
+            if !self.names[k].used {
+                continue;
+            }
+            let s_len = self.names[k].len as usize;
+            let base = k * self.max_name_len;
+            let is_child = s_len > old_len
+                && self.name_bytes[base..base + old_len] == self.scratch_a[..old_len]
+                && self.name_bytes[base + old_len] == b'/';
+            if is_child && new_len + (s_len - old_len) > self.max_name_len {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Rewrites the names under the directory in scratch A to sit under the
+    /// path in scratch B.
+    fn move_children(&mut self, old_ni: usize, old_len: usize, new_len: usize) {
+        for k in 0..self.names.len() {
+            if !self.names[k].used || k == old_ni {
+                continue;
+            }
+            let s_len = self.names[k].len as usize;
+            let base = k * self.max_name_len;
+            let is_child = s_len > old_len
+                && self.name_bytes[base..base + old_len] == self.scratch_a[..old_len]
+                && self.name_bytes[base + old_len] == b'/';
+            if is_child {
+                let tail = s_len - old_len;
+                self.name_bytes
+                    .copy_within(base + old_len..base + s_len, base + new_len);
+                self.name_bytes[base..base + new_len].copy_from_slice(&self.scratch_b[..new_len]);
+                self.names[k].len = (new_len + tail) as u16;
+            }
+        }
     }
 
     pub(super) fn unlink(&mut self, raw_path: &[u8]) -> i32 {

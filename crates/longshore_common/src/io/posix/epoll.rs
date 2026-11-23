@@ -10,12 +10,18 @@
 use super::abi_linux::*;
 use super::SockSlot;
 use crate::io::Wake;
+use core::ffi::c_int;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const WAKE_TAG: u64 = u64::MAX;
 const EVENTS_CAP: usize = 64;
+
+/// The `maxevents` argument: never more than the event buffer holds.
+fn max_events() -> c_int {
+    c_int::try_from(EVENTS_CAP).unwrap_or(c_int::MAX)
+}
 
 struct EpollWaker {
     woken: Arc<AtomicBool>,
@@ -26,14 +32,14 @@ impl Wake for EpollWaker {
     fn wake(&self) {
         self.woken.store(true, Ordering::Release);
         let one: u64 = 1;
-        unsafe { write(self.fd_dup, (&one as *const u64).cast(), 8) };
+        let _: isize = unsafe { write(self.fd_dup, (&one as *const u64).cast(), 8) };
     }
 }
 
 impl Drop for EpollWaker {
     fn drop(&mut self) {
         if self.fd_dup >= 0 {
-            unsafe { close(self.fd_dup) };
+            let _: i32 = unsafe { close(self.fd_dup) };
         }
     }
 }
@@ -53,7 +59,7 @@ impl Poller {
         let wake_fd = unsafe { eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK) };
         if wake_fd < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(epfd) };
+            let _: i32 = unsafe { close(epfd) };
             return Err(err);
         }
         let mut ev = epoll_event {
@@ -63,8 +69,8 @@ impl Poller {
         if unsafe { epoll_ctl(epfd, EPOLL_CTL_ADD, wake_fd, &mut ev) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
             unsafe {
-                close(wake_fd);
-                close(epfd);
+                let _: i32 = close(wake_fd);
+                let _: i32 = close(epfd);
             }
             return Err(err);
         }
@@ -120,7 +126,8 @@ impl Poller {
 
     pub(super) fn before_close(&mut self, s: &mut SockSlot) {
         if s.fd >= 0 && (s.armed_read || s.armed_write) {
-            unsafe { epoll_ctl(self.epfd, EPOLL_CTL_DEL, s.fd, core::ptr::null_mut()) };
+            let _: i32 =
+                unsafe { epoll_ctl(self.epfd, EPOLL_CTL_DEL, s.fd, core::ptr::null_mut()) };
         }
         s.armed_read = false;
         s.armed_write = false;
@@ -128,16 +135,15 @@ impl Poller {
 
     pub(super) fn poll(&mut self, socks: &mut [SockSlot]) {
         loop {
-            let n =
-                unsafe { epoll_wait(self.epfd, self.events.as_mut_ptr(), EVENTS_CAP as i32, 0) };
-            if n < 0 {
+            let n = unsafe { epoll_wait(self.epfd, self.events.as_mut_ptr(), max_events(), 0) };
+            let Ok(n) = usize::try_from(n) else {
                 if os_errno() == OS_EINTR {
                     continue;
                 }
                 return;
-            }
-            self.apply(n as usize, socks);
-            if (n as usize) < EVENTS_CAP {
+            };
+            self.apply(n, socks);
+            if n < EVENTS_CAP {
                 return;
             }
         }
@@ -179,19 +185,19 @@ impl Poller {
                 epoll_wait(
                     self.epfd,
                     self.events.as_mut_ptr(),
-                    EVENTS_CAP as i32,
+                    max_events(),
                     timeout_ms,
                 )
             };
-            if n < 0 {
+            let Ok(n) = usize::try_from(n) else {
                 let err = os_errno();
                 if err == OS_EINTR {
                     continue;
                 }
                 return Err(io::Error::from_raw_os_error(err));
-            }
+            };
             if n > 0 {
-                self.apply(n as usize, socks);
+                self.apply(n, socks);
             }
             return Ok(());
         }
@@ -204,7 +210,7 @@ impl Poller {
             let bits = ev.events_bits();
             if tag == WAKE_TAG {
                 let mut val = 0u64;
-                unsafe { read(self.wake_fd, (&mut val as *mut u64).cast(), 8) };
+                let _: isize = unsafe { read(self.wake_fd, (&mut val as *mut u64).cast(), 8) };
                 continue;
             }
             let Some(s) = socks.get_mut(tag as usize) else {
@@ -239,10 +245,10 @@ impl Poller {
 impl Drop for Poller {
     fn drop(&mut self) {
         if self.wake_fd >= 0 {
-            unsafe { close(self.wake_fd) };
+            let _: i32 = unsafe { close(self.wake_fd) };
         }
         if self.epfd >= 0 {
-            unsafe { close(self.epfd) };
+            let _: i32 = unsafe { close(self.epfd) };
         }
     }
 }

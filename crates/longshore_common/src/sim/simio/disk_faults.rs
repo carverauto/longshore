@@ -7,6 +7,7 @@
 //! persistent sector read errors, and placed-fault lookup for [`SimDisk`].
 
 use super::{DiskFaultCtx, PlacedEntry, PlacedFault, Prng, SimDisk};
+use crate::io::count_result;
 use crate::io::posix::errno::linux::EIO;
 
 #[derive(Clone, Copy)]
@@ -112,7 +113,7 @@ impl SimDisk {
         if end <= start {
             return;
         }
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         for entry in self.read_errors.iter_mut() {
             if entry.used && entry.ino == ino {
                 let sec_start = entry.sector * s;
@@ -139,7 +140,7 @@ impl SimDisk {
         data: &[u8],
         ctx: &mut DiskFaultCtx<'_>,
     ) -> i32 {
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         let cut_len = if let Some((first, num_cuts)) = sector_cut_bounds(file_off, data.len(), s) {
             (first + ctx.rng.below(num_cuts) * s - file_off) as usize
         } else {
@@ -149,7 +150,7 @@ impl SimDisk {
             self.commit_write(ii, file_off, &data[..cut_len]);
         }
         ctx.counters.short_write += 1;
-        cut_len as i32
+        count_result(cut_len)
     }
 
     pub(super) fn inject_torn_write(
@@ -160,7 +161,7 @@ impl SimDisk {
         reported: bool,
         ctx: &mut DiskFaultCtx<'_>,
     ) -> i32 {
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         if let Some((first, num_cuts)) = sector_cut_bounds(file_off, data.len(), s) {
             let cut_len = (first + ctx.rng.below(num_cuts) * s - file_off) as usize;
             if cut_len > 0 {
@@ -172,7 +173,7 @@ impl SimDisk {
             -EIO
         } else {
             ctx.counters.torn_silent += 1;
-            data.len() as i32
+            count_result(data.len())
         }
     }
 }

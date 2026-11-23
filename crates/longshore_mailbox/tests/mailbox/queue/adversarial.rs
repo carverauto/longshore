@@ -8,21 +8,18 @@
 
 use super::{test_limits, Duration};
 use core::task::{Context, Poll, Waker};
-use longshore_common::io::{Completions, Io, Limits, Op, Token};
+use longshore_common::io::{Completion, Completions, Io, Op, Token};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_mailbox::{mailbox_parked, queue, queue_parked, Config, Recv, SlotWaiter, TryRecv};
 
 #[test]
 fn receiver_arm_and_on_completion_handle_busy_foreign_tokens_and_post_close() {
-    let limits = Limits {
-        ops_max: 1,
-        ..test_limits()
-    };
+    let limits = test_limits().with_ops_max(1);
     let mut io = SimIo::new(limits, 7, Faults::default());
-    let (tx, mut rx) = queue::<u32, _>(&mut io, 2, Token(55)).unwrap();
+    let (tx, mut rx) = queue::<u32, _>(&mut io, 2, Token::new(55)).unwrap();
 
     // Occupy the single op slot so rx.arm() hits Busy without setting armed=true.
-    io.submit(Token(1), Op::Timeout { nanos: 1_000_000 })
+    io.submit(Token::new(1), Op::Timeout { nanos: 1_000_000 })
         .unwrap();
     assert!(rx.arm(&mut io).is_err());
 
@@ -35,12 +32,12 @@ fn receiver_arm_and_on_completion_handle_busy_foreign_tokens_and_post_close() {
     tx.try_send(42).unwrap();
     io.tick(true, &mut out).unwrap();
     let wake_c = out.pop().unwrap();
-    assert_eq!(wake_c.token, Token(55));
-    io.submit(Token(2), Op::Timeout { nanos: 1_000_000 })
+    assert_eq!(wake_c.token(), Token::new(55));
+    io.submit(Token::new(2), Op::Timeout { nanos: 1_000_000 })
         .unwrap();
     assert!(rx.on_completion(&mut io, wake_c).is_err());
     io.tick(true, &mut out).unwrap();
-    let _ = out.pop();
+    let _: Option<Completion> = out.pop();
     assert!(rx.arm(&mut io).is_ok());
 
     // Close idempotency & post-close on_completion does not re-arm.
@@ -60,12 +57,7 @@ fn two_phase_begin_finish_close_repeated_stop_and_spurious_wake_in_wait_stop() {
     assert_eq!(rx_s.try_recv(), TryRecv::Stop);
     assert_eq!(rx_s.try_recv(), TryRecv::Closed);
 
-    let cfg = Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token(1),
-    };
+    let cfg = Config::new(4, 2, 4, Token::new(1));
     let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
     let mut w = SlotWaiter::new();
     let mut cx = Context::from_waker(Waker::noop());

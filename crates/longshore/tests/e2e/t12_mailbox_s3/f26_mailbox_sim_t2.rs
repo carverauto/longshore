@@ -22,16 +22,14 @@ use std::process::Command;
 #[test]
 fn t2_f26_1_two_sim_cores_capacity_one_backpressure_replays_cleanly() {
     let run = || -> Vec<u32> {
-        let limits = Limits {
-            sockets_max: 2,
-            buffers: 1,
-            buffer_size: 256,
-            ops_max: 4,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(1)
+            .with_buffer_size(256)
+            .with_ops_max(4);
         let mut core_b = SimIo::new(limits, 33, Faults::default());
         let mut out_b = Completions::new(8);
-        let (tx, mut m_rx) = queue::<u32, _>(&mut core_b, 1, Token(1)).unwrap();
+        let (tx, mut m_rx) = queue::<u32, _>(&mut core_b, 1, Token::new(1)).unwrap();
         m_rx.arm(&mut core_b).unwrap();
 
         let mut received = Vec::new();
@@ -66,16 +64,14 @@ fn t2_f26_1_two_sim_cores_capacity_one_backpressure_replays_cleanly() {
 #[cfg(feature = "sim")]
 #[test]
 fn t2_f26_2_two_sim_cores_stop_drains_queued_then_rejects_further_sends() {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 256,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(256)
+        .with_ops_max(4);
     let mut core_b = SimIo::new(limits, 44, Faults::default());
     let mut out_b = Completions::new(8);
-    let (tx, mut m_rx) = queue::<u32, _>(&mut core_b, 5, Token(1)).unwrap();
+    let (tx, mut m_rx) = queue::<u32, _>(&mut core_b, 5, Token::new(1)).unwrap();
     m_rx.arm(&mut core_b).unwrap();
 
     for i in 1..=5u32 {
@@ -112,11 +108,7 @@ fn t2_f26_3_two_sim_cores_with_network_faults_replay_deterministically() {
     let sched: Vec<CoreTick> = (0..300)
         .map(|i| if i % 2 == 0 { CoreTick::B } else { CoreTick::A })
         .collect();
-    let faults = Faults {
-        delay: 200_000,
-        short_send: 200_000,
-        ..Default::default()
-    };
+    let faults = Faults::NONE.with_delay(200_000).with_short_send(200_000);
     let r1 = run_two_core_ping_pong(101, 202, faults, &sched);
     let r2 = run_two_core_ping_pong(101, 202, faults, &sched);
     assert_eq!(r1, r2);
@@ -125,19 +117,17 @@ fn t2_f26_3_two_sim_cores_with_network_faults_replay_deterministically() {
 #[cfg(feature = "sim")]
 #[test]
 fn t2_f26_4_two_sim_cores_steady_state_loop_runs_under_alloc_guard() {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 256,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(256)
+        .with_ops_max(4);
     let mut core_a = SimIo::new(limits, 51, Faults::default());
     let mut core_b = SimIo::new(limits, 52, Faults::default());
     let mut out_a = Completions::new(8);
     let mut out_b = Completions::new(8);
-    let (tx_ab, mut m_ab) = queue::<u32, _>(&mut core_b, 4, Token(1)).unwrap();
-    let (tx_ba, mut m_ba) = queue::<u32, _>(&mut core_a, 4, Token(2)).unwrap();
+    let (tx_ab, mut m_ab) = queue::<u32, _>(&mut core_b, 4, Token::new(1)).unwrap();
+    let (tx_ba, mut m_ba) = queue::<u32, _>(&mut core_a, 4, Token::new(2)).unwrap();
     m_ab.arm(&mut core_b).unwrap();
     m_ba.arm(&mut core_a).unwrap();
 
@@ -149,7 +139,9 @@ fn t2_f26_4_two_sim_cores_steady_state_loop_runs_under_alloc_guard() {
             while let Some(c) = out_b.pop() {
                 if m_ab.on_completion(&mut core_b, c).unwrap() {
                     while let TryRecv::Message(v) = m_ab.try_recv() {
-                        let _ = tx_ba.try_send(v + 1);
+                        tx_ba
+                            .try_send(v + 1)
+                            .expect("one message in flight fits the queue");
                     }
                 }
             }
@@ -158,7 +150,9 @@ fn t2_f26_4_two_sim_cores_steady_state_loop_runs_under_alloc_guard() {
                 if m_ba.on_completion(&mut core_a, c).unwrap() {
                     while let TryRecv::Message(v) = m_ba.try_recv() {
                         count += v;
-                        let _ = tx_ab.try_send(v + 1);
+                        tx_ab
+                            .try_send(v + 1)
+                            .expect("one message in flight fits the queue");
                     }
                 }
             }

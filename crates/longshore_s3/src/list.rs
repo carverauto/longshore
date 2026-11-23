@@ -20,21 +20,15 @@ pub enum ListError {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Entry<'a> {
-    /// The key as it appears in the XML, possibly with character references
-    /// (`&amp;`, `&#34;`). Use [`unescape`] to decode it.
-    pub key_raw: &'a [u8],
-    pub size: u64,
+    pub(crate) key_raw: &'a [u8],
+    pub(crate) size: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Listing<'a> {
     body: &'a [u8],
-    /// More keys exist after the last one returned.
-    pub is_truncated: bool,
-    /// The token that resumes a truncated listing, as it appears in the
-    /// XML, possibly with character references; decode it with [`unescape`].
-    /// Stores send it with a truncated listing.
-    pub next_token_raw: Option<&'a [u8]>,
+    is_truncated: bool,
+    next_token_raw: Option<&'a [u8]>,
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -98,6 +92,22 @@ impl<'a> Listing<'a> {
             is_truncated: is_truncated.ok_or(ListError::Malformed)?,
             next_token_raw,
         })
+    }
+
+    /// More keys exist after the last one returned.
+    #[inline]
+    #[must_use]
+    pub const fn is_truncated(&self) -> bool {
+        self.is_truncated
+    }
+
+    /// The token that resumes a truncated listing, as it appears in the
+    /// XML, possibly with character references; decode it with [`unescape`].
+    /// Stores send it with a truncated listing.
+    #[inline]
+    #[must_use]
+    pub const fn next_token_raw(&self) -> Option<&'a [u8]> {
+        self.next_token_raw
     }
 
     pub fn entries(&self) -> Entries<'a> {
@@ -180,7 +190,7 @@ impl<'a> Iterator for Entries<'a> {
             let size = size
                 .iter()
                 .try_fold(0u64, |n, d| {
-                    n.checked_mul(10)?.checked_add((d - b'0') as u64)
+                    n.checked_mul(10)?.checked_add(u64::from(d - b'0'))
                 })
                 .ok_or(ListError::Malformed)?;
             Ok(Entry { key_raw, size })
@@ -223,7 +233,7 @@ pub fn unescape(raw: &[u8], out: &mut [u8]) -> Option<usize> {
         };
         let c = char::from_u32(ch)?;
         let dst = out.get_mut(n..n + c.len_utf8())?;
-        c.encode_utf8(dst);
+        let _: &mut str = c.encode_utf8(dst);
         n += c.len_utf8();
         i = end + 1;
     }
@@ -232,3 +242,18 @@ pub fn unescape(raw: &[u8], out: &mut [u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests;
+
+impl<'a> Entry<'a> {
+    /// The key as it appears in the XML, possibly with character references
+    /// (`&amp;`, `&#34;`). Use [`unescape`] to decode it.
+    #[inline]
+    pub const fn key_raw(self) -> &'a [u8] {
+        self.key_raw
+    }
+
+    /// The object's length in bytes.
+    #[inline]
+    pub const fn size(self) -> u64 {
+        self.size
+    }
+}

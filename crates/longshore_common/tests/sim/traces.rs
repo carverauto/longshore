@@ -7,38 +7,38 @@
 //! the delay fault.
 
 use longshore_common::io::{
-    BufId, Completions, Io, Limits, Op, Sock, Token, EAGAIN, ECANCELED, ENOENT,
+    BufId, Completions, FileId, Io, Limits, Op, Sock, Token, EAGAIN, ECANCELED, ENOENT,
 };
 use longshore_common::sim::{Faults, SimIo};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-const LIMITS: Limits = Limits {
-    sockets_max: 6,
-    buffers: 4,
-    buffer_size: 4096,
-    ops_max: 8,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(6)
+    .with_buffers(4)
+    .with_buffer_size(4096)
+    .with_ops_max(8);
 const TCP_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
 const UDP_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2)), 5353);
 
-const LISTENER: Sock = Sock(0);
-const SERVER: Sock = Sock(1);
-const CLIENT: Sock = Sock(2);
-const UDP_SRV: Sock = Sock(3);
-const UDP_CLI: Sock = Sock(4);
+const LISTENER: Sock = Sock::new(0);
+const SERVER: Sock = Sock::new(1);
+const CLIENT: Sock = Sock::new(2);
+const UDP_SRV: Sock = Sock::new(3);
+const UDP_CLI: Sock = Sock::new(4);
 
+#[cfg(test)]
 fn drain(io: &mut SimIo, out: &mut Completions, expected: usize) -> Vec<(u64, i32)> {
     let mut got = Vec::with_capacity(expected);
     while got.len() < expected {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            got.push((c.token.0, c.result));
+            got.push((c.token().get(), c.result()));
         }
     }
     got
 }
 
+#[cfg(test)]
 fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let mut out = Completions::new(8);
@@ -46,51 +46,71 @@ fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
     // 1. Register file, set contents, listen TCP, bind UDP, get waker.
     let file = io.register_file("creds.txt").unwrap();
     io.set_file(file, Some(b"secret-key"));
-    io.listen(LISTENER, TCP_ADDR).unwrap();
+    let _: SocketAddr = io.listen(LISTENER, TCP_ADDR).unwrap();
     io.bind_udp(UDP_SRV, UDP_ADDR);
     let waker = io.waker().unwrap();
     waker.wake();
 
+    wake_read_timers_and_connect_udp(&mut io, &mut out, file);
+    udp_round_trip_and_tcp_connect(&mut io, &mut out);
+    recv_now_and_missing_cancel(&mut io, &mut out);
+    stream_payload(&mut io, &mut out);
+    close_all(&mut io, &mut out);
+
+    io.trace_hash()
+}
+
+#[cfg(test)]
+fn wake_read_timers_and_connect_udp(io: &mut SimIo, out: &mut Completions, file: FileId) {
     // 2. Submit AwaitWake, ReadFile, two Timeouts, Cancel (targeting one Timeout), ConnectUdp.
-    io.submit(Token(1), Op::AwaitWake).unwrap();
+    io.submit(Token::new(1), Op::AwaitWake).unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::ReadFile {
             file,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    io.submit(Token(3), Op::Timeout { nanos: 400_000 }).unwrap();
-    io.submit(Token(4), Op::Timeout { nanos: 5_000_000 })
+    io.submit(Token::new(3), Op::Timeout { nanos: 400_000 })
         .unwrap();
-    io.submit(Token(5), Op::Cancel { target: Token(4) })
+    io.submit(Token::new(4), Op::Timeout { nanos: 5_000_000 })
         .unwrap();
     io.submit(
-        Token(6),
+        Token::new(5),
+        Op::Cancel {
+            target: Token::new(4),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(6),
         Op::ConnectUdp {
             sock: UDP_CLI,
             addr: UDP_ADDR,
         },
     )
     .unwrap();
-    let phase1 = drain(&mut io, &mut out, 6);
+    let phase1 = drain(io, out, 6);
     assert!(phase1.contains(&(1, 0)));
     assert!(phase1.contains(&(2, 10)));
     assert!(phase1.contains(&(3, 0)));
     assert!(phase1.contains(&(4, -ECANCELED)));
     assert!(phase1.contains(&(5, 0)));
     assert!(phase1.contains(&(6, 0)));
+}
 
+#[cfg(test)]
+fn udp_round_trip_and_tcp_connect(io: &mut SimIo, out: &mut Completions) {
     // 3. UDP Send + Recv, simultaneously with TCP Accept + Connect.
-    io.buf(BufId(1))[..4].copy_from_slice(b"ping");
+    io.buf(BufId::new(1))[..4].copy_from_slice(b"ping");
     io.submit(
-        Token(7),
+        Token::new(7),
         Op::Send {
             sock: UDP_CLI,
-            buf: BufId(1),
+            buf: BufId::new(1),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -98,17 +118,17 @@ fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
     )
     .unwrap();
     io.submit(
-        Token(8),
+        Token::new(8),
         Op::Recv {
             sock: UDP_SRV,
-            buf: BufId(2),
+            buf: BufId::new(2),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
     io.submit(
-        Token(9),
+        Token::new(9),
         Op::Accept {
             listener: LISTENER,
             sock: SERVER,
@@ -116,49 +136,62 @@ fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
     )
     .unwrap();
     io.submit(
-        Token(10),
+        Token::new(10),
         Op::Connect {
             sock: CLIENT,
             addr: TCP_ADDR,
         },
     )
     .unwrap();
-    let phase2 = drain(&mut io, &mut out, 4);
+    let phase2 = drain(io, out, 4);
     assert!(phase2.contains(&(7, 4)));
     assert!(phase2.contains(&(8, 4)));
     assert!(phase2.contains(&(9, 0)));
     assert!(phase2.contains(&(10, 0)));
+}
 
+#[cfg(test)]
+fn recv_now_and_missing_cancel(io: &mut SimIo, out: &mut Completions) {
     // 4. TCP RecvNow (empty -> -EAGAIN), then Send + Recv, plus Cancel of missing token.
     io.submit(
-        Token(11),
+        Token::new(11),
         Op::RecvNow {
             sock: SERVER,
-            buf: BufId(3),
+            buf: BufId::new(3),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    io.submit(Token(12), Op::Cancel { target: Token(999) })
-        .unwrap();
-    let phase3 = drain(&mut io, &mut out, 2);
+    io.submit(
+        Token::new(12),
+        Op::Cancel {
+            target: Token::new(999),
+        },
+    )
+    .unwrap();
+    let phase3 = drain(io, out, 2);
     assert!(phase3.contains(&(11, -EAGAIN)));
     assert!(phase3.contains(&(12, -ENOENT)));
+}
 
+/// Streams a payload from the TCP client to the server with zero-copy sends,
+/// re-submitting the remainder until it has all arrived.
+#[cfg(test)]
+fn stream_payload(io: &mut SimIo, out: &mut Completions) {
     let payload = b"hello-stream-payload";
     let mut sent = 0usize;
     let mut recvd = 0usize;
     let mut next_tok = 20u64;
-    io.buf(BufId(0))[..payload.len()].copy_from_slice(payload);
+    io.buf(BufId::new(0))[..payload.len()].copy_from_slice(payload);
     while recvd < payload.len() {
         let mut submitted = 0usize;
         if sent < payload.len() {
             io.submit(
-                Token(next_tok),
+                Token::new(next_tok),
                 Op::Send {
                     sock: CLIENT,
-                    buf: BufId(0),
+                    buf: BufId::new(0),
                     off: sent as u32,
                     len: (payload.len() - sent) as u32,
                     zero_copy: true,
@@ -169,10 +202,10 @@ fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
             submitted += 1;
         }
         io.submit(
-            Token(next_tok),
+            Token::new(next_tok),
             Op::Recv {
                 sock: SERVER,
-                buf: BufId(3),
+                buf: BufId::new(3),
                 off: recvd as u32,
                 len: (payload.len() - recvd) as u32,
             },
@@ -181,27 +214,28 @@ fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
         let recv_tok = next_tok;
         next_tok += 1;
         submitted += 1;
-        for (tok, res) in drain(&mut io, &mut out, submitted) {
+        for (tok, res) in drain(io, out, submitted) {
             if tok == recv_tok {
-                recvd += res as usize;
+                recvd += usize::try_from(res).unwrap();
             } else {
-                sent += res as usize;
+                sent += usize::try_from(res).unwrap();
             }
         }
     }
+}
 
+#[cfg(test)]
+fn close_all(io: &mut SimIo, out: &mut Completions) {
     // 5. Close all open sockets (no other ops in flight on those sockets).
     for (idx, sock) in [CLIENT, SERVER, LISTENER, UDP_CLI, UDP_SRV]
         .into_iter()
         .enumerate()
     {
-        io.submit(Token(100 + idx as u64), Op::Close { sock })
+        io.submit(Token::new(100 + idx as u64), Op::Close { sock })
             .unwrap();
     }
-    let closed = drain(&mut io, &mut out, 5);
+    let closed = drain(io, out, 5);
     assert!(closed.iter().all(|(_, r)| *r == 0));
-
-    io.trace_hash()
 }
 
 #[test]
@@ -223,10 +257,7 @@ fn trace_hashes_match_across_all_ops_without_delay() {
 
 #[test]
 fn trace_hashes_match_across_all_ops_with_delay() {
-    let faults = Faults {
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE.with_delay(200_000);
     let expected = [
         (1, 9502771201062475408u64),
         (7, 14816035989744244144),
@@ -244,12 +275,10 @@ fn trace_hashes_match_across_all_ops_with_delay() {
 
 #[test]
 fn trace_hashes_match_across_all_ops_with_delay_and_stream_faults() {
-    let faults = Faults {
-        delay: 200_000,
-        short_send: 250_000,
-        partial_recv: 250_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_delay(200_000)
+        .with_short_send(250_000)
+        .with_partial_recv(250_000);
     let expected = [
         (1, 16521434901384262062u64),
         (7, 4788325518576388030),

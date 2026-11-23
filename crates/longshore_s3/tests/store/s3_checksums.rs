@@ -6,6 +6,7 @@
 //! The S3 store against the in-tree HTTP server on one simulated `Io`, with
 //! heap allocation forbidden while operations run.
 
+#[cfg(test)]
 mod common;
 use common::*;
 
@@ -15,17 +16,10 @@ fn checksums_are_sent_enforced_and_verified_on_fetch() {
     w.fill_tx(BUF, 9);
     w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 1));
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: BUF,
             verified: true
@@ -34,7 +28,7 @@ fn checksums_are_sent_enforced_and_verified_on_fetch() {
     // A ranged fetch cannot be checked against a whole-object checksum.
     w.s3.fetch(&mut w.io, 3, "k", Some((0, 9)), RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: 10,
             verified: false
@@ -45,18 +39,14 @@ fn checksums_are_sent_enforced_and_verified_on_fetch() {
     let crc = longshore_crc::crc64_nvme(&w.io.buf(TX)[..BUF as usize]);
     w.s3.store(&mut w.io, 4, "k2", TX, BUF, Checksum::Provided(crc))
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     // ...and a wrong one is indistinguishable from damage in transit, so it
     // is retried and then given up on. Nothing is stored.
     w.s3.store(&mut w.io, 5, "k3", TX, BUF, Checksum::Provided(crc ^ 1))
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 5,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 3
-        }
+        Done::new(5, Outcome::Fatal(Fatal::RetriesExhausted), 3)
     );
     assert_eq!(w.server.object_len("/k3"), None);
 }
@@ -83,61 +73,26 @@ fn assert_refusal_of_damage(seed: u64, f: Fatal) {
 /// exactly the bytes stored. Damage is retried or reported, never accepted.
 #[test]
 fn bit_flips_never_become_silent_corruption_with_checksums_on() {
-    let faults = Faults {
-        bit_flip: 150_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        ..Faults::default()
-    };
-    let (mut stored, mut fetched, mut retried, mut refused) = (0, 0, 0, 0);
+    let faults = Faults::NONE
+        .with_bit_flip(150_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000);
+    let mut t = Tally::default();
     for seed in 0..80 {
         let mut w = world_with(seed, faults, 8, true);
         w.fill_tx(BUF, seed as u8);
         let sent = w.io.buf(TX).to_vec();
-        w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
-            .unwrap();
-        let d = w.last();
-        retried += (d.attempts > 1) as u32;
-        match d.outcome {
-            Outcome::Stored => {
-                stored += 1;
-                assert_eq!(
-                    w.server.object("/k"),
-                    Some(&sent[..]),
-                    "seed {seed}: Stored, but the server holds damaged bytes"
-                );
-            }
-            Outcome::Fatal(f) => {
-                refused += 1;
-                assert_refusal_of_damage(seed, f);
-                assert_eq!(w.s3.in_progress(), 0);
-                continue;
-            }
-            o => panic!("seed {seed}: unexpected store outcome {o:?}"),
-        }
-        w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
-        let d = w.last();
-        retried += (d.attempts > 1) as u32;
-        match d.outcome {
-            Outcome::Fetched { len, verified } => {
-                fetched += 1;
-                assert!(
-                    verified && len == BUF,
-                    "seed {seed}: fetch succeeded unverified"
-                );
-                assert!(
-                    w.io.buf(RX)[..] == sent[..],
-                    "seed {seed}: Fetched, but the bytes are damaged"
-                );
-            }
-            Outcome::Fatal(f) => {
-                refused += 1;
-                assert_refusal_of_damage(seed, f);
-            }
-            o => panic!("seed {seed}: unexpected fetch outcome {o:?}"),
+        if store_never_accepts_damage(&mut w, seed, &sent, &mut t) {
+            fetch_never_returns_damage(&mut w, seed, &sent, &mut t);
         }
         assert_eq!(w.s3.in_progress(), 0);
     }
+    let Tally {
+        stored,
+        fetched,
+        retried,
+        refused,
+    } = t;
     // The run must actually exercise the damage paths to mean anything, and
     // damage is mostly retried away: a refusal is the exception.
     // 49 of the 160 operations when this was written. Most of those are
@@ -150,16 +105,100 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
     );
 }
 
+/// How the operations of the bit-flip runs ended.
+#[derive(Default)]
+struct Tally {
+    stored: u32,
+    fetched: u32,
+    retried: u32,
+    refused: u32,
+}
+
+/// Stores `sent` with a computed checksum. A store that reports success
+/// must hold exactly `sent`; damage must be refused. Returns whether it
+/// was stored.
+#[cfg(test)]
+fn store_never_accepts_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tally) -> bool {
+    w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
+        .unwrap();
+    let d = w.last();
+    t.retried += u32::from(d.attempts() > 1);
+    match d.outcome() {
+        Outcome::Stored => {
+            t.stored += 1;
+            assert_eq!(
+                w.server.object("/k"),
+                Some(sent),
+                "seed {seed}: Stored, but the server holds damaged bytes"
+            );
+            true
+        }
+        Outcome::Fatal(f) => {
+            t.refused += 1;
+            assert_refusal_of_damage(seed, f);
+            false
+        }
+        o @ (Outcome::AlreadyExists { .. }
+        | Outcome::Fetched { .. }
+        | Outcome::Listed { .. }
+        | Outcome::NotFound
+        | Outcome::Erased
+        | Outcome::Begun { .. }
+        | Outcome::PartStored { .. }
+        | Outcome::Aborted
+        | Outcome::Stat(_)
+        | Outcome::Copied
+        | Outcome::ErasedMany { .. }
+        | Outcome::Report(_)) => panic!("seed {seed}: unexpected store outcome {o:?}"),
+    }
+}
+
+/// Fetches what was stored. A fetch that reports success must be verified
+/// and return exactly `sent`; damage must be refused.
+#[cfg(test)]
+fn fetch_never_returns_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tally) {
+    w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
+    let fetch = w.last();
+    t.retried += u32::from(fetch.attempts() > 1);
+    match fetch.outcome() {
+        Outcome::Fetched { len, verified } => {
+            t.fetched += 1;
+            assert!(
+                verified && len == BUF,
+                "seed {seed}: fetch succeeded unverified"
+            );
+            assert!(
+                w.io.buf(RX)[..] == sent[..],
+                "seed {seed}: Fetched, but the bytes are damaged"
+            );
+        }
+        Outcome::Fatal(f) => {
+            t.refused += 1;
+            assert_refusal_of_damage(seed, f);
+        }
+        o @ (Outcome::Stored
+        | Outcome::AlreadyExists { .. }
+        | Outcome::Listed { .. }
+        | Outcome::NotFound
+        | Outcome::Erased
+        | Outcome::Begun { .. }
+        | Outcome::PartStored { .. }
+        | Outcome::Aborted
+        | Outcome::Stat(_)
+        | Outcome::Copied
+        | Outcome::ErasedMany { .. }
+        | Outcome::Report(_)) => panic!("seed {seed}: unexpected fetch outcome {o:?}"),
+    }
+}
+
 /// The same faults with checksums off do let damage through. This is what
 /// the test above would look like if the checksum path did nothing.
 #[test]
 fn the_same_bit_flips_do_corrupt_data_with_checksums_off() {
-    let faults = Faults {
-        bit_flip: 150_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_bit_flip(150_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000);
     let mut damaged = 0;
     for seed in 0..80 {
         let mut w = world_with(seed, faults, 8, false);
@@ -167,7 +206,7 @@ fn the_same_bit_flips_do_corrupt_data_with_checksums_off() {
         let sent = w.io.buf(TX).to_vec();
         w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::None)
             .unwrap();
-        if w.last().outcome == Outcome::Stored && w.server.object("/k") != Some(&sent[..]) {
+        if w.last().outcome() == Outcome::Stored && w.server.object("/k") != Some(&sent[..]) {
             damaged += 1;
         }
     }
@@ -185,14 +224,10 @@ fn a_required_checksum_that_never_arrives_is_a_failure_not_an_unverified_success
     w.fill_tx(100, 0);
     w.s3.store(&mut w.io, 1, "k", TX, 100, Checksum::None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Fatal(Fatal::ChecksumMismatch),
-            attempts: 3
-        }
+        Done::new(2, Outcome::Fatal(Fatal::ChecksumMismatch), 3)
     );
 }

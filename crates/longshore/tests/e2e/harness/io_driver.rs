@@ -35,13 +35,13 @@ fn drive_until_inner<IO: Io + ?Sized>(
     mut pred: impl FnMut(&[Completion]) -> bool,
 ) -> io::Result<Vec<Completion>> {
     let mut collected = Vec::new();
-    drain_completions(out, &mut collected);
+    let _: usize = drain_completions(out, &mut collected);
     if pred(&collected) {
         return Ok(collected);
     }
     for _ in 0..max_ticks {
         io.tick(wait, out)?;
-        drain_completions(out, &mut collected);
+        let _: usize = drain_completions(out, &mut collected);
         if pred(&collected) {
             return Ok(collected);
         }
@@ -84,10 +84,12 @@ pub fn submit_and_collect_one<IO: Io + ?Sized>(
 ) -> io::Result<(Completion, Vec<Completion>)> {
     io.submit(token, op)
         .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Io::submit returned Busy"))?;
-    let all = drive_until(io, out, max_ticks, |cs| cs.iter().any(|c| c.token == token))?;
+    let all = drive_until(io, out, max_ticks, |cs| {
+        cs.iter().any(|c| c.token() == token)
+    })?;
     let pos = all
         .iter()
-        .position(|c| c.token == token)
+        .position(|c| c.token() == token)
         .expect("predicate guaranteed token presence");
     let mut rest = all;
     let matched = rest.remove(pos);
@@ -114,7 +116,7 @@ pub fn drive_until_stack<IO: Io + ?Sized, const N: usize>(
     max_ticks: usize,
     mut pred: impl FnMut(&[Completion]) -> bool,
 ) -> io::Result<usize> {
-    let mut buf = [Completion::new(Token(0), 0); N];
+    let mut buf = [Completion::new(Token::new(0), 0); N];
     let mut len = 0usize;
     while let Some(c) = out.pop() {
         if len >= N {
@@ -157,14 +159,14 @@ pub fn submit_and_wait_one_stack<IO: Io + ?Sized>(
     io.submit(token, op)
         .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Io::submit returned Busy"))?;
     while let Some(c) = out.pop() {
-        if c.token == token {
+        if c.token() == token {
             return Ok(c);
         }
     }
     for _ in 0..max_ticks {
         io.tick(true, out)?;
         while let Some(c) = out.pop() {
-            if c.token == token {
+            if c.token() == token {
                 return Ok(c);
             }
         }
@@ -225,7 +227,7 @@ impl TempDir {
     }
 
     /// Creates a unique directory under `LONGSHORE_TEST_DIR` (falling back to `std::env::temp_dir()`).
-    #[allow(dead_code)]
+    #[cfg(target_os = "linux")]
     pub fn new_in_test_dir(prefix: &str) -> io::Result<Self> {
         let base = std::env::var_os("LONGSHORE_TEST_DIR")
             .map(PathBuf::from)
@@ -266,7 +268,8 @@ impl TempDir {
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        // Best-effort cleanup; Drop must not panic over a leftover temporary file.
+        let _: Option<()> = std::fs::remove_dir_all(&self.path).ok();
     }
 }
 
@@ -293,13 +296,6 @@ fn unused_tcp_addr(bind: &str) -> io::Result<SocketAddr> {
 /// child process inherited the listening descriptor before returning.
 pub fn unused_loopback_addr() -> io::Result<SocketAddr> {
     unused_tcp_addr("127.0.0.1:0")
-}
-
-/// Reserves and returns an unused IPv6 loopback socket address, verifying no
-/// child process inherited the listening descriptor before returning.
-#[allow(dead_code)]
-pub fn unused_loopback_v6_addr() -> io::Result<SocketAddr> {
-    unused_tcp_addr("[::1]:0")
 }
 
 /// Returns the workspace root, honoring `LONGSHORE_REPO_ROOT` when running a

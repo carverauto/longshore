@@ -15,3 +15,4 @@
 
 pub mod handshake;
 pub mod record;
+pub mod wide_gcm;

@@ -19,241 +19,178 @@ const SECTOR: u64 = 512;
 const BLOCK: u32 = 4096;
 
 fn storage_limits() -> Limits {
-    Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: BLOCK,
-        small_buffers: 2,
-        small_buffer_size: 128,
-        aligned_buffers: 2,
-        aligned_buffer_size: BLOCK,
-        block_size: BLOCK,
-        files_max: 4,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(BLOCK)
+        .with_small_buffers(2)
+        .with_small_buffer_size(128)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(BLOCK)
+        .with_block_size(BLOCK)
+        .with_files_max(4)
+        .with_ops_max(8)
 }
 
 fn setup_small_writeback_sim(seed: u64) -> SimIo {
     let mut sim = SimIo::new(storage_limits(), seed, Faults::default());
     // Tiny write_log_entries (3) so 4th unsynced write forces oldest writeback eviction.
-    sim.setup_disk(DiskConfig {
-        max_files: 4,
-        max_dirs: 8,
-        max_bytes_per_file: (BLOCK as usize) * 16,
-        max_name_len: 64,
-        write_log_entries: 3,
-        write_log_bytes: (SECTOR as usize) * 8,
-        read_error_sectors: 8,
-        sector_size: SECTOR as u32,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(4)
+            .with_max_dirs(8)
+            .with_max_bytes_per_file((BLOCK as usize) * 16)
+            .with_max_name_len(64)
+            .with_write_log_entries(3)
+            .with_write_log_bytes((SECTOR as usize) * 8)
+            .with_read_error_sectors(8)
+            .with_sector_size(SECTOR as u32),
+    );
     sim
+}
+
+/// The writeback scenario's simulator, completions, and buffers.
+struct Rig {
+    sim: SimIo,
+    out: Completions,
+    path_buf: BufId,
+    w_buf: BufId,
+    r_buf: BufId,
+}
+
+impl Rig {
+    /// Submits `op` and waits up to 1000 ticks for its result.
+    fn wait(&mut self, token: Token, op: Op) -> i32 {
+        submit_and_wait_one(&mut self.sim, &mut self.out, token, op, 1_000)
+            .unwrap()
+            .result()
+    }
+
+    /// Opens `/wb_eio.dat` read-write in `FileSlot(0)`, creating it if asked.
+    fn open_file(&mut self, token: Token, create: bool) -> i32 {
+        let plen = write_nul_path(&mut self.sim, self.path_buf, 0, "/wb_eio.dat");
+        let open = Op::FileOpen {
+            slot: FileSlot::new(0),
+            path_buf: self.path_buf,
+            path_off: 0,
+            path_len: plen,
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(create),
+        };
+        self.wait(token, open)
+    }
+
+    /// Opens, syncs, and closes `/` so the file name is durable after a crash.
+    fn sync_root_dir(&mut self) {
+        let dlen = write_nul_path(&mut self.sim, self.path_buf, 0, "/");
+        let open_dir = Op::FileOpen {
+            slot: FileSlot::new(1),
+            path_buf: self.path_buf,
+            path_off: 0,
+            path_len: dlen,
+            flags: OpenFlags::NONE.with_read(true).with_directory(true),
+        };
+        assert_eq!(self.wait(Token::new(2), open_dir), 0);
+        let sync_dir = Op::FileSync {
+            slot: FileSlot::new(1),
+            datasync: false,
+        };
+        assert_eq!(self.wait(Token::new(3), sync_dir), 0);
+        assert_eq!(
+            self.wait(
+                Token::new(4),
+                Op::FileClose {
+                    slot: FileSlot::new(1)
+                }
+            ),
+            0
+        );
+    }
+
+    /// Writes sector `sec` filled with `byte`; returns the write result.
+    fn write_sector(&mut self, token: Token, sec: u64, byte: u8) -> i32 {
+        write_pool_bytes(&mut self.sim, self.w_buf, 0, &[byte; SECTOR as usize]);
+        let write = Op::FileWrite {
+            slot: FileSlot::new(0),
+            buf: self.w_buf,
+            off: 0,
+            len: SECTOR as u32,
+            file_off: sec * SECTOR,
+        };
+        self.wait(token, write)
+    }
+
+    /// Reads sector `sec` into the read buffer; returns the read result.
+    fn read_sector_result(&mut self, token: Token, sec: u64) -> i32 {
+        let read = Op::FileRead {
+            slot: FileSlot::new(0),
+            buf: self.r_buf,
+            off: 0,
+            len: SECTOR as u32,
+            file_off: sec * SECTOR,
+        };
+        self.wait(token, read)
+    }
+
+    /// Reads all of sector `sec` and returns its bytes.
+    fn read_sector(&mut self, token: Token, sec: u64) -> [u8; SECTOR as usize] {
+        assert_eq!(self.read_sector_result(token, sec), SECTOR as i32);
+        let mut got = [0u8; SECTOR as usize];
+        read_pool_into(&mut self.sim, self.r_buf, 0, &mut got);
+        got
+    }
+
+    /// A full (non-data) `FileSync` of the file; returns its result.
+    fn sync_file(&mut self, token: Token) -> i32 {
+        let sync = Op::FileSync {
+            slot: FileSlot::new(0),
+            datasync: false,
+        };
+        self.wait(token, sync)
+    }
 }
 
 #[test]
 fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
     let lim = storage_limits();
-    let mut sim = setup_small_writeback_sim(404);
-    let mut out = Completions::new(8);
-    let path_buf = lim.small(0);
-    let w_buf = BufId(0);
-    let r_buf = BufId(1);
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/wb_eio.dat");
+    let mut rig = Rig {
+        sim: setup_small_writeback_sim(404),
+        out: Completions::new(8),
+        path_buf: lim.small(0),
+        w_buf: BufId::new(0),
+        r_buf: BufId::new(1),
+    };
 
     // 1. Open and sync directory + initial file so name is durable.
-    let c = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(1),
-        Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf,
-            path_off: 0,
-            path_len: plen,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                ..Default::default()
-            },
-        },
-        1_000,
-    )
-    .unwrap();
-    assert_eq!(c.result, 0);
-
-    // Sync dir so /wb_eio.dat exists durably after crash.
-    let dlen = write_nul_path(&mut sim, path_buf, 0, "/");
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(2),
-            Op::FileOpen {
-                slot: FileSlot(1),
-                path_buf,
-                path_off: 0,
-                path_len: dlen,
-                flags: OpenFlags {
-                    read: true,
-                    directory: true,
-                    ..Default::default()
-                },
-            },
-            1_000
-        )
-        .unwrap()
-        .result,
-        0
-    );
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(3),
-            Op::FileSync {
-                slot: FileSlot(1),
-                datasync: false,
-            },
-            1_000
-        )
-        .unwrap()
-        .result,
-        0
-    );
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(4),
-            Op::FileClose { slot: FileSlot(1) },
-            1_000
-        )
-        .unwrap()
-        .result,
-        0
-    );
+    assert_eq!(rig.open_file(Token::new(1), true), 0);
+    rig.sync_root_dir();
 
     // 2. Write 4 sectors without sync: log capacity is 3, so sector 0 evicts to durable!
     for sec in 0..4u64 {
-        let data = [0xA0 + sec as u8; SECTOR as usize];
-        write_pool_bytes(&mut sim, w_buf, 0, &data);
-        let res = submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(10 + sec),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: w_buf,
-                off: 0,
-                len: SECTOR as u32,
-                file_off: sec * SECTOR,
-            },
-            1_000,
-        )
-        .unwrap()
-        .result;
-        assert_eq!(res, SECTOR as i32);
+        assert_eq!(
+            rig.write_sector(Token::new(10 + sec), sec, 0xA0 + sec as u8),
+            SECTOR as i32
+        );
     }
 
     // 3. Inject placed Fail on the next FileSync (op #9): writes in log become poisoned (AS_EIO).
     // Op counts: 1=open file, 2=open dir, 3=sync dir, 4=close dir, 5..8=4 writes, 9=next FileSync.
-    sim.place_disk_fault(9, PlacedFault::Fail);
-    let failed_sync = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(20),
-        Op::FileSync {
-            slot: FileSlot(0),
-            datasync: false,
-        },
-        1_000,
-    )
-    .unwrap();
-    assert_eq!(failed_sync.result, -EIO);
+    rig.sim.place_disk_fault(9, PlacedFault::Fail);
+    assert_eq!(rig.sync_file(Token::new(20)), -EIO);
 
     // 4. Second FileSync succeeds, but Linux AS_EIO means poisoned writes are NOT durable.
-    let ok_sync = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(21),
-        Op::FileSync {
-            slot: FileSlot(0),
-            datasync: false,
-        },
-        1_000,
-    )
-    .unwrap();
-    assert_eq!(ok_sync.result, 0);
+    assert_eq!(rig.sync_file(Token::new(21)), 0);
 
     // Before power loss, poisoned sector 3 is still readable in page cache / overlay.
-    let mut pre = [0u8; SECTOR as usize];
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(22),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: r_buf,
-                off: 0,
-                len: SECTOR as u32,
-                file_off: 3 * SECTOR,
-            },
-            1_000
-        )
-        .unwrap()
-        .result,
-        SECTOR as i32
-    );
-    read_pool_into(&mut sim, r_buf, 0, &mut pre);
+    let pre = rig.read_sector(Token::new(22), 3);
     assert!(pre.iter().all(|&b| b == 0xA3));
 
     // 5. Power loss drops poisoned writes while evicted sector 0 remains durable.
-    sim.power_loss();
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/wb_eio.dat");
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(30),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf,
-                path_off: 0,
-                path_len: plen,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    ..Default::default()
-                },
-            },
-            1_000
-        )
-        .unwrap()
-        .result,
-        0
-    );
-    let mut post0 = [0u8; SECTOR as usize];
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(31),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: r_buf,
-                off: 0,
-                len: SECTOR as u32,
-                file_off: 0,
-            },
-            1_000
-        )
-        .unwrap()
-        .result,
-        SECTOR as i32
-    );
-    read_pool_into(&mut sim, r_buf, 0, &mut post0);
+    rig.sim.power_loss();
+    assert_eq!(rig.open_file(Token::new(30), false), 0);
+    let post0 = rig.read_sector(Token::new(31), 0);
     assert!(
         post0.iter().all(|&b| b == 0xA0),
         "evicted sector 0 must survive"
@@ -261,90 +198,27 @@ fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
 
     // 6. Corrupt sector 0 medium bit, detect via CRC-64/NVME, inject read_error and repair!
     let expected_crc = crc64_nvme(&[0xA0u8; SECTOR as usize]);
-    sim.corrupt_medium_bit("/wb_eio.dat", 16, 3).unwrap();
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(32),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: r_buf,
-                off: 0,
-                len: SECTOR as u32,
-                file_off: 0,
-            },
-            1_000
-        )
-        .unwrap()
-        .result,
-        SECTOR as i32
+    rig.sim.corrupt_medium_bit("/wb_eio.dat", 16, 3).unwrap();
+    let flipped = rig.read_sector(Token::new(32), 0);
+    assert_ne!(
+        crc64_nvme(&flipped),
+        expected_crc,
+        "CRC must catch bit flip"
     );
-    read_pool_into(&mut sim, r_buf, 0, &mut post0);
-    assert_ne!(crc64_nvme(&post0), expected_crc, "CRC must catch bit flip");
 
     // Inject persistent read_error on sector 1 via DiskFaults, observe -EIO, then repair via full-sector write.
-    sim.set_disk_faults(DiskFaults {
-        read_error: 1_000_000,
-        ..DiskFaults::default()
-    });
-    let err_c = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(33),
-        Op::FileRead {
-            slot: FileSlot(0),
-            buf: r_buf,
-            off: 0,
-            len: SECTOR as u32,
-            file_off: SECTOR,
-        },
-        1_000,
-    )
-    .unwrap();
-    assert_eq!(err_c.result, -EIO);
+    rig.sim
+        .set_disk_faults(DiskFaults::NONE.with_read_error(1_000_000));
+    assert_eq!(rig.read_sector_result(Token::new(33), 1), -EIO);
 
-    sim.set_disk_faults(DiskFaults::default());
+    rig.sim.set_disk_faults(DiskFaults::default());
     // Repair sector 0 and sector 1 with clean full-sector writes + sync.
     for (idx, byte) in [(0u64, 0xA0u8), (1u64, 0xA1u8)] {
-        write_pool_bytes(&mut sim, w_buf, 0, &[byte; SECTOR as usize]);
         assert_eq!(
-            submit_and_wait_one(
-                &mut sim,
-                &mut out,
-                Token(40 + idx),
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: w_buf,
-                    off: 0,
-                    len: SECTOR as u32,
-                    file_off: idx * SECTOR,
-                },
-                1_000
-            )
-            .unwrap()
-            .result,
+            rig.write_sector(Token::new(40 + idx), idx, byte),
             SECTOR as i32
         );
     }
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(50),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: r_buf,
-                off: 0,
-                len: SECTOR as u32,
-                file_off: 0,
-            },
-            1_000
-        )
-        .unwrap()
-        .result,
-        SECTOR as i32
-    );
-    read_pool_into(&mut sim, r_buf, 0, &mut post0);
-    assert_eq!(crc64_nvme(&post0), expected_crc);
+    let repaired = rig.read_sector(Token::new(50), 0);
+    assert_eq!(crc64_nvme(&repaired), expected_crc);
 }

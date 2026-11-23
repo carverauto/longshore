@@ -7,11 +7,7 @@ use super::*;
 use longshore_http_client::head::HttpError;
 
 fn status(s: u16) -> Class {
-    classify(&Ok(Response {
-        status: s,
-        body_len: 0,
-        conn: 0,
-    }))
+    classify_status(s)
 }
 
 /// Each status the policy treats specially, and its neighbours, written out

@@ -44,13 +44,13 @@ impl Map {
 
 impl Drop for Map {
     fn drop(&mut self) {
-        unsafe { munmap(self.ptr, self.len) };
+        let _: i32 = unsafe { munmap(self.ptr, self.len) };
     }
 }
 
 pub struct Ring {
     fd: c_int,
-    pub params: io_uring_params,
+    params: io_uring_params,
     _sq_map: Map,
     _cq_map: Option<Map>,
     _sqe_map: Map,
@@ -67,12 +67,15 @@ pub struct Ring {
     cq_tail: *const AtomicU32,
     cq_mask: u32,
     cqes: *const io_uring_cqe,
-    /// Number of `io_uring_enter` calls made, for benchmarks.
-    pub enters: u64,
+    enters: u64,
 }
 
 /// The submission queue has no free slot; call `enter` first.
 #[derive(Debug)]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a unit struct has no fields to make private"
+)]
 pub struct SqFull;
 
 impl Ring {
@@ -108,7 +111,7 @@ impl Ring {
         }
         let res = Self::map(fd, p);
         if res.is_err() {
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
         }
         res
     }
@@ -169,6 +172,10 @@ impl Ring {
     /// later `enter` is refused by the kernel. The ring itself lives on
     /// through its mappings, with whatever it had in flight.
     #[cfg(feature = "fault-injection")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test-only fault injection; /dev/null is there on every Linux host"
+    )]
     pub fn lose(&mut self) {
         use std::os::fd::AsRawFd;
         let null = std::fs::File::open("/dev/null").expect("open /dev/null");
@@ -190,6 +197,20 @@ impl Ring {
         };
         self.sq_tail_local = self.sq_tail_local.wrapping_add(1);
         Ok(())
+    }
+
+    /// The parameters the kernel returned when it set the ring up.
+    #[inline]
+    #[must_use]
+    pub const fn params(&self) -> &io_uring_params {
+        &self.params
+    }
+
+    /// Number of `io_uring_enter` calls made, for benchmarks.
+    #[inline]
+    #[must_use]
+    pub const fn enters(&self) -> u64 {
+        self.enters
     }
 
     /// SQEs pushed but not yet handed to the kernel.
@@ -221,7 +242,8 @@ impl Ring {
                 )
             };
             if r >= 0 {
-                return Ok(r as u32);
+                // At most `to_submit` (a `u32`); anything else is not a count.
+                return u32::try_from(r).map_err(|_| io::Error::from(io::ErrorKind::InvalidData));
             }
             let e = io::Error::last_os_error();
             if e.kind() != io::ErrorKind::Interrupted {
@@ -324,7 +346,7 @@ impl Ring {
 
 impl Drop for Ring {
     fn drop(&mut self) {
-        unsafe { close(self.fd) };
+        let _: i32 = unsafe { close(self.fd) };
     }
 }
 

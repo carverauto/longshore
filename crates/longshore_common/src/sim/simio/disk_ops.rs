@@ -8,6 +8,7 @@
 use super::faults::{misdirect_slot_count, pick_misdirected_off, sector_cut_bounds};
 use super::log::LogKind;
 use super::{DiskFaultCtx, PlacedFault, SimDisk};
+use crate::io::count_result;
 use crate::io::files::STATX_SIZE;
 use crate::io::posix::errno::linux::{EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, EOPNOTSUPP};
 use crate::io::FileSlot;
@@ -52,7 +53,7 @@ impl SimDisk {
         if n == 0 {
             return 0;
         }
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         let first_sec = file_off / s;
         let last_sec = (file_off + n as u64 - 1) / s;
         let ino_num = self.inodes[ii].ino;
@@ -72,7 +73,7 @@ impl SimDisk {
             pool[range.start + byte_idx] ^= bit;
             ctx.counters.bit_flip += 1;
         }
-        n as i32
+        count_result(n)
     }
 
     pub(super) fn write(
@@ -103,62 +104,19 @@ impl SimDisk {
         }
         let data = &pool[range];
         if let Some(pf) = placed {
-            return match pf {
-                PlacedFault::Fail => {
-                    ctx.counters.placed_fail += 1;
-                    -EIO
-                }
-                PlacedFault::FailAfter => {
-                    self.commit_write(ii, file_off, data);
-                    ctx.counters.placed_fail_after += 1;
-                    -EIO
-                }
-                PlacedFault::LostReported => {
-                    ctx.counters.lost_reported += 1;
-                    -EIO
-                }
-                PlacedFault::LostSilent => {
-                    ctx.counters.lost_silent += 1;
-                    data.len() as i32
-                }
-                PlacedFault::ShortWrite => {
-                    let s = self.sector_size as u64;
-                    if sector_cut_bounds(file_off, data.len(), s).is_some() {
-                        self.inject_short_write(ii, file_off, data, ctx)
-                    } else {
-                        self.commit_write(ii, file_off, data);
-                        data.len() as i32
-                    }
-                }
-                PlacedFault::TornReported => self.inject_torn_write(ii, file_off, data, true, ctx),
-                PlacedFault::TornSilent => self.inject_torn_write(ii, file_off, data, false, ctx),
-                PlacedFault::MisdirectedWrite => {
-                    let s = self.sector_size as u64;
-                    let live = self.live_size(ii);
-                    let (other, ov_start, ov_count) =
-                        misdirect_slot_count(live, file_off, data.len(), s);
-                    if other > 0 {
-                        let dst = pick_misdirected_off(ctx.rng, other, ov_start, ov_count, s);
-                        self.commit_write(ii, dst, data);
-                        ctx.counters.misdirected_write += 1;
-                    } else {
-                        self.commit_write(ii, file_off, data);
-                    }
-                    data.len() as i32
-                }
-            };
+            return self.write_placed(ii, file_off, data, pf, ctx);
         }
         if data.is_empty() {
             return 0;
         }
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         if ctx.rng.chance(ctx.faults.lost_reported) {
             ctx.counters.lost_reported += 1;
             return -EIO;
         }
         if ctx.rng.chance(ctx.faults.lost_silent) {
             ctx.counters.lost_silent += 1;
-            return data.len() as i32;
+            return count_result(data.len());
         }
         let cuts = sector_cut_bounds(file_off, data.len(), s);
         if cuts.is_some() && ctx.rng.chance(ctx.faults.short_write) {
@@ -176,10 +134,65 @@ impl SimDisk {
             let dst = pick_misdirected_off(ctx.rng, other, ov_start, ov_count, s);
             self.commit_write(ii, dst, data);
             ctx.counters.misdirected_write += 1;
-            return data.len() as i32;
+            return count_result(data.len());
         }
         self.commit_write(ii, file_off, data);
-        data.len() as i32
+        count_result(data.len())
+    }
+
+    /// A write that meets the fault placed on its submission.
+    fn write_placed(
+        &mut self,
+        ii: usize,
+        file_off: u64,
+        data: &[u8],
+        pf: PlacedFault,
+        ctx: &mut DiskFaultCtx<'_>,
+    ) -> i32 {
+        match pf {
+            PlacedFault::Fail => {
+                ctx.counters.placed_fail += 1;
+                -EIO
+            }
+            PlacedFault::FailAfter => {
+                self.commit_write(ii, file_off, data);
+                ctx.counters.placed_fail_after += 1;
+                -EIO
+            }
+            PlacedFault::LostReported => {
+                ctx.counters.lost_reported += 1;
+                -EIO
+            }
+            PlacedFault::LostSilent => {
+                ctx.counters.lost_silent += 1;
+                count_result(data.len())
+            }
+            PlacedFault::ShortWrite => {
+                let s = u64::from(self.sector_size);
+                if sector_cut_bounds(file_off, data.len(), s).is_some() {
+                    self.inject_short_write(ii, file_off, data, ctx)
+                } else {
+                    self.commit_write(ii, file_off, data);
+                    count_result(data.len())
+                }
+            }
+            PlacedFault::TornReported => self.inject_torn_write(ii, file_off, data, true, ctx),
+            PlacedFault::TornSilent => self.inject_torn_write(ii, file_off, data, false, ctx),
+            PlacedFault::MisdirectedWrite => {
+                let s = u64::from(self.sector_size);
+                let live = self.live_size(ii);
+                let (other, ov_start, ov_count) =
+                    misdirect_slot_count(live, file_off, data.len(), s);
+                if other > 0 {
+                    let dst = pick_misdirected_off(ctx.rng, other, ov_start, ov_count, s);
+                    self.commit_write(ii, dst, data);
+                    ctx.counters.misdirected_write += 1;
+                } else {
+                    self.commit_write(ii, file_off, data);
+                }
+                count_result(data.len())
+            }
+        }
     }
 
     pub(super) fn commit_write(&mut self, ii: usize, file_off: u64, data: &[u8]) {
@@ -207,7 +220,13 @@ impl SimDisk {
                     ctx.counters.placed_fail_after += 1;
                     -EIO
                 }
-                _ => {
+                PlacedFault::Fail
+                | PlacedFault::ShortWrite
+                | PlacedFault::TornReported
+                | PlacedFault::TornSilent
+                | PlacedFault::LostReported
+                | PlacedFault::LostSilent
+                | PlacedFault::MisdirectedWrite => {
                     ctx.counters.placed_fail += 1;
                     -EIO
                 }

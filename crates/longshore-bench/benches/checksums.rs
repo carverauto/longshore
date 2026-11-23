@@ -9,7 +9,8 @@
 //! is first checked against the algorithm's published check value, so a fast
 //! wrong answer cannot win.
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::measurement::WallTime;
+use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use std::hint::black_box;
 
 const CHECK_INPUT: &[u8] = b"123456789";
@@ -53,7 +54,10 @@ fn crc32c_crc_fast(data: &[u8]) -> u32 {
 /// on the benchmark machine, which may have instructions that one lacks.
 fn verify_kernels() {
     let all = longshore::checksum::kernels::all();
-    let table = all.iter().find(|k| k.name == "table").unwrap();
+    let Some(table) = all.iter().find(|k| k.name() == "table") else {
+        eprintln!("checksums: no table kernel to check the others against");
+        std::process::exit(1)
+    };
     let data: Vec<u8> = (0..1_000_003u64)
         .map(|i| (i.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 56) as u8)
         .collect();
@@ -64,28 +68,63 @@ fn verify_kernels() {
             let d = &data[offset..];
             let (mut want64, mut want32) = (!0u64, !0u32);
             for len in 0..=8192 {
-                let name = k.name;
+                let name = k.name();
                 assert_eq!(k.crc64_update(!0, &d[..len]), want64, "{name} {len}");
                 assert_eq!(k.crc32c_update(!0, &d[..len]), want32, "{name} {len}");
                 want64 = table.crc64_update(want64, &d[len..len + 1]);
                 want32 = table.crc32c_update(want32, &d[len..len + 1]);
             }
         }
-        assert_eq!(!k.crc64_update(!0, &data), crc64_table(&data), "{}", k.name);
+        assert_eq!(
+            !k.crc64_update(!0, &data),
+            crc64_table(&data),
+            "{}",
+            k.name()
+        );
         assert_eq!(
             !k.crc32c_update(!0, &data),
             crc32c_table(&data),
             "{}",
-            k.name
+            k.name()
         );
-        println!("verified: {}", k.name);
+        println!("verified: {}", k.name());
+    }
+}
+
+type F64 = fn(&[u8]) -> u64;
+type F32 = fn(&[u8]) -> u32;
+
+/// Every implementation gives the catalogue check value for its CRC.
+fn verify_check_values(crc64: &[(&str, F64)], crc32c: &[(&str, F32)]) {
+    for &(name, f) in crc64 {
+        assert_eq!(
+            f(CHECK_INPUT),
+            CRC64_NVME_CHECK,
+            "{name} fails the CRC-64/NVME check value"
+        );
+    }
+    for &(name, f) in crc32c {
+        assert_eq!(
+            f(CHECK_INPUT),
+            CRC32C_CHECK,
+            "{name} fails the CRC-32C check value"
+        );
+    }
+}
+
+/// `size` in bytes as a benchmark group label: `8MiB`, `64KiB`, `256B`.
+fn size_label(size: usize) -> String {
+    if size >= 1 << 20 {
+        format!("{}MiB", size >> 20)
+    } else if size >= 1 << 10 {
+        format!("{}KiB", size >> 10)
+    } else {
+        format!("{size}B")
     }
 }
 
 fn bench(c: &mut Criterion) {
     verify_kernels();
-    type F64 = fn(&[u8]) -> u64;
-    type F32 = fn(&[u8]) -> u32;
     let crc64: [(&str, F64); 4] = [
         ("crc (table)", crc64_table),
         ("crc64fast-nvme", crc64_crc64fast_nvme),
@@ -98,31 +137,18 @@ fn bench(c: &mut Criterion) {
         ("crc-fast", crc32c_crc_fast),
         ("longshore", crc32c_longshore),
     ];
-    for (name, f) in crc64 {
-        assert_eq!(
-            f(CHECK_INPUT),
-            CRC64_NVME_CHECK,
-            "{name} fails the CRC-64/NVME check value"
-        );
-    }
-    for (name, f) in crc32c {
-        assert_eq!(
-            f(CHECK_INPUT),
-            CRC32C_CHECK,
-            "{name} fails the CRC-32C check value"
-        );
-    }
+    verify_check_values(&crc64, &crc32c);
 
     // Each of longshore's kernels this processor supports, by name, so lane
     // counts and register widths can be compared. "longshore" above is the
     // one it selects.
     let kernels: Vec<_> = longshore::checksum::kernels::all()
         .iter()
-        .filter(|k| k.supported() && k.name != "table")
+        .filter(|k| k.supported() && k.name() != "table")
         .collect();
     println!(
         "longshore selects: {}",
-        longshore::checksum::kernels::selected().name
+        longshore::checksum::kernels::selected().name()
     );
 
     // 64 B, 256 B and 1 KiB show the cost of a call and of the stages that
@@ -133,35 +159,33 @@ fn bench(c: &mut Criterion) {
         let data: Vec<u8> = (0..size)
             .map(|i| (i as u32).wrapping_mul(2654435761).to_le_bytes()[1])
             .collect();
-        let label = if size >= 1 << 20 {
-            format!("{}MiB", size >> 20)
-        } else if size >= 1 << 10 {
-            format!("{}KiB", size >> 10)
-        } else {
-            format!("{size}B")
-        };
-        let mut g = c.benchmark_group(format!("crc64_nvme/{label}"));
-        g.throughput(Throughput::Bytes(size as u64));
+        let label = size_label(size);
+        let mut g64 = c.benchmark_group(format!("crc64_nvme/{label}"));
+        let _: &mut BenchmarkGroup<'_, WallTime> = g64.throughput(Throughput::Bytes(size as u64));
         for (name, f) in crc64 {
-            g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
+            let _: &mut BenchmarkGroup<'_, WallTime> =
+                g64.bench_function(name, |b| b.iter(|| f(black_box(&data))));
         }
         for k in &kernels {
-            g.bench_function(format!("longshore {}", k.name), |b| {
-                b.iter(|| !k.crc64_update(!0, black_box(&data)))
-            });
+            let _: &mut BenchmarkGroup<'_, WallTime> = g64
+                .bench_function(format!("longshore {}", k.name()), |b| {
+                    b.iter(|| !k.crc64_update(!0, black_box(&data)))
+                });
         }
-        g.finish();
-        let mut g = c.benchmark_group(format!("crc32c/{label}"));
-        g.throughput(Throughput::Bytes(size as u64));
+        g64.finish();
+        let mut g32 = c.benchmark_group(format!("crc32c/{label}"));
+        let _: &mut BenchmarkGroup<'_, WallTime> = g32.throughput(Throughput::Bytes(size as u64));
         for (name, f) in crc32c {
-            g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
+            let _: &mut BenchmarkGroup<'_, WallTime> =
+                g32.bench_function(name, |b| b.iter(|| f(black_box(&data))));
         }
         for k in &kernels {
-            g.bench_function(format!("longshore {}", k.name), |b| {
-                b.iter(|| !k.crc32c_update(!0, black_box(&data)))
-            });
+            let _: &mut BenchmarkGroup<'_, WallTime> = g32
+                .bench_function(format!("longshore {}", k.name()), |b| {
+                    b.iter(|| !k.crc32c_update(!0, black_box(&data)))
+                });
         }
-        g.finish();
+        g32.finish();
     }
 }
 

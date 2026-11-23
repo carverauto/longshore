@@ -97,20 +97,14 @@ fn check(method: &[u8], target: &[u8], head: &[u8], fields: &Fields) -> Option<b
     }
 
     let expected = sigv4::signature(
-        &Request {
-            method: text(method)?,
-            canonical_uri: path,
-            query: &query[..pairs],
-            headers: &headers[..count],
-            payload_hash: header("x-amz-content-sha256")?,
-        },
-        &Scope {
-            access_key,
-            secret_key,
-            region,
-            service,
-            amz_date,
-        },
+        &Request::new(
+            text(method)?,
+            path,
+            &query[..pairs],
+            &headers[..count],
+            header("x-amz-content-sha256")?,
+        ),
+        &Scope::new(access_key, secret_key, region, service, amz_date),
     )
     .ok()?;
     Some(signature.as_bytes() == expected)

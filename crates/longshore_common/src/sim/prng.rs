@@ -44,6 +44,6 @@ impl Prng {
 
     /// True with probability `per_million / 1_000_000`.
     pub fn chance(&mut self, per_million: u32) -> bool {
-        per_million != 0 && self.below(1_000_000) < per_million as u64
+        per_million != 0 && self.below(1_000_000) < u64::from(per_million)
     }
 }

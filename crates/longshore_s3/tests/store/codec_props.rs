@@ -33,8 +33,8 @@ fn month_days(year: u64, month: u64) -> u64 {
 fn calendar(unix_secs: u64) -> (u64, u64, u64, usize) {
     let total = unix_secs / 86_400;
     let (mut days, mut year, mut month) = (total, 1970, 1);
-    while days >= 365 + leap(year) as u64 {
-        days -= 365 + leap(year) as u64;
+    while days >= 365 + u64::from(leap(year)) {
+        days -= 365 + u64::from(leap(year));
         year += 1;
     }
     while days >= month_days(year, month) {
@@ -116,7 +116,7 @@ fn a_credentials_file_gives_back_what_was_written(tc: TestCase) {
     let access = graphic(&tc, FIELD_MAX);
     let secret = graphic(&tc, FIELD_MAX);
     let session = tc.draw(gs::booleans()).then(|| graphic(&tc, 300));
-    let pad = |tc: &TestCase| -> &'static str {
+    let pad = || -> &'static str {
         ["", " ", "\t", "  "][tc.draw(gs::integers::<usize>().min_value(0).max_value(3))]
     };
     let eol = if tc.draw(gs::booleans()) {
@@ -127,15 +127,15 @@ fn a_credentials_file_gives_back_what_was_written(tc: TestCase) {
     let mut lines = vec![
         format!(
             "{}aws_access_key_id{}={}{access}{}",
-            pad(&tc),
-            pad(&tc),
-            pad(&tc),
-            pad(&tc)
+            pad(),
+            pad(),
+            pad(),
+            pad()
         ),
-        format!("aws_secret_access_key{}={}{secret}", pad(&tc), pad(&tc)),
+        format!("aws_secret_access_key{}={}{secret}", pad(), pad()),
     ];
     if let Some(token) = &session {
-        lines.push(format!("aws_session_token{}={}{token}", pad(&tc), pad(&tc)));
+        lines.push(format!("aws_session_token{}={}{token}", pad(), pad()));
     }
     if tc.draw(gs::booleans()) {
         lines.reverse();
@@ -146,7 +146,7 @@ fn a_credentials_file_gives_back_what_was_written(tc: TestCase) {
     }
     let sectioned = tc.draw(gs::booleans());
     if sectioned || !file.is_empty() {
-        file += &format!("[default]{}{eol}", pad(&tc));
+        file += &format!("[default]{}{eol}", pad());
     }
     for line in &lines {
         file += &format!("{line}{eol}");

@@ -14,6 +14,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
@@ -48,7 +52,7 @@ fn raise_nofile() {
             let target = lim.rlim_max.min(8192);
             if target > lim.rlim_cur {
                 lim.rlim_cur = target;
-                let _ = setrlimit(RLIMIT_NOFILE, &lim);
+                let _: i32 = setrlimit(RLIMIT_NOFILE, &lim);
             }
         }
     }
@@ -66,7 +70,7 @@ fn main() {
         match a.as_str() {
             "--v6" => v6 = true,
             "--posix" => posix = true,
-            other => panic!("unknown flag {other}"),
+            other => die::die(format_args!("unknown flag {other}")),
         }
     }
     let ip = if v6 {

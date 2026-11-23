@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+
 members = [
     "crates/longshore",
     "crates/longshore_common",
@@ -19,8 +20,7 @@ version = "0.2.0"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-# Internal Dependencies. The crates are released together, so each names
-# the others at exactly its own version.
+# Internal Dependencies. The crates are released together all with the same version number.
 longshore = { path = "crates/longshore", version = "=0.2.0", default-features = false }
 longshore_common = { path = "crates/longshore_common", version = "=0.2.0", default-features = false }
 longshore_crc = { path = "crates/longshore_crc", version = "=0.2.0", default-features = false }
@@ -37,12 +37,10 @@ ring = { version = "0.17", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 webpki-roots = "1"
 
-# Test Dependencies.
-hegeltest = "0.52"
+# Test and benchmark Dependencies.
+hegeltest = "0.54"
 loom = "0.7"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }
-
-# Benchmark Dependencies.
 aes-gcm = "0.11"
 aws-lc-rs = "1.19"
 # Oracles to verify`longshore_crc` CRC kernels.
@@ -51,6 +49,50 @@ crc-fast = "1.10"
 crc32c = "0.6"
 crc64fast-nvme = "1.2"
 criterion = { version = "0.8", default-features = false }
+
+[workspace.lints.rust]
+# `--cfg longshore_model` builds the loom model checks (scripts/test-model.sh).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(longshore_model)'] }
+bare_trait_objects = "forbid"
+deprecated_safe = { level = "warn", priority = -1 }
+unused_must_use = "deny"
+unused_results = "deny"
+# 622 public items have no documentation yet; that is a separate piece of work.
+# missing_docs = "deny"
+
+[workspace.lints.clippy]
+# The workspace's lint table: every crate takes it with `[lints] workspace = true`.
+all = { level = "deny", priority = -1 }
+infinite_iter = "deny"
+maybe_infinite_iter = "deny"
+todo = "deny"
+unimplemented = "warn"
+rc_buffer = "deny"
+mutex_atomic = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+trivially_copy_pass_by_ref = "deny"
+needless_pass_by_value = "deny"
+large_types_passed_by_value = "deny"
+let_underscore_must_use = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+wildcard_enum_match_arm = "deny"
+let_underscore_untyped = "deny"
+shadow_unrelated = "deny"
+cast_lossless = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"
+# Unwrap, expect and panic are allowed in tests. The settings are in clippy.toml
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+# A function fits on one screen: at most 70 lines, set in clippy.toml.
+too_many_lines = "deny"
+# A struct does not mix public and private fields: they are private, behind getters.
+partial_pub_fields = "deny"
+# No exported struct has all its fields public: it is built by constructors and read by getters.
+exhaustive_structs = "deny"
 
 [profile.release]
 opt-level = 3

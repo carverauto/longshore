@@ -27,29 +27,29 @@ fn t2_f03_2_stall_ticks_deadlock_timed_out() {
     let mut io = SimIo::new(sim_limits(), 1, Faults::default());
     let mut out = Completions::new(8);
     let addr: SocketAddr = "192.0.2.1:443".parse().unwrap();
-    io.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = io.listen(Sock::new(0), addr).unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
+            listener: Sock::new(0),
+            sock: Sock::new(1),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(2),
+            sock: Sock::new(2),
             addr,
         },
     )
     .unwrap();
-    let _ = drain_exact(&mut io, &mut out, 2);
+    let _: Vec<(u64, i32)> = drain_exact(&mut io, &mut out, 2);
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
@@ -67,40 +67,40 @@ fn t2_f03_3_read_file_absent_returns_enoent() {
     let f = io.register_file("missing.conf").unwrap();
     io.set_file(f, None);
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::ReadFile {
             file: f,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
     let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!(cs[0].result, -ENOENT);
+    assert_eq!(cs[0].result(), -ENOENT);
 
     io.set_file(f, Some(b"ok"));
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::ReadFile {
             file: f,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!(cs[0].result, 2);
-    assert_eq!(&io.buf(BufId(0))[..2], b"ok");
+    let read = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
+    assert_eq!(read[0].result(), 2);
+    assert_eq!(&io.buf(BufId::new(0))[..2], b"ok");
 }
 
 #[test]
 fn t2_f03_4_duplicate_listen_returns_addr_in_use() {
     let mut io = SimIo::new(sim_limits(), 1, Faults::default());
     let addr: SocketAddr = "192.0.2.5:8080".parse().unwrap();
-    io.listen(Sock(0), addr).unwrap();
-    let err = io.listen(Sock(1), addr).unwrap_err();
+    let _: SocketAddr = io.listen(Sock::new(0), addr).unwrap();
+    let err = io.listen(Sock::new(1), addr).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::AddrInUse);
 }
 
@@ -110,32 +110,29 @@ fn t2_f03_5_connect_refused_fault_leaves_slot_reusable() {
     let mut io = SimIo::new(
         sim_limits(),
         11,
-        Faults {
-            connect_refused: 1_000_000,
-            ..Default::default()
-        },
+        Faults::NONE.with_connect_refused(1_000_000),
     );
     let mut out = Completions::new(8);
-    io.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = io.listen(Sock::new(0), addr).unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
     let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!(cs[0].result, -ECONNREFUSED);
+    assert_eq!(cs[0].result(), -ECONNREFUSED);
     // Slot must remain free for immediate reuse without Close.
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::ConnectUdp {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
-    let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!(cs[0].result, 0);
+    let reused = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
+    assert_eq!(reused[0].result(), 0);
 }

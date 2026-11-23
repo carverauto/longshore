@@ -6,20 +6,13 @@
 //! Lanes driven by hand in the simulator, one simulated machine each with
 //! its own store and server, and a client over them.
 
-#![allow(dead_code)]
-
 use crate::common::*;
 use longshore_s3::client::{Buffer, Client, Layout, Output, Pending, Worker};
 use std::future::Future;
 use std::pin::pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
-const WIDE: Limits = Limits {
-    ops_max: LIMITS.ops_max + 2,
-    ..LIMITS
-};
+const WIDE: Limits = LIMITS.with_ops_max(LIMITS.ops_max() + 2);
 pub const LEN: usize = 1000;
 
 /// One I/O lane: what would be one thread, with the server it talks to.
@@ -45,28 +38,20 @@ pub fn rig_with(lanes: usize, operations: u32) -> Rig {
     let lanes: Vec<LaneRig> = (0..lanes)
         .map(|n| {
             let mut io = SimIo::new(WIDE, 40 + n as u64, Faults::default());
-            let mut server = Server::new(server::Config {
-                listener: Sock(0),
-                connections_max: CONNS,
-                first_sock: 1 + CONNS,
-                first_buf: 0,
-                head_max: 2048,
-                buffer_size: BUF,
-                objects_max: 8,
-                token_base: 2 << 40,
-                checksum: Some(|body: &[u8]| {
-                    longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body))
-                }),
-            });
-            server.start(&mut io, ADDR).unwrap();
-            let layout = Layout {
-                operations,
-                first_buffer: TX,
-                buffers: 2,
-                token_base: 7 << 40,
-                heartbeat_ns: 10 * MS,
-            };
-            let (mut worker, lane) = Worker::new(&mut io, S3::new(s3_config(3, false)), layout);
+            let mut server = Server::new(
+                server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+                    .head_max(2048)
+                    .objects_max(8)
+                    .checksum(|body: &[u8]| {
+                        longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body))
+                    })
+                    .build()
+                    .unwrap(),
+            );
+            let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
+            let layout = Layout::new(operations, TX, 2, 7 << 40, 10 * MS);
+            let (mut worker, lane) = Worker::new(&mut io, S3::new(s3_config(3, false)), layout)
+                .expect("the simulator can be woken");
             worker.start(&mut io);
             handles.push(lane);
             LaneRig {
@@ -129,25 +114,5 @@ impl Rig {
 pub fn fill(buf: &mut Buffer, pattern: u8) {
     for (i, b) in buf.as_mut_slice()[..LEN].iter_mut().enumerate() {
         *b = (i as u8).wrapping_mul(31) ^ pattern;
-    }
-}
-
-/// A waker that counts how often it was woken.
-pub fn counted() -> (Arc<Count>, Waker) {
-    let count = Arc::new(Count(AtomicUsize::new(0)));
-    (count.clone(), Waker::from(count))
-}
-
-pub struct Count(AtomicUsize);
-
-impl Count {
-    pub fn get(&self) -> usize {
-        self.0.load(Ordering::SeqCst)
-    }
-}
-
-impl Wake for Count {
-    fn wake(self: Arc<Self>) {
-        self.0.fetch_add(1, Ordering::SeqCst);
     }
 }

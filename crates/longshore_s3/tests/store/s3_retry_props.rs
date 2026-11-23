@@ -7,6 +7,7 @@
 //! retryable failures a store meets, it ends as the budget says it must,
 //! having waited as long as the backoff says and no longer.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use hegel::generators as gs;
@@ -57,17 +58,9 @@ fn a_run_of_failures_ends_as_the_budget_and_the_backoff_say(tc: TestCase) {
     let failed = script.len().min(attempts_max as usize);
     let stored = script.len() < attempts_max as usize;
     let expected = if stored {
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: failed as u32 + 1,
-        }
+        Done::new(1, Outcome::Stored, failed as u32 + 1)
     } else {
-        Done {
-            token: 1,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: attempts_max,
-        }
+        Done::new(1, Outcome::Fatal(Fatal::RetriesExhausted), attempts_max)
     };
     assert_eq!(done, expected, "{script:?} with {attempts_max} attempts");
     assert_eq!(w.server.object_len("/k"), stored.then_some(100));

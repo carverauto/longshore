@@ -5,6 +5,7 @@
 
 //! Direct I/O write-then-sync latency benchmark: linked chain vs two submissions.
 
+use crate::die::OrDie;
 use longshore::io::uring::UringIo;
 use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
 use std::path::Path;
@@ -28,9 +29,9 @@ fn measure(io: &mut UringIo, buf: BufId, iters: usize, chained: bool, us: &mut V
         if chained {
             io.submit_chain(&[
                 (
-                    Token(1),
+                    Token::new(1),
                     Op::FileWrite {
-                        slot: FileSlot(0),
+                        slot: FileSlot::new(0),
                         buf,
                         off: 0,
                         len: 4096,
@@ -38,46 +39,46 @@ fn measure(io: &mut UringIo, buf: BufId, iters: usize, chained: bool, us: &mut V
                     },
                 ),
                 (
-                    Token(2),
+                    Token::new(2),
                     Op::FileSync {
-                        slot: FileSlot(0),
+                        slot: FileSlot::new(0),
                         datasync: true,
                     },
                 ),
             ])
-            .unwrap();
+            .or_die("submit_chain");
             let mut done = 0;
             while done < 2 {
-                io.tick(true, &mut out).unwrap();
+                io.tick(true, &mut out).or_die("tick");
                 while let Some(c) = out.pop() {
-                    assert!(c.result >= 0, "chain op failed: {}", c.result);
+                    assert!(c.result() >= 0, "chain op failed: {}", c.result());
                     done += 1;
                 }
             }
         } else {
             io.submit(
-                Token(1),
+                Token::new(1),
                 Op::FileWrite {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     buf,
                     off: 0,
                     len: 4096,
                     file_off,
                 },
             )
-            .unwrap();
-            io.tick(true, &mut out).unwrap();
-            assert_eq!(out.pop().unwrap().result, 4096);
+            .or_die("submit");
+            io.tick(true, &mut out).or_die("tick");
+            assert_eq!(out.pop().or_die("a completion").result(), 4096);
             io.submit(
-                Token(2),
+                Token::new(2),
                 Op::FileSync {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     datasync: true,
                 },
             )
-            .unwrap();
-            io.tick(true, &mut out).unwrap();
-            assert_eq!(out.pop().unwrap().result, 0);
+            .or_die("submit");
+            io.tick(true, &mut out).or_die("tick");
+            assert_eq!(out.pop().or_die("a completion").result(), 0);
         }
         us.push(t0.elapsed().as_nanos() as u64);
         enters_total += io.enters() - e0;
@@ -100,6 +101,7 @@ fn report(chained: bool, us: &mut [u64], enters_total: u64) {
 }
 
 /// How the two modes are ordered in the measured part.
+#[derive(Clone, Copy)]
 pub(super) enum Order {
     /// All of one mode, then all of the other.
     Blocks { chain_first: bool },
@@ -108,69 +110,89 @@ pub(super) enum Order {
 }
 
 pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 4096,
-        files_max: 2,
-        aligned_buffers: 1,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
-    let mut io = UringIo::new(limits).expect("UringIo::new");
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_aligned_buffers(1)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(8);
+    let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(8);
-    let path = format!("{}/bench_wal.bin\0", dir.display());
-    io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
+    open_bench_file(&mut io, &mut out, dir);
     let wbuf = limits.aligned(0);
     io.buf(wbuf).fill(0x42);
 
+    // Warmup
+    let mut warm = Vec::with_capacity(40);
+    let _: u64 = measure(&mut io, wbuf, 20, true, &mut warm);
+    let _: u64 = measure(&mut io, wbuf, 20, false, &mut warm);
+
+    run_order(&mut io, wbuf, iters, order);
+
     io.submit(
-        Token(1),
-        Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: path.len() as u32,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                direct: true,
-                ..Default::default()
-            },
+        Token::new(99),
+        Op::FileClose {
+            slot: FileSlot::new(0),
         },
     )
-    .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0, "O_DIRECT open failed");
+    .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result(), 0);
+}
+
+/// Open `bench_wal.bin` in `dir` for direct I/O into slot 0 and reserve its
+/// blocks.
+fn open_bench_file(io: &mut UringIo, out: &mut Completions, dir: &Path) {
+    let path = format!("{}/bench_wal.bin\0", dir.display());
+    io.buf(BufId::new(0))[..path.len()].copy_from_slice(path.as_bytes());
+    io.submit(
+        Token::new(1),
+        Op::FileOpen {
+            slot: FileSlot::new(0),
+            path_buf: BufId::new(0),
+            path_off: 0,
+            path_len: path.len() as u32,
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true)
+                .with_direct(true),
+        },
+    )
+    .or_die("submit");
+    io.tick(true, out).or_die("tick");
+    assert_eq!(
+        out.pop().or_die("a completion").result(),
+        0,
+        "O_DIRECT open failed"
+    );
 
     // Pre-allocate 256 KiB so writes overwrite allocated blocks without metadata growth jitter.
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::FileReserve {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             file_off: 0,
             len: 64 * 4096,
             keep_size: false,
         },
     )
-    .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
+    .or_die("submit");
+    io.tick(true, out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result(), 0);
+}
 
-    // Warmup
-    let mut warm = Vec::with_capacity(40);
-    measure(&mut io, wbuf, 20, true, &mut warm);
-    measure(&mut io, wbuf, 20, false, &mut warm);
-
+/// Measure and report both modes in `order`.
+fn run_order(io: &mut UringIo, wbuf: BufId, iters: usize, order: Order) {
     // Whichever mode runs second runs on a file the first has just
     // written, so the order is the caller's choice.
     match order {
         Order::Blocks { chain_first } => {
-            run_one_mode(&mut io, wbuf, iters, chain_first);
-            run_one_mode(&mut io, wbuf, iters, !chain_first);
+            run_one_mode(io, wbuf, iters, chain_first);
+            run_one_mode(io, wbuf, iters, !chain_first);
         }
         Order::Interleaved => {
             let (mut two, mut chain) = (Vec::with_capacity(iters), Vec::with_capacity(iters));
@@ -178,17 +200,12 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
             let mut left = iters;
             while left > 0 {
                 let n = left.min(10);
-                two_enters += measure(&mut io, wbuf, n, false, &mut two);
-                chain_enters += measure(&mut io, wbuf, n, true, &mut chain);
+                two_enters += measure(io, wbuf, n, false, &mut two);
+                chain_enters += measure(io, wbuf, n, true, &mut chain);
                 left -= n;
             }
             report(false, &mut two, two_enters);
             report(true, &mut chain, chain_enters);
         }
     }
-
-    io.submit(Token(99), Op::FileClose { slot: FileSlot(0) })
-        .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
 }

@@ -24,16 +24,22 @@
 //! | Its own generator | The simulator's | One seed for network and disk |
 
 use super::Prng;
-use crate::io::files::STATX_SIZE;
-use crate::io::posix::errno::linux::{EBADF, EINVAL, EIO};
-use crate::io::{FileSlot, Limits, Op, OpenFlags};
+use crate::io::OpenFlags;
 
+#[path = "disk_attempt.rs"]
+mod attempt;
+#[path = "disk_config.rs"]
+mod config;
+#[path = "disk_counters.rs"]
+mod counters;
 #[path = "disk_dirs.rs"]
 mod dirs;
 #[path = "disk_dirs_apply.rs"]
 mod dirs_apply;
 #[path = "disk_faults.rs"]
 mod faults;
+#[path = "disk_faults_rates.rs"]
+mod faults_rates;
 #[path = "disk_log.rs"]
 mod log;
 #[path = "disk_log_read.rs"]
@@ -202,173 +208,6 @@ impl SimDisk {
             disk.next_ino = 2;
         }
         disk
-    }
-
-    pub(in crate::sim::simio) fn attempt(
-        &mut self,
-        op: &Op,
-        pool: &mut [u8],
-        limits: &Limits,
-        op_num: u64,
-        ctx: &mut DiskFaultCtx<'_>,
-    ) -> i32 {
-        let placed = faults::take_placed(ctx.placed, op_num);
-        match *op {
-            Op::FileOpen {
-                slot,
-                path_buf,
-                path_off,
-                path_len,
-                flags,
-            } => {
-                let r = limits.range(path_buf, path_off, path_len);
-                match placed {
-                    Some(PlacedFault::FailAfter) => {
-                        let res = self.open(slot, &pool[r], flags);
-                        if res == 0 {
-                            self.undo_open_handle(slot);
-                        }
-                        ctx.counters.placed_fail_after += 1;
-                        -EIO
-                    }
-                    Some(_) => {
-                        ctx.counters.placed_fail += 1;
-                        -EIO
-                    }
-                    None => self.open(slot, &pool[r], flags),
-                }
-            }
-            Op::FileClose { slot } => self.attempt_close(slot, placed, ctx),
-            Op::FileRead {
-                slot,
-                buf,
-                off,
-                len,
-                file_off,
-            } => self.read(
-                slot,
-                pool,
-                limits.range(buf, off, len),
-                file_off,
-                placed,
-                ctx,
-            ),
-            Op::FileWrite {
-                slot,
-                buf,
-                off,
-                len,
-                file_off,
-            } => self.write(
-                slot,
-                pool,
-                limits.range(buf, off, len),
-                file_off,
-                placed,
-                ctx,
-            ),
-            Op::FileSync { slot, .. } => self.attempt_sync(slot, placed, ctx),
-            Op::FileReserve {
-                slot,
-                file_off,
-                len,
-                keep_size,
-            } => self.reserve(slot, file_off, len, keep_size, placed, ctx),
-            Op::FilePunch {
-                slot,
-                file_off,
-                len,
-            } => self.punch(slot, file_off, len, placed, ctx),
-            Op::FileStatus {
-                path_buf,
-                path_off,
-                path_len,
-                out_buf,
-                out_off,
-            } => {
-                let pr = limits.range(path_buf, path_off, path_len);
-                let or = limits.range(out_buf, out_off, STATX_SIZE as u32);
-                self.attempt_meta(placed, ctx, |d| d.status(pool, pr, or))
-            }
-            Op::FileRename {
-                old_buf,
-                old_off,
-                old_len,
-                new_buf,
-                new_off,
-                new_len,
-            } => {
-                let r1 = limits.range(old_buf, old_off, old_len);
-                let r2 = limits.range(new_buf, new_off, new_len);
-                self.attempt_meta(placed, ctx, |d| d.rename(pool, r1, r2))
-            }
-            Op::FileUnlink {
-                path_buf,
-                path_off,
-                path_len,
-            } => {
-                let r = limits.range(path_buf, path_off, path_len);
-                self.attempt_meta(placed, ctx, |d| d.unlink(&pool[r]))
-            }
-            Op::FileMkdir {
-                path_buf,
-                path_off,
-                path_len,
-            } => {
-                let r = limits.range(path_buf, path_off, path_len);
-                self.attempt_meta(placed, ctx, |d| d.mkdir(&pool[r]))
-            }
-            _ => -EINVAL,
-        }
-    }
-
-    fn attempt_close(
-        &mut self,
-        slot: FileSlot,
-        placed: Option<PlacedFault>,
-        ctx: &mut DiskFaultCtx<'_>,
-    ) -> i32 {
-        if self
-            .open_slots
-            .get(slot.0 as usize)
-            .and_then(|s| *s)
-            .is_none()
-        {
-            return -EBADF;
-        }
-        match placed {
-            Some(PlacedFault::FailAfter) => {
-                self.close(slot);
-                ctx.counters.placed_fail_after += 1;
-                -EIO
-            }
-            Some(_) => {
-                self.close(slot);
-                ctx.counters.placed_fail += 1;
-                -EIO
-            }
-            None => self.close(slot),
-        }
-    }
-
-    fn attempt_meta(
-        &mut self,
-        placed: Option<PlacedFault>,
-        ctx: &mut DiskFaultCtx<'_>,
-        f: impl FnOnce(&mut Self) -> i32,
-    ) -> i32 {
-        match placed {
-            Some(PlacedFault::FailAfter) => {
-                let _ = f(self);
-                ctx.counters.placed_fail_after += 1;
-                -EIO
-            }
-            Some(_) => {
-                ctx.counters.placed_fail += 1;
-                -EIO
-            }
-            None => f(self),
-        }
     }
 
     pub(in crate::sim::simio) fn power_loss(&mut self, rng: &mut Prng) {

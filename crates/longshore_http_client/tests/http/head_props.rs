@@ -33,13 +33,13 @@ fn string_from(tc: &TestCase, alphabet: &[u8], max: usize) -> String {
 fn parsing_arbitrary_bytes_is_safe(tc: TestCase) {
     let data = tc.draw(gs::binary().max_size(600));
     if let Ok(Some(h)) = parse_response(&data, LIMIT) {
-        assert!(h.fields.head_len <= data.len());
-        assert!(data[..h.fields.head_len].ends_with(b"\r\n\r\n"));
-        let _ = h.fields.header(&data, "content-length");
+        assert!(h.fields().head_len() <= data.len());
+        assert!(data[..h.fields().head_len()].ends_with(b"\r\n\r\n"));
+        let _: Option<&[u8]> = h.fields().header(&data, "content-length");
     }
     if let Ok(Some(h)) = parse_request(&data, LIMIT) {
-        assert!(h.fields.head_len <= data.len());
-        let _ = (h.method(&data), h.target(&data));
+        assert!(h.fields().head_len() <= data.len());
+        let _: (&[u8], &[u8]) = (h.method(&data), h.target(&data));
     }
 }
 
@@ -118,24 +118,24 @@ fn written_heads_parse_back(tc: TestCase) {
 
     let mut buf = [0u8; LIMIT];
     let mut w = HeadWriter::request(&mut buf, method, &target);
-    w.header_u64("Content-Length", length);
+    let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", length);
     for (n, v) in &headers {
-        w.header(n, v.as_bytes());
+        let _: &mut HeadWriter<'_> = w.header(n, v.as_bytes());
     }
     let n = w.finish().expect("valid fields that fit must be accepted");
 
     let head = parse_request(&buf[..n], LIMIT)
         .expect("writer output must parse")
         .expect("writer output is a complete head");
-    assert_eq!(head.fields.head_len, n);
+    assert_eq!(head.fields().head_len(), n);
     assert_eq!(
         (head.method(&buf), head.target(&buf)),
         (method.as_bytes(), target.as_bytes())
     );
-    assert_eq!(head.fields.content_length, Some(length));
+    assert_eq!(head.fields().content_length(), Some(length));
     for (name, value) in &headers {
         assert_eq!(
-            head.fields.header(&buf, &name.to_uppercase()),
+            head.fields().header(&buf, &name.to_uppercase()),
             Some(value.as_bytes()),
             "header {name}"
         );
@@ -151,13 +151,13 @@ fn writer_never_emits_injected_lines(tc: TestCase) {
     let value = tc.draw(gs::binary().max_size(40));
     let mut buf = [0u8; 512];
     let mut w = HeadWriter::request(&mut buf, "GET", &target);
-    w.header(&name, &value);
+    let _: &mut HeadWriter<'_> = w.header(&name, &value);
     match w.finish() {
         Err(e) => assert_eq!(e, HttpError::BadRequest),
         Ok(n) => {
             let out = &buf[..n];
             assert_eq!(
-                out.windows(2).filter(|w| *w == b"\r\n").count(),
+                out.windows(2).filter(|pair| *pair == b"\r\n").count(),
                 3,
                 "request line, one header, blank line"
             );
@@ -196,20 +196,20 @@ fn written_response_heads_parse_back(tc: TestCase) {
 
     let mut buf = [0u8; LIMIT];
     let mut w = HeadWriter::response(&mut buf, status, &reason);
-    w.header_u64("Content-Length", length);
+    let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", length);
     for (name, value) in names.iter().zip(&values) {
-        w.header(name, value.as_bytes());
+        let _: &mut HeadWriter<'_> = w.header(name, value.as_bytes());
     }
     let n = w.finish().expect("short enough to fit");
     let head = parse_response(&buf[..n], LIMIT)
         .expect("what the writer wrote is well formed")
         .expect("and complete");
-    assert_eq!(head.status, status);
-    assert_eq!(head.fields.head_len, n);
-    assert_eq!(head.fields.content_length, Some(length));
+    assert_eq!(head.status(), status);
+    assert_eq!(head.fields().head_len(), n);
+    assert_eq!(head.fields().content_length(), Some(length));
     for (name, value) in names.iter().zip(&values) {
         assert_eq!(
-            head.fields.header(&buf[..n], &name.to_ascii_uppercase()),
+            head.fields().header(&buf[..n], &name.to_ascii_uppercase()),
             Some(value.as_bytes()),
             "{name}"
         );

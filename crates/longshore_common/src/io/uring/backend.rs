@@ -13,14 +13,14 @@ use core::ffi::c_int;
 impl Io for UringIo {
     fn now_ns(&self) -> u64 {
         let mut ts = timespec::default();
-        unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
-        ts.sec as u64 * 1_000_000_000 + ts.nsec as u64
+        let _: i32 = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
+        crate::io::clock_ns(ts.sec, ts.nsec)
     }
 
     fn unix_secs(&self) -> u64 {
         let mut ts = timespec::default();
-        unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
-        ts.sec as u64
+        let _: i32 = unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
+        crate::io::clock_secs(ts.sec)
     }
 
     fn buf(&mut self, id: BufId) -> &mut [u8] {
@@ -78,13 +78,13 @@ impl Io for UringIo {
         let fd = l.into_raw_fd();
         if self.no_delay || self.keep_alive {
             if let Err(errno) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
-                unsafe { close(fd) };
+                let _: i32 = unsafe { close(fd) };
                 return Err(io::Error::from_raw_os_error(errno));
             }
         }
         self.last_listen_opts = Some(read_tcp_options(fd));
         let r = self.ring.update_file(sock.0, fd);
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         r.map(|_| bound)
     }
 
@@ -100,61 +100,20 @@ impl Io for UringIo {
         let l = std::os::unix::net::UnixListener::bind(path)?;
         let fd = l.into_raw_fd();
         let r = self.ring.update_file(sock.0, fd);
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         r
     }
 
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy> {
         let i = self.free.pop().ok_or(Busy)?;
         self.init_slot(i, token);
-        if op.is_file_op() {
-            let pool = &self.bufs[self.pool_base..];
-            if let Err(errno) = self.files_table.check_op(&op, pool, &self.limits) {
-                self.slots[i as usize].state = State::Free;
-                self.ready.push(i, Completion::new(token, errno));
-                return Ok(());
-            }
-        }
-        match op {
-            Op::ArmedAccept { listener } => {
-                assert!(
-                    listener.0 < self.limits.sockets_max,
-                    "socket slot out of range"
-                );
-                if self.limits.accept_range_len == 0 {
-                    self.slots[i as usize].state = State::Free;
-                    self.ready.push(i, Completion::new(token, -ENFILE));
-                    return Ok(());
-                }
-            }
-            Op::ArmedRecv { sock } => {
-                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-                if self.limits.ring_buffers == 0 {
-                    self.slots[i as usize].state = State::Free;
-                    self.ready.push(i, Completion::new(token, -ENOBUFS));
-                    return Ok(());
-                }
-            }
-            Op::ConnectUnix {
-                sock,
-                path_buf,
-                path_off,
-                path_len,
-            } => {
-                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-                let pool = &self.bufs[self.pool_base..];
-                if let Err(errno) =
-                    check_unix_path(pool, &self.limits, path_buf, path_off, path_len, 108)
-                {
-                    self.slots[i as usize].state = State::Free;
-                    self.ready.push(i, Completion::new(token, errno));
-                    return Ok(());
-                }
-            }
-            _ => {}
+        if let Err(errno) = self.precheck(&op) {
+            self.slots[i as usize].state = State::Free;
+            self.ready.push(i, Completion::new(token, errno));
+            return Ok(());
         }
         if let Some(mut sqe) = self.prepare_sqe(i, op, token) {
-            sqe.user_data |= i as u64;
+            sqe.user_data |= u64::from(i);
             self.push(sqe);
         }
         Ok(())
@@ -170,6 +129,7 @@ impl Io for UringIo {
         let pool = &self.bufs[self.pool_base..];
         if let Err((bad_idx, errno)) = self.files_table.check_chain(ops, pool, &self.limits) {
             for (idx, &(token, _)) in ops.iter().enumerate() {
+                #[expect(clippy::expect_used, reason = "free.len() >= ops.len(), checked above")]
                 let i = self.free.pop().expect("checked free.len()");
                 self.slots[i as usize].state = State::Free;
                 self.ready.push(
@@ -181,10 +141,11 @@ impl Io for UringIo {
         }
         let last = ops.len() - 1;
         for (idx, &(token, op)) in ops.iter().enumerate() {
+            #[expect(clippy::expect_used, reason = "free.len() >= ops.len(), checked above")]
             let i = self.free.pop().expect("checked free.len()");
             self.init_slot(i, token);
             if let Some(mut sqe) = self.prepare_sqe(i, op, token) {
-                sqe.user_data |= i as u64;
+                sqe.user_data |= u64::from(i);
                 if idx < last {
                     sqe.flags |= IOSQE_IO_LINK;
                 }
@@ -269,19 +230,23 @@ impl UringIo {
         assert_eq!(self.in_flight, 0, "probe_tcp_options requires an idle ring");
         let probe_one =
             |ring: &mut Ring, level: c_int, optname: c_int| -> io::Result<Option<bool>> {
+                // The command's `level` and `optname` are `__u32` in the uapi.
+                let invalid = |_| io::Error::from(io::ErrorKind::InvalidInput);
+                let level = u32::try_from(level).map_err(invalid)?;
+                let optname = u32::try_from(optname).map_err(invalid)?;
                 let mut val: c_int = 0;
                 let sqe = io_uring_sqe {
                     opcode: IORING_OP_URING_CMD,
                     flags: IOSQE_FIXED_FILE,
-                    fd: sock.0 as i32,
+                    fd: fixed_fd(sock.0),
                     off: SOCKET_URING_OP_GETSOCKOPT,
-                    addr: (level as u32 as u64) | ((optname as u32 as u64) << 32),
+                    addr: u64::from(level) | (u64::from(optname) << 32),
                     file_index: core::mem::size_of::<c_int>() as u32,
                     addr3: (&mut val as *mut c_int) as u64,
                     ..Default::default()
                 };
                 ring.push(sqe).map_err(|_| io::Error::other("sq full"))?;
-                ring.enter(1)?;
+                let _: u32 = ring.enter(1)?;
                 let cqe = ring.pop().ok_or_else(|| io::Error::other("missing cqe"))?;
                 if cqe.res == -EINVAL || cqe.res == -95 {
                     return Ok(None);
@@ -346,4 +311,67 @@ pub(super) fn read_tcp_options(fd: c_int) -> (bool, bool) {
         read_one(IPPROTO_TCP, TCP_NODELAY),
         read_one(SOL_SOCKET, SO_KEEPALIVE),
     )
+}
+
+impl UringIo {
+    /// Checks an operation's arguments before it takes a submission entry;
+    /// `Err` carries the errno it completes with at once.
+    #[inline]
+    fn precheck(&mut self, op: &Op) -> Result<(), i32> {
+        if op.is_file_op() {
+            let pool = &self.bufs[self.pool_base..];
+            self.files_table.check_op(op, pool, &self.limits)?;
+        }
+        match *op {
+            Op::ArmedAccept { listener } => {
+                assert!(
+                    listener.0 < self.limits.sockets_max,
+                    "socket slot out of range"
+                );
+                if self.limits.accept_range_len == 0 {
+                    return Err(-ENFILE);
+                }
+            }
+            Op::ArmedRecv { sock } => {
+                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                if self.limits.ring_buffers == 0 {
+                    return Err(-ENOBUFS);
+                }
+            }
+            Op::ConnectUnix {
+                sock,
+                path_buf,
+                path_off,
+                path_len,
+            } => {
+                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                let pool = &self.bufs[self.pool_base..];
+                let _: &[u8] =
+                    check_unix_path(pool, &self.limits, path_buf, path_off, path_len, 108)?;
+            }
+            Op::Connect { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {}
+        }
+        Ok(())
+    }
 }

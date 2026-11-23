@@ -6,98 +6,186 @@
 //! Tier 3 pairwise scenarios `T3-01`–`T3-02`: `Engine<Posix>` file + TCP ops
 //! in one tick loop, and `Limits::BASE` + aligned pool + `submit_chain`.
 
-use super::super::harness::{
-    drive_until, read_pool_bytes, submit_and_wait_one, write_pool_bytes, TempDir,
+use super::super::harness::{drive_until, read_pool_bytes, write_pool_bytes, TempDir};
+use super::{
+    disk_config, file_limits, open_file, read_op, result_of, run_op, rw_create, sync_op, write_op,
+    write_path,
 };
-use super::{disk_config, file_limits, open_file, write_path};
 use longshore::io::files::file_size;
-use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token};
+use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, Sock, Token};
 use longshore::sim::{Faults, SimIo};
+#[cfg(unix)]
+use std::net::SocketAddr;
 
 fn run_t3_02_backend<IO: Io>(io: &mut IO, path_a: &str) {
     let mut out = Completions::new(16);
-    let aligned_buf = BufId(8);
-    let read_buf = BufId(9);
-    let path_buf = BufId(4);
+    let aligned_buf = BufId::new(8);
+    let read_buf = BufId::new(9);
+    let path_buf = BufId::new(4);
     let ptr = io.buf(aligned_buf).as_ptr() as usize;
     assert_eq!(ptr % 4096, 0, "aligned buffer must start on block boundary");
 
+    let direct = rw_create().with_direct(true);
     let open_res = open_file(
         io,
         &mut out,
-        Token(1),
-        FileSlot(0),
+        Token::new(1),
+        FileSlot::new(0),
         path_buf,
         path_a,
-        OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            direct: true,
-            ..Default::default()
-        },
+        direct,
     )
     .expect("open direct");
     assert_eq!(open_res, 0);
 
-    let pattern: Vec<u8> = (0..4096).map(|i| ((i * 7 + 3) & 0xff) as u8).collect();
+    let pattern: Vec<u8> = (0..4096u32).map(|i| ((i * 7 + 3) & 0xff) as u8).collect();
     write_pool_bytes(io, aligned_buf, 0, &pattern);
     let chain = [
         (
-            Token(2),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: aligned_buf,
-                off: 0,
-                len: 4096,
-                file_off: 0,
-            },
+            Token::new(2),
+            write_op(FileSlot::new(0), aligned_buf, 4096, 0),
         ),
-        (
-            Token(3),
-            Op::FileSync {
-                slot: FileSlot(0),
-                datasync: true,
-            },
-        ),
+        (Token::new(3), sync_op(FileSlot::new(0), true)),
     ];
     io.submit_chain(&chain).expect("submit_chain");
     let cs = drive_until(io, &mut out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(2)) && v.iter().any(|c| c.token == Token(3))
+        v.iter().any(|c| c.token().get() == 2) && v.iter().any(|c| c.token().get() == 3)
     })
     .expect("chain drive");
-    assert_eq!(
-        cs.iter().find(|c| c.token == Token(2)).unwrap().result,
-        4096
-    );
-    assert_eq!(cs.iter().find(|c| c.token == Token(3)).unwrap().result, 0);
+    assert_eq!(result_of(&cs, 2), 4096);
+    assert_eq!(result_of(&cs, 3), 0);
 
-    let r = submit_and_wait_one(
+    let r = run_op(
         io,
         &mut out,
-        Token(4),
-        Op::FileRead {
-            slot: FileSlot(0),
-            buf: read_buf,
-            off: 0,
-            len: 4096,
-            file_off: 0,
-        },
+        4,
+        read_op(FileSlot::new(0), read_buf, 4096, 0),
         10_000,
-    )
-    .expect("read");
-    assert_eq!(r.result, 4096);
+    );
+    assert_eq!(r, 4096);
     assert_eq!(read_pool_bytes(io, read_buf, 0, 4096), pattern);
 
-    let c = submit_and_wait_one(
+    let c = run_op(
         io,
         &mut out,
-        Token(5),
-        Op::FileClose { slot: FileSlot(0) },
+        5,
+        Op::FileClose {
+            slot: FileSlot::new(0),
+        },
         10_000,
+    );
+    assert_eq!(c, 0);
+}
+
+/// Accept, connect and a file write in one tick loop; the write must land whole.
+#[cfg(unix)]
+fn connect_while_writing<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    addr: SocketAddr,
+    payload: &[u8],
+) {
+    io.submit(
+        Token::new(10),
+        Op::Accept {
+            listener: Sock::new(0),
+            sock: Sock::new(2),
+        },
     )
-    .expect("close");
-    assert_eq!(c.result, 0);
+    .unwrap();
+    io.submit(
+        Token::new(11),
+        Op::Connect {
+            sock: Sock::new(1),
+            addr,
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(12),
+        write_op(FileSlot::new(0), BufId::new(0), payload.len() as u32, 0),
+    )
+    .unwrap();
+    let cs = drive_until(io, out, 10_000, |v| {
+        v.iter().any(|c| c.token().get() == 10)
+            && v.iter().any(|c| c.token().get() == 11)
+            && v.iter().any(|c| c.token().get() == 12)
+    })
+    .unwrap();
+    assert_eq!(result_of(&cs, 12), i32::try_from(payload.len()).unwrap());
+}
+
+/// A TCP send/recv and a file sync in one tick loop.
+#[cfg(unix)]
+fn exchange_while_syncing<IO: Io>(io: &mut IO, out: &mut Completions) {
+    io.submit(
+        Token::new(13),
+        Op::Send {
+            sock: Sock::new(1),
+            buf: BufId::new(1),
+            off: 0,
+            len: 8,
+            zero_copy: false,
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(14),
+        Op::Recv {
+            sock: Sock::new(2),
+            buf: BufId::new(2),
+            off: 0,
+            len: 16,
+        },
+    )
+    .unwrap();
+    io.submit(Token::new(15), sync_op(FileSlot::new(0), false))
+        .unwrap();
+    let cs2 = drive_until(io, out, 10_000, |v| {
+        v.iter().any(|c| c.token().get() == 14) && v.iter().any(|c| c.token().get() == 15)
+    })
+    .unwrap();
+    assert_eq!(result_of(&cs2, 15), 0);
+    assert_eq!(read_pool_bytes(io, BufId::new(2), 0, 8), b"ping-tcp");
+}
+
+/// Closes the file, renames `path_a` to `path_b`, and stats `path_b` into
+/// `BufId(3)`; each must succeed.
+#[cfg(unix)]
+fn close_rename_and_stat<IO: Io>(io: &mut IO, out: &mut Completions, path_a: &str, path_b: &str) {
+    assert_eq!(
+        run_op(
+            io,
+            out,
+            16,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            },
+            10_000
+        ),
+        0
+    );
+    let old_len = write_path(io, BufId::new(4), path_a);
+    let new_len = write_path(io, BufId::new(5), path_b);
+    let rename = Op::FileRename {
+        old_buf: BufId::new(4),
+        old_off: 0,
+        old_len,
+        new_buf: BufId::new(5),
+        new_off: 0,
+        new_len,
+    };
+    assert_eq!(run_op(io, out, 17, rename, 10_000), 0);
+
+    let st_len = write_path(io, BufId::new(4), path_b);
+    let status = Op::FileStatus {
+        path_buf: BufId::new(4),
+        path_off: 0,
+        path_len: st_len,
+        out_buf: BufId::new(3),
+        out_off: 0,
+    };
+    assert_eq!(run_op(io, out, 18, status, 10_000), 0);
 }
 
 #[cfg(unix)]
@@ -113,170 +201,49 @@ fn t3_01_engine_posix_file_ops_and_tcp_in_same_tick() {
     let mut out = Completions::new(16);
 
     let addr = io
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .expect("listen");
     let open_rc = open_file(
         &mut io,
         &mut out,
-        Token(1),
-        FileSlot(0),
-        BufId(4),
+        Token::new(1),
+        FileSlot::new(0),
+        BufId::new(4),
         path_a.to_str().unwrap(),
-        OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        },
+        rw_create(),
     )
     .expect("open");
     assert_eq!(open_rc, 0);
 
     let payload = b"t3-01-posix-file-and-tcp";
-    write_pool_bytes(&mut io, BufId(0), 0, payload);
-    write_pool_bytes(&mut io, BufId(1), 0, b"ping-tcp");
-
-    io.submit(
-        Token(10),
-        Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(11),
-        Op::Connect {
-            sock: Sock(1),
-            addr,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(12),
-        Op::FileWrite {
-            slot: FileSlot(0),
-            buf: BufId(0),
-            off: 0,
-            len: payload.len() as u32,
-            file_off: 0,
-        },
-    )
-    .unwrap();
-    let cs = drive_until(&mut io, &mut out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(10))
-            && v.iter().any(|c| c.token == Token(11))
-            && v.iter().any(|c| c.token == Token(12))
-    })
-    .unwrap();
-    assert_eq!(
-        cs.iter().find(|c| c.token == Token(12)).unwrap().result,
-        payload.len() as i32
-    );
-
-    io.submit(
-        Token(13),
-        Op::Send {
-            sock: Sock(1),
-            buf: BufId(1),
-            off: 0,
-            len: 8,
-            zero_copy: false,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(14),
-        Op::Recv {
-            sock: Sock(2),
-            buf: BufId(2),
-            off: 0,
-            len: 16,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(15),
-        Op::FileSync {
-            slot: FileSlot(0),
-            datasync: false,
-        },
-    )
-    .unwrap();
-    let cs2 = drive_until(&mut io, &mut out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(14)) && v.iter().any(|c| c.token == Token(15))
-    })
-    .unwrap();
-    assert_eq!(cs2.iter().find(|c| c.token == Token(15)).unwrap().result, 0);
-    assert_eq!(read_pool_bytes(&mut io, BufId(2), 0, 8), b"ping-tcp");
-
-    assert_eq!(
-        submit_and_wait_one(
-            &mut io,
-            &mut out,
-            Token(16),
-            Op::FileClose { slot: FileSlot(0) },
-            10_000,
-        )
-        .unwrap()
-        .result,
-        0
-    );
-    let old_len = write_path(&mut io, BufId(4), path_a.to_str().unwrap());
-    let new_len = write_path(&mut io, BufId(5), path_b.to_str().unwrap());
-    let ren = submit_and_wait_one(
+    write_pool_bytes(&mut io, BufId::new(0), 0, payload);
+    write_pool_bytes(&mut io, BufId::new(1), 0, b"ping-tcp");
+    connect_while_writing(&mut io, &mut out, addr, payload);
+    exchange_while_syncing(&mut io, &mut out);
+    close_rename_and_stat(
         &mut io,
         &mut out,
-        Token(17),
-        Op::FileRename {
-            old_buf: BufId(4),
-            old_off: 0,
-            old_len,
-            new_buf: BufId(5),
-            new_off: 0,
-            new_len,
-        },
-        10_000,
-    )
-    .unwrap();
-    assert_eq!(ren.result, 0);
-
-    let st_len = write_path(&mut io, BufId(4), path_b.to_str().unwrap());
-    let st = submit_and_wait_one(
-        &mut io,
-        &mut out,
-        Token(18),
-        Op::FileStatus {
-            path_buf: BufId(4),
-            path_off: 0,
-            path_len: st_len,
-            out_buf: BufId(3),
-            out_off: 0,
-        },
-        10_000,
-    )
-    .unwrap();
-    assert_eq!(st.result, 0);
-    assert_eq!(file_size(io.buf(BufId(3))), payload.len() as u64);
+        path_a.to_str().unwrap(),
+        path_b.to_str().unwrap(),
+    );
+    assert_eq!(file_size(io.buf(BufId::new(3))), payload.len() as u64);
     assert_eq!(std::fs::read(&path_b).unwrap(), payload);
     assert!(!path_a.exists());
 }
 
 #[test]
 fn t3_02_limits_base_aligned_pool_and_submit_chain() {
-    let limits = Limits {
-        files_max: 4,
-        aligned_buffers: 4,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        buffers: 4,
-        buffer_size: 4096,
-        small_buffers: 4,
-        small_buffer_size: 512,
-        ops_max: 8,
-        sockets_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_files_max(4)
+        .with_aligned_buffers(4)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_buffers(4)
+        .with_buffer_size(4096)
+        .with_small_buffers(4)
+        .with_small_buffer_size(512)
+        .with_ops_max(8)
+        .with_sockets_max(4);
     let mut sim = SimIo::new(limits, 302, Faults::default());
     sim.setup_disk(disk_config());
     run_t3_02_backend(&mut sim, "/t3_02_sim.dat");

@@ -61,13 +61,13 @@ fn empty_buffer_completions_return_to_ring_without_exposing_buf_id() {
     assert_eq!(returned, None);
 
     for res in [0, -ECANCELED, -104] {
-        let mut returned = None;
-        let got = decode_ring_buf(buf_flags, res, base, |id| returned = Some(id));
-        assert_eq!(got, None, "res={res}");
+        returned = None;
+        let empty = decode_ring_buf(buf_flags, res, base, |id| returned = Some(id));
+        assert_eq!(empty, None, "res={res}");
         assert_eq!(returned, Some(7), "res={res}");
     }
 
-    let mut returned = None;
+    returned = None;
     assert_eq!(
         decode_ring_buf(IORING_CQE_F_MORE, 0, base, |id| returned = Some(id)),
         None

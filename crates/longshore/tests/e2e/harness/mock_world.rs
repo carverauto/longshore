@@ -96,16 +96,16 @@ type AttemptHandler = Box<dyn FnMut(&Op, &mut [u8], &Limits) -> Option<i32>>;
 /// Configurable mock [`World`] implementation recording exact hook call order.
 pub struct TestWorld {
     calls: RefCell<Vec<HookCall>>,
-    pub now: u64,
-    pub step_ns: u64,
-    pub unix_epoch: u64,
-    pub first_index: usize,
-    pub hold_next: bool,
-    pub ready_socks: Option<Vec<Sock>>,
-    pub claimed_socks: Vec<Sock>,
-    pub claim_connects: bool,
-    pub stall_on_wait: bool,
-    pub wait_limit: Option<usize>,
+    now: u64,
+    step_ns: u64,
+    unix_epoch: u64,
+    first_index: usize,
+    hold_next: bool,
+    ready_socks: Option<Vec<Sock>>,
+    claimed_socks: Vec<Sock>,
+    claim_connects: bool,
+    stall_on_wait: bool,
+    wait_limit: Option<usize>,
     wait_count: usize,
     attempt_handler: Option<AttemptHandler>,
 }
@@ -134,6 +134,25 @@ impl TestWorld {
             wait_count: 0,
             attempt_handler: None,
         }
+    }
+
+    /// Starts the clock at `now` and advances it by `step_ns` per reading,
+    /// with the Unix time `unix_epoch` at the start.
+    pub fn with_clock(mut self, now: u64, step_ns: u64, unix_epoch: u64) -> Self {
+        (self.now, self.step_ns, self.unix_epoch) = (now, step_ns, unix_epoch);
+        self
+    }
+
+    /// The index the world reports first.
+    pub fn with_first_index(mut self, first_index: usize) -> Self {
+        self.first_index = first_index;
+        self
+    }
+
+    /// Claims operations on the specified socket slots.
+    pub fn with_claimed_socks(mut self, socks: Vec<Sock>) -> Self {
+        self.claimed_socks = socks;
+        self
     }
 
     /// Restricts `is_ready` reporting to the specified socket slots.
@@ -179,7 +198,21 @@ impl TestWorld {
             | Op::ArmedRecv { sock }
             | Op::RecvNow { sock, .. }
             | Op::Close { sock } => Some(sock),
-            _ => None,
+            Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => None,
         }
     }
 }
@@ -194,7 +227,7 @@ impl World for TestWorld {
     }
 
     fn register_file(&mut self, _path: &str) -> io::Result<FileId> {
-        Ok(FileId(0))
+        Ok(FileId::new(0))
     }
 
     fn listen(&mut self, _sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
@@ -245,7 +278,30 @@ impl World for TestWorld {
         }
         match op {
             Op::Close { .. } => Some(0),
-            _ => None,
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => None,
         }
     }
 
@@ -257,7 +313,33 @@ impl World for TestWorld {
             Op::Connect { sock, .. } if self.claim_connects => {
                 self.claimed_socks.is_empty() || self.claimed_socks.contains(sock)
             }
-            _ => Self::op_sock(op).is_some_and(|s| self.claimed_socks.contains(&s)),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {
+                Self::op_sock(op).is_some_and(|s| self.claimed_socks.contains(&s))
+            }
         }
     }
 

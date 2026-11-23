@@ -19,9 +19,10 @@ use std::sync::atomic::Ordering;
 pub const KEY_MAX: usize = 1024;
 
 /// How an operation ended.
-// Held in a preallocated cell and passed by value: boxing the large variant
-// would allocate on every operation.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "held in a preallocated cell and passed by value: boxing the large variant would allocate on every operation"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Finished {
     Outcome(Outcome),

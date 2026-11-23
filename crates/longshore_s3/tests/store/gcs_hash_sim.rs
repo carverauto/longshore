@@ -7,6 +7,12 @@
 //! CRC-32C and the MD5 of an object as two values, which may share one
 //! header line or have a line each, in either order.
 
+#[expect(
+    dead_code,
+    unused_imports,
+    reason = "`gcs_world` also serves the token-rotation and failure tests in gcs_sim.rs; these hash tests use only its world and server, so the rest goes unused here"
+)]
+#[cfg(test)]
 mod gcs_world;
 use gcs_world::*;
 
@@ -21,6 +27,7 @@ const SCRIPTED: &[u8] = b"the body of the scripted response";
 /// A well-formed MD5 value. Nothing reads it.
 const MD5: &str = "md5=AAAAAAAAAAAAAAAAAAAAAA==";
 
+#[cfg(test)]
 fn crc_of(body: &[u8]) -> String {
     let value = longshore_crc::crc32c_header_value(longshore_crc::crc32c(body));
     format!("crc32c={}", core::str::from_utf8(&value).unwrap())
@@ -28,6 +35,7 @@ fn crc_of(body: &[u8]) -> String {
 
 /// Fetch a key whose first response is `SCRIPTED` under these header lines.
 /// Returns how the fetch ended and whether the caller got the scripted body.
+#[cfg(test)]
 fn fetch_with(hash_lines: &[String]) -> (Done, bool) {
     let mut w = world(1, Faults::default(), 3);
     w.io.buf(TX)[..STORED.len()].copy_from_slice(STORED);
@@ -40,7 +48,7 @@ fn fetch_with(hash_lines: &[String]) -> (Done, bool) {
         Checksum::Compute,
     )
     .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n", SCRIPTED.len());
     for line in hash_lines {
         response += &format!("x-goog-hash: {line}\r\n");
@@ -57,14 +65,14 @@ fn fetch_with(hash_lines: &[String]) -> (Done, bool) {
 }
 
 fn verified_at_once(len: usize) -> Done {
-    Done {
-        token: 2,
-        outcome: Outcome::Fetched {
+    Done::new(
+        2,
+        Outcome::Fetched {
             len: len as u32,
             verified: true,
         },
-        attempts: 1,
-    }
+        1,
+    )
 }
 
 #[test]
@@ -103,14 +111,14 @@ fn a_missing_malformed_or_wrong_checksum_is_fetched_again() {
     ] {
         let (done, scripted) = fetch_with(&lines);
         assert_eq!(
-            done.outcome,
+            done.outcome(),
             Outcome::Fetched {
                 len: STORED.len() as u32,
                 verified: true
             },
             "{lines:?}"
         );
-        assert!(done.attempts > 1 && !scripted, "{lines:?}: {done:?}");
+        assert!(done.attempts() > 1 && !scripted, "{lines:?}: {done:?}");
     }
 }
 

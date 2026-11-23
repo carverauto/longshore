@@ -8,7 +8,7 @@
 //! and closing unanswered sent slots without overwriting existing answers.
 
 use crate::pool::Pool;
-use crate::sync::{Condvar, Mutex};
+use crate::sync::{unpoisoned, Condvar, Mutex};
 use core::task::{Context, Poll, Waker};
 
 struct CellState<A> {
@@ -78,7 +78,7 @@ impl<A> Cells<A> {
     /// Mark `slot` as sent with optional caller-attached `tag` before enqueueing
     /// the request.
     pub fn prepare(&self, slot: u32, tag: Option<u32>) {
-        let mut s = self.cells[slot as usize].state.lock().expect("cell lock");
+        let mut s = unpoisoned(self.cells[slot as usize].state.lock());
         *s = CellState {
             sent: true,
             answer: None,
@@ -90,13 +90,13 @@ impl<A> Cells<A> {
 
     /// Roll back [`Cells::prepare`] after a failed send.
     pub fn cancel_prepare(&self, slot: u32) {
-        let mut s = self.cells[slot as usize].state.lock().expect("cell lock");
+        let mut s = unpoisoned(self.cells[slot as usize].state.lock());
         *s = CellState::default();
     }
 
     /// Poll `slot` for an answer, freeing `slot` into `pool` once taken.
     pub fn poll_answer(&self, pool: &Pool, slot: u32, cx: &mut Context<'_>) -> Poll<A> {
-        let mut s = self.cells[slot as usize].state.lock().expect("cell lock");
+        let mut s = unpoisoned(self.cells[slot as usize].state.lock());
         if let Some(ans) = s.answer.take() {
             *s = CellState::default();
             drop(s);
@@ -114,12 +114,12 @@ impl<A> Cells<A> {
     /// into `pool` and return the answer.
     pub fn wait_answer(&self, pool: &Pool, slot: u32) -> A {
         let cell = &self.cells[slot as usize];
-        let mut s = cell.state.lock().expect("cell lock");
+        let mut s = unpoisoned(cell.state.lock());
         let ans = loop {
             if let Some(ans) = s.answer.take() {
                 break ans;
             }
-            s = cell.done.wait(s).expect("cell lock");
+            s = unpoisoned(cell.done.wait(s));
         };
         *s = CellState::default();
         drop(s);
@@ -131,7 +131,7 @@ impl<A> Cells<A> {
     /// frees `slot` into `pool`, and returns `Some(answer)`. Otherwise marks the
     /// cell detached so the receiver will free `slot` and reclaim any `tag`.
     pub fn detach(&self, pool: &Pool, slot: u32) -> Option<A> {
-        let mut s = self.cells[slot as usize].state.lock().expect("cell lock");
+        let mut s = unpoisoned(self.cells[slot as usize].state.lock());
         if let Some(ans) = s.answer.take() {
             *s = CellState::default();
             drop(s);
@@ -150,7 +150,7 @@ impl<A> Cells<A> {
     /// `u32` tag (if any).
     pub fn answer(&self, pool: &Pool, slot: u32, value: A) -> Option<u32> {
         let cell = &self.cells[slot as usize];
-        let mut s = cell.state.lock().expect("cell lock");
+        let mut s = unpoisoned(cell.state.lock());
         if s.detached {
             let tag = s.tag.take();
             *s = CellState::default();
@@ -180,7 +180,7 @@ impl<A> Cells<A> {
         mut on_detached: impl FnMut(u32),
     ) {
         for (slot, cell) in self.cells.iter().enumerate() {
-            let mut s = cell.state.lock().expect("cell lock");
+            let mut s = unpoisoned(cell.state.lock());
             if !s.sent || s.answer.is_some() {
                 continue;
             }

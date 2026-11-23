@@ -9,7 +9,7 @@ use super::{
     Entry, QueueReceiver, Recv, TryRecv, CLOSED, COUNT_MASK, NOTIFY_IDLE, NOTIFY_PARKED, PARK_NONE,
     PARK_RECV, PARK_STOP, STOPPED,
 };
-use crate::sync::{self, Ordering};
+use crate::sync::{self, unpoisoned, Ordering};
 use longshore_common::io::{Busy, Completion, Io, Op};
 
 impl<M: Copy> QueueReceiver<M> {
@@ -26,7 +26,7 @@ impl<M: Copy> QueueReceiver<M> {
     /// Handle a completion; if it matches the receiver's wake token, re-arm
     /// `Op::AwaitWake` (unless closed) and return `Ok(true)`.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> Result<bool, Busy> {
-        if c.token != self.wake_token {
+        if c.token() != self.wake_token {
             return Ok(false);
         }
         self.armed = false;
@@ -54,7 +54,7 @@ impl<M: Copy> QueueReceiver<M> {
                 self.head += 1;
                 match entry {
                     Entry::Msg(m) => {
-                        self.shared.state.fetch_sub(1, Ordering::Release);
+                        let _: u64 = self.shared.state.fetch_sub(1, Ordering::Release);
                         return TryRecv::Message(m);
                     }
                     Entry::Stop => {
@@ -103,7 +103,7 @@ impl<M: Copy> QueueReceiver<M> {
     /// after I/O shutdown.
     pub fn recv_parked(&mut self) -> Recv<M> {
         {
-            let mut g = self.shared.parker.lock().expect("parker lock");
+            let mut g = unpoisoned(self.shared.parker.lock());
             *g = Some(sync::current());
         }
         assert_eq!(
@@ -112,7 +112,7 @@ impl<M: Copy> QueueReceiver<M> {
             "recv_parked requires a queue built with queue_parked or mailbox_parked"
         );
         loop {
-            self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
+            let _: usize = self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
             match self.try_recv() {
                 TryRecv::Message(m) => return Recv::Message(m),
                 TryRecv::Stop => return Recv::Stop,
@@ -143,19 +143,20 @@ impl<M: Copy> QueueReceiver<M> {
             return;
         }
         {
-            let mut g = self.shared.parker.lock().expect("parker lock");
+            let mut g = unpoisoned(self.shared.parker.lock());
             *g = Some(sync::current());
         }
         if self.shared.park_mode.load(Ordering::Acquire) == PARK_NONE {
-            let _ = self.shared.park_mode.compare_exchange(
-                PARK_NONE,
-                PARK_STOP,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            );
+            // Only the receiver moves the mode off PARK_NONE, so there is no
+            // competing writer whose value a failed exchange would report.
+            let _: Option<u8> = self
+                .shared
+                .park_mode
+                .compare_exchange(PARK_NONE, PARK_STOP, Ordering::SeqCst, Ordering::SeqCst)
+                .ok();
         }
         loop {
-            self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
+            let _: usize = self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
             if self.shared.stop_requested.load(Ordering::SeqCst)
                 || self.shared.senders.load(Ordering::SeqCst) == 0
             {
@@ -201,7 +202,7 @@ impl<M: Copy> QueueReceiver<M> {
             self.head += 1;
             match entry {
                 Entry::Msg(m) => {
-                    self.shared.state.fetch_sub(1, Ordering::Release);
+                    let _: u64 = self.shared.state.fetch_sub(1, Ordering::Release);
                     on_item(Recv::Message(m));
                 }
                 Entry::Stop => {

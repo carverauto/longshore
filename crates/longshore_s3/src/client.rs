@@ -24,11 +24,12 @@
 //! use longshore_s3::creds::Credentials;
 //!
 //! let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-//! let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
-//! settings.tls = true;
-//! settings.port = 443;
-//! settings.threads = 4; // four independent I/O threads
-//! let client = settings.build().unwrap();
+//! let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+//!     .tls(true)
+//!     .port(443)
+//!     .threads(4) // four independent I/O threads
+//!     .build()
+//!     .unwrap();
 //!
 //! let mut body = client.buffer_blocking();
 //! body.as_mut_slice()[..5].copy_from_slice(b"hello");
@@ -214,7 +215,9 @@ impl Client {
     ) -> Pending<(Result<(), Error>, Buffer)> {
         self.store_as(key, body, len, false, |f, _| match f {
             Finished::Outcome(Outcome::Stored) => Ok(()),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
     }
 
@@ -229,7 +232,9 @@ impl Client {
         self.store_as(key, body, len, true, |f, _| match f {
             Finished::Outcome(Outcome::Stored) => Ok(true),
             Finished::Outcome(Outcome::AlreadyExists { .. }) => Ok(false),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
     }
 
@@ -239,7 +244,7 @@ impl Client {
         body: Buffer,
         len: usize,
         no_clobber: bool,
-        map: fn(Finished, u32) -> Result<T, Error>,
+        map: fn(&Finished, u32) -> Result<T, Error>,
     ) -> Pending<(Result<T, Error>, Buffer)> {
         let too_long = len > body.lane.buf_size;
         let (lane, buf, alive) = body.into_parts();
@@ -291,9 +296,11 @@ impl Client {
             0,
             None,
             |f, _| match f {
-                Finished::Outcome(Outcome::Fetched { len, .. }) => Ok(Some(len as usize)),
+                Finished::Outcome(Outcome::Fetched { len, .. }) => Ok(Some(*len as usize)),
                 Finished::Outcome(Outcome::NotFound) => Ok(None),
-                other => Err(error_of(other)),
+                other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                    Err(error_of(other))
+                }
             },
         )
     }
@@ -302,7 +309,9 @@ impl Client {
     pub fn erase(&self, key: &str) -> Pending<Result<(), Error>> {
         self.unbuffered(key, Kind::Erase, |f, _| match f {
             Finished::Outcome(Outcome::Erased | Outcome::NotFound) => Ok(()),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
     }
 
@@ -312,7 +321,7 @@ impl Client {
         &self,
         key: &str,
         kind: Kind,
-        map: fn(Finished, u32) -> Result<T, Error>,
+        map: fn(&Finished, u32) -> Result<T, Error>,
     ) -> Pending<Result<T, Error>> {
         let first = self.lanes[least_busy(&self.lanes)].clone();
         let pending = Pending::new((first, self.alive.clone()), key, kind, None, 0, None, map);
@@ -324,9 +333,9 @@ impl Client {
     }
 }
 
-fn error_of(f: Finished) -> Error {
+fn error_of(f: &Finished) -> Error {
     match f {
-        Finished::Outcome(Outcome::Fatal(fatal)) => Error::Store(fatal),
+        Finished::Outcome(Outcome::Fatal(fatal)) => Error::Store(*fatal),
         Finished::Outcome(_) => Error::Unexpected,
         Finished::Rejected(SubmitError::BadKey) => Error::BadKey,
         Finished::Rejected(SubmitError::BadRange) => Error::BadRange,
@@ -363,9 +372,19 @@ fn least_busy(lanes: &[Arc<Lane>]) -> usize {
     if lanes.len() == 1 {
         return 0;
     }
-    (0..lanes.len())
-        .min_by_key(|&n| (!open(&lanes[n]), lanes[n].in_flight()))
-        .expect("at least one lane")
+    // The first of the least busy, as `min_by_key` would pick, starting
+    // from lane 0 since a client always has one.
+    let busy = |n: usize| (!open(&lanes[n]), lanes[n].in_flight());
+    let first = (0, busy(0));
+    let (best, _) = (1..lanes.len()).fold(first, |(best, least), n| {
+        let b = busy(n);
+        if b < least {
+            (n, b)
+        } else {
+            (best, least)
+        }
+    });
+    best
 }
 
 /// Whether the lane still takes requests.

@@ -111,6 +111,30 @@ impl Posix {
                 file_off,
                 len,
             } => Some(self.file_punch(slot, file_off, len)),
+            Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => Some(Self::attempt_path_op(op, pool, limits)),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. } => unreachable!("non-file op"),
+        }
+    }
+
+    /// Runs a file operation that names paths rather than an open slot.
+    fn attempt_path_op(op: &Op, pool: &mut [u8], limits: &Limits) -> i32 {
+        match *op {
             Op::FileStatus {
                 path_buf,
                 path_off,
@@ -120,7 +144,7 @@ impl Posix {
             } => {
                 let pr = limits.range(path_buf, path_off, path_len);
                 let or = limits.range(out_buf, out_off, STATX_SIZE as u32);
-                Some(Self::file_status(pool, pr, or))
+                Self::file_status(pool, pr, or)
             }
             Op::FileRename {
                 old_buf,
@@ -132,10 +156,7 @@ impl Posix {
             } => {
                 let r1 = limits.range(old_buf, old_off, old_len);
                 let r2 = limits.range(new_buf, new_off, new_len);
-                Some(Self::file_rename(
-                    pool[r1].as_ptr().cast(),
-                    pool[r2].as_ptr().cast(),
-                ))
+                Self::file_rename(pool[r1].as_ptr().cast(), pool[r2].as_ptr().cast())
             }
             Op::FileUnlink {
                 path_buf,
@@ -143,7 +164,7 @@ impl Posix {
                 path_len,
             } => {
                 let r = limits.range(path_buf, path_off, path_len);
-                Some(Self::file_unlink(pool[r].as_ptr().cast()))
+                Self::file_unlink(pool[r].as_ptr().cast())
             }
             Op::FileMkdir {
                 path_buf,
@@ -151,9 +172,29 @@ impl Posix {
                 path_len,
             } => {
                 let r = limits.range(path_buf, path_off, path_len);
-                Some(Self::file_mkdir(pool[r].as_ptr().cast()))
+                Self::file_mkdir(pool[r].as_ptr().cast())
             }
-            _ => unreachable!("non-file op"),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. } => unreachable!("not a path op"),
         }
     }
 
@@ -176,7 +217,7 @@ impl Posix {
         #[cfg(target_os = "macos")]
         if flags.direct && unsafe { fcntl(fd, F_NOCACHE, 1) } < 0 {
             let e = os_errno();
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return to_linux_errno(e);
         }
         self.file_fds[slot.0 as usize] = fd;
@@ -258,7 +299,7 @@ impl Posix {
         loop {
             #[cfg(target_os = "macos")]
             let r = {
-                let _ = datasync;
+                let _: bool = datasync;
                 unsafe { fcntl(fd, F_FULLFSYNC) }
             };
             #[cfg(target_os = "linux")]

@@ -20,3 +20,6 @@ path = "tests/checksum/props.rs"
 [[test]]
 name = "checksum_kernels"
 path = "tests/checksum/kernels.rs"
+
+[lints]
+workspace = true

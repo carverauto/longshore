@@ -35,7 +35,7 @@ fn queue_two_senders_and_receiver() {
         while got.len() < 2 {
             match rx.recv_parked() {
                 Recv::Message(v) => got.push(v),
-                other => panic!("unexpected {other:?}"),
+                other @ (Recv::Stop | Recv::Closed) => panic!("unexpected {other:?}"),
             }
         }
         assert_eq!(rx.recv_parked(), Recv::Closed);
@@ -66,7 +66,7 @@ fn queue_full_and_wraparound() {
         match rx.recv_parked() {
             Recv::Message(3) => assert_eq!(rx.recv_parked(), Recv::Closed),
             Recv::Closed => {}
-            other => panic!("unexpected {other:?}"),
+            other @ (Recv::Message(_) | Recv::Stop) => panic!("unexpected {other:?}"),
         }
         h.join().unwrap();
     });
@@ -195,7 +195,7 @@ fn queue_try_send_racing_stop_close() {
             .iter()
             .filter_map(|i| match *i {
                 Recv::Message(v) => Some(v),
-                _ => None,
+                Recv::Stop | Recv::Closed => None,
             })
             .collect();
         match r1 {
@@ -233,7 +233,7 @@ fn queue_try_send_racing_stop_try_recv_then_close() {
             .iter()
             .filter_map(|i| match *i {
                 Recv::Message(v) => Some(v),
-                _ => None,
+                Recv::Stop | Recv::Closed => None,
             })
             .collect();
         match r1 {
@@ -249,7 +249,7 @@ fn queue_concurrent_stops_emit_at_most_one_stop() {
     model(2, || {
         let (tx1, mut rx) = queue_parked::<u32>(2);
         let tx2 = tx1.clone();
-        let _ = tx1.try_send(7);
+        assert!(tx1.try_send(7).is_ok(), "the queue holds two");
         let h1 = loom::thread::spawn(move || tx1.stop());
         let h2 = loom::thread::spawn(move || tx2.stop());
         let mut stops = 0;
@@ -274,15 +274,12 @@ fn queue_recv_parked_races_wake_try_send_and_last_sender_drop() {
         let (tx, mut rx) = queue_parked::<u32>(2);
         let h = loom::thread::spawn(move || {
             tx.wake();
-            let _ = tx.try_send(9);
+            assert!(tx.try_send(9).is_ok(), "the queue holds two");
             drop(tx);
         });
         let mut msgs = Vec::new();
-        loop {
-            match rx.recv_parked() {
-                Recv::Message(v) => msgs.push(v),
-                Recv::Stop | Recv::Closed => break,
-            }
+        while let Recv::Message(v) = rx.recv_parked() {
+            msgs.push(v);
         }
         h.join().unwrap();
         assert_eq!(msgs, vec![9]);

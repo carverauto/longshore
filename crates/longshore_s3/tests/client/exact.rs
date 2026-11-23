@@ -6,15 +6,15 @@
 //! `put`, `head` and `get` through the shareable client, over workers
 //! driven by hand in the simulator.
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
+#[cfg(test)]
 mod rig;
 use common::{Behavior, Io};
 use longshore_s3::client::{Budget, Error};
 use longshore_s3::crypto::sha256;
-use longshore_s3::report::{
-    Cause, ContentRange, Encryption, End, Expect, Put, Report, ServerEncryption,
-};
+use longshore_s3::report::{Cause, ContentRange, Encryption, End, Expect, Put, ServerEncryption};
 use longshore_s3::s3::Checksum;
 use rig::*;
 use std::future::Future;
@@ -28,11 +28,10 @@ fn once() -> Budget {
 }
 
 fn archive(body: &[u8]) -> Put {
-    Put {
-        no_clobber: true,
-        encryption: Some(Encryption::Aes256),
-        checksum: Checksum::Sha256(sha256(body)),
-    }
+    Put::default()
+        .with_no_clobber(true)
+        .with_encryption(Some(Encryption::Aes256))
+        .with_checksum(Checksum::Sha256(sha256(body)))
 }
 
 #[test]
@@ -44,51 +43,52 @@ fn a_write_and_its_reads_report_one_identity_through_lent_buffers() {
     let sent = body.as_slice()[..LEN].to_vec();
     let (put, body) = r.run(r.client.put("dir/a", body, LEN, &archive(&sent), once()));
     let put = put.expect("a request was sent");
-    let End::Answered(stored) = put.end else {
+    let End::Answered(stored) = put.end() else {
         panic!("{put:?}")
     };
-    assert_eq!((stored.status, put.sent, put.unanswered), (200, 1, 0));
-    assert_eq!(stored.encryption, Some(ServerEncryption::Aes256));
-    assert_eq!(stored.sha256, Some(sha256(&sent)));
-    assert_eq!(put.request.map(|signed| signed.method), Some("PUT"));
-    let expect = Expect {
-        etag: stored.etag,
-        version: stored.version,
-    };
-    assert!(expect.etag.is_some() && expect.version.is_some());
+    assert_eq!((stored.status(), put.sent(), put.unanswered()), (200, 1, 0));
+    assert_eq!(stored.encryption(), Some(ServerEncryption::Aes256));
+    assert_eq!(stored.sha256(), Some(sha256(&sent)));
+    assert_eq!(put.request().map(|signed| signed.method()), Some("PUT"));
+    let expect = Expect::default()
+        .with_etag(stored.etag())
+        .with_version(stored.version());
+    assert!(expect.etag().is_some() && expect.version().is_some());
 
     let head = r.run(r.client.head("dir/a", &expect, once())).unwrap();
-    let End::Answered(head) = head.end else {
+    let End::Answered(head) = head.end() else {
         panic!("{head:?}")
     };
-    assert_eq!((head.status, head.content_length), (200, Some(LEN as u64)));
-    assert_eq!((head.etag, head.version), (expect.etag, expect.version));
+    assert_eq!(
+        (head.status(), head.content_length()),
+        (200, Some(LEN as u64))
+    );
+    assert_eq!(
+        (head.etag(), head.version()),
+        (expect.etag(), expect.version())
+    );
 
     let (ranged, body) = r.run(r.client.get("dir/a", Some((10, 19)), &expect, body, once()));
-    let End::Answered(ranged) = ranged.unwrap().end else {
+    let End::Answered(ranged) = ranged.unwrap().end() else {
         panic!("not answered")
     };
-    assert_eq!((ranged.status, ranged.body_len), (206, 10));
+    assert_eq!((ranged.status(), ranged.body_len()), (206, 10));
     assert_eq!(
-        ranged.content_range,
-        Some(ContentRange {
-            first: 10,
-            last: 19,
-            size: Some(LEN as u64)
-        })
+        ranged.content_range(),
+        ContentRange::parse(format!("bytes 10-19/{LEN}").as_bytes())
     );
     assert_eq!(&body.as_slice()[..10], &sent[10..20]);
 
     let (whole, body) = r.run(r.client.get("dir/a", None, &expect, body, once()));
-    let End::Answered(whole) = whole.unwrap().end else {
+    let End::Answered(whole) = whole.unwrap().end() else {
         panic!("not answered")
     };
-    assert_eq!((whole.status, whole.body_len), (200, LEN as u32));
+    assert_eq!((whole.status(), whole.body_len()), (200, LEN as u32));
     assert_eq!(&body.as_slice()[..LEN], &sent[..]);
 
     // A second write to the key is refused, and says so.
     let (again, _body) = r.run(r.client.put("dir/a", body, LEN, &archive(&sent), once()));
-    assert!(matches!(again.unwrap().end, End::Answered(a) if a.status == 412));
+    assert!(matches!(again.unwrap().end(), End::Answered(a) if a.status() == 412));
 }
 
 #[test]
@@ -99,20 +99,15 @@ fn a_deadline_that_has_passed_sends_nothing_and_returns_the_buffer() {
     let past = Budget::once(Instant::now() - Duration::from_millis(1));
     let (put, body) = r.run(r.client.put("k", body, LEN, &Put::default(), past));
     assert_eq!(
-        put,
-        Ok(Report {
-            end: End::NotSent(Cause::Deadline),
-            request: None,
-            sent: 0,
-            unanswered: 0
-        })
+        put.map(|p| (p.end(), p.request(), p.sent(), p.unanswered())),
+        Ok((End::NotSent(Cause::Deadline), None, 0, 0))
     );
     let head = r.run(r.client.head("k", &Expect::default(), past));
-    assert!(matches!(head, Ok(report) if report.end == End::NotSent(Cause::Deadline)));
-    assert_eq!(r.lanes[0].server.requests, 0);
+    assert!(matches!(head, Ok(report) if report.end() == End::NotSent(Cause::Deadline)));
+    assert_eq!(r.lanes[0].server.requests(), 0);
     // The buffer is the caller's again and carries the next operation.
-    let (put, _body) = r.run(r.client.put("k", body, LEN, &Put::default(), once()));
-    assert!(matches!(put.unwrap().end, End::Answered(a) if a.status == 200));
+    let (next, _body) = r.run(r.client.put("k", body, LEN, &Put::default(), once()));
+    assert!(matches!(next.unwrap().end(), End::Answered(a) if a.status() == 200));
 }
 
 #[test]
@@ -134,7 +129,7 @@ fn an_error_means_nothing_was_sent() {
         r.run(r.client.head("", &Expect::default(), once())),
         Err(Error::BadKey)
     );
-    assert_eq!(r.lanes[0].server.requests, 0);
+    assert_eq!(r.lanes[0].server.requests(), 0);
 }
 
 /// The result of a request the store never answers comes when the deadline
@@ -146,16 +141,13 @@ fn a_stalled_request_ends_at_its_deadline_with_its_buffer() {
     let mut body = r.buffer();
     fill(&mut body, 7);
     r.lanes[0].server.script(Behavior::Stall);
-    let budget = Budget {
-        attempts: 3,
-        deadline: Some(Instant::now() + Duration::from_millis(200)),
-    };
+    let budget = Budget::new(3, Some(Instant::now() + Duration::from_millis(200)));
     let started = r.lanes[0].io.now_ns();
     let (put, body) = r.run(r.client.put("k", body, LEN, &Put::default(), budget));
     let put = put.unwrap();
-    assert_eq!(put.end, End::Unknown(Cause::Deadline));
-    assert_eq!((put.sent, put.unanswered), (1, 1));
-    assert!(put.request.is_some());
+    assert_eq!(put.end(), End::Unknown(Cause::Deadline));
+    assert_eq!((put.sent(), put.unanswered()), (1, 1));
+    assert!(put.request().is_some());
     // On the simulator's clock: after the deadline, and long before the
     // request's own timeout of a second.
     let took = r.lanes[0].io.now_ns() - started;
@@ -163,9 +155,9 @@ fn a_stalled_request_ends_at_its_deadline_with_its_buffer() {
         (150 * common::MS..400 * common::MS).contains(&took),
         "{took}"
     );
-    assert_eq!(r.lanes[0].server.requests, 1, "no second attempt");
+    assert_eq!(r.lanes[0].server.requests(), 1, "no second attempt");
     let (next, _body) = r.run(r.client.put("k2", body, LEN, &Put::default(), once()));
-    assert!(matches!(next.unwrap().end, End::Answered(a) if a.status == 200));
+    assert!(matches!(next.unwrap().end(), End::Answered(a) if a.status() == 200));
 }
 
 /// An I/O thread that fails under a request already sent cannot say the
@@ -179,7 +171,7 @@ fn a_failed_io_thread_reports_a_sent_request_as_unknown() {
     let client = r.client.clone();
     let mut put = pin!(client.put("k", body, LEN, &Put::default(), once()));
     let mut cx = Context::from_waker(Waker::noop());
-    while r.lanes[0].server.requests == 0 {
+    while r.lanes[0].server.requests() == 0 {
         assert!(put.as_mut().poll(&mut cx).is_pending());
         r.pump();
     }
@@ -188,7 +180,7 @@ fn a_failed_io_thread_reports_a_sent_request_as_unknown() {
         panic!("the operation did not end")
     };
     let report = report.expect("a request was sent");
-    assert_eq!(report.end, End::Unknown(Cause::Closed));
-    assert_eq!((report.sent, report.unanswered), (1, 1));
-    assert!(report.request.is_some());
+    assert_eq!(report.end(), End::Unknown(Cause::Closed));
+    assert_eq!((report.sent(), report.unanswered()), (1, 1));
+    assert!(report.request().is_some());
 }

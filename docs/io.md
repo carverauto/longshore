@@ -16,15 +16,15 @@ same single-threaded `Io` queue (`UringIo`, `PosixIo`, and `SimIo`):
   (`datasync` or full sync), `FileReserve` (extend or keep size), `FilePunch`
   (block-aligned hole punching), `FileStatus` (256-byte Linux `statx` layout
   with `files::file_size`), `FileRename`, `FileUnlink`, and `FileMkdir`.
-- **No truncate or directory listing**: reopen with `OpenFlags::empty` to reset
+- **No truncate or directory listing**: reopen with `OpenFlags::with_empty(true)` to reset
   a file from its start, and probe fixed names or keep an index file rather
   than listing a directory.
 - **Linked chains (`Io::submit_chain`)**: submits file operations atomically
   (`IOSQE_IO_LINK` on `io_uring`), such as write-then-sync in one submission.
   A chain stops at the first failure or short read/write, completing later
   members with `-ECANCELED`.
-- **Aligned pool**: set `Limits::aligned_buffers`,
-  `Limits::aligned_buffer_size`, and `Limits::block_size` (a power of two
+- **Aligned pool**: set `Limits::with_aligned_buffers`,
+  `Limits::with_aligned_buffer_size`, and `Limits::with_block_size` (a power of two
   `>= 4096` matching the storage device's sector/block size for `O_DIRECT` and
   `FilePunch`). Pools are registered with the kernel as `<= 1 GiB` contiguous
   ranges of whole buffers, removing the 16,384-buffer limit.
@@ -74,9 +74,9 @@ across `UringIo`, `PosixIo`, and `SimIo`:
   submission time into slot storage.
 - **Armed accept (`Op::ArmedAccept`)**: accepts connections on a listener with
   one submission, placing each accepted socket into a free slot inside the
-  reserved range `Limits::accept_range_start..accept_range_start +
-  accept_range_len` and reporting the slot index with `Completion::more ==
-  true`. When the range is full, the incoming connection is dropped and the
+  reserved range `Limits::accept_range_start()..accept_range_start() +
+  accept_range_len()` and reporting the slot index with `Completion::more()
+  == true`. When the range is full, the incoming connection is dropped and the
   armed accept ends with `-ENFILE` (or `-EMFILE`).
 - **Socket options & shutdown-before-close**: `Io::no_delay` (`TCP_NODELAY`)
   and `Io::keep_alive` (`SO_KEEPALIVE`) apply to TCP listeners and
@@ -90,19 +90,19 @@ across `UringIo`, `PosixIo`, and `SimIo`:
 
 ## Buffer ring
 
-- **Configuration (`Limits`)**: set `Limits::ring_buffers` (up to `32_768`) and
-  `Limits::ring_buffer_size` to add a fourth buffer class in the pool backed on
+- **Configuration (`Limits`)**: set `Limits::with_ring_buffers` (up to `32_768`) and
+  `Limits::with_ring_buffer_size` to add a fourth buffer class in the pool backed on
   Linux `io_uring` by page-aligned index memory (`IORING_REGISTER_PBUF_RING`).
   If `UringIo` cannot quiesce cleanly on drop, buffer-ring index memory is
   leaked alongside the pool.
 - **Armed receive (`Op::ArmedRecv`)**: takes a buffer from the ring only when
   bytes arrive, so idle plain connections hold no buffer. Completions carrying
-  bytes set `Completion::buf` to `Some(id)` and `Completion::more`; callers
+  bytes report `Completion::buf()` as `Some(id)` and `Completion::more()`; callers
   read bytes in place and return the buffer via `Io::give_back(id)` with no
   system call. Empty completions (`result <= 0`) return their buffer
-  internally (`buf == None`), peer EOF ends with `0`, and an empty ring ends
+  internally (`buf() == None`), peer EOF ends with `0`, and an empty ring ends
   with `-ENOBUFS` leaving unread bytes in the socket. Armed operations count
-  toward `Limits::ops_max` until their final (`more == false`) completion.
+  toward `Limits::ops_max` until their final (`more() == false`) completion.
 
 ## TLS feature
 

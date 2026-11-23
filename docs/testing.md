@@ -17,7 +17,8 @@ real-kernel checks) has to be cross-compiled and run on a Linux host.
 cargo test --workspace          # unit, simulation and property tests
 cargo test --workspace --exclude longshore-bench --no-default-features  # plain build without longshore_tls / aws-lc-sys
 cargo test -p longshore_common --features fault-injection               # stale-readiness and fault-injection tests
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --exclude longshore-bench --all-targets --no-default-features -- -D warnings
 ./scripts/test-model.sh         # the client's hand-offs, model checked
 ./scripts/test.sh               # the tests and the model, then the real-kernel checks
 cargo bench -p longshore-bench --bench <name>   # criterion microbenchmarks (see bench/README.md)
@@ -41,8 +42,13 @@ thread left waiting. loom is only in that build.
 fail and tears clients down with work in flight. It is built with the
 `fault-injection` feature, which is off everywhere else.
 
-Property tests use [Hegel](https://hegel.dev). The fuzz targets run with
-`cargo fuzz` from `fuzz/`.
+Property tests use [Hegel](https://hegel.dev). The parsers have fuzz targets
+in `fuzz/`, run with `cargo fuzz` through `scripts/fuzz.sh` (or `make fuzz`):
+every target for 60 seconds by default, `FUZZ_SECONDS` and `FUZZ_TARGETS` to
+change that, `FUZZ_SECONDS=0` to only build them. It needs a nightly toolchain
+and `cargo install --locked cargo-fuzz`. The Fuzz workflow runs each target
+for a minute on a pull request and for ten on `main` and every night, keeping
+each target's corpus between runs and the crashing input when one fails.
 
 ## Trying it against a store
 
@@ -69,6 +75,16 @@ s3_uring objects                          # stat, metadata, copy, delimiter list
 s3_uring list some/prefix/
 
 exact_s3                                  # put, head and get: what the store honours and returns
+```
+
+Without a store of your own, `scripts/self-hosted-s3.sh` starts Ceph's S3
+gateway or RustFS in a container and runs the programs against it from a
+second container, with the bucket in the path:
+
+```sh
+scripts/self-hosted-s3.sh up ceph      # or rustfs
+scripts/self-hosted-s3.sh run ceph
+scripts/self-hosted-s3.sh down
 ```
 
 For Google Cloud Storage, set `S3_VENDOR=gcs` and

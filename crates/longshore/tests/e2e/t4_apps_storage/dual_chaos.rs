@@ -13,213 +13,218 @@ use longshore::sim::{DiskConfig, DiskFaults, Faults, SimIo};
 const BLOCK: u32 = 4096;
 
 fn chaos_limits() -> Limits {
-    Limits {
-        sockets_max: 8,
-        buffers: 4,
-        buffer_size: BLOCK,
-        small_buffers: 4,
-        small_buffer_size: 256,
-        aligned_buffers: 2,
-        aligned_buffer_size: BLOCK,
-        block_size: BLOCK,
-        files_max: 4,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(8)
+        .with_buffers(4)
+        .with_buffer_size(BLOCK)
+        .with_small_buffers(4)
+        .with_small_buffer_size(256)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(BLOCK)
+        .with_block_size(BLOCK)
+        .with_files_max(4)
+        .with_ops_max(16)
 }
 
-fn run_chaos_seed(seed: u64) -> (u64, u64) {
-    let net_faults = Faults {
-        reset: 50_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        delay: 150_000,
-        bit_flip: 20_000,
-        ..Faults::default()
-    };
-    let disk_faults = DiskFaults {
-        short_write: 100_000,
-        torn_reported: 50_000,
-        lost_reported: 50_000,
-        sync_fail: 50_000,
-        read_error: 30_000,
-        ..DiskFaults::default()
-    };
-
-    let lim = chaos_limits();
+/// A simulator with both network and disk faults switched on for `seed`.
+fn chaos_sim(lim: Limits, seed: u64) -> SimIo {
+    let net_faults = Faults::NONE
+        .with_reset(50_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000)
+        .with_delay(150_000)
+        .with_bit_flip(20_000);
+    let disk_faults = DiskFaults::NONE
+        .with_short_write(100_000)
+        .with_torn_reported(50_000)
+        .with_lost_reported(50_000)
+        .with_sync_fail(50_000)
+        .with_read_error(30_000);
     let mut sim = SimIo::new(lim, seed, net_faults);
-    sim.setup_disk(DiskConfig {
-        max_files: 6,
-        max_dirs: 8,
-        max_bytes_per_file: (BLOCK as usize) * 8,
-        max_name_len: 64,
-        write_log_entries: 8,
-        write_log_bytes: (BLOCK as usize) * 8,
-        read_error_sectors: 8,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(6)
+            .with_max_dirs(8)
+            .with_max_bytes_per_file((BLOCK as usize) * 8)
+            .with_max_name_len(64)
+            .with_write_log_entries(8)
+            .with_write_log_bytes((BLOCK as usize) * 8)
+            .with_read_error_sectors(8)
+            .with_sector_size(512),
+    );
     sim.set_disk_faults(disk_faults);
+    sim
+}
 
-    let mut out = Completions::new(16);
+/// Tries to connect `Sock(1)` to `Sock(2)`; network faults may prevent it.
+/// Returns whether both sides completed.
+fn try_connect(sim: &mut SimIo, out: &mut Completions) -> bool {
     let addr = sim
-        .listen(Sock(0), "127.0.0.1:9200".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:9200".parse().unwrap())
         .unwrap();
     sim.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     sim.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
-    let mut connected = false;
     for _ in 0..50 {
-        sim.tick(true, &mut out).unwrap();
+        sim.tick(true, out).unwrap();
         let mut saw_a = false;
         let mut saw_c = false;
         while let Some(c) = out.pop() {
-            if c.token.0 == 1 && c.result >= 0 {
+            if c.token().get() == 1 && c.result() >= 0 {
                 saw_a = true;
             }
-            if c.token.0 == 2 && c.result == 0 {
+            if c.token().get() == 2 && c.result() == 0 {
                 saw_c = true;
             }
         }
         if saw_a && saw_c {
-            connected = true;
-            break;
+            return true;
         }
         if out.is_empty() {
             break;
         }
     }
+    false
+}
 
-    let path_buf = lim.small(0);
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/chaos.log");
-    let open_res = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(3),
+/// Opens `/chaos.log` read-write-create into `FileSlot(0)`; returns the result.
+fn open_chaos_log(sim: &mut SimIo, out: &mut Completions, path_buf: BufId, token: Token) -> i32 {
+    let plen = write_nul_path(sim, path_buf, 0, "/chaos.log");
+    submit_and_wait_one(
+        sim,
+        out,
+        token,
         Op::FileOpen {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             path_buf,
             path_off: 0,
             path_len: plen,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true),
         },
         1_000,
     )
     .unwrap()
-    .result;
-    assert_eq!(open_res, 0);
+    .result()
+}
+
+/// One network Send/Recv exchange. Network faults may fail or stall it; the
+/// test checks that the disk chain beside it is unaffected, not the exchange.
+fn exchange_round(sim: &mut SimIo, out: &mut Completions, round: u64) {
+    write_pool_bytes(sim, BufId::new(0), 0, &[0x40 + round as u8; 512]);
+    let _: Option<longshore::io::Completion> = submit_and_wait_one(
+        sim,
+        out,
+        Token::new(10 + round * 4),
+        Op::Send {
+            sock: Sock::new(1),
+            buf: BufId::new(0),
+            off: 0,
+            len: 512,
+            zero_copy: false,
+        },
+        500,
+    )
+    .ok();
+    let _: Option<longshore::io::Completion> = submit_and_wait_one(
+        sim,
+        out,
+        Token::new(11 + round * 4),
+        Op::Recv {
+            sock: Sock::new(2),
+            buf: BufId::new(1),
+            off: 0,
+            len: 512,
+        },
+        500,
+    )
+    .ok();
+}
+
+/// Appends 512 bytes for `round` via a `[FileWrite, FileSync]` chain and
+/// waits for both to complete, whatever their results.
+fn write_sync_round(sim: &mut SimIo, out: &mut Completions, round: u64) {
+    write_pool_bytes(sim, BufId::new(2), 0, &[0x70 + round as u8; 512]);
+    sim.submit_chain(&[
+        (
+            Token::new(50 + round * 2),
+            Op::FileWrite {
+                slot: FileSlot::new(0),
+                buf: BufId::new(2),
+                off: 0,
+                len: 512,
+                file_off: round * 512,
+            },
+        ),
+        (
+            Token::new(51 + round * 2),
+            Op::FileSync {
+                slot: FileSlot::new(0),
+                datasync: true,
+            },
+        ),
+    ])
+    .unwrap();
+    let mut done = 0;
+    while done < 2 {
+        sim.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            if c.token().get() == 50 + round * 2 || c.token().get() == 51 + round * 2 {
+                done += 1;
+            }
+        }
+    }
+}
+
+fn run_chaos_seed(seed: u64) -> (u64, u64) {
+    let lim = chaos_limits();
+    let mut sim = chaos_sim(lim, seed);
+    let mut out = Completions::new(16);
+    let connected = try_connect(&mut sim, &mut out);
+
+    let path_buf = lim.small(0);
+    assert_eq!(
+        open_chaos_log(&mut sim, &mut out, path_buf, Token::new(3)),
+        0
+    );
 
     // Interleave network Send/Recv with disk Write+Sync chains.
     for round in 0..4u64 {
         if connected {
-            write_pool_bytes(&mut sim, BufId(0), 0, &[0x40 + round as u8; 512]);
-            let _ = submit_and_wait_one(
-                &mut sim,
-                &mut out,
-                Token(10 + round * 4),
-                Op::Send {
-                    sock: Sock(1),
-                    buf: BufId(0),
-                    off: 0,
-                    len: 512,
-                    zero_copy: false,
-                },
-                500,
-            );
-            let _ = submit_and_wait_one(
-                &mut sim,
-                &mut out,
-                Token(11 + round * 4),
-                Op::Recv {
-                    sock: Sock(2),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 512,
-                },
-                500,
-            );
+            exchange_round(&mut sim, &mut out, round);
         }
-        write_pool_bytes(&mut sim, BufId(2), 0, &[0x70 + round as u8; 512]);
-        sim.submit_chain(&[
-            (
-                Token(50 + round * 2),
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(2),
-                    off: 0,
-                    len: 512,
-                    file_off: round * 512,
-                },
-            ),
-            (
-                Token(51 + round * 2),
-                Op::FileSync {
-                    slot: FileSlot(0),
-                    datasync: true,
-                },
-            ),
-        ])
-        .unwrap();
-        let mut done = 0;
-        while done < 2 {
-            sim.tick(true, &mut out).unwrap();
-            while let Some(c) = out.pop() {
-                if c.token.0 == 50 + round * 2 || c.token.0 == 51 + round * 2 {
-                    done += 1;
-                }
-            }
-        }
+        write_sync_round(&mut sim, &mut out, round);
     }
 
     // Power loss mid-session, then cleanly reopen & verify fault counters accessible.
     sim.power_loss();
     sim.set_disk_faults(DiskFaults::default());
-    let plen = write_nul_path(&mut sim, path_buf, 0, "/chaos.log");
-    let reopen = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(99),
-        Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf,
-            path_off: 0,
-            path_len: plen,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                ..Default::default()
-            },
-        },
-        1_000,
-    )
-    .unwrap()
-    .result;
-    assert_eq!(reopen, 0);
+    assert_eq!(
+        open_chaos_log(&mut sim, &mut out, path_buf, Token::new(99)),
+        0
+    );
 
     let counters = sim.disk_fault_counters();
-    let total_faults = counters.short_write
-        + counters.torn_reported
-        + counters.lost_reported
-        + counters.sync_fail
-        + counters.read_error;
+    let total_faults = counters.short_write()
+        + counters.torn_reported()
+        + counters.lost_reported()
+        + counters.sync_fail()
+        + counters.read_error();
     (sim.trace_hash(), total_faults)
 }
 

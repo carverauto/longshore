@@ -20,14 +20,54 @@ use std::sync::Arc;
 /// Configuration for building a slotted mailbox.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
+    pub(crate) capacity: usize,
+    pub(crate) slots: u32,
+    pub(crate) waiters_prealloc: usize,
+    pub(crate) wake_token: Token,
+}
+
+impl Config {
+    /// A mailbox holding `capacity` messages with `slots` caller waiter
+    /// slots, room for `waiters_prealloc` waiting callers, and `wake_token`
+    /// on the receiver's `Io`.
+    #[inline]
+    pub const fn new(
+        capacity: usize,
+        slots: u32,
+        waiters_prealloc: usize,
+        wake_token: Token,
+    ) -> Config {
+        Config {
+            capacity,
+            slots,
+            waiters_prealloc,
+            wake_token,
+        }
+    }
+
     /// Maximum queued messages (excluding the reserved in-band stop slot).
-    pub capacity: usize,
+    #[inline]
+    pub const fn capacity(self) -> usize {
+        self.capacity
+    }
+
     /// Number of caller waiter slots (`0..slots`).
-    pub slots: u32,
+    #[inline]
+    pub const fn slots(self) -> u32 {
+        self.slots
+    }
+
     /// Preallocated waiter queue capacity inside [`Pool`].
-    pub waiters_prealloc: usize,
+    #[inline]
+    pub const fn waiters_prealloc(self) -> usize {
+        self.waiters_prealloc
+    }
+
     /// Token used for `Op::AwaitWake` on the receiver's `Io`.
-    pub wake_token: Token,
+    #[inline]
+    pub const fn wake_token(self) -> Token {
+        self.wake_token
+    }
 }
 
 /// Caller-facing handle to a slotted mailbox.

@@ -7,24 +7,19 @@
 //! it will close, more than one host, retiring connections, and what a
 //! failure on a first use reports.
 
+#[cfg(test)]
 mod common;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
+#[cfg(test)]
 fn request_to(w: &mut World, host_id: u16, host: &str, method: &str, target: &str) -> Response {
-    let req = Request {
-        method,
-        target,
-        host,
-        host_id,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req = Request::new(method, target, host, host_id, ADDR).with_response_buf(Some(RX));
     let n = w.done.len();
     w.client.start(&mut w.io, 900 + n as u64, &req).unwrap();
     w.run_until_done(n + 1);
-    w.done[n].result.expect("a response")
+    w.done[n].result().expect("a response")
 }
 
 /// A response that announces the close is not followed by a reuse. The idle
@@ -38,10 +33,7 @@ fn a_connection_the_server_said_it_will_close_is_not_reused() {
             let mut w = world_with(
                 40,
                 Faults::default(),
-                client::Config {
-                    check_idle,
-                    ..client_cfg()
-                },
+                client_builder().check_idle(check_idle).build().unwrap(),
             );
             w.server.script(behavior);
             ok(200, body)(w.request("GET", "/k", None));
@@ -53,7 +45,11 @@ fn a_connection_the_server_said_it_will_close_is_not_reused() {
             );
             ok(404, 0)(w.request("GET", "/missing", None));
             assert_eq!(
-                (w.client.connects, w.client.idle_closed, w.client.idle_dirty),
+                (
+                    w.client.connects(),
+                    w.client.idle_closed(),
+                    w.client.idle_dirty()
+                ),
                 (2, 0, 0),
                 "{behavior:?}, idle check {check_idle}: nothing was left for the check to find"
             );
@@ -67,19 +63,19 @@ fn hosts_do_not_share_connections() {
     let mut w = world(41, Faults::default());
     let first = request_to(&mut w, 0, "objects.test", "GET", "/missing");
     let second = request_to(&mut w, 1, "other.test", "GET", "/missing");
-    assert_eq!((first.status, second.status), (404, 404));
-    assert_ne!(first.conn, second.conn);
-    assert_eq!((w.client.connects, w.client.open_connections()), (2, 2));
+    assert_eq!((first.status(), second.status()), (404, 404));
+    assert_ne!(first.conn(), second.conn());
+    assert_eq!((w.client.connects(), w.client.open_connections()), (2, 2));
     // Each host goes back to its own connection.
     assert_eq!(
-        request_to(&mut w, 1, "other.test", "GET", "/missing").conn,
-        second.conn
+        request_to(&mut w, 1, "other.test", "GET", "/missing").conn(),
+        second.conn()
     );
     assert_eq!(
-        request_to(&mut w, 0, "objects.test", "GET", "/missing").conn,
-        first.conn
+        request_to(&mut w, 0, "objects.test", "GET", "/missing").conn(),
+        first.conn()
     );
-    assert_eq!(w.client.connects, 2);
+    assert_eq!(w.client.connects(), 2);
 }
 
 /// With every slot idle on one host, a request for another host takes one
@@ -87,25 +83,26 @@ fn hosts_do_not_share_connections() {
 #[test]
 fn a_full_pool_gives_up_an_idle_connection_to_another_host() {
     let mut w = world(42, Faults::default());
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(200 + t, "HEAD", "/missing", None).unwrap();
     }
     w.run_until_done(CONNS as usize);
     let conns: std::collections::BTreeSet<u32> =
-        w.done.iter().map(|d| d.result.unwrap().conn).collect();
-    let tokens: std::collections::BTreeSet<u64> = w.done.iter().map(|d| d.token).collect();
+        w.done.iter().map(|d| d.result().unwrap().conn()).collect();
+    let tokens: std::collections::BTreeSet<u64> = w.done.iter().map(|d| d.token()).collect();
     assert_eq!(conns.into_iter().collect::<Vec<_>>(), [0, 1, 2]);
     assert_eq!(tokens.into_iter().collect::<Vec<_>>(), [200, 201, 202]);
-    assert!(w.done.iter().all(|d| d.result.unwrap().status == 404));
-    assert_eq!(w.client.connects, CONNS as u64);
+    assert!(w.done.iter().all(|d| d.result().unwrap().status() == 404));
+    assert_eq!(w.client.connects(), u64::from(CONNS));
 
     let r = request_to(&mut w, 1, "other.test", "GET", "/missing");
-    assert_eq!(r.status, 404);
+    assert_eq!(r.status(), 404);
     w.settle(20);
-    assert_eq!(w.client.connects, CONNS as u64 + 1);
+    assert_eq!(w.client.connects(), u64::from(CONNS) + 1);
     assert_eq!(w.client.open_connections(), CONNS as usize);
     assert_eq!(
-        w.server.closed, 1,
+        w.server.closed(),
+        1,
         "the server saw the old connection close"
     );
 }
@@ -113,7 +110,7 @@ fn a_full_pool_gives_up_an_idle_connection_to_another_host() {
 #[test]
 fn retired_connections_finish_their_request_and_are_not_reused() {
     let mut w = world(43, Faults::default());
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(200 + t, "HEAD", "/missing", None).unwrap();
     }
     w.run_until_done(CONNS as usize);
@@ -132,29 +129,29 @@ fn retired_connections_finish_their_request_and_are_not_reused() {
     assert_eq!(w.client.retire_some(0, 5), 0);
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        w.client.connects,
-        CONNS as u64 + 1,
+        w.client.connects(),
+        u64::from(CONNS) + 1,
         "a retired connection is replaced"
     );
 
     // Retiring while a request is in flight does not disturb that request.
-    let mut w = world(43, Faults::default());
-    ok(404, 0)(w.request("GET", "/missing", None));
-    w.start(300, "GET", "/missing", None).unwrap();
-    assert_eq!(w.client.retire_some(0, 1), 1);
-    w.run_until_done(2);
-    ok(404, 0)(w.done[1].result);
-    assert_eq!(w.client.connects, 1);
-    ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!(w.client.connects, 2);
+    let mut in_flight = world(43, Faults::default());
+    ok(404, 0)(in_flight.request("GET", "/missing", None));
+    in_flight.start(300, "GET", "/missing", None).unwrap();
+    assert_eq!(in_flight.client.retire_some(0, 1), 1);
+    in_flight.run_until_done(2);
+    ok(404, 0)(in_flight.done[1].result());
+    assert_eq!(in_flight.client.connects(), 1);
+    ok(404, 0)(in_flight.request("GET", "/missing", None));
+    assert_eq!(in_flight.client.connects(), 2);
 
     // Unmeasured connections: this one was opened to an address that
     // reports no segment size.
-    let mut w = world(43, Faults::default());
-    ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!(w.client.retire_unmeasured(1), 0);
-    assert_eq!(w.client.retire_unmeasured(0), 1);
-    assert_eq!(w.client.retire_unmeasured(0), 0, "already retired");
+    let mut unmeasured = world(43, Faults::default());
+    ok(404, 0)(unmeasured.request("GET", "/missing", None));
+    assert_eq!(unmeasured.client.retire_unmeasured(1), 0);
+    assert_eq!(unmeasured.client.retire_unmeasured(0), 1);
+    assert_eq!(unmeasured.client.retire_unmeasured(0), 0, "already retired");
 }
 
 /// `reused` tells a retry layer whether a close is the usual stale
@@ -203,31 +200,30 @@ fn a_close_reports_whether_the_connection_had_been_used() {
 /// connection never opened.
 #[test]
 fn only_a_failed_connect_names_the_address() {
-    let mut w = world(
-        7,
-        Faults {
-            connect_refused: 1_000_000,
-            ..Faults::default()
-        },
-    );
-    assert_eq!(w.client.connect_failure, None);
+    let mut w = world(7, Faults::NONE.with_connect_refused(1_000_000));
+    assert_eq!(w.client.connect_failure(), None);
     assert_eq!(
         w.request("GET", "/k", None),
         Err(Error::Io(longshore_common::io::ECONNREFUSED))
     );
-    assert_eq!(w.client.connect_failure.take(), Some(ADDR));
+    assert_eq!(w.client.take_connect_failure(), Some(ADDR));
 
-    let mut w = world(7, Faults::default());
-    w.server.script(Behavior::GarbageHead);
+    let mut answered = world(7, Faults::default());
+    answered.server.script(Behavior::GarbageHead);
     assert_eq!(
-        w.request("GET", "/k", None),
+        answered.request("GET", "/k", None),
         Err(Error::Head(HttpError::BadStartLine))
     );
     assert_eq!(
-        w.client.connect_failure, None,
+        answered.client.connect_failure(),
+        None,
         "the address answered; it is the response that was bad"
     );
-    w.server.script(Behavior::Stall);
-    assert_eq!(w.request("GET", "/k", None), Err(Error::Timeout));
-    assert_eq!(w.client.connect_failure, None, "a timeout after connecting");
+    answered.server.script(Behavior::Stall);
+    assert_eq!(answered.request("GET", "/k", None), Err(Error::Timeout));
+    assert_eq!(
+        answered.client.connect_failure(),
+        None,
+        "a timeout after connecting"
+    );
 }

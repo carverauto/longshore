@@ -5,16 +5,13 @@
 
 use super::*;
 
-#[allow(clippy::needless_update)]
-const LIMITS: Limits = Limits {
-    sockets_max: 1,
-    buffers: 2,
-    buffer_size: 1000,
-    small_buffers: 3,
-    small_buffer_size: 10,
-    ops_max: 1,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(1)
+    .with_buffers(2)
+    .with_buffer_size(1000)
+    .with_small_buffers(3)
+    .with_small_buffer_size(10)
+    .with_ops_max(1);
 
 #[test]
 fn buffers_of_both_sizes_tile_the_pool() {
@@ -33,17 +30,15 @@ fn buffers_of_both_sizes_tile_the_pool() {
 
 #[test]
 fn aligned_buffers_start_on_block_boundary_with_head_padding() {
-    let l = Limits {
-        buffers: 1,
-        buffer_size: 1000,
-        small_buffers: 1,
-        small_buffer_size: 10,
-        aligned_buffers: 2,
-        aligned_buffer_size: 8192,
-        block_size: 4096,
-        ops_max: 1,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_buffers(1)
+        .with_buffer_size(1000)
+        .with_small_buffers(1)
+        .with_small_buffer_size(10)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(8192)
+        .with_block_size(4096)
+        .with_ops_max(1);
     assert_eq!(l.buffer_count(), 4);
     assert_eq!(l.aligned_start(), 4096);
     assert_eq!(l.pool_bytes(), 4096 + 2 * 8192 + 4096);
@@ -61,13 +56,11 @@ fn aligned_buffers_start_on_block_boundary_with_head_padding() {
 #[test]
 #[should_panic(expected = "block_size must be a power of two >= 4096")]
 fn invalid_block_size_panics_when_aligned_buffers_present() {
-    let l = Limits {
-        aligned_buffers: 1,
-        aligned_buffer_size: 4096,
-        block_size: 2048,
-        ..Limits::BASE
-    };
-    let _ = l.pool_bytes();
+    let l = Limits::BASE
+        .with_aligned_buffers(1)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(2048);
+    let _: usize = l.pool_bytes();
 }
 
 #[test]
@@ -89,13 +82,13 @@ fn a_pair_borrows_two_buffers_in_the_order_asked() {
 #[test]
 #[should_panic(expected = "buffer range out of bounds")]
 fn a_range_past_a_small_buffer_is_refused() {
-    LIMITS.range(BufId(2), 5, 6);
+    let _: std::ops::Range<usize> = LIMITS.range(BufId(2), 5, 6);
 }
 
 #[test]
 #[should_panic(expected = "buffer out of range")]
 fn a_buffer_past_the_pool_is_refused() {
-    LIMITS.span(BufId(5));
+    let _: (usize, usize) = LIMITS.span(BufId(5));
 }
 
 #[test]
@@ -108,20 +101,20 @@ fn a_range_may_end_exactly_at_its_buffers_end() {
 #[test]
 #[should_panic(expected = "buffer range out of bounds")]
 fn a_range_whose_end_overflows_is_refused() {
-    LIMITS.range(BufId(0), u32::MAX, 2);
+    let _: std::ops::Range<usize> = LIMITS.range(BufId(0), u32::MAX, 2);
 }
 
 #[test]
 #[should_panic(expected = "small buffer out of range")]
 fn a_small_buffer_past_the_last_is_refused() {
-    LIMITS.small(3);
+    let _: BufId = LIMITS.small(3);
 }
 
 #[test]
 #[should_panic(expected = "buf_pair needs two distinct pool buffers")]
 fn a_pair_of_the_same_buffer_is_refused() {
     let mut pool = vec![0u8; LIMITS.pool_bytes()];
-    LIMITS.pair(&mut pool, BufId(1), BufId(1));
+    let _: (&mut [u8], &mut [u8]) = LIMITS.pair(&mut pool, BufId(1), BufId(1));
 }
 
 #[test]
@@ -151,22 +144,20 @@ fn completion_new_sets_final_with_no_buffer() {
 
 #[test]
 fn ring_buffers_tile_after_aligned_and_validate_invariants() {
-    let l = Limits {
-        sockets_max: 8,
-        accept_range_start: 2,
-        accept_range_len: 6,
-        buffers: 1,
-        buffer_size: 1000,
-        small_buffers: 1,
-        small_buffer_size: 10,
-        aligned_buffers: 1,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ring_buffers: 2,
-        ring_buffer_size: 256,
-        ops_max: 1,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_sockets_max(8)
+        .with_accept_range_start(2)
+        .with_accept_range_len(6)
+        .with_buffers(1)
+        .with_buffer_size(1000)
+        .with_small_buffers(1)
+        .with_small_buffer_size(10)
+        .with_aligned_buffers(1)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ring_buffers(2)
+        .with_ring_buffer_size(256)
+        .with_ops_max(1);
     assert_eq!(l.ring_base(), 3);
     assert_eq!(l.buffer_count(), 5);
     assert_eq!(l.ring(0), BufId(3));
@@ -183,33 +174,25 @@ fn ring_buffers_tile_after_aligned_and_validate_invariants() {
 #[test]
 #[should_panic(expected = "ring_buffers must be <= 32_768")]
 fn ring_buffers_above_32768_are_refused() {
-    let l = Limits {
-        ring_buffers: 32_769,
-        ring_buffer_size: 64,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_ring_buffers(32_769)
+        .with_ring_buffer_size(64);
     l.validate();
 }
 
 #[test]
 #[should_panic(expected = "ring_buffer_size must be > 0")]
 fn zero_ring_buffer_size_is_refused() {
-    let l = Limits {
-        ring_buffers: 1,
-        ring_buffer_size: 0,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE.with_ring_buffers(1).with_ring_buffer_size(0);
     l.validate();
 }
 
 #[test]
 #[should_panic(expected = "accept_range_start + accept_range_len must be <= sockets_max")]
 fn accept_range_past_sockets_max_is_refused() {
-    let l = Limits {
-        sockets_max: 4,
-        accept_range_start: 2,
-        accept_range_len: 3,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_sockets_max(4)
+        .with_accept_range_start(2)
+        .with_accept_range_len(3);
     l.validate();
 }

@@ -19,7 +19,7 @@ use longshore::tls::handshake::{Handshake, ServerSetup};
 use longshore::tls::record::{
     record_len, Direction, CONTENT_ALERT, CONTENT_APPLICATION_DATA, FRAGMENT_MAX, RECORD_MAX,
 };
-use s3::{dispatch_s3, store_put};
+use s3::dispatch_s3;
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -38,6 +38,10 @@ fn clone_tls(t: &MaybeTls) -> MaybeTls {
     t.as_ref().map(Arc::clone)
 }
 #[cfg(not(feature = "tls"))]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "MaybeTls is () without the tls feature and an Option<Arc<..>> with it; one signature serves both"
+)]
 fn clone_tls(_: &MaybeTls) -> MaybeTls {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,7 +84,7 @@ impl HttpStoreServer {
         let state = Arc::new(Mutex::new(StoreState::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let (st, sp) = (Arc::clone(&state), Arc::clone(&stop));
-        let thread = thread::spawn(move || accept_loop(listener, st, sp, tls));
+        let thread = thread::spawn(move || accept_loop(&listener, &st, &sp, &tls));
         Ok(Self {
             addr,
             state,
@@ -94,11 +98,6 @@ impl HttpStoreServer {
     pub fn port(&self) -> u16 {
         self.addr.port()
     }
-    #[allow(dead_code)]
-    pub fn insert_object(&self, key: &str, data: Vec<u8>) {
-        let mut st = self.state.lock().expect("lock");
-        store_put(&mut st, key.trim_start_matches('/'), data);
-    }
     pub fn get_object(&self, key: &str) -> Option<StoreObject> {
         let st = self.state.lock().expect("lock");
         st.objects.get(key.trim_start_matches('/')).cloned()
@@ -106,31 +105,34 @@ impl HttpStoreServer {
     pub fn request_count(&self) -> usize {
         self.state.lock().expect("lock").requests
     }
-    #[allow(dead_code)]
-    pub fn clear(&self) {
-        let mut st = self.state.lock().expect("lock");
-        st.objects.clear();
-        st.uploads.clear();
-    }
 }
 
 impl Drop for HttpStoreServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        let _ = TcpStream::connect(self.addr);
+        // Only wakes the accept loop, which may already have stopped.
+        let _: Option<TcpStream> = TcpStream::connect(self.addr).ok();
         if let Some(h) = self.thread.take() {
-            let _ = h.join();
+            // A panicked server thread has already reported it; Drop must not panic again.
+            let _: Option<()> = h.join().ok();
         }
     }
 }
 
-fn accept_loop(l: TcpListener, st: Arc<Mutex<StoreState>>, sp: Arc<AtomicBool>, tls: MaybeTls) {
+#[cfg_attr(
+    not(feature = "tls"),
+    expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "MaybeTls is () without the tls feature and an Option<Arc<..>> with it; one signature serves both"
+    )
+)]
+fn accept_loop(l: &TcpListener, st: &Arc<Mutex<StoreState>>, sp: &Arc<AtomicBool>, tls: &MaybeTls) {
     let mut workers = Vec::new();
     while !sp.load(Ordering::Acquire) {
         match l.accept() {
             Ok((s, _)) => {
-                let (st, sp, t) = (Arc::clone(&st), Arc::clone(&sp), clone_tls(&tls));
-                workers.push(thread::spawn(move || handle_conn(s, st, sp, t)));
+                let (st, sp, t) = (Arc::clone(st), Arc::clone(sp), clone_tls(tls));
+                workers.push(thread::spawn(move || handle_conn(s, &st, &sp, t)));
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(5))
@@ -139,7 +141,8 @@ fn accept_loop(l: TcpListener, st: Arc<Mutex<StoreState>>, sp: Arc<AtomicBool>, 
         }
     }
     for w in workers {
-        let _ = w.join();
+        // A panicked connection thread has already reported it; its client saw the failure.
+        let _: Option<()> = w.join().ok();
     }
 }
 
@@ -162,19 +165,22 @@ fn read_more(s: &mut TcpStream, dst: &mut Vec<u8>, tmp: &mut [u8]) -> io::Result
     }
 }
 
-fn handle_conn(mut s: TcpStream, st: Arc<Mutex<StoreState>>, sp: Arc<AtomicBool>, tls: MaybeTls) {
-    let _ = s.set_nonblocking(false);
-    let _ = s.set_read_timeout(Some(Duration::from_millis(50)));
+fn handle_conn(mut s: TcpStream, st: &Mutex<StoreState>, sp: &AtomicBool, tls: MaybeTls) {
+    // The peer may already be gone (macOS then refuses socket options with EINVAL);
+    // the read loop below ends on a dead socket either way.
+    let _: Option<()> = s.set_nonblocking(false).ok();
+    let _: Option<()> = s.set_read_timeout(Some(Duration::from_millis(50))).ok();
     #[cfg(feature = "tls")]
     if let Some(setup) = tls {
-        let _ = handle_tls(s, st, sp, setup);
+        // A failed TLS connection just ends; its client sees the failure.
+        let _: Option<()> = handle_tls(s, st, sp, &setup).ok();
         return;
     }
     #[cfg(not(feature = "tls"))]
     let () = tls;
     let (mut buf, mut tmp) = (Vec::new(), [0u8; 16 * 1024]);
     while !sp.load(Ordering::Acquire) {
-        if let Some((resp, close)) = try_http(&mut buf, &st) {
+        if let Some((resp, close)) = try_http(&mut buf, st) {
             if s.write_all(&resp).is_err() || close {
                 break;
             }
@@ -187,11 +193,11 @@ fn handle_conn(mut s: TcpStream, st: Arc<Mutex<StoreState>>, sp: Arc<AtomicBool>
 #[cfg(feature = "tls")]
 fn handle_tls(
     mut s: TcpStream,
-    st: Arc<Mutex<StoreState>>,
-    sp: Arc<AtomicBool>,
-    setup: Arc<ServerSetup>,
+    st: &Mutex<StoreState>,
+    sp: &AtomicBool,
+    setup: &ServerSetup,
 ) -> io::Result<()> {
-    let Ok(mut hs) = Handshake::server(&setup) else {
+    let Ok(mut hs) = Handshake::server(setup) else {
         return Ok(());
     };
     let (mut wire, mut plain, mut tmp) = (Vec::new(), Vec::new(), [0u8; RECORD_MAX]);
@@ -205,7 +211,7 @@ fn handle_tls(
             return Ok(());
         };
         if u > 0 {
-            wire.drain(..u);
+            let _: std::vec::Drain<'_, u8> = wire.drain(..u);
         } else if !read_more(&mut s, &mut wire, &mut tmp)? {
             return Ok(());
         }
@@ -223,7 +229,7 @@ fn handle_tls(
             let Ok((ct, plen)) = rx.open(&wire[..rlen], &mut tmp) else {
                 return Ok(());
             };
-            wire.drain(..rlen);
+            let _: std::vec::Drain<'_, u8> = wire.drain(..rlen);
             if ct == CONTENT_ALERT {
                 return Ok(());
             }
@@ -231,7 +237,7 @@ fn handle_tls(
                 plain.extend_from_slice(&tmp[..plen]);
             }
         }
-        if let Some((out, close)) = try_http(&mut plain, &st) {
+        if let Some((out, close)) = try_http(&mut plain, st) {
             for chunk in out.chunks(FRAGMENT_MAX) {
                 let Ok(slen) = tx.seal(CONTENT_APPLICATION_DATA, chunk, &mut tmp) else {
                     return Ok(());
@@ -248,26 +254,26 @@ fn handle_tls(
     Ok(())
 }
 
-fn try_http(buf: &mut Vec<u8>, state: &Arc<Mutex<StoreState>>) -> Option<(Vec<u8>, bool)> {
+fn try_http(buf: &mut Vec<u8>, state: &Mutex<StoreState>) -> Option<(Vec<u8>, bool)> {
     let head = parse_request(buf, 16 * 1024).ok()??;
     let (hl, bl) = (
-        head.fields.head_len,
-        head.fields.content_length.unwrap_or(0) as usize,
+        head.fields().head_len(),
+        head.fields().content_length().unwrap_or(0) as usize,
     );
     if buf.len() < hl + bl {
         return None;
     }
     let m = String::from_utf8_lossy(head.method(buf)).into_owned();
     let t = String::from_utf8_lossy(head.target(buf)).into_owned();
-    let inm = head.fields.header(buf, "if-none-match") == Some(b"*");
+    let inm = head.fields().header(buf, "if-none-match") == Some(b"*");
     let rng = head
-        .fields
+        .fields()
         .header(buf, "range")
         .and_then(|v| std::str::from_utf8(v).ok())
         .and_then(|s| s.strip_prefix("bytes=")?.split_once('-'))
         .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)));
-    let (close, body) = (head.fields.close, buf[hl..hl + bl].to_vec());
-    buf.drain(..hl + bl);
+    let (close, body) = (head.fields().close(), buf[hl..hl + bl].to_vec());
+    let _: std::vec::Drain<'_, u8> = buf.drain(..hl + bl);
     let mut st = state.lock().expect("lock");
     st.requests += 1;
     Some((dispatch_s3(&mut st, &m, &t, inm, rng, body), close))

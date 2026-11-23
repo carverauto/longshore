@@ -50,3 +50,6 @@ path = "tests/e2e.rs"
 default-target = "x86_64-unknown-linux-gnu"
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 features = ["sim"]
+
+[lints]
+workspace = true

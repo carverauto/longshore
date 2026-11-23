@@ -56,7 +56,7 @@ impl Stream {
     pub fn on_idle_check<IO: Io>(&mut self, io: &mut IO, result: i32) -> IdleCheck {
         #[cfg(not(feature = "tls"))]
         {
-            let _ = io;
+            let _: &mut IO = io;
             match result {
                 r if r == -EAGAIN => IdleCheck::Clean,
                 r if r > 0 => IdleCheck::Dirty,
@@ -85,7 +85,7 @@ impl Stream {
             if result <= 0 {
                 return IdleCheck::Closed;
             }
-            t.rx_end += result as u32;
+            t.rx_end += result.unsigned_abs();
             t.idle_step(io, sock, token)
         }
     }
@@ -123,7 +123,8 @@ impl Tls {
         if self.make_room(io).is_err() {
             return IdleCheck::Closed;
         }
-        io.submit(
+        Stream::submit(
+            io,
             token,
             Op::RecvNow {
                 sock,
@@ -131,8 +132,7 @@ impl Tls {
                 off: self.rx_end,
                 len: self.cap - self.rx_end,
             },
-        )
-        .expect("Limits::ops_max must cover one receive per connection");
+        );
         IdleCheck::Pending
     }
 }

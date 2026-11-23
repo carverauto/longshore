@@ -6,6 +6,7 @@
 //! Build a client and drop it with work in flight, many times over.
 
 use super::{builder, descriptors, io_threads, serve, settles, SIZE};
+use crate::die::OrDie;
 use longshore::client::{Client, Error};
 use longshore::io::uring::Fault;
 use std::time::Duration;
@@ -36,7 +37,7 @@ enum Way {
     Fail,
 }
 
-fn caller(client: Client, n: usize, way: Way) {
+fn caller(client: &Client, n: usize, way: Way) {
     let key = format!("churn-{n}");
     let mut body = client.buffer_blocking();
     let void = body.is_empty();
@@ -53,7 +54,7 @@ fn caller(client: Client, n: usize, way: Way) {
             match stored {
                 Ok(()) if !void => {}
                 Err(Error::Closed) if way == Way::Fail => return,
-                other => panic!("{way:?}: store ended {other:?}"),
+                other => crate::die::die(format_args!("{way:?}: store ended {other:?}")),
             }
             let (fetched, body) = client.fetch(&key, body).wait();
             match fetched {
@@ -62,7 +63,7 @@ fn caller(client: Client, n: usize, way: Way) {
                     assert!(body.as_slice().iter().all(|b| *b == n as u8));
                 }
                 Err(Error::Closed) if way == Way::Fail => {}
-                other => panic!("{way:?}: fetch ended {other:?}"),
+                other => crate::die::die(format_args!("{way:?}: fetch ended {other:?}")),
             }
         }
     }
@@ -78,11 +79,11 @@ pub fn run(rounds: u32, bounded_memory: bool) {
     let mut settled_kib = 0;
     for round in 0..rounds {
         let way = [Way::Finish, Way::Detach, Way::Outlive, Way::Fail][round as usize % 4];
-        let client = builder(addr, THREADS).build().expect("build");
+        let client = builder(addr, THREADS).build().or_die("build");
         let callers: Vec<_> = (0..CALLERS)
             .map(|n| {
                 let c = client.clone();
-                std::thread::spawn(move || caller(c, n, way))
+                std::thread::spawn(move || caller(&c, n, way))
             })
             .collect();
         match way {
@@ -90,12 +91,12 @@ pub fn run(rounds: u32, bounded_memory: bool) {
             Way::Outlive => {}
             Way::Finish | Way::Detach => {
                 // Let some of the work get under way first.
-                std::thread::sleep(Duration::from_micros(200 * (round as u64 % 5)));
+                std::thread::sleep(Duration::from_micros(200 * (u64::from(round) % 5)));
             }
         }
         drop(client);
         for c in callers {
-            c.join().expect("a caller failed");
+            c.join().or_die("a caller failed");
         }
         // The last handle went on whichever thread dropped it last, and
         // that drop joined the I/O threads.

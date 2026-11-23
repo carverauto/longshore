@@ -17,6 +17,18 @@ pub use std::sync::atomic::{
 };
 #[cfg(not(longshore_model))]
 pub use std::sync::{Condvar, Mutex};
+
+/// The guard (or other result) of a lock that was not poisoned.
+///
+/// A poisoned lock means a holder panicked part-way through an update;
+/// going on would trust state left half-written, so the panic is passed on.
+#[expect(
+    clippy::expect_used,
+    reason = "a poisoned lock holds half-written state; passing the holder's panic on is the only safe course"
+)]
+pub(crate) fn unpoisoned<G>(result: std::sync::LockResult<G>) -> G {
+    result.expect("a thread panicked while holding this lock")
+}
 #[cfg(not(longshore_model))]
 pub use std::thread::{current, park, yield_now, Thread};
 

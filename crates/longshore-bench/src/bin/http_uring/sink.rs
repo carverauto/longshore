@@ -6,17 +6,18 @@
 //! The multi-threaded peer for throughput runs.
 
 use super::*;
+use crate::die::OrDie;
 
 /// Thread-per-connection HTTP peer that never becomes the bottleneck:
 /// request bodies are discarded in the kernel with MSG_TRUNC.
 pub(super) fn sink(port: u16, get_size: u32, trust_file: Option<&str>) {
-    let l =
-        TcpListener::bind(("0.0.0.0", port)).unwrap_or_else(|e| die(&format!("bind {port}: {e}")));
+    let l = TcpListener::bind(("0.0.0.0", port))
+        .unwrap_or_else(|e| die(format_args!("bind {port}: {e}")));
     // TLS mode: a throwaway certificate for `bench.test`, saved for the client to trust.
     let tls = trust_file.map(|path| {
         let k = rcgen::generate_simple_self_signed(vec!["bench.test".to_string()])
-            .unwrap_or_else(|e| die(&format!("certificate: {e}")));
-        std::fs::write(path, k.cert.der()).unwrap_or_else(|e| die(&format!("{path}: {e}")));
+            .unwrap_or_else(|e| die(format_args!("certificate: {e}")));
+        std::fs::write(path, k.cert.der()).unwrap_or_else(|e| die(format_args!("{path}: {e}")));
         let key = rustls::pki_types::PrivateKeyDer::Pkcs8(
             rustls::pki_types::PrivatePkcs8KeyDer::from(k.signing_key.serialize_der()),
         );
@@ -24,10 +25,10 @@ pub(super) fn sink(port: u16, get_size: u32, trust_file: Option<&str>) {
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
+        .or_die("with_protocol_versions")
         .with_no_client_auth()
         .with_single_cert(vec![k.cert.der().clone()], key)
-        .unwrap_or_else(|e| die(&format!("server config: {e}")));
+        .unwrap_or_else(|e| die(format_args!("server config: {e}")));
         std::sync::Arc::new(cfg)
     });
     eprintln!(
@@ -37,7 +38,7 @@ pub(super) fn sink(port: u16, get_size: u32, trust_file: Option<&str>) {
     for s in l.incoming() {
         let Ok(s) = s else { continue };
         let tls = tls.clone();
-        std::thread::spawn(move || match tls {
+        let _: std::thread::JoinHandle<()> = std::thread::spawn(move || match tls {
             None => serve(s, get_size, true),
             Some(cfg) => {
                 let Ok(conn) = rustls::ServerConnection::new(cfg) else {
@@ -105,12 +106,12 @@ fn serve<S: Read + Write + MaybeFd>(mut s: S, get_size: u32, discard_in_kernel: 
                         },
                         None => s
                             .read(&mut scratch[..left.min(1 << 20)])
-                            .map_or(-1, |n| n as isize),
+                            .map_or(-1, |n| isize::try_from(n).unwrap_or(-1)),
                     };
                     if n <= 0 {
                         return;
                     }
-                    left -= n as usize;
+                    left -= usize::try_from(n).or_die("received bytes");
                 }
                 let body = if is_get { get_size as usize } else { 0 };
                 if s.write_all(

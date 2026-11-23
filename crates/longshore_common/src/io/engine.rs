@@ -21,15 +21,16 @@ use std::sync::Arc;
 
 mod backend;
 mod step;
+mod submit;
 #[cfg(test)]
 mod tests;
 
 /// Result of attempting a pending operation in a [`World`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Attempt {
-    pub result: i32,
-    pub more: bool,
-    pub buf: Option<BufId>,
+    pub(crate) result: i32,
+    pub(crate) more: bool,
+    pub(crate) buf: Option<BufId>,
 }
 
 impl Attempt {
@@ -208,5 +209,32 @@ impl<W: World> Engine<W> {
         self.ready.clear();
         self.files.reset();
         self.woken.store(false, Ordering::Release);
+    }
+}
+
+impl Attempt {
+    /// A completion with `result`, saying whether `more` follow and which
+    /// buffer an armed receive selected.
+    #[inline]
+    pub const fn new(result: i32, more: bool, buf: Option<BufId>) -> Self {
+        Self { result, more, buf }
+    }
+
+    /// A byte count or 0 on success, or a negated Linux errno.
+    #[inline]
+    pub const fn result(self) -> i32 {
+        self.result
+    }
+
+    /// Whether more completions will follow for the operation.
+    #[inline]
+    pub const fn more(self) -> bool {
+        self.more
+    }
+
+    /// Buffer selected by an armed receive, if any.
+    #[inline]
+    pub const fn buf(self) -> Option<BufId> {
+        self.buf
     }
 }

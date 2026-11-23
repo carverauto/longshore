@@ -6,6 +6,7 @@
 //! Generic `IO: Io` contract suite for [`Io::submit_chain`].
 
 use crate::io::contract_files::{base_limits, close_file, drive_one, open_file, write_path};
+use crate::io::must::{fail, Must};
 use crate::io::{
     BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ECANCELED, ENOENT,
 };
@@ -17,10 +18,10 @@ pub(super) fn collect_chain<const N: usize>(
     out: &mut Completions,
     ops: [(Token, Op); N],
 ) -> Vec<Completion> {
-    io.submit_chain(&ops).expect("submit_chain");
+    io.must_submit_chain(&ops);
     let mut got = Vec::with_capacity(N);
     for _ in 0..10_000 {
-        io.tick(true, out).expect("tick");
+        io.must_tick(true, out);
         while let Some(c) = out.pop() {
             if ops.iter().any(|(t, _)| *t == c.token) {
                 got.push(c);
@@ -30,7 +31,7 @@ pub(super) fn collect_chain<const N: usize>(
             return got;
         }
     }
-    panic!("timed out collecting chain");
+    fail(format_args!("timed out collecting chain"));
 }
 
 /// Run all 7 linked-chain contract tests against any [`Io`] backend.
@@ -47,12 +48,10 @@ fn write_then_sync<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     let p = format!("{root}c_ws.dat");
     let plen = write_path(&mut io, BufId(0), 0, &p);
     io.buf(BufId(1))[..13].copy_from_slice(b"chain-payload");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     let cs = collect_chain(
         &mut io,
         &mut out,
@@ -117,12 +116,10 @@ fn short_read_cancels_tail<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &s
     let mut io = make(base_limits());
     let mut out = Completions::new(16);
     let p = format!("{root}c_short.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p, rw),
         0
@@ -176,16 +173,11 @@ fn failure_at_each_position<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
     let mut out = Completions::new(16);
     let ok_path = format!("{root}c_ok.dat");
     let missing = format!("{root}c_missing.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
+    let ro = OpenFlags::NONE.with_read(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &ok_path, rw),
         0

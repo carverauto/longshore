@@ -6,8 +6,11 @@
 //! HTTP client against the in-tree server on one simulated `Io`, with heap
 //! allocation forbidden while requests run.
 
+#[cfg(test)]
 mod common;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
 #[test]
 fn server_failures_surface_as_errors_and_the_pool_recovers() {
@@ -54,110 +57,29 @@ fn a_stalled_server_times_out_and_the_slot_is_freed() {
     assert_eq!(w.client.in_flight(), 0);
 }
 
+const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 81)), 80);
+const LISTEN: Sock = Sock::new(1 + CONNS * 2);
+const PEER_SOCK: Sock = Sock::new(2 + CONNS * 2);
+const ACCEPT: u64 = 3 << 40;
+const RECV: u64 = ACCEPT + 1;
+const SEND: u64 = ACCEPT + 2;
+const PARTIAL: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhalf";
+const OUT_OFF: u32 = 4096;
+
 #[test]
 fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
     // The peer answers with a partial response exactly when the timeout
     // fires, then goes silent. Depending on the seed, the client's read
     // completes with that data before the cancel reaches it.
-    const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 81)), 80);
-    const LISTEN: Sock = Sock(1 + CONNS * 2);
-    const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
-    const ACCEPT: u64 = 3 << 40;
-    const RECV: u64 = ACCEPT + 1;
-    const SEND: u64 = ACCEPT + 2;
-    const PARTIAL: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhalf";
-    const OUT_OFF: u32 = 4096;
-    let timeout = client_cfg().request_timeout_ns;
     for seed in 0..64 {
         let mut w = world(seed, Faults::default());
-        w.io.listen(LISTEN, PEER).unwrap();
-        w.io.submit(
-            Token(ACCEPT),
-            Op::Accept {
-                listener: LISTEN,
-                sock: PEER_SOCK,
-            },
-        )
-        .unwrap();
-        w.io.buf(TX)[OUT_OFF as usize..OUT_OFF as usize + PARTIAL.len()].copy_from_slice(PARTIAL);
-        let req = Request {
-            method: "GET",
-            target: "/slow",
-            host: "slow.test",
-            host_id: 1,
-            addr: PEER,
-            headers: &[],
-            body: None,
-            response_buf: Some(RX),
-        };
-        let t0 = w.io.now_ns();
-        w.client.start(&mut w.io, 7, &req).unwrap();
-        let (mut sent, mut peer_eof, mut result) = (false, false, None);
-        let World {
-            io,
-            client,
-            server,
-            out,
-            ..
-        } = &mut w;
-        sealed(|| {
-            while io.now_ns() - t0 < 5 * timeout && !(peer_eof && result.is_some()) {
-                io.tick(true, out).expect("simulation deadlock");
-                while let Some(c) = out.pop() {
-                    match c.token.0 {
-                        HEARTBEAT => {
-                            if !sent && io.now_ns() - t0 >= timeout {
-                                io.submit(
-                                    Token(SEND),
-                                    Op::Send {
-                                        sock: PEER_SOCK,
-                                        buf: TX,
-                                        off: OUT_OFF,
-                                        len: PARTIAL.len() as u32,
-                                        zero_copy: false,
-                                    },
-                                )
-                                .unwrap();
-                                sent = true;
-                            }
-                            client.tick(io);
-                            io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
-                                .unwrap();
-                        }
-                        ACCEPT | RECV if c.result > 0 || c.token.0 == ACCEPT => {
-                            io.submit(
-                                Token(RECV),
-                                Op::Recv {
-                                    sock: PEER_SOCK,
-                                    buf: TX,
-                                    off: 0,
-                                    len: 1024,
-                                },
-                            )
-                            .unwrap();
-                        }
-                        RECV => peer_eof = true,
-                        SEND => {}
-                        _ => match client.on_completion(io, c) {
-                            Handled::Done(d) => result = Some(d),
-                            Handled::Pending => {}
-                            Handled::NotMine => {
-                                assert!(server.on_completion(io, c), "unrouted completion {c:?}")
-                            }
-                        },
-                    }
-                }
-            }
-        });
+        let t0 = start_slow_request(&mut w);
+        let (sent, peer_eof, result) = run_with_slow_peer(&mut w, t0);
         assert!(sent, "seed {seed}: the partial response was never sent");
         assert_eq!(
-            result,
-            Some(Done {
-                token: 7,
-                result: Err(Error::Timeout),
-                // The request went out whole before the response stalled.
-                sent: true,
-            }),
+            result.map(|d| (d.token(), d.result(), d.sent())),
+            // The request went out whole before the response stalled.
+            Some((7, Err(Error::Timeout), true)),
             "seed {seed}: the request did not end with a timeout"
         );
         assert!(
@@ -168,15 +90,95 @@ fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
     }
 }
 
+/// Sets up the slow peer and starts request 7 to it. Returns when it started.
+#[cfg(test)]
+fn start_slow_request(w: &mut World) -> u64 {
+    let _: SocketAddr = w.io.listen(LISTEN, PEER).unwrap();
+    w.io.submit(
+        Token::new(ACCEPT),
+        Op::Accept {
+            listener: LISTEN,
+            sock: PEER_SOCK,
+        },
+    )
+    .unwrap();
+    w.io.buf(TX)[OUT_OFF as usize..OUT_OFF as usize + PARTIAL.len()].copy_from_slice(PARTIAL);
+    let req = Request::new("GET", "/slow", "slow.test", 1, PEER).with_response_buf(Some(RX));
+    let t0 = w.io.now_ns();
+    w.client.start(&mut w.io, 7, &req).unwrap();
+    t0
+}
+
+/// Runs until the peer sees end of stream and the request has ended, or
+/// five timeouts pass. The peer sends `PARTIAL` once the request timeout
+/// is due. Returns whether it sent, whether it saw end of stream, and how
+/// the request ended.
+#[cfg(test)]
+fn run_with_slow_peer(w: &mut World, t0: u64) -> (bool, bool, Option<Done>) {
+    let timeout = client_cfg().request_timeout_ns();
+    let (mut sent, mut peer_eof, mut result) = (false, false, None);
+    let World {
+        io,
+        client,
+        server,
+        out,
+        ..
+    } = w;
+    sealed(|| {
+        while io.now_ns() - t0 < 5 * timeout && !(peer_eof && result.is_some()) {
+            io.tick(true, out).expect("simulation deadlock");
+            while let Some(c) = out.pop() {
+                match c.token().get() {
+                    HEARTBEAT => {
+                        if !sent && io.now_ns() - t0 >= timeout {
+                            send_partial(io);
+                            sent = true;
+                        }
+                        client.tick(io);
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                            .unwrap();
+                    }
+                    ACCEPT | RECV if c.result() > 0 || c.token().get() == ACCEPT => {
+                        let recv = Op::Recv {
+                            sock: PEER_SOCK,
+                            buf: TX,
+                            off: 0,
+                            len: 1024,
+                        };
+                        io.submit(Token::new(RECV), recv).unwrap();
+                    }
+                    RECV => peer_eof = true,
+                    SEND => {}
+                    _ => match client.on_completion(io, c) {
+                        Handled::Done(d) => result = Some(d),
+                        Handled::Pending => {}
+                        Handled::NotMine => {
+                            assert!(server.on_completion(io, c), "unrouted completion {c:?}")
+                        }
+                    },
+                }
+            }
+        }
+    });
+    (sent, peer_eof, result)
+}
+
+/// The peer sends the partial response it keeps at `OUT_OFF`.
+#[cfg(test)]
+fn send_partial(io: &mut SimIo) {
+    let send = Op::Send {
+        sock: PEER_SOCK,
+        buf: TX,
+        off: OUT_OFF,
+        len: PARTIAL.len() as u32,
+        zero_copy: false,
+    };
+    io.submit(Token::new(SEND), send).unwrap();
+}
+
 #[test]
 fn connect_refused_is_reported_without_leaking_the_slot() {
-    let mut w = world(
-        7,
-        Faults {
-            connect_refused: 1_000_000,
-            ..Faults::default()
-        },
-    );
+    let mut w = world(7, Faults::NONE.with_connect_refused(1_000_000));
     for _ in 0..CONNS * 2 {
         assert_eq!(
             w.request("GET", "/k", None),
@@ -189,12 +191,10 @@ fn connect_refused_is_reported_without_leaking_the_slot() {
 /// Short writes, partial reads and reordering must not change what is stored or fetched.
 #[test]
 fn round_trip_survives_short_writes_partial_reads_and_delays() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 300_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(300_000)
+        .with_delay(200_000);
     for seed in 0..40 {
         let mut w = world(seed, faults);
         w.fill_tx(BUF, seed as u8);
@@ -217,13 +217,11 @@ fn round_trip_survives_short_writes_partial_reads_and_delays() {
 /// an error, and the pool never leaks a connection slot.
 #[test]
 fn resets_never_hang_a_request_or_leak_a_slot() {
-    let faults = Faults {
-        reset: 30_000,
-        short_send: 100_000,
-        partial_recv: 100_000,
-        delay: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_reset(30_000)
+        .with_short_send(100_000)
+        .with_partial_recv(100_000)
+        .with_delay(100_000);
     let (mut oks, mut errs) = (0, 0);
     for seed in 0..40 {
         let mut w = world(seed, faults);
@@ -237,9 +235,9 @@ fn resets_never_hang_a_request_or_leak_a_slot() {
             match r {
                 Ok(resp) => {
                     assert!(
-                        matches!(resp.status, 200 | 404),
+                        matches!(resp.status(), 200 | 404),
                         "seed {seed}: status {}",
-                        resp.status
+                        resp.status()
                     );
                     oks += 1;
                 }
@@ -271,16 +269,13 @@ fn resets_never_hang_a_request_or_leak_a_slot() {
 fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
     use hegel::generators as gs;
     let seed = tc.draw(gs::integers::<u64>());
-    let ppm =
-        |tc: &hegel::TestCase, max: u32| tc.draw(gs::integers::<u32>().min_value(0).max_value(max));
-    let faults = Faults {
-        reset: ppm(&tc, 20_000),
-        short_send: ppm(&tc, 500_000),
-        partial_recv: ppm(&tc, 500_000),
-        delay: ppm(&tc, 400_000),
-        connect_refused: ppm(&tc, 100_000),
-        ..Faults::default()
-    };
+    let ppm = |max: u32| tc.draw(gs::integers::<u32>().min_value(0).max_value(max));
+    let faults = Faults::NONE
+        .with_reset(ppm(20_000))
+        .with_short_send(ppm(500_000))
+        .with_partial_recv(ppm(500_000))
+        .with_delay(ppm(400_000))
+        .with_connect_refused(ppm(100_000));
     let ops = tc.draw(
         gs::vecs(
             gs::integers::<u32>()
@@ -304,7 +299,7 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
                 w.fill_tx(len, pattern);
                 match w.request("PUT", "/k", Some(len)) {
                     Ok(r) => {
-                        assert_eq!(r.status, 200, "seed {seed} step {step}");
+                        assert_eq!(r.status(), 200, "seed {seed} step {step}");
                         known = Some((len, pattern));
                         maybe.clear();
                         exists_for_sure = true;
@@ -317,22 +312,22 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
                 }
             }
             1 => match w.request("GET", "/k", None) {
-                Ok(r) if r.status == 200 => {
-                    let got = w.io.buf(RX)[..r.body_len as usize].to_vec();
-                    let matches = |(len, pattern): (u32, u8), w: &mut World| {
-                        w.fill_tx(len, pattern);
-                        len == r.body_len && w.io.buf(TX)[..len as usize] == got[..]
+                Ok(r) if r.status() == 200 => {
+                    let got = w.io.buf(RX)[..r.body_len() as usize].to_vec();
+                    let matches = |(put_len, put_pattern): (u32, u8)| {
+                        w.fill_tx(put_len, put_pattern);
+                        put_len == r.body_len() && w.io.buf(TX)[..put_len as usize] == got[..]
                     };
                     let candidates: Vec<(u32, u8)> =
                         known.into_iter().chain(maybe.iter().copied()).collect();
                     assert!(
-                        candidates.into_iter().any(|c| matches(c, &mut w)),
+                        candidates.into_iter().any(matches),
                         "seed {seed} step {step}: GET returned {} bytes matching no PUT",
-                        r.body_len
+                        r.body_len()
                     );
                 }
                 Ok(r) => {
-                    assert_eq!(r.status, 404, "seed {seed} step {step}");
+                    assert_eq!(r.status(), 404, "seed {seed} step {step}");
                     assert!(
                         !exists_for_sure,
                         "seed {seed} step {step}: 404 for an object a PUT confirmed"
@@ -343,7 +338,7 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
             },
             _ => {
                 // Idle time lets closes complete and exercises reuse after a pause.
-                w.settle(len as u64 % 40);
+                w.settle(u64::from(len) % 40);
             }
         }
         w.settle(5);

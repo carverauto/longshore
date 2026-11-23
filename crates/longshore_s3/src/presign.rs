@@ -40,17 +40,11 @@ pub enum PresignError {
 /// Where the object is and who signs for it.
 #[derive(Debug, Clone, Copy)]
 pub struct Target<'a> {
-    /// `https` or `http`.
-    pub scheme: &'a str,
-    /// The host, as in the `Host` header: `bucket.endpoint`, or the endpoint
-    /// alone when the bucket is in `root`, with `:port` if the port is not
-    /// the scheme's default.
-    pub host: &'a str,
-    /// What the path starts with: empty when the bucket is in the host
-    /// name, `/bucket` when it is addressed in the path.
-    pub root: &'a str,
-    pub region: &'a str,
-    pub credentials: &'a Credentials,
+    pub(crate) scheme: &'a str,
+    pub(crate) host: &'a str,
+    pub(crate) root: &'a str,
+    pub(crate) region: &'a str,
+    pub(crate) credentials: &'a Credentials,
 }
 
 /// Write a presigned URL for `key` into `out` and return its length. The URL
@@ -63,63 +57,23 @@ pub fn presign(
     unix_secs: u64,
     expires_secs: u32,
 ) -> Result<usize, PresignError> {
-    if key.is_empty() {
-        return Err(PresignError::BadKey);
-    }
-    if expires_secs == 0 || expires_secs > EXPIRES_MAX_SECS {
-        return Err(PresignError::BadExpiry);
-    }
+    check(target, key, expires_secs)?;
     let creds = target.credentials;
-    if creds.access_key().is_empty() {
-        return Err(PresignError::NotSigningCredentials);
-    }
     let date = amz_date(unix_secs);
-    let date_str = core::str::from_utf8(&date).expect("timestamps are ASCII");
+    let date_str = crate::text::written(&date);
 
     // Pieces that are signed and also appear in the URL, each encoded once.
     let mut path = [0u8; 64 + 1 + 3 * 1024];
-    let at = target.root.len();
-    path.get_mut(..at)
-        .ok_or(PresignError::BadKey)?
-        .copy_from_slice(target.root.as_bytes());
-    path[at] = b'/';
-    let path_len = at
-        + 1
-        + uri_encode(key.as_bytes(), false, &mut path[at + 1..]).ok_or(PresignError::BadKey)?;
-    let path = core::str::from_utf8(&path[..path_len]).expect("encoded keys are ASCII");
-
+    let path = encode_path(&mut path, target.root, key)?;
     let mut credential = [0u8; 256];
-    let mut n = 0;
-    for piece in [
-        creds.access_key().as_bytes(),
-        b"%2F",
-        &date[..8],
-        b"%2F",
-        target.region.as_bytes(),
-        b"%2Fs3%2Faws4_request",
-    ] {
-        credential
-            .get_mut(n..n + piece.len())
-            .ok_or(PresignError::OutputTooSmall)?
-            .copy_from_slice(piece);
-        n += piece.len();
-    }
-    let credential = core::str::from_utf8(&credential[..n]).expect("ASCII");
-
+    let credential = write_credential(&mut credential, creds.access_key(), &date, target.region)?;
     let mut expires = [0u8; 10];
-    let mut d = expires.len();
-    let mut v = expires_secs;
-    while v > 0 {
-        d -= 1;
-        expires[d] = b'0' + (v % 10) as u8;
-        v /= 10;
-    }
-    let expires = core::str::from_utf8(&expires[d..]).expect("digits");
-
+    let expires = write_decimal(&mut expires, expires_secs);
     let mut token = [0u8; 3 * crate::creds::SESSION_MAX];
+    // Three times the longest token: always room, so `None` cannot happen.
     let token_len = uri_encode(creds.session_token().as_bytes(), true, &mut token)
-        .expect("an encoded session token fits three times its length");
-    let token = core::str::from_utf8(&token[..token_len]).expect("ASCII");
+        .ok_or(PresignError::OutputTooSmall)?;
+    let token = crate::text::written(&token[..token_len]);
 
     let mut query = [
         ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
@@ -158,7 +112,79 @@ pub fn presign(
         },
     )
     .map_err(|_| PresignError::OutputTooSmall)?;
+    write_url(out, target, path, pairs, &signature)
+}
 
+/// Refuse an empty key, a life out of range, or credentials that cannot sign.
+fn check(target: &Target, key: &str, expires_secs: u32) -> Result<(), PresignError> {
+    if key.is_empty() {
+        return Err(PresignError::BadKey);
+    }
+    if expires_secs == 0 || expires_secs > EXPIRES_MAX_SECS {
+        return Err(PresignError::BadExpiry);
+    }
+    if target.credentials.access_key().is_empty() {
+        return Err(PresignError::NotSigningCredentials);
+    }
+    Ok(())
+}
+
+/// `root/key` with the key URI-encoded, written into `buf`.
+fn encode_path<'b>(buf: &'b mut [u8], root: &str, key: &str) -> Result<&'b str, PresignError> {
+    let at = root.len();
+    buf.get_mut(..at)
+        .ok_or(PresignError::BadKey)?
+        .copy_from_slice(root.as_bytes());
+    buf[at] = b'/';
+    let len = at
+        + 1
+        + uri_encode(key.as_bytes(), false, &mut buf[at + 1..]).ok_or(PresignError::BadKey)?;
+    Ok(crate::text::written(&buf[..len]))
+}
+
+/// The encoded `X-Amz-Credential` value, written into `buf`.
+fn write_credential<'b>(
+    buf: &'b mut [u8],
+    access_key: &str,
+    date: &[u8; 16],
+    region: &str,
+) -> Result<&'b str, PresignError> {
+    let mut len = 0;
+    for piece in [
+        access_key.as_bytes(),
+        b"%2F",
+        &date[..8],
+        b"%2F",
+        region.as_bytes(),
+        b"%2Fs3%2Faws4_request",
+    ] {
+        buf.get_mut(len..len + piece.len())
+            .ok_or(PresignError::OutputTooSmall)?
+            .copy_from_slice(piece);
+        len += piece.len();
+    }
+    Ok(crate::text::written(&buf[..len]))
+}
+
+/// `v` in decimal, written at the end of `buf`.
+fn write_decimal(buf: &mut [u8; 10], mut v: u32) -> &str {
+    let mut d = buf.len();
+    while v > 0 {
+        d -= 1;
+        buf[d] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    crate::text::written(&buf[d..])
+}
+
+/// Write the URL: scheme, host, path, query and signature.
+fn write_url(
+    out: &mut [u8],
+    target: &Target,
+    path: &str,
+    pairs: &[(&str, &str)],
+    signature: &[u8],
+) -> Result<usize, PresignError> {
     let mut n = 0;
     let mut put = |bytes: &[u8]| -> Result<(), PresignError> {
         out.get_mut(n..n + bytes.len())
@@ -178,9 +204,62 @@ pub fn presign(
         put(value.as_bytes())?;
     }
     put(b"&X-Amz-Signature=")?;
-    put(&signature)?;
+    put(signature)?;
     Ok(n)
 }
 
 #[cfg(test)]
 mod tests;
+
+impl<'a> Target<'a> {
+    /// The object store at `host` under `root`, signed for by `credentials` in `region`.
+    #[inline]
+    pub const fn new(
+        scheme: &'a str,
+        host: &'a str,
+        root: &'a str,
+        region: &'a str,
+        credentials: &'a Credentials,
+    ) -> Self {
+        Target {
+            scheme,
+            host,
+            root,
+            region,
+            credentials,
+        }
+    }
+
+    /// `https` or `http`.
+    #[inline]
+    pub const fn scheme(self) -> &'a str {
+        self.scheme
+    }
+
+    /// The host, as in the `Host` header: `bucket.endpoint`, or the endpoint
+    /// alone when the bucket is in `root`, with `:port` if the port is not
+    /// the scheme's default.
+    #[inline]
+    pub const fn host(self) -> &'a str {
+        self.host
+    }
+
+    /// What the path starts with: empty when the bucket is in the host
+    /// name, `/bucket` when it is addressed in the path.
+    #[inline]
+    pub const fn root(self) -> &'a str {
+        self.root
+    }
+
+    /// Region used in the signature scope.
+    #[inline]
+    pub const fn region(self) -> &'a str {
+        self.region
+    }
+
+    /// Who signs the URL.
+    #[inline]
+    pub const fn credentials(self) -> &'a Credentials {
+        self.credentials
+    }
+}

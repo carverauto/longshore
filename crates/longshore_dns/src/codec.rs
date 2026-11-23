@@ -55,11 +55,12 @@ pub enum DnsError {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Answers {
-    pub addrs: [IpAddr; ADDRS_MAX],
-    pub len: usize,
+    pub(crate) addrs: [IpAddr; ADDRS_MAX],
+    pub(crate) len: usize,
 }
 
 impl Answers {
+    /// The addresses the answer held, in the order it gave them.
     pub fn as_slice(&self) -> &[IpAddr] {
         &self.addrs[..self.len]
     }

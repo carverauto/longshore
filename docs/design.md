@@ -11,7 +11,7 @@ is. The TLS handshake is the exception, because `rustls` allocates.
 
 The client makes no copy of an upload's body. By default it reads the body
 once, from the caller's registered buffer, to compute the checksum that goes
-with the upload; `checksums = false` turns that pass off. Over plain HTTP the
+with the upload; `checksums(false)` on the builder turns that pass off. Over plain HTTP the
 body is then sent from that buffer. Over HTTPS sealing reads the body once
 more and writes the records into the connection's send buffer, and those
 records are what is sent. Whether a send is zero-copy is decided for each

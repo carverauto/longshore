@@ -7,23 +7,38 @@
 
 use crate::io::{Limits, Op, Token, EBADF, EBUSY, EINVAL};
 
+mod open_flags;
 mod validate;
 pub(crate) use validate::check_unix_path;
 
 /// Index into the fixed file table (`0..limits.files_max`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct FileSlot(pub u32);
+pub struct FileSlot(pub(crate) u32);
+
+impl FileSlot {
+    /// Fixed file slot `index`.
+    #[inline]
+    pub const fn new(index: u32) -> FileSlot {
+        FileSlot(index)
+    }
+
+    /// The slot's index in the fixed file table.
+    #[inline]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
 
 /// Portable open flags mapped to kernel values per platform and architecture.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OpenFlags {
-    pub read: bool,
-    pub write: bool,
-    pub create: bool,
-    pub exclusive: bool,
-    pub empty: bool,
-    pub direct: bool,
-    pub directory: bool,
+    pub(crate) read: bool,
+    pub(crate) write: bool,
+    pub(crate) create: bool,
+    pub(crate) exclusive: bool,
+    pub(crate) empty: bool,
+    pub(crate) direct: bool,
+    pub(crate) directory: bool,
 }
 
 /// Byte size of a Linux `struct statx` buffer.
@@ -32,7 +47,9 @@ pub const STATX_SIZE: usize = 256;
 /// Read `stx_size` from a `FileStatus` output buffer in Linux `struct statx` layout.
 pub fn file_size(buf: &[u8]) -> u64 {
     assert!(buf.len() >= STATX_SIZE, "statx buffer must be >= 256 bytes");
-    u64::from_le_bytes(buf[40..48].try_into().expect("8 bytes at 40..48"))
+    let mut size = [0u8; 8];
+    size.copy_from_slice(&buf[40..48]);
+    u64::from_le_bytes(size)
 }
 
 impl Op {
@@ -157,12 +174,11 @@ impl FileTable {
                 path_len,
                 flags,
             } => {
-                let s = self.slots.get(slot.0 as usize).ok_or(-EBADF)?;
+                let s = self.slots.get_mut(slot.0 as usize).ok_or(-EBADF)?;
                 validate::check_path(pool, limits, path_buf, path_off, path_len)?;
                 if !s.is_free_for_open() {
                     return Err(-EBUSY);
                 }
-                let s = &mut self.slots[slot.0 as usize];
                 s.opens += 1;
                 s.direct = flags.direct;
                 s.next_direct = flags.direct;
@@ -176,7 +192,31 @@ impl FileTable {
                 self.slots[slot.0 as usize].closes += 1;
                 Ok(())
             }
-            _ => validate::check_non_lifecycle(&self.slots, op, pool, limits, false),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {
+                validate::check_non_lifecycle(&self.slots, op, pool, limits, false)
+            }
         }
     }
 
@@ -199,51 +239,87 @@ impl FileTable {
             if !op.is_file_op() {
                 return Err((idx, -EINVAL));
             }
-            let r = match *op {
-                Op::FileOpen {
-                    slot,
-                    path_buf,
-                    path_off,
-                    path_len,
-                    flags,
-                } => {
-                    let s = self.sync_sim(slot, g).map_err(|e| (idx, e))?;
-                    let can_open = s.sim_can_open;
-                    validate::check_path(pool, limits, path_buf, path_off, path_len)
-                        .map_err(|e| (idx, e))?;
-                    if !can_open {
-                        Err(-EBUSY)
-                    } else {
-                        let s = &mut self.slots[slot.0 as usize];
-                        s.sim_can_open = false;
-                        s.sim_active = true;
-                        s.sim_direct = flags.direct;
-                        Ok(())
-                    }
+            self.simulate_chain_op(op, pool, limits, g)
+                .map_err(|e| (idx, e))?;
+        }
+        self.commit_chain(ops);
+        Ok(())
+    }
+
+    /// Checks one chain member against the slot states the members before
+    /// it leave behind, and applies its effect to those simulated states.
+    fn simulate_chain_op(
+        &mut self,
+        op: &Op,
+        pool: &[u8],
+        limits: &Limits,
+        g: u32,
+    ) -> Result<(), i32> {
+        match *op {
+            Op::FileOpen {
+                slot,
+                path_buf,
+                path_off,
+                path_len,
+                flags,
+            } => {
+                let can_open = self.sync_sim(slot, g)?.sim_can_open;
+                validate::check_path(pool, limits, path_buf, path_off, path_len)?;
+                if !can_open {
+                    Err(-EBUSY)
+                } else {
+                    let s = &mut self.slots[slot.0 as usize];
+                    s.sim_can_open = false;
+                    s.sim_active = true;
+                    s.sim_direct = flags.direct;
+                    Ok(())
                 }
-                Op::FileClose { slot } => {
-                    let s = self.sync_sim(slot, g).map_err(|e| (idx, e))?;
-                    if !s.sim_active {
-                        Err(-EBADF)
-                    } else {
-                        let s = &mut self.slots[slot.0 as usize];
-                        s.sim_active = false;
-                        s.sim_can_open = true;
-                        s.sim_direct = false;
-                        Ok(())
-                    }
+            }
+            Op::FileClose { slot } => {
+                let active = self.sync_sim(slot, g)?.sim_active;
+                if !active {
+                    Err(-EBADF)
+                } else {
+                    let s = &mut self.slots[slot.0 as usize];
+                    s.sim_active = false;
+                    s.sim_can_open = true;
+                    s.sim_direct = false;
+                    Ok(())
                 }
-                _ => {
-                    if let Some(slot) = validate::slot_of(op) {
-                        self.sync_sim(slot, g).map_err(|e| (idx, e))?;
-                    }
-                    validate::check_non_lifecycle(&self.slots, op, pool, limits, true)
+            }
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {
+                if let Some(slot) = validate::slot_of(op) {
+                    let _: &SlotEntry = self.sync_sim(slot, g)?;
                 }
-            };
-            if let Err(e) = r {
-                return Err((idx, e));
+                validate::check_non_lifecycle(&self.slots, op, pool, limits, true)
             }
         }
+    }
+
+    /// Records the opens and closes of a chain that passed validation.
+    fn commit_chain(&mut self, ops: &[(Token, Op)]) {
         for (_, op) in ops {
             match *op {
                 Op::FileOpen { slot, flags, .. } => {
@@ -257,10 +333,31 @@ impl FileTable {
                 Op::FileClose { slot } => {
                     self.slots[slot.0 as usize].closes += 1;
                 }
-                _ => {}
+                Op::Connect { .. }
+                | Op::ConnectUnix { .. }
+                | Op::ConnectUdp { .. }
+                | Op::Accept { .. }
+                | Op::ArmedAccept { .. }
+                | Op::ArmedRecv { .. }
+                | Op::Send { .. }
+                | Op::Recv { .. }
+                | Op::RecvNow { .. }
+                | Op::Close { .. }
+                | Op::AwaitWake
+                | Op::ReadFile { .. }
+                | Op::Timeout { .. }
+                | Op::Cancel { .. }
+                | Op::FileRead { .. }
+                | Op::FileWrite { .. }
+                | Op::FileSync { .. }
+                | Op::FileReserve { .. }
+                | Op::FilePunch { .. }
+                | Op::FileStatus { .. }
+                | Op::FileRename { .. }
+                | Op::FileUnlink { .. }
+                | Op::FileMkdir { .. } => {}
             }
         }
-        Ok(())
     }
 
     fn sync_sim(&mut self, slot: FileSlot, g: u32) -> Result<&SlotEntry, i32> {

@@ -18,31 +18,27 @@ use std::sync::Arc;
 use std::thread;
 
 fn test_builder(srv: &HttpStoreServer, threads: u32, ops: u32, bufs: u32, waiters: u32) -> Builder {
-    let mut b = Builder::new(
+    Builder::new(
         "127.0.0.1",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = false;
-    b.port = srv.port();
-    b.address = Some(srv.addr());
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.threads = threads;
-    b.connections = 4;
-    b.buffers = bufs;
-    b.buffer_size = 16 * 1024;
-    b.operations = ops;
-    b.waiters = waiters;
-    b
+    )
+    .tls(false)
+    .port(srv.port())
+    .address(Some(srv.addr()))
+    .portable(true)
+    .threads(threads)
+    .connections(4)
+    .buffers(bufs)
+    .buffer_size(16 * 1024)
+    .operations(ops)
+    .waiters(waiters)
 }
 
-fn report_status(rep: Report) -> Option<u16> {
-    match rep.end {
-        End::Answered(ans) => Some(ans.status),
-        _ => None,
+fn report_status(rep: &Report) -> Option<u16> {
+    match rep.end() {
+        End::Answered(ans) => Some(ans.status()),
+        End::NotSent(_) | End::Unknown(_) => None,
     }
 }
 
@@ -63,16 +59,16 @@ fn t1_f27_1_builder_waiters_field_and_full_object_and_exact_report_api() {
     let (rep, buf) = client
         .put("k2", buf, 7, &Put::default(), Budget::UNLIMITED)
         .wait();
-    assert_eq!(report_status(rep.expect("put report")), Some(200));
+    assert_eq!(report_status(&rep.expect("put report")), Some(200));
     let head_rep = client
         .head("k2", &Expect::default(), Budget::UNLIMITED)
         .wait()
         .expect("head");
-    assert_eq!(report_status(head_rep), Some(200));
+    assert_eq!(report_status(&head_rep), Some(200));
     let (get_rep, buf) = client
         .get("k2", None, &Expect::default(), buf, Budget::UNLIMITED)
         .wait();
-    assert_eq!(report_status(get_rep.expect("get report")), Some(200));
+    assert_eq!(report_status(&get_rep.expect("get report")), Some(200));
     drop(buf);
 
     client.erase("k1").wait().expect("erase k1");
@@ -122,9 +118,9 @@ fn t1_f27_3_client_drop_sends_in_band_stop_and_joins_cleanly() {
     buf.as_mut_slice()[..4].copy_from_slice(b"stop");
     let p1 = client.store("drop-test", buf, 4);
     let p2 = client.erase("nonexistent");
-    let (r1, buf) = p1.wait();
+    let (r1, returned) = p1.wait();
     r1.expect("p1");
-    drop(buf);
+    drop(returned);
     p2.wait().expect("p2");
 
     // Dropping the last Client handle must send in-band stop and join all I/O threads cleanly.
@@ -192,8 +188,7 @@ fn t1_f27_5_unedited_s3_client_model_tests_pass() {
 #[test]
 fn t2_f27_1_failed_uring_thread_answers_closed_and_keeps_lent_buffer_valid() {
     let srv = HttpStoreServer::start_plain().expect("plain store");
-    let mut b = test_builder(&srv, 1, 4, 2, 16);
-    b.portable = false;
+    let b = test_builder(&srv, 1, 4, 2, 16).portable(false);
     let client = match b.build() {
         Ok(c) => c,
         Err(_) => return,
@@ -263,8 +258,7 @@ fn t2_f27_4_multi_lane_routing_and_lane_isolation() {
 
     #[cfg(all(feature = "fault-injection", target_os = "linux"))]
     {
-        let mut b = test_builder(&srv, 4, 4, 2, 32);
-        b.portable = false;
+        let b = test_builder(&srv, 4, 4, 2, 32).portable(false);
         if let Ok(uring_client) = b.build() {
             uring_client.inject_fault(0, Fault::TickFails);
             for _ in 0..100 {

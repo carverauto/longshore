@@ -6,16 +6,39 @@
 //! Waiting for buffers and operation slots, and what callers see when an
 //! I/O lane fails.
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
+#[cfg(test)]
 mod rig;
 use longshore_s3::client::{Buffer, Error};
 use rig::*;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::mpsc;
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
+
+/// A waker that counts how often it was woken.
+fn counted() -> (Arc<Count>, Waker) {
+    let count = Arc::new(Count(AtomicUsize::new(0)));
+    (count.clone(), Waker::from(count))
+}
+
+struct Count(AtomicUsize);
+
+impl Count {
+    fn get(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Count {
+    fn wake(self: Arc<Self>) {
+        let _: usize = self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
 
 #[test]
 fn a_waiter_polled_twice_leaves_the_next_buffer_to_the_other_waiter() {
@@ -106,12 +129,12 @@ fn an_operation_in_flight_when_the_io_fails_ends_closed_with_its_buffer() {
     l.worker.turn(&mut l.io);
     assert!(storing.as_mut().poll(&mut cx).is_pending());
     l.worker.abandon(true);
-    let (result, body) = match storing.as_mut().poll(&mut cx) {
+    let (result, returned) = match storing.as_mut().poll(&mut cx) {
         Poll::Ready(v) => v,
         Poll::Pending => panic!("an abandoned operation is still pending"),
     };
     assert_eq!(result, Err(Error::Closed));
-    assert_eq!(&body.as_slice()[..LEN], &sent[..]);
+    assert_eq!(&returned.as_slice()[..LEN], &sent[..]);
     // Nothing more is sent to the failed I/O.
     assert_eq!(r.run(r.client.erase("k")), Err(Error::Closed));
 }
@@ -197,17 +220,14 @@ fn once_every_lane_is_closed_a_waiter_ends_with_a_void_buffer() {
 
 #[test]
 fn an_erase_asked_for_before_its_lane_failed_runs_on_another() {
-    let mut r = rig(2);
-    let erasing = r.client.erase("k");
     // Both lanes are idle, so either could have been picked: close each in
     // turn and the erase still finds the other.
-    r.lanes[0].worker.abandon(true);
-    assert_eq!(r.run(erasing), Ok(()));
-
-    let mut r = rig(2);
-    let erasing = r.client.erase("k");
-    r.lanes[1].worker.abandon(true);
-    assert_eq!(r.run(erasing), Ok(()));
+    for closed in [0, 1] {
+        let mut r = rig(2);
+        let erasing = r.client.erase("k");
+        r.lanes[closed].worker.abandon(true);
+        assert_eq!(r.run(erasing), Ok(()));
+    }
 }
 
 #[test]
@@ -258,20 +278,20 @@ fn when_the_failed_io_cannot_be_stopped_its_buffers_are_void_and_never_lent_agai
     l.worker.turn(&mut l.io);
     l.worker.abandon(false);
     // The caller is not left waiting, but the buffer it gets back is empty.
-    let (result, a) = match storing.as_mut().poll(&mut cx) {
+    let (result, returned) = match storing.as_mut().poll(&mut cx) {
         Poll::Ready(v) => v,
         Poll::Pending => panic!("an abandoned operation is still pending"),
     };
     assert_eq!(result, Err(Error::Closed));
-    assert!(a.as_slice().is_empty());
-    assert_eq!(a.len(), 0);
-    drop(a);
+    assert!(returned.as_slice().is_empty());
+    assert_eq!(returned.len(), 0);
+    drop(returned);
     // Neither buffer went back to the pool, and with no lane open none ever
     // will: a wait for one ends at once with a void buffer, in both forms.
     let client = r.client.clone();
     let mut borrowing = pin!(client.buffer());
     let waited = match borrowing.as_mut().poll(&mut cx) {
-        Poll::Ready(b) => b,
+        Poll::Ready(buf) => buf,
         Poll::Pending => panic!("a buffer wait with no lane open did not end"),
     };
     let blocked = r.client.buffer_blocking();

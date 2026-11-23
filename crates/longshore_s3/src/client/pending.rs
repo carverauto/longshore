@@ -32,6 +32,10 @@ impl<R> Output for Result<R, Error> {
 
 impl<R> Output for (Result<R, Error>, Buffer) {
     type Value = R;
+    #[expect(
+        clippy::expect_used,
+        reason = "only operations that lend a buffer have this output, and they always hand it back"
+    )]
     fn build(result: Result<R, Error>, buffer: Option<Buffer>) -> Self {
         (
             result,
@@ -60,7 +64,7 @@ pub struct Pending<T: Output> {
     /// The lent buffer the operation holds, as an index in the lane.
     buf: Option<u32>,
     /// The second argument is the part number, for a part of an upload.
-    map: fn(Finished, u32) -> Result<T::Value, Error>,
+    map: fn(&Finished, u32) -> Result<T::Value, Error>,
     number: u32,
 }
 
@@ -83,7 +87,7 @@ impl<T: Output> Pending<T> {
         buf: Option<u32>,
         len: u32,
         early: Option<Error>,
-        map: fn(Finished, u32) -> Result<T::Value, Error>,
+        map: fn(&Finished, u32) -> Result<T::Value, Error>,
     ) -> Self {
         let built = match early {
             Some(e) => Err(e),
@@ -142,9 +146,13 @@ impl<T: Output> Pending<T> {
     /// Hand the request to the I/O thread under slot `op`. False, with the
     /// slot given back, if its thread is closed.
     fn send(&mut self, op: u32) -> bool {
+        #[expect(
+            clippy::expect_used,
+            reason = "the request is put back whenever a send fails, so it is here on every try"
+        )]
         let mut r = self.request.take().expect("sent once");
         r.op = op;
-        self.lane.in_flight.fetch_add(1, Ordering::Relaxed);
+        let _: u32 = self.lane.in_flight.fetch_add(1, Ordering::Relaxed);
         let tag = self.buf.filter(|&b| b != NO_INDEX);
         match self.lane.sender.send_slot(op, tag, r) {
             Ok(()) => {
@@ -153,19 +161,23 @@ impl<T: Output> Pending<T> {
             }
             Err(TrySendError::Closed(r)) => {
                 self.request = Some(r);
-                self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                let _: u32 = self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
                 self.lane.sender.pool().give(op);
                 false
             }
+            #[expect(
+                clippy::panic,
+                reason = "the lane's queue holds one message per operation slot (Worker::new sets capacity = slots), so it cannot be full while this slot is held"
+            )]
             Err(TrySendError::Full(_)) => {
-                self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                let _: u32 = self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
                 self.lane.sender.pool().give(op);
                 panic!("mailbox queue full while holding an operation slot");
             }
         }
     }
 
-    fn finish(&mut self, finished: Finished) -> T {
+    fn finish(&mut self, finished: &Finished) -> T {
         self.stage = Stage::Taken;
         let buffer = self.buffer();
         T::build((self.map)(finished, self.number), buffer)
@@ -234,7 +246,7 @@ impl<T: Output> Pending<T> {
             Stage::Early(e) => self.early(e),
             Stage::Sent(op) => {
                 let finished = self.lane.sender.wait_answer(op);
-                self.finish(finished)
+                self.finish(&finished)
             }
             Stage::Slot | Stage::Taken => unreachable!("a result is taken once"),
         }
@@ -253,10 +265,14 @@ impl<T: Output> Future for Pending<T> {
         match me.stage {
             Stage::Early(e) => Poll::Ready(me.early(e)),
             Stage::Sent(op) => match me.lane.sender.poll_answer(op, cx) {
-                Poll::Ready(finished) => Poll::Ready(me.finish(finished)),
+                Poll::Ready(finished) => Poll::Ready(me.finish(&finished)),
                 Poll::Pending => Poll::Pending,
             },
             Stage::Slot => unreachable!("a slot was taken or the lane closed"),
+            #[expect(
+                clippy::panic,
+                reason = "polling a future after it returned Ready breaks the Future contract"
+            )]
             Stage::Taken => panic!("polled after it returned its result"),
         }
     }

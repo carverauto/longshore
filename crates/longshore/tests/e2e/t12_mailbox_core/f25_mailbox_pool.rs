@@ -24,10 +24,10 @@ use std::time::Duration;
 struct CountWake(AtomicUsize);
 impl Wake for CountWake {
     fn wake(self: Arc<Self>) {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.0.fetch_add(1, Ordering::Relaxed);
     }
     fn wake_by_ref(self: &Arc<Self>) {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.0.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -39,16 +39,11 @@ fn counting_waker() -> (Arc<CountWake>, Waker) {
 
 #[test]
 fn t1_f25_1_blocking_caller_sends_request_and_receives_answer() {
-    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config::new(4, 2, 4, Token::new(1)));
 
     let worker = thread::spawn(move || {
         if let Recv::Message(slot) = rx.recv_parked() {
-            assert!(rx.answer(slot, 42_000 + slot as u64).is_none());
+            assert!(rx.answer(slot, 42_000 + u64::from(slot)).is_none());
         }
     });
 
@@ -59,12 +54,7 @@ fn t1_f25_1_blocking_caller_sends_request_and_receives_answer() {
 
 #[test]
 fn t1_f25_2_future_caller_woken_and_yields_answer_via_block_on() {
-    let (tx, mut rx) = mailbox_parked::<u32, &'static str>(Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, &'static str>(Config::new(4, 2, 4, Token::new(1)));
 
     let (wakes, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);
@@ -73,7 +63,9 @@ fn t1_f25_2_future_caller_woken_and_yields_answer_via_block_on() {
 
     let slot = match rx.try_recv() {
         TryRecv::Message(s) => s,
-        other => panic!("expected message, got {other:?}"),
+        other @ (TryRecv::Stop | TryRecv::Empty | TryRecv::Closed) => {
+            panic!("expected message, got {other:?}")
+        }
     };
     assert!(rx.answer(slot, "pong").is_none());
     assert!(wakes.0.load(Ordering::Relaxed) >= 1);
@@ -137,8 +129,8 @@ fn t1_f25_4_waiting_within_preallocated_waiters_allocates_zero_heap() {
         }
         cells.prepare(s0, None);
         cells.prepare(s1, None);
-        cells.answer(&pool, s0, 1);
-        cells.answer(&pool, s1, 2);
+        let _: Option<u32> = cells.answer(&pool, s0, 1);
+        let _: Option<u32> = cells.answer(&pool, s1, 2);
         matches!(cells.poll_answer(&pool, s0, &mut cx), Poll::Ready(1))
             && matches!(cells.poll_answer(&pool, s1, &mut cx), Poll::Ready(2))
     });
@@ -148,22 +140,19 @@ fn t1_f25_4_waiting_within_preallocated_waiters_allocates_zero_heap() {
 #[test]
 fn t1_f25_5_mailbox_block_on_drives_both_mailbox_and_s3_client_pending() {
     let srv = HttpStoreServer::start_plain().expect("plain store");
-    let mut b = Builder::new(
+    let b = Builder::new(
         "127.0.0.1",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = false;
-    b.port = srv.port();
-    b.address = Some(srv.addr());
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.buffers = 2;
-    b.buffer_size = 16 * 1024;
-    b.connections = 2;
-    b.operations = 2;
+    )
+    .tls(false)
+    .port(srv.port())
+    .address(Some(srv.addr()))
+    .portable(true)
+    .buffers(2)
+    .buffer_size(16 * 1024)
+    .connections(2)
+    .operations(2);
     let client = b.build().expect("client");
 
     let buf = block_on(client.buffer());
@@ -174,12 +163,7 @@ fn t1_f25_5_mailbox_block_on_drives_both_mailbox_and_s3_client_pending() {
 
 #[test]
 fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
-    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config {
-        capacity: 4,
-        slots: 1,
-        waiters_prealloc: 2,
-        wake_token: Token(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config::new(4, 1, 2, Token::new(1)));
     let (_c, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);
 
@@ -192,7 +176,9 @@ fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
 
     let slot = match rx.try_recv() {
         TryRecv::Message(s) => s,
-        other => panic!("expected slot, got {other:?}"),
+        other @ (TryRecv::Stop | TryRecv::Empty | TryRecv::Closed) => {
+            panic!("expected slot, got {other:?}")
+        }
     };
     let returned_tag = rx.answer(slot, 9999);
     assert_eq!(returned_tag, Some(42), "detached tag 42 must come back");
@@ -202,7 +188,9 @@ fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
     assert!(matches!(next.as_mut().poll(&mut cx), Poll::Pending));
     let slot2 = match rx.try_recv() {
         TryRecv::Message(s) => s,
-        other => panic!("expected slot2, got {other:?}"),
+        other @ (TryRecv::Stop | TryRecv::Empty | TryRecv::Closed) => {
+            panic!("expected slot2, got {other:?}")
+        }
     };
     assert!(rx.answer(slot2, 555).is_none());
     assert_eq!(block_on(next), 555);
@@ -210,12 +198,7 @@ fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
 
 #[test]
 fn t2_f25_2_waiters_exceeding_slots_and_preallocated_grow_and_complete() {
-    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config {
-        capacity: 8,
-        slots: 1,
-        waiters_prealloc: 2,
-        wake_token: Token(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config::new(8, 1, 2, Token::new(1)));
 
     let receiver = thread::spawn(move || {
         for _ in 0..5 {
@@ -240,12 +223,7 @@ fn t2_f25_2_waiters_exceeding_slots_and_preallocated_grow_and_complete() {
 
 #[test]
 fn t2_f25_3_close_delivers_answered_slot_and_closed_to_unanswered() {
-    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config::new(4, 2, 4, Token::new(1)));
     let (_c, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);
 
@@ -277,7 +255,7 @@ fn t2_f25_4_close_never_overwrites_unsent_free_slots() {
         panic!("slot 0 free");
     };
     cells.prepare(s0, None);
-    cells.answer(&pool, s0, 77);
+    let _: Option<u32> = cells.answer(&pool, s0, 77);
     // Slots 1 and 2 are free/unsent; close_unanswered must not panic or fabricate answers.
     cells.close_unanswered(&pool, || 999, |_| {});
     assert_eq!(cells.poll_answer(&pool, s0, &mut cx), Poll::Ready(77));
@@ -291,5 +269,5 @@ fn t2_f25_5_zero_capacity_pool_rejected_and_wake_without_send_is_safe() {
     let (tx, mut rx) = queue_parked::<u32>(2);
     tx.wake();
     assert_eq!(rx.try_recv(), TryRecv::Empty);
-    let _ = Pool::new(0, 1);
+    let _: Pool = Pool::new(0, 1);
 }

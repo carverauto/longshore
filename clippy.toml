@@ -1,0 +1,9 @@
+# Settings for the lints in [workspace.lints.clippy] (Cargo.toml).
+
+# Unwrap, expect and panic are allowed in tests: a failed unwrap is a failed test.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+# A function fits on one screen.
+too-many-lines-threshold = 70

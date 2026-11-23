@@ -5,8 +5,6 @@
 
 //! Socket constants, address storage, and socket syscalls for `io::sys`.
 
-#![allow(non_camel_case_types)]
-
 use core::ffi::{c_int, c_void};
 use core::mem::{offset_of, size_of};
 

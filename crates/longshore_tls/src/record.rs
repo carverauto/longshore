@@ -132,6 +132,8 @@ impl Direction {
         if key.len() != suite.key_len() {
             return Err(RecordError::BadKey);
         }
+        // Before the first key: the fastest AES-GCM routine this CPU can run.
+        let _: bool = crate::wide_gcm::enable();
         self.clear();
         // SAFETY: `ctx` is owned storage of the right size and alignment.
         // `EVP_AEAD_CTX_zero` puts it in the state `EVP_AEAD_CTX_init`
@@ -347,9 +349,8 @@ impl Direction {
             return Err(RecordError::SequenceExhausted);
         }
         let nonce = self.nonce();
-        let header: [u8; HEADER_LEN] = record[..HEADER_LEN]
-            .try_into()
-            .expect("checked by record_len");
+        let mut header = [0u8; HEADER_LEN];
+        header.copy_from_slice(&record[..HEADER_LEN]);
         let ct_len = record.len() - HEADER_LEN - TAG_LEN;
         if ct_len > INNER_MAX {
             return Err(RecordError::BadLength);

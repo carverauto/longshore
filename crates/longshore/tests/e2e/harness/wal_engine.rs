@@ -16,15 +16,15 @@ const HEADER_LEN: usize = 24;
 
 #[derive(Clone, Copy, Debug)]
 pub struct WalConfig {
-    pub file_slot: FileSlot,
-    pub dir_slot: FileSlot,
-    pub write_buf: BufId,
-    pub read_buf: BufId,
-    pub path_buf: BufId,
-    pub scratch_buf: BufId,
-    pub block_size: u32,
-    pub segment_bytes: u64,
-    pub direct: bool,
+    file_slot: FileSlot,
+    dir_slot: FileSlot,
+    write_buf: BufId,
+    read_buf: BufId,
+    path_buf: BufId,
+    scratch_buf: BufId,
+    block_size: u32,
+    segment_bytes: u64,
+    direct: bool,
     base_dir: [u8; 128],
     base_dir_len: usize,
 }
@@ -36,17 +36,35 @@ impl WalConfig {
         let mut base_dir = [0u8; 128];
         base_dir[..raw.len()].copy_from_slice(raw);
         Self {
-            file_slot: FileSlot(0),
-            dir_slot: FileSlot(1),
-            write_buf: BufId(0),
-            read_buf: BufId(1),
-            path_buf: BufId(2),
-            scratch_buf: BufId(3),
+            file_slot: FileSlot::new(0),
+            dir_slot: FileSlot::new(1),
+            write_buf: BufId::new(0),
+            read_buf: BufId::new(1),
+            path_buf: BufId::new(2),
+            scratch_buf: BufId::new(3),
             block_size,
-            segment_bytes: (block_size as u64) * 16,
+            segment_bytes: u64::from(block_size) * 16,
             direct: true,
             base_dir,
             base_dir_len: raw.len(),
+        }
+    }
+
+    /// The buffers records are written from and read into.
+    pub fn with_io_bufs(self, write_buf: BufId, read_buf: BufId) -> Self {
+        Self {
+            write_buf,
+            read_buf,
+            ..self
+        }
+    }
+
+    /// The buffers paths are built in.
+    pub fn with_path_bufs(self, path_buf: BufId, scratch_buf: BufId) -> Self {
+        Self {
+            path_buf,
+            scratch_buf,
+            ..self
         }
     }
 }
@@ -70,8 +88,8 @@ pub struct WalStats {
 
 pub struct WalEngine {
     cfg: WalConfig,
-    pub cursor: u64,
-    pub next_seq: u64,
+    cursor: u64,
+    next_seq: u64,
     next_token: u64,
 }
 
@@ -87,14 +105,18 @@ impl WalEngine {
     pub fn reset_after_power_loss(&mut self) {
         self.cursor = 0;
     }
+    /// Append the next record at file offset `cursor`.
+    pub fn set_cursor(&mut self, cursor: u64) {
+        self.cursor = cursor;
+    }
     fn tok(&mut self) -> Token {
-        let t = Token(self.next_token);
+        let t = Token::new(self.next_token);
         self.next_token = self.next_token.wrapping_add(1);
         t
     }
     fn run<IO: Io>(&mut self, io: &mut IO, out: &mut Completions, op: Op) -> io::Result<i32> {
         let tok = self.tok();
-        Ok(submit_and_wait_one_stack(io, out, tok, op, 10_000)?.result)
+        Ok(submit_and_wait_one_stack(io, out, tok, op, 10_000)?.result())
     }
 
     fn write_path<IO: Io>(&self, io: &mut IO, buf: BufId, seg: Option<u32>) -> u32 {
@@ -132,13 +154,11 @@ impl WalEngine {
     ) -> io::Result<i32> {
         let (slot, path_buf) = (self.cfg.file_slot, self.cfg.path_buf);
         let path_len = self.write_path(io, path_buf, Some(seg));
-        let flags = OpenFlags {
-            read: true,
-            write: true,
-            create,
-            direct: self.cfg.direct,
-            ..Default::default()
-        };
+        let flags = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(create)
+            .with_direct(self.cfg.direct);
         let op = Op::FileOpen {
             slot,
             path_buf,
@@ -148,13 +168,13 @@ impl WalEngine {
         };
         let res = self.run(io, out, op)?;
         if res >= 0 && reserve && self.cfg.segment_bytes > 0 {
-            let op = Op::FileReserve {
+            let reserve_op = Op::FileReserve {
                 slot,
                 file_off: 0,
                 len: self.cfg.segment_bytes,
                 keep_size: false,
             };
-            return self.run(io, out, op);
+            return self.run(io, out, reserve_op);
         }
         Ok(res)
     }
@@ -204,16 +224,16 @@ impl WalEngine {
         io.submit_chain(&[(t_w, w_op), (t_s, s_op)])
             .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Busy"))?;
         let (mut w, mut s) = (0, 0);
-        drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
-            let cw = v.iter().find(|c| c.token == t_w);
-            let cs = v.iter().find(|c| c.token == t_s);
-            if let (Some(a), Some(b)) = (cw, cs) {
-                (w, s) = (a.result, b.result);
+        let _: usize = drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
+            let cw = v.iter().find(|c| c.token() == t_w);
+            let cs = v.iter().find(|c| c.token() == t_s);
+            if let (Some(write), Some(sync)) = (cw, cs) {
+                (w, s) = (write.result(), sync.result());
                 return true;
             }
             false
         })?;
-        if w == block as i32 && s == 0 {
+        if w == i32::try_from(block).unwrap() && s == 0 {
             self.cursor += block as u64;
             self.next_seq += 1;
         }
@@ -271,11 +291,7 @@ impl WalEngine {
             return Ok(res);
         }
         let path_len = self.write_path(io, old_buf, None);
-        let flags = OpenFlags {
-            read: true,
-            directory: true,
-            ..Default::default()
-        };
+        let flags = OpenFlags::NONE.with_read(true).with_directory(true);
         let (t1, t2, t3) = (self.tok(), self.tok(), self.tok());
         let o_op = Op::FileOpen {
             slot,
@@ -292,9 +308,9 @@ impl WalEngine {
         io.submit_chain(&[(t1, o_op), (t2, s_op), (t3, c_op)])
             .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Busy"))?;
         let mut s_res = 0;
-        drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
-            if v.iter().any(|c| c.token == t3) {
-                s_res = v.iter().find(|c| c.token == t2).map_or(0, |c| c.result);
+        let _: usize = drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
+            if v.iter().any(|c| c.token() == t3) {
+                s_res = v.iter().find(|c| c.token() == t2).map_or(0, |c| c.result());
                 return true;
             }
             false
@@ -311,7 +327,7 @@ impl WalEngine {
     ) -> io::Result<WalStats> {
         let (mut stats, block, slot, buf) = (
             WalStats::default(),
-            self.cfg.block_size as u64,
+            u64::from(self.cfg.block_size),
             self.cfg.file_slot,
             self.cfg.read_buf,
         );
@@ -337,7 +353,7 @@ impl WalEngine {
                     stats.stopped_on_read_error = true;
                     break;
                 }
-                let frame = &io.buf(buf)[..res as usize];
+                let frame = &io.buf(buf)[..usize::try_from(res).unwrap()];
                 match check_frame(frame) {
                     Ok(None) => break,
                     Err(()) => {
@@ -357,7 +373,7 @@ impl WalEngine {
                     }
                 }
             }
-            let _ = self.close_segment(io, out)?;
+            let _: i32 = self.close_segment(io, out)?;
         }
         if stats.last_seq >= self.next_seq {
             self.next_seq = stats.last_seq + 1;

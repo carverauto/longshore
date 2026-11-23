@@ -3,162 +3,125 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! Starting a request: choosing a connection, writing the head, sending.
+//! A request as the caller describes it. It is built and read for every
+//! request on the data path, so building and reading it copy nothing and
+//! allocate nothing.
 
-use super::*;
+use longshore_common::io::BufId;
+use std::net::SocketAddr;
 
-impl Client {
-    /// Begin a request. Its outcome arrives later as [`Handled::Done`] with
-    /// `token`. Nothing is retained from `req` except its buffers.
-    pub fn start<IO: Io>(&mut self, io: &mut IO, token: u64, req: &Request) -> Result<(), Error> {
-        let now = io.now_ns();
-        let fresh = |c: &Conn| {
-            now.saturating_sub(c.opened_at) < self.cfg.max_age_ns
-                && c.uses < self.cfg.max_requests
-                && !c.retired
-        };
-        // Prefer a live connection to this host. Failing that, replace an
-        // expired connection to this host before opening another, so an aged
-        // connection never outlives its limit just because a slot was free.
-        // Then an unused slot, then a connection idle on another host.
-        let pick = self
-            .conns
-            .iter()
-            .position(|c| c.state == State::Idle && c.host_id == req.host_id && fresh(c))
-            .or_else(|| {
-                self.conns
-                    .iter()
-                    .position(|c| c.state == State::Idle && c.host_id == req.host_id)
-            })
-            .or_else(|| self.conns.iter().position(|c| c.state == State::Closed))
-            .or_else(|| self.conns.iter().position(|c| c.state == State::Idle))
-            .ok_or(Error::Busy)?;
+#[derive(Clone, Copy, Debug)]
+#[must_use]
+pub struct Request<'a> {
+    method: &'a str,
+    target: &'a str,
+    host: &'a str,
+    host_id: u16,
+    addr: SocketAddr,
+    headers: &'a [(&'a str, &'a [u8])],
+    body: Option<(BufId, u32)>,
+    response_buf: Option<BufId>,
+}
 
-        if req.host.len() > 253 {
-            return Err(Error::BadRequest);
+impl<'a> Request<'a> {
+    /// A request with no extra headers, no body, and no buffer for a
+    /// response body; the `with_` setters add those.
+    #[inline]
+    pub const fn new(
+        method: &'a str,
+        target: &'a str,
+        host: &'a str,
+        host_id: u16,
+        addr: SocketAddr,
+    ) -> Request<'a> {
+        Request {
+            method,
+            target,
+            host,
+            host_id,
+            addr,
+            headers: &[],
+            body: None,
+            response_buf: None,
         }
-        // The head buffer is about to be overwritten, so the previous
-        // response's headers are gone whether or not this request is accepted.
-        self.conns[pick].fields = None;
-        let head_len = {
-            let buf = &mut io.buf(self.head_buf(pick))[..self.cfg.head_max as usize];
-            let mut w = HeadWriter::request(buf, req.method, req.target);
-            w.header("Host", req.host.as_bytes());
-            if req.body.is_some() || matches!(req.method, "PUT" | "POST") {
-                w.header_u64("Content-Length", req.body.map_or(0, |b| b.1 as u64));
-            }
-            for (name, value) in req.headers {
-                w.header(name, value);
-            }
-            w.finish().map_err(|_| Error::BadRequest)? as u32
-        };
-
-        let reuse = self.conns[pick].state == State::Idle
-            && self.conns[pick].host_id == req.host_id
-            && fresh(&self.conns[pick]);
-        let was_idle = self.conns[pick].state == State::Idle;
-        let c = &mut self.conns[pick];
-        c.token = token;
-        c.started_at = now;
-        c.head_len = head_len;
-        c.body = req.body;
-        c.response_buf = req.response_buf;
-        c.is_head = req.method == "HEAD";
-        c.timed_out = false;
-        c.sent = false;
-        // The name the certificate must match is the host alone: a Host value
-        // may carry a port, a server name may not.
-        #[cfg(feature = "tls")]
-        {
-            let name = req.host.split(':').next().unwrap_or(req.host);
-            c.name[..name.len()].copy_from_slice(name.as_bytes());
-            c.name_len = name.len() as u8;
-        }
-        if reuse {
-            // If the idle check finds this connection dead, its replacement
-            // is a new connection and goes where this request says. The
-            // address is read only when connecting, so the live connection
-            // is not affected.
-            c.addr = req.addr;
-            // The check reads into the free space after the request head. A
-            // head that fills the buffer leaves none, and goes unchecked.
-            if self.cfg.check_idle && head_len < self.cfg.head_max {
-                c.state = State::CheckIdle;
-                let found = self.streams[pick].check_idle(io, self.head_buf(pick), head_len);
-                self.after_idle_check(io, pick, found);
-            } else {
-                self.send_head(io, pick, 0);
-            }
-        } else {
-            c.host_id = req.host_id;
-            c.addr = req.addr;
-            if was_idle {
-                c.state = State::Closing { then_connect: true };
-                self.streams[pick].reset();
-                self.submit(
-                    io,
-                    pick,
-                    K_CLOSE,
-                    Op::Close {
-                        sock: self.sock(pick),
-                    },
-                );
-            } else {
-                self.connect(io, pick);
-            }
-        }
-        Ok(())
     }
 
-    /// Act on what an idle connection held: use it, or replace it and send
-    /// the waiting request on the new one.
-    pub(super) fn after_idle_check<IO: Io>(&mut self, io: &mut IO, i: usize, found: IdleCheck) {
-        match found {
-            IdleCheck::Pending => return,
-            IdleCheck::Clean => return self.send_head(io, i, 0),
-            IdleCheck::Closed => self.idle_closed += 1,
-            IdleCheck::Dirty => self.idle_dirty += 1,
-        }
-        self.conns[i].state = State::Closing { then_connect: true };
-        self.streams[i].reset();
-        self.submit(io, i, K_CLOSE, Op::Close { sock: self.sock(i) });
+    /// Headers sent after Host (and Content-Length, when there is one).
+    #[inline]
+    pub const fn with_headers(mut self, headers: &'a [(&'a str, &'a [u8])]) -> Self {
+        self.headers = headers;
+        self
     }
 
-    pub(super) fn connect<IO: Io>(&mut self, io: &mut IO, i: usize) {
-        self.connects += 1;
-        self.conns[i].state = State::Connecting;
-        self.conns[i].uses = 0;
-        self.conns[i].segment = 0;
-        self.conns[i].retired = false;
-        self.submit(
-            io,
-            i,
-            K_CONNECT,
-            Op::Connect {
-                sock: self.sock(i),
-                addr: self.conns[i].addr,
-            },
-        );
+    /// The request body: a pool buffer and the number of bytes to send
+    /// from it, or `None` for no body.
+    #[inline]
+    pub const fn with_body(mut self, body: Option<(BufId, u32)>) -> Self {
+        self.body = body;
+        self
     }
 
-    pub(super) fn send_head<IO: Io>(&mut self, io: &mut IO, i: usize, off: u32) {
-        self.conns[i].state = State::SendHead { off };
-        self.conns[i].sent = true;
-        // Heads are small; the kernel would copy a zero-copy send this size anyway.
-        self.streams[i].send(
-            io,
-            self.head_buf(i),
-            off,
-            self.conns[i].head_len - off,
-            u32::MAX,
-        );
+    /// Where to receive the response body, or `None` to read and discard
+    /// it. Required if the response has a body larger than can be discarded.
+    #[inline]
+    pub const fn with_response_buf(mut self, response_buf: Option<BufId>) -> Self {
+        self.response_buf = response_buf;
+        self
     }
 
-    pub(super) fn send_body<IO: Io>(&mut self, io: &mut IO, i: usize, off: u32) {
-        let (buf, len) = self.conns[i]
-            .body
-            .expect("send_body is only reached with a body");
-        self.conns[i].state = State::SendBody { off };
-        self.streams[i].send(io, buf, off, len - off, self.cfg.zero_copy_min);
+    /// The method: `GET`, `PUT`, `HEAD` and so on.
+    #[inline]
+    #[must_use]
+    pub const fn method(&self) -> &'a str {
+        self.method
+    }
+
+    /// Origin-form target, already percent-encoded: `/bucket/key?query`.
+    #[inline]
+    #[must_use]
+    pub const fn target(&self) -> &'a str {
+        self.target
+    }
+
+    /// Value of the Host header.
+    #[inline]
+    #[must_use]
+    pub const fn host(&self) -> &'a str {
+        self.host
+    }
+
+    /// Connections are reused only for the same `host_id`.
+    #[inline]
+    #[must_use]
+    pub const fn host_id(&self) -> u16 {
+        self.host_id
+    }
+
+    /// Address to connect to if a new connection is needed.
+    #[inline]
+    #[must_use]
+    pub const fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Headers sent after Host (and Content-Length, when there is one).
+    #[inline]
+    #[must_use]
+    pub const fn headers(&self) -> &'a [(&'a str, &'a [u8])] {
+        self.headers
+    }
+
+    /// Request body: a pool buffer and the number of bytes to send from it.
+    #[inline]
+    #[must_use]
+    pub const fn body(&self) -> Option<(BufId, u32)> {
+        self.body
+    }
+
+    /// Where to receive the response body.
+    #[inline]
+    #[must_use]
+    pub const fn response_buf(&self) -> Option<BufId> {
+        self.response_buf
     }
 }

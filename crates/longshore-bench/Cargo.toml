@@ -6,9 +6,12 @@ version.workspace = true
 publish = false
 license.workspace = true
 
-[dependencies]
+# The check and benchmark programs in src/bin drive the rings, so they are
+# Linux-only (io_uring); elsewhere they build to a stub that uses none of
+# these. This is a tool crate; nothing ships from it. rustls and rcgen are
+# for the benchmark sink's TLS mode.
+[target.'cfg(target_os = "linux")'.dependencies]
 longshore = { workspace = true, features = ["sim", "tls"] }
-# For the benchmark sink's TLS mode. This is a tool crate; nothing ships from it.
 rustls.workspace = true
 rcgen.workspace = true
 
@@ -25,6 +28,9 @@ name = "uring_faults"
 required-features = ["fault-injection"]
 
 [dev-dependencies]
+# The criterion benches and the examples use longshore on every platform
+# (and rustls, further down).
+longshore = { workspace = true, features = ["sim", "tls"] }
 aes-gcm.workspace = true
 aws-lc-rs.workspace = true
 aws-lc-sys.workspace = true
@@ -43,26 +49,38 @@ webpki-roots.workspace = true
 # Criterion microbenchmarks (dev tooling). Network throughput between hosts is
 # measured by the `tcp_raw` binary instead: it needs two machines and reports
 # CPU cost, which does not fit timing a closure in-process.
+#
+# `test = true`: `cargo test` builds each bench and runs every function once
+# (criterion's test mode, without `--bench`), so the benches cannot rot and
+# the dev-dependencies only they use count as used.
 [[bench]]
 name = "dns_codec"
 harness = false
+test = true
 
 [[bench]]
 name = "http_head"
 harness = false
+test = true
 
 [[bench]]
 name = "checksums"
 harness = false
+test = true
 
 [[bench]]
 name = "aead"
 harness = false
+test = true
 
 [[bench]]
 name = "aead_memory"
 harness = false
+test = true
 
 # Feasibility probe for splitting TLS: handshake by rustls, records by longshore::tls.
 [[example]]
 name = "tls_probe"
+
+[lints]
+workspace = true

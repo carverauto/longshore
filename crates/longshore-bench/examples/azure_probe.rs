@@ -22,6 +22,8 @@ const KEY: &str =
     "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 const VERSION: &str = "2021-08-06";
 
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 struct Reply {
     status: u16,
     head: String,
@@ -38,7 +40,10 @@ impl Reply {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the probe builds each request by hand; every argument is one part of the request line, a header or the body"
+)]
 fn call(
     addr: &str,
     method: &str,
@@ -48,16 +53,11 @@ fn call(
     if_none_match: &str,
     range: &str,
     body: &[u8],
-) -> Reply {
+) -> Result<Reply> {
     let mut key = [0u8; KEY_MAX];
-    let k = decode_key(KEY, &mut key).expect("development key");
-    let date = http_date(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    );
-    let date = std::str::from_utf8(&date).unwrap();
+    let k = decode_key(KEY, &mut key).ok_or("development key")?;
+    let date = http_date(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
+    let date = std::str::from_utf8(&date)?;
     let mut ms: Vec<(&str, &str)> = vec![("x-ms-date", date), ("x-ms-version", VERSION)];
     ms.extend_from_slice(extra_ms);
     let content_type = if body.is_empty() {
@@ -65,27 +65,23 @@ fn call(
     } else {
         "application/octet-stream"
     };
-    let req = Request {
-        method,
-        content_length: body.len() as u64,
-        content_type,
-        if_none_match,
-        range,
-        ms_headers: &ms,
-        account: ACCOUNT,
-        path,
-        query,
-    };
+    let req = Request::new(method, ACCOUNT, path)
+        .with_content_length(body.len() as u64)
+        .with_content_type(content_type)
+        .with_if_none_match(if_none_match)
+        .with_range(range)
+        .with_ms_headers(&ms)
+        .with_query(query);
     let mut auth = [0u8; 160];
-    let n = authorization(&req, &key[..k], &mut auth).expect("signable");
+    let n = authorization(&req, &key[..k], &mut auth).map_err(|e| format!("signable: {e:?}"))?;
 
     let mut target = path.to_string();
     for (i, (name, value)) in query.iter().enumerate() {
         target += &format!("{}{name}={value}", if i == 0 { '?' } else { '&' });
     }
-    let mut head = format!("{method} {target} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\nAuthorization: {}\r\n", body.len(), std::str::from_utf8(&auth[..n]).unwrap());
+    let mut request = format!("{method} {target} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\nAuthorization: {}\r\n", body.len(), std::str::from_utf8(&auth[..n])?);
     for (name, value) in &ms {
-        head += &format!("{name}: {value}\r\n");
+        request += &format!("{name}: {value}\r\n");
     }
     for (name, value) in [
         ("Content-Type", content_type),
@@ -93,30 +89,30 @@ fn call(
         ("Range", range),
     ] {
         if !value.is_empty() {
-            head += &format!("{name}: {value}\r\n");
+            request += &format!("{name}: {value}\r\n");
         }
     }
-    head += "\r\n";
-    let mut s = TcpStream::connect(addr).unwrap_or_else(|e| panic!("{addr}: {e}"));
-    s.write_all(head.as_bytes()).unwrap();
-    s.write_all(body).unwrap();
+    request += "\r\n";
+    let mut s = TcpStream::connect(addr).map_err(|e| format!("{addr}: {e}"))?;
+    s.write_all(request.as_bytes())?;
+    s.write_all(body)?;
     let mut raw = Vec::new();
-    s.read_to_end(&mut raw).unwrap();
+    let _: usize = s.read_to_end(&mut raw)?;
     let split = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .expect("a response head");
+        .ok_or("a response head")?;
     let head = String::from_utf8_lossy(&raw[..split]).into_owned();
     let status = head
         .split(' ')
         .nth(1)
         .and_then(|v| v.parse().ok())
-        .expect("a status");
-    Reply {
+        .ok_or("a status")?;
+    Ok(Reply {
         status,
         head,
         body: raw[split + 4..].to_vec(),
-    }
+    })
 }
 
 fn show(what: &str, r: &Reply, want: u16) -> bool {
@@ -141,7 +137,7 @@ fn show(what: &str, r: &Reply, want: u16) -> bool {
     ok
 }
 
-fn main() {
+fn main() -> Result<()> {
     let addr = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:10000".into());
@@ -151,12 +147,6 @@ fn main() {
     let body: Vec<u8> = (0..100_000u32)
         .map(|i| i.wrapping_mul(2654435761).to_le_bytes()[2])
         .collect();
-    let crc = longshore::checksum::crc64_nvme(&body);
-    let be = longshore::checksum::crc64_header_value(crc);
-    let be = std::str::from_utf8(&be).unwrap();
-    let le = longshore::checksum::crc64_azure_header_value(crc);
-    let le = std::str::from_utf8(&le).unwrap();
-    let block = ("x-ms-blob-type", "BlockBlob");
     let mut ok = true;
 
     ok &= show(
@@ -170,12 +160,28 @@ fn main() {
             "",
             "",
             b"",
-        ),
+        )?,
         201,
     );
-    let r = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
-    ok &= show("store if absent", &r, 201);
-    let returned = r
+    ok &= store(addr, &blob, &body)?;
+    ok &= fetch(addr, &blob, &body)?;
+    ok &= list_and_erase(addr, &container, &blob)?;
+    println!("{}", if ok { "probe ok" } else { "probe FAILED" });
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
+/// Store the blob if absent, again, and with right and wrong checksums.
+fn store(addr: &str, blob: &str, body: &[u8]) -> Result<bool> {
+    let crc = longshore::checksum::crc64_nvme(body);
+    let be = longshore::checksum::crc64_header_value(crc);
+    let be = std::str::from_utf8(&be)?;
+    let le = longshore::checksum::crc64_azure_header_value(crc);
+    let le = std::str::from_utf8(&le)?;
+    let block = ("x-ms-blob-type", "BlockBlob");
+    let mut ok = true;
+    let stored = call(addr, "PUT", blob, &[], &[block], "*", "", body)?;
+    ok &= show("store if absent", &stored, 201);
+    let returned = stored
         .header("x-ms-content-crc64")
         .unwrap_or("(none)")
         .to_string();
@@ -190,20 +196,20 @@ fn main() {
     );
     // The reference documents 412 for an unmet If-None-Match on a write;
     // the emulator answers 409 BlobAlreadyExists. The client must take both.
-    let r = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
-    ok &= show("store if absent, again", &r, r.status) && matches!(r.status, 409 | 412);
+    let again = call(addr, "PUT", blob, &[], &[block], "*", "", body)?;
+    ok &= show("store if absent, again", &again, again.status) && matches!(again.status, 409 | 412);
     ok &= show(
         "store with checksum, least significant first",
         &call(
             addr,
             "PUT",
-            &blob,
+            blob,
             &[],
             &[block, ("x-ms-content-crc64", le)],
             "",
             "",
-            &body,
-        ),
+            body,
+        )?,
         201,
     );
     ok &= show(
@@ -211,13 +217,13 @@ fn main() {
         &call(
             addr,
             "PUT",
-            &blob,
+            blob,
             &[],
             &[block, ("x-ms-content-crc64", be)],
             "",
             "",
-            &body,
-        ),
+            body,
+        )?,
         400,
     );
     ok &= show(
@@ -225,30 +231,42 @@ fn main() {
         &call(
             addr,
             "PUT",
-            &blob,
+            blob,
             &[],
             &[block, ("x-ms-content-crc64", "AAAAAAAAAAA=")],
             "",
             "",
-            &body,
-        ),
+            body,
+        )?,
         400,
     );
-    let r = call(addr, "GET", &blob, &[], &[], "", "", b"");
-    ok &= show("fetch", &r, 200) && r.body == body;
-    let r = call(addr, "GET", &blob, &[], &[], "", "bytes=100-199", b"");
-    ok &= show("fetch a range", &r, 206) && r.body == body[100..200];
-    let r = call(addr, "HEAD", &blob, &[], &[], "", "", b"");
-    ok &= show("properties", &r, 200);
+    Ok(ok)
+}
+
+/// Fetch the blob whole and in part, and its properties.
+fn fetch(addr: &str, blob: &str, body: &[u8]) -> Result<bool> {
+    let mut ok = true;
+    let fetched = call(addr, "GET", blob, &[], &[], "", "", b"")?;
+    ok &= show("fetch", &fetched, 200) && fetched.body == body;
+    let ranged = call(addr, "GET", blob, &[], &[], "", "bytes=100-199", b"")?;
+    ok &= show("fetch a range", &ranged, 206) && ranged.body == body[100..200];
+    let props = call(addr, "HEAD", blob, &[], &[], "", "", b"")?;
+    ok &= show("properties", &props, 200);
     println!(
         "  properties x-ms-content-crc64: {}   content-md5: {}",
-        r.header("x-ms-content-crc64").unwrap_or("(none)"),
-        r.header("content-md5").unwrap_or("(none)")
+        props.header("x-ms-content-crc64").unwrap_or("(none)"),
+        props.header("content-md5").unwrap_or("(none)")
     );
-    let r = call(
+    Ok(ok)
+}
+
+/// List the container, erase the blob, and delete the container.
+fn list_and_erase(addr: &str, container: &str, blob: &str) -> Result<bool> {
+    let mut ok = true;
+    let listed = call(
         addr,
         "GET",
-        &container,
+        container,
         &[
             ("restype", "container"),
             ("comp", "list"),
@@ -258,11 +276,11 @@ fn main() {
         "",
         "",
         b"",
-    );
-    ok &= show("list with a prefix", &r, 200);
+    )?;
+    ok &= show("list with a prefix", &listed, 200);
     println!(
         "  listing: {}",
-        String::from_utf8_lossy(&r.body)
+        String::from_utf8_lossy(&listed.body)
             .replace(['\r', '\n'], "")
             .chars()
             .take(600)
@@ -270,12 +288,12 @@ fn main() {
     );
     ok &= show(
         "erase",
-        &call(addr, "DELETE", &blob, &[], &[], "", "", b""),
+        &call(addr, "DELETE", blob, &[], &[], "", "", b"")?,
         202,
     );
     ok &= show(
         "fetch after erase",
-        &call(addr, "GET", &blob, &[], &[], "", "", b""),
+        &call(addr, "GET", blob, &[], &[], "", "", b"")?,
         404,
     );
     ok &= show(
@@ -283,15 +301,14 @@ fn main() {
         &call(
             addr,
             "DELETE",
-            &container,
+            container,
             &[("restype", "container")],
             &[],
             "",
             "",
             b"",
-        ),
+        )?,
         202,
     );
-    println!("{}", if ok { "probe ok" } else { "probe FAILED" });
-    std::process::exit(if ok { 0 } else { 1 });
+    Ok(ok)
 }

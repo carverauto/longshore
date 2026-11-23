@@ -6,6 +6,7 @@
 //! Direct I/O sequential throughput: one thread keeps `depth` block-sized
 //! writes, then reads, in flight over a preallocated file.
 
+use crate::die::OrDie;
 use longshore::io::uring::UringIo;
 use longshore::io::{Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
 use std::path::Path;
@@ -18,10 +19,11 @@ const CLOCK_THREAD_CPUTIME_ID: core::ffi::c_int = 3;
 
 fn thread_cpu_secs() -> f64 {
     let mut ts = [0i64; 2];
-    unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    let _: i32 = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
     ts[0] as f64 + ts[1] as f64 / 1e9
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct Shape {
     pub size: u64,
     pub block: u32,
@@ -30,10 +32,10 @@ pub(super) struct Shape {
 }
 
 fn one(io: &mut UringIo, out: &mut Completions, token: u64, op: Op, what: &str) {
-    io.submit(Token(token), op).unwrap();
-    io.tick(true, out).unwrap();
-    let c = out.pop().unwrap();
-    assert_eq!(c.result, 0, "{what} failed: {}", c.result);
+    io.submit(Token::new(token), op).or_die("submit");
+    io.tick(true, out).or_die("tick");
+    let c = out.pop().or_die("a completion");
+    assert_eq!(c.result(), 0, "{what} failed: {}", c.result());
 }
 
 /// One sequential pass over the file. A write pass ends with `fdatasync`,
@@ -45,14 +47,14 @@ fn pass(
     shape: &Shape,
     write: bool,
 ) -> (f64, f64) {
-    let block = shape.block as u64;
+    let block = u64::from(shape.block);
     let mut free: Vec<u32> = (0..shape.depth).collect();
     let (mut next, mut done) = (0u64, 0u64);
     let (t0, cpu0) = (Instant::now(), thread_cpu_secs());
     while done < shape.size {
         while next < shape.size {
             let Some(i) = free.pop() else { break };
-            let (slot, buf) = (FileSlot(0), limits.aligned(i));
+            let (slot, buf) = (FileSlot::new(0), limits.aligned(i));
             let op = if write {
                 Op::FileWrite {
                     slot,
@@ -70,19 +72,19 @@ fn pass(
                     file_off: next,
                 }
             };
-            io.submit(Token(i as u64), op).unwrap();
+            io.submit(Token::new(u64::from(i)), op).or_die("submit");
             next += block;
         }
-        io.tick(true, out).unwrap();
+        io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
-            assert_eq!(c.result as i64, block as i64, "short or failed op");
-            free.push(c.token.0 as u32);
+            assert_eq!(u64::try_from(c.result()), Ok(block), "short or failed op");
+            free.push(c.token().get() as u32);
             done += block;
         }
     }
     if write {
         let sync = Op::FileSync {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             datasync: true,
         };
         one(io, out, u64::MAX, sync, "fdatasync");
@@ -91,22 +93,20 @@ fn pass(
 }
 
 pub(super) fn run(dir: &Path, shape: Shape) {
-    assert!(shape.size.is_multiple_of(shape.block as u64));
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 4096,
-        files_max: 2,
-        aligned_buffers: shape.depth,
-        aligned_buffer_size: shape.block,
-        block_size: 4096,
-        ops_max: shape.depth + 2,
-        ..Limits::BASE
-    };
-    let mut io = UringIo::new(limits).expect("UringIo::new");
+    assert!(shape.size.is_multiple_of(u64::from(shape.block)));
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_aligned_buffers(shape.depth)
+        .with_aligned_buffer_size(shape.block)
+        .with_block_size(4096)
+        .with_ops_max(shape.depth + 2);
+    let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(shape.depth as usize + 2);
     let path = format!("{}/bench_throughput.bin\0", dir.display());
-    io.buf(longshore::io::BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
+    io.buf(longshore::io::BufId::new(0))[..path.len()].copy_from_slice(path.as_bytes());
 
     // Incompressible contents, different in every buffer.
     let mut x = 0x9E37_79B9_7F4A_7C15u64;
@@ -120,21 +120,19 @@ pub(super) fn run(dir: &Path, shape: Shape) {
     }
 
     let open = Op::FileOpen {
-        slot: FileSlot(0),
-        path_buf: longshore::io::BufId(0),
+        slot: FileSlot::new(0),
+        path_buf: longshore::io::BufId::new(0),
         path_off: 0,
         path_len: path.len() as u32,
-        flags: OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            direct: true,
-            ..Default::default()
-        },
+        flags: OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true)
+            .with_direct(true),
     };
     one(&mut io, &mut out, 1, open, "O_DIRECT open");
     let reserve = Op::FileReserve {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         file_off: 0,
         len: shape.size,
         keep_size: false,
@@ -142,7 +140,7 @@ pub(super) fn run(dir: &Path, shape: Shape) {
     one(&mut io, &mut out, 2, reserve, "reserve");
 
     // Unmeasured fill: the measured writes then overwrite written extents.
-    let _ = pass(&mut io, &mut out, &limits, &shape, true);
+    let _: (f64, f64) = pass(&mut io, &mut out, &limits, &shape, true);
 
     for run in 1..=shape.runs {
         for write in [true, false] {
@@ -162,7 +160,9 @@ pub(super) fn run(dir: &Path, shape: Shape) {
         &mut io,
         &mut out,
         99,
-        Op::FileClose { slot: FileSlot(0) },
+        Op::FileClose {
+            slot: FileSlot::new(0),
+        },
         "close",
     );
 }

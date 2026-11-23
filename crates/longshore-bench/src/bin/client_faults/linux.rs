@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::die::{die, OrDie};
 use longshore::client::{Builder, Client, Error};
 use longshore::http::server::{self, Server};
 use longshore::io::uring::{Fault, UringIo};
@@ -25,12 +26,12 @@ pub fn main() {
     let number = |flag: &str, default: u32| {
         args.iter()
             .position(|a| a == flag)
-            .map(|i| args[i + 1].parse().expect("a number"))
+            .map(|i| args[i + 1].parse().or_die("a number"))
             .unwrap_or(default)
     };
     // A caller that never gets an answer is the failure these runs look
     // for, so a run that has not ended by now has failed.
-    std::thread::spawn(|| {
+    let _: std::thread::JoinHandle<()> = std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(240));
         eprintln!("client_faults: still running after 240 s; a caller is stuck");
         std::process::exit(2);
@@ -40,7 +41,7 @@ pub fn main() {
             let fault = match args.get(1).map(String::as_str) {
                 Some("tick") => Fault::TickFails,
                 Some("ring") => Fault::RingLost,
-                _ => panic!("break tick|ring"),
+                _ => die("break tick|ring"),
             };
             break_threads(fault, number("--threads", 2));
         }
@@ -48,9 +49,7 @@ pub fn main() {
             number("--rounds", 2000),
             !args.iter().any(|a| a == "--any-memory"),
         ),
-        _ => panic!(
-            "client_faults break tick|ring [--threads N] | churn [--rounds N] [--any-memory]"
-        ),
+        _ => die("client_faults break tick|ring [--threads N] | churn [--rounds N] [--any-memory]"),
     }
 }
 
@@ -59,55 +58,50 @@ pub fn main() {
 /// ends.
 pub fn serve(connections: u32) -> SocketAddr {
     let (bound, listening) = channel();
-    std::thread::spawn(move || {
-        let mut io = UringIo::new(Limits {
-            sockets_max: 1 + connections,
-            buffers: 2 * connections,
-            buffer_size: SIZE,
-            ops_max: connections * 3 + 2,
-            ..Limits::BASE
-        })
-        .expect("server ring");
-        let mut server = Server::new(server::Config {
-            listener: Sock(0),
-            connections_max: connections,
-            first_sock: 1,
-            first_buf: 0,
-            head_max: 4096,
-            buffer_size: SIZE,
-            objects_max: 64,
-            token_base: 2 << 40,
-            checksum: None,
-        });
+    let _: std::thread::JoinHandle<()> = std::thread::spawn(move || {
+        let mut io = UringIo::new(
+            Limits::BASE
+                .with_sockets_max(1 + connections)
+                .with_buffers(2 * connections)
+                .with_buffer_size(SIZE)
+                .with_ops_max(connections * 3 + 2),
+        )
+        .or_die("server ring");
+        let mut server = Server::new(
+            server::ServerConfig::builder(Sock::new(0), connections, 1, 0, SIZE, 2 << 40)
+                .head_max(4096)
+                .objects_max(64)
+                .build()
+                .or_die("server config"),
+        );
         let addr = server
             .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .expect("server start");
-        bound.send(addr).unwrap();
+            .or_die("server start");
+        bound.send(addr).or_die("send");
         let mut out = Completions::new(64);
         loop {
-            io.tick(true, &mut out).expect("server tick");
+            io.tick(true, &mut out).or_die("server tick");
             while let Some(c) = out.pop() {
-                server.on_completion(&mut io, c);
+                let _: bool = server.on_completion(&mut io, c);
             }
         }
     });
-    listening.recv().expect("the server did not start")
+    listening.recv().or_die("the server did not start")
 }
 
 pub fn builder(addr: SocketAddr, threads: u32) -> Builder {
-    let mut b = Builder::new(
+    Builder::new(
         "bucket.objects.test",
         "us-test-1",
-        Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
-    );
-    b.port = addr.port();
-    b.address = Some(addr);
-    b.threads = threads;
-    b.connections = CONNS;
-    b.buffers = 2;
-    b.operations = 4;
-    b.buffer_size = SIZE;
-    b
+        Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new"),
+    )
+    .port(addr.port())
+    .address(Some(addr))
+    .threads(threads)
+    .connections(CONNS)
+    .buffers(2)
+    .operations(4)
+    .buffer_size(SIZE)
 }
 
 /// The client's I/O threads alive in this process, by their names.
@@ -150,7 +144,7 @@ struct Seen {
 
 /// One caller: store and fetch its own key until told to stop. An answer
 /// of `Closed` is expected once threads fail. Anything else is a failure.
-fn caller(client: Client, n: usize, stop: Arc<AtomicBool>, seen: Arc<Seen>) {
+fn caller(client: &Client, n: usize, stop: &AtomicBool, seen: &Seen) {
     let key = format!("caller-{n}");
     let len = SIZE as usize;
     let mut round = 0u8;
@@ -160,10 +154,10 @@ fn caller(client: Client, n: usize, stop: Arc<AtomicBool>, seen: Arc<Seen>) {
         if body.is_empty() {
             // Void: its thread failed and could not be stopped, or no
             // thread is left. An operation given it must end closed.
-            seen.void.fetch_add(1, Ordering::Relaxed);
+            let _: u64 = seen.void.fetch_add(1, Ordering::Relaxed);
             let (stored, _void) = client.store(&key, body, 0).wait();
             assert_eq!(stored, Err(Error::Closed), "a void buffer was accepted");
-            seen.closed.fetch_add(1, Ordering::Relaxed);
+            let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(1));
             continue;
         }
@@ -172,10 +166,10 @@ fn caller(client: Client, n: usize, stop: Arc<AtomicBool>, seen: Arc<Seen>) {
         match stored {
             Ok(()) => {}
             Err(Error::Closed) => {
-                seen.closed.fetch_add(1, Ordering::Relaxed);
+                let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
-            Err(other) => panic!("caller {n}: store ended {other:?}"),
+            Err(other) => die(format_args!("caller {n}: store ended {other:?}")),
         }
         let (fetched, body) = client.fetch(&key, body).wait();
         match fetched {
@@ -185,14 +179,14 @@ fn caller(client: Client, n: usize, stop: Arc<AtomicBool>, seen: Arc<Seen>) {
                     body.as_slice().iter().all(|b| *b == round ^ n as u8),
                     "caller {n}: fetched bytes differ"
                 );
-                seen.stored.fetch_add(1, Ordering::Relaxed);
+                let _: u64 = seen.stored.fetch_add(1, Ordering::Relaxed);
             }
             // The object may be on no thread's answer: the fetch went to a
             // thread that failed.
             Err(Error::Closed) => {
-                seen.closed.fetch_add(1, Ordering::Relaxed);
+                let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
             }
-            other => panic!("caller {n}: fetch ended {other:?}"),
+            other => die(format_args!("caller {n}: fetch ended {other:?}")),
         }
     }
 }
@@ -204,44 +198,20 @@ fn break_threads(fault: Fault, threads: u32) {
     );
     let addr = serve(threads * CONNS);
     let (threads_before, fds_before) = (io_threads(), descriptors());
-    let client = builder(addr, threads).build().expect("build");
+    let client = builder(addr, threads).build().or_die("build");
     let stop = Arc::new(AtomicBool::new(false));
     let seen = Arc::new(Seen::default());
     let callers: Vec<_> = (0..CALLERS)
         .map(|n| {
             let (c, s, k) = (client.clone(), stop.clone(), seen.clone());
-            std::thread::spawn(move || caller(c, n, s, k))
+            std::thread::spawn(move || caller(&c, n, &s, &k))
         })
         .collect();
-    let count = |a: &AtomicU64| a.load(Ordering::Relaxed);
-    let reaches = |what: &str, a: &AtomicU64, target: u64| {
-        let started = Instant::now();
-        while count(a) < target {
-            assert!(
-                started.elapsed() < Duration::from_secs(20),
-                "{what}: {} of {target} after 20 s",
-                count(a)
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    };
     // Every thread is carrying work before one fails.
     reaches("round trips before the fault", &seen.stored, 200);
 
-    // Wait for the thread to notice. It may have had nothing in flight
-    // just then, so no caller need have seen an operation end closed.
-    let noticed = |thread: usize| {
-        let started = Instant::now();
-        while !client.thread_failed(thread) {
-            assert!(
-                started.elapsed() < Duration::from_secs(10),
-                "I/O thread {thread} never noticed its ring had failed"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    };
     client.inject_fault(0, fault);
-    noticed(0);
+    noticed(&client, 0);
     let after_first = count(&seen.stored);
     // The threads still running carry on.
     reaches(
@@ -254,7 +224,7 @@ fn break_threads(fault: Fault, threads: u32) {
     for thread in 1..threads as usize {
         client.inject_fault(thread, fault);
     }
-    (1..threads as usize).for_each(noticed);
+    (1..threads as usize).for_each(|thread| noticed(&client, thread));
     let all_noticed = count(&seen.stored);
     // With no thread left every call still returns, and returns closed.
     reaches(
@@ -262,13 +232,66 @@ fn break_threads(fault: Fault, threads: u32) {
         &seen.closed,
         closed_by_first + 200,
     );
-    // A failed thread marks its lane closed before it quiesces, and only
-    // then reports the outcomes of operations that had already finished
-    // before the failure. Those are real successes and may arrive after
-    // every thread noticed, so wait for the count to stop changing. Each
-    // thread has CONNS operation slots, so at most threads * CONNS
-    // operations can have finished unreported; anything more succeeded
-    // after the failure.
+    settle_after_failure(&seen, all_noticed, threads);
+    if fault == Fault::RingLost {
+        assert!(count(&seen.void) > 0, "no buffer came back void");
+    }
+    stop.store(true, Ordering::Release);
+    for c in callers {
+        c.join().or_die("a caller failed");
+    }
+    // The failed threads are still there, refusing work, until the last
+    // handle goes.
+    assert_eq!(io_threads(), threads_before + threads as usize);
+    drop(client);
+    settles("I/O threads after the drop", threads_before, io_threads);
+    settles("descriptors after the drop", fds_before, descriptors);
+    println!(
+        "ok break {fault:?}: {threads} I/O threads, {} round trips, {} operations ended closed, {} void buffers, threads and descriptors gone",
+        count(&seen.stored),
+        count(&seen.closed),
+        count(&seen.void)
+    );
+}
+
+fn count(a: &AtomicU64) -> u64 {
+    a.load(Ordering::Relaxed)
+}
+
+/// Wait up to 20 seconds for the counter `a` to reach `target`.
+fn reaches(what: &str, a: &AtomicU64, target: u64) {
+    let started = Instant::now();
+    while count(a) < target {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "{what}: {} of {target} after 20 s",
+            count(a)
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Wait for the thread to notice. It may have had nothing in flight
+/// just then, so no caller need have seen an operation end closed.
+fn noticed(client: &Client, thread: usize) {
+    let started = Instant::now();
+    while !client.thread_failed(thread) {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "I/O thread {thread} never noticed its ring had failed"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// A failed thread marks its lane closed before it quiesces, and only
+/// then reports the outcomes of operations that had already finished
+/// before the failure. Those are real successes and may arrive after
+/// every thread noticed, so wait for the count to stop changing. Each
+/// thread has CONNS operation slots, so at most threads * CONNS
+/// operations can have finished unreported; anything more succeeded
+/// after the failure.
+fn settle_after_failure(seen: &Seen, all_noticed: u64, threads: u32) {
     let started = Instant::now();
     let mut settled = count(&seen.stored);
     loop {
@@ -288,24 +311,5 @@ fn break_threads(fault: Fault, threads: u32) {
         "{} operations succeeded after every I/O thread failed, more than the {} that could have been finished and unreported",
         settled - all_noticed,
         threads * CONNS
-    );
-    if fault == Fault::RingLost {
-        assert!(count(&seen.void) > 0, "no buffer came back void");
-    }
-    stop.store(true, Ordering::Release);
-    for c in callers {
-        c.join().expect("a caller failed");
-    }
-    // The failed threads are still there, refusing work, until the last
-    // handle goes.
-    assert_eq!(io_threads(), threads_before + threads as usize);
-    drop(client);
-    settles("I/O threads after the drop", threads_before, io_threads);
-    settles("descriptors after the drop", fds_before, descriptors);
-    println!(
-        "ok break {fault:?}: {threads} I/O threads, {} round trips, {} operations ended closed, {} void buffers, threads and descriptors gone",
-        count(&seen.stored),
-        count(&seen.closed),
-        count(&seen.void)
     );
 }

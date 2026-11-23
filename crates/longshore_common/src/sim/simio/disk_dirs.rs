@@ -86,7 +86,7 @@ impl DirChangeKind {
         match self {
             Self::Mkdir { child, .. } => Some(child),
             Self::Rename { moved, .. } if inodes[moved as usize].is_dir => Some(moved),
-            _ => None,
+            Self::Empty | Self::Create { .. } | Self::Unlink { .. } | Self::Rename { .. } => None,
         }
     }
 }
@@ -123,6 +123,10 @@ impl SimDisk {
         if self.dir_log_len >= self.dir_log.len() {
             self.evict_one_dir_change();
         }
+        #[expect(
+            clippy::expect_used,
+            reason = "the arena has one slot per log entry and the log was just given room"
+        )]
         let slot = self
             .dir_arena_used
             .iter()
@@ -273,7 +277,10 @@ impl SimDisk {
                         entry.new_dir_synced = true;
                     }
                 }
-                _ => {}
+                DirChangeKind::Empty
+                | DirChangeKind::Create { .. }
+                | DirChangeKind::Mkdir { .. }
+                | DirChangeKind::Unlink { .. } => {}
             }
         }
         let mut i = 0;
@@ -318,7 +325,11 @@ impl SimDisk {
                 {
                     entry.poisoned = true;
                 }
-                _ => {}
+                DirChangeKind::Empty
+                | DirChangeKind::Create { .. }
+                | DirChangeKind::Mkdir { .. }
+                | DirChangeKind::Unlink { .. }
+                | DirChangeKind::Rename { .. } => {}
             }
         }
     }
@@ -331,7 +342,8 @@ impl SimDisk {
             }
             let keep = (e.old_dir_synced && e.new_dir_synced) || rng.below(2) == 1;
             if keep {
-                self.apply_dir_change_to_durable(i);
+                let _: crate::sim::simio::disk::dirs_apply::ApplyReclaim =
+                    self.apply_dir_change_to_durable(i);
             }
         }
         self.dir_log_len = 0;

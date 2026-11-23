@@ -33,21 +33,20 @@ const NAME: &str = "objects.test";
 
 // Buffers: client heads 0..2, client TLS 2..6, server (head, body) 6..10,
 // server TLS 10..14, user tx 14, rx 15.
-const TX: BufId = BufId(14);
-const RX: BufId = BufId(15);
-const LIMITS: Limits = Limits {
-    sockets_max: 1 + CONNS * 2,
-    buffers: 16,
-    buffer_size: BUF,
-    ops_max: CONNS * 3 + CONNS + 1 + 1,
-    ..Limits::BASE
-};
+const TX: BufId = BufId::new(14);
+const RX: BufId = BufId::new(15);
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(1 + CONNS * 2)
+    .with_buffers(16)
+    .with_buffer_size(BUF)
+    .with_ops_max(CONNS * 3 + CONNS + 1 + 1);
 
 struct Identity {
     cert: Vec<u8>,
     key: Vec<u8>,
 }
 
+#[cfg(test)]
 fn identity(name: &str) -> Identity {
     let k = rcgen::generate_simple_self_signed(vec![name.to_string()]).unwrap();
     Identity {
@@ -64,36 +63,29 @@ struct World {
     done: Vec<Done>,
 }
 
-fn client_cfg() -> client::Config {
-    client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: 0,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 2_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    }
+/// The test client's configuration, for a test to change before building it.
+fn client_builder() -> client::ClientConfigBuilder {
+    client::ClientConfig::builder(CONNS, 1, 0, BUF, 1 << 40)
+        .head_max(HEAD_MAX)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(2_000 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(256 * 1024)
 }
 
-fn server_cfg() -> server::Config {
-    server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 6,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        objects_max: 2,
-        token_base: 2 << 40,
-        checksum: None,
-    }
+#[cfg(test)]
+fn client_cfg() -> client::ClientConfig {
+    client_builder().build().unwrap()
+}
+
+#[cfg(test)]
+fn server_cfg() -> server::ServerConfig {
+    server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 6, BUF, 2 << 40)
+        .head_max(HEAD_MAX)
+        .objects_max(2)
+        .build()
+        .unwrap()
 }
 
 /// `client_tls` and `server_tls` choose each side's protocol independently.
@@ -106,10 +98,11 @@ fn world_with(
     world_cfg(seed, faults, client_cfg(), client_tls, server_tls)
 }
 
+#[cfg(test)]
 fn world_cfg(
     seed: u64,
     faults: Faults,
-    cfg: client::Config,
+    cfg: client::ClientConfig,
     client_tls: Option<ClientSetup>,
     server_tls: Option<ServerSetup>,
 ) -> World {
@@ -118,12 +111,12 @@ fn world_cfg(
         Some(s) => Server::with_tls(server_cfg(), s, 10),
         None => Server::new(server_cfg()),
     };
-    server.start(&mut io, ADDR).unwrap();
+    let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     let client = match client_tls {
         Some(s) => Client::with_tls(cfg, s, 2),
         None => Client::new(cfg),
     };
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     World {
         io,
@@ -134,6 +127,7 @@ fn world_cfg(
     }
 }
 
+#[cfg(test)]
 fn world(seed: u64, faults: Faults) -> World {
     let id = identity(NAME);
     world_with(
@@ -144,6 +138,7 @@ fn world(seed: u64, faults: Faults) -> World {
     )
 }
 
+#[cfg(test)]
 impl World {
     fn run_until_done(&mut self, n: usize) {
         let World {
@@ -157,9 +152,9 @@ impl World {
             while done.len() < n {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                         continue;
                     }
@@ -190,12 +185,12 @@ impl World {
             while io.now_ns() < until {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     } else if client.on_completion(io, c) == Handled::NotMine {
-                        server.on_completion(io, c);
+                        let _: bool = server.on_completion(io, c);
                     }
                 }
             }
@@ -209,23 +204,17 @@ impl World {
         body: Option<u32>,
     ) -> Result<Response, Error> {
         let token = self.done.len() as u64 + 100;
-        let req = Request {
-            method,
-            target,
-            host: NAME,
-            host_id: 0,
-            addr: ADDR,
-            headers: &[("x-test", b"1")],
-            body: body.map(|n| (TX, n)),
-            response_buf: Some(RX),
-        };
+        let req = Request::new(method, target, NAME, 0, ADDR)
+            .with_headers(&[("x-test", b"1")])
+            .with_body(body.map(|n| (TX, n)))
+            .with_response_buf(Some(RX));
         self.client
             .start(&mut self.io, token, &req)
             .expect("a connection should be free");
         self.run_until_done(self.done.len() + 1);
         let d = *self.done.last().unwrap();
-        assert_eq!(d.token, token);
-        d.result
+        assert_eq!(d.token(), token);
+        d.result()
     }
 
     fn fill_tx(&mut self, len: u32, pattern: u8) {
@@ -235,9 +224,10 @@ impl World {
     }
 }
 
+#[cfg(test)]
 fn ok(status: u16, body_len: u32) -> impl Fn(Result<Response, Error>) {
     move |r| match r {
-        Ok(resp) => assert_eq!((resp.status, resp.body_len), (status, body_len)),
+        Ok(resp) => assert_eq!((resp.status(), resp.body_len()), (status, body_len)),
         Err(e) => panic!("expected {status}, got {e:?}"),
     }
 }
@@ -271,7 +261,7 @@ fn put_then_get_round_trips_over_tls_on_one_connection() {
     ok(200, 0)(w.request("HEAD", "/k", None));
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        (w.client.connects, w.server.accepted),
+        (w.client.connects(), w.server.accepted()),
         (1, 1),
         "one handshake served every request"
     );
@@ -281,12 +271,10 @@ fn put_then_get_round_trips_over_tls_on_one_connection() {
 /// delayed: the plaintext is unchanged.
 #[test]
 fn tls_survives_short_writes_partial_reads_and_delays() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 300_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(300_000)
+        .with_delay(200_000);
     for seed in 0..25 {
         let mut w = world(seed, faults);
         w.fill_tx(50_000, seed as u8);
@@ -309,12 +297,10 @@ fn tls_survives_short_writes_partial_reads_and_delays() {
 /// application: a request either succeeds with exact bytes or fails.
 #[test]
 fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
-    let faults = Faults {
-        bit_flip: 20_000,
-        short_send: 100_000,
-        partial_recv: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_bit_flip(20_000)
+        .with_short_send(100_000)
+        .with_partial_recv(100_000);
     let (mut clean, mut failed) = (0, 0);
     for seed in 0..60 {
         let mut w = world(seed, faults);
@@ -322,7 +308,7 @@ fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
         let sent = w.io.buf(TX)[..40_000].to_vec();
         match w.request("PUT", "/k", Some(40_000)) {
             Ok(r) => {
-                assert_eq!(r.status, 200, "seed {seed}");
+                assert_eq!(r.status(), 200, "seed {seed}");
                 assert_eq!(
                     w.server.object("/k"),
                     Some(&sent[..]),
@@ -342,7 +328,7 @@ fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
         }
         match w.request("GET", "/k", None) {
             Ok(r) => {
-                assert_eq!((r.status, r.body_len), (200, 40_000), "seed {seed}");
+                assert_eq!((r.status(), r.body_len()), (200, 40_000), "seed {seed}");
                 assert!(
                     w.io.buf(RX)[..40_000] == sent[..],
                     "seed {seed}: GET succeeded with damaged bytes"
@@ -365,33 +351,37 @@ fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
 fn an_untrusted_or_misnamed_certificate_fails_before_any_request_is_sent() {
     let (server_id, other) = (identity(NAME), identity(NAME));
     // The client trusts a different certificate.
-    let mut w = world_with(
+    let mut untrusted = world_with(
         2,
         Faults::default(),
         Some(ClientSetup::with_roots(&[&other.cert]).unwrap()),
         Some(ServerSetup::new(&[&server_id.cert], &server_id.key).unwrap()),
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        untrusted.request("GET", "/k", None),
         Err(Error::Tls(TlsError::BadCertificate))
     );
     assert_eq!(
-        w.server.requests, 0,
+        untrusted.server.requests(),
+        0,
         "no request may reach a server the client does not trust"
     );
     // The certificate is trusted but is for another name.
     let wrong = identity("elsewhere.test");
-    let mut w = world_with(
+    let mut misnamed = world_with(
         3,
         Faults::default(),
         Some(ClientSetup::with_roots(&[&wrong.cert]).unwrap()),
         Some(ServerSetup::new(&[&wrong.cert], &wrong.key).unwrap()),
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        misnamed.request("GET", "/k", None),
         Err(Error::Tls(TlsError::BadCertificate))
     );
-    assert_eq!((w.server.requests, w.client.in_flight()), (0, 0));
+    assert_eq!(
+        (misnamed.server.requests(), misnamed.client.in_flight()),
+        (0, 0)
+    );
 }
 
 #[test]
@@ -400,31 +390,31 @@ fn protocol_mismatches_fail_cleanly() {
     // TLS client, plain server. This server keeps waiting for a request head
     // that never comes, so the client's timeout ends it; a server that
     // answered in HTTP would be rejected as a bad record instead.
-    let mut w = world_with(
+    let mut tls_to_plain = world_with(
         4,
         Faults::default(),
         Some(ClientSetup::with_roots(&[&id.cert]).unwrap()),
         None,
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        tls_to_plain.request("GET", "/k", None),
         Err(Error::Timeout),
         "TLS to a plain port must fail, not hang"
     );
-    assert_eq!(w.client.in_flight(), 0);
+    assert_eq!(tls_to_plain.client.in_flight(), 0);
     // Plain client, TLS server: the server drops what is not a handshake.
-    let mut w = world_with(
+    let mut plain_to_tls = world_with(
         5,
         Faults::default(),
         None,
         Some(ServerSetup::new(&[&id.cert], &id.key).unwrap()),
     );
     assert_eq!(
-        w.request("GET", "/k", None),
+        plain_to_tls.request("GET", "/k", None),
         Err(Error::Closed { reused: false }),
         "plain request to a TLS port must fail, not hang"
     );
-    assert_eq!(w.client.in_flight(), 0);
+    assert_eq!(plain_to_tls.client.in_flight(), 0);
 }
 
 #[test]
@@ -445,7 +435,8 @@ fn timeouts_and_server_failures_work_the_same_over_tls() {
     ok(200, 1000)(w.request("GET", "/k", None));
     assert_eq!(w.client.in_flight(), 0);
     assert_eq!(
-        w.client.connects, 3,
+        w.client.connects(),
+        3,
         "a new handshake after each of the two failures"
     );
 }
@@ -454,11 +445,9 @@ fn timeouts_and_server_failures_work_the_same_over_tls() {
 fn chunked_responses_work_over_tls() {
     let mut w = world(
         7,
-        Faults {
-            partial_recv: 300_000,
-            short_send: 300_000,
-            ..Faults::default()
-        },
+        Faults::NONE
+            .with_partial_recv(300_000)
+            .with_short_send(300_000),
     );
     w.fill_tx(30_000, 4);
     ok(200, 0)(w.request("PUT", "/k", Some(30_000)));
@@ -468,7 +457,7 @@ fn chunked_responses_work_over_tls() {
         ok(200, 30_000)(w.request("GET", "/k", None));
         assert!(w.io.buf(RX)[..30_000] == sent[..], "chunk size {chunk}");
     }
-    assert_eq!(w.client.connects, 1);
+    assert_eq!(w.client.connects(), 1);
 }
 
 /// Traffic keys are never used past the configured number of records: a
@@ -477,10 +466,7 @@ fn chunked_responses_work_over_tls() {
 #[test]
 fn a_connection_is_replaced_before_its_keys_wear_out() {
     let id = identity(NAME);
-    let cfg = client::Config {
-        tls_records_max: 12,
-        ..client_cfg()
-    };
+    let cfg = client_builder().tls_records_max(12).build().unwrap();
     let mut w = world_cfg(
         21,
         Faults::default(),
@@ -501,20 +487,20 @@ fn a_connection_is_replaced_before_its_keys_wear_out() {
         );
     }
     assert!(
-        (4..=24).contains(&w.client.connects),
+        (4..=24).contains(&w.client.connects()),
         "24 requests of about 5 records against a limit of 12 need several connections, not {}",
-        w.client.connects
+        w.client.connects()
     );
-    assert_eq!(w.client.connects, w.server.accepted);
+    assert_eq!(w.client.connects(), w.server.accepted());
 
     // With the default limit the same work stays on one connection.
-    let mut w = world(21, Faults::default());
+    let mut default_limit = world(21, Faults::default());
     for i in 0..12u8 {
-        w.fill_tx(60_000, i);
-        ok(200, 0)(w.request("PUT", "/k", Some(60_000)));
-        ok(200, 60_000)(w.request("GET", "/k", None));
+        default_limit.fill_tx(60_000, i);
+        ok(200, 0)(default_limit.request("PUT", "/k", Some(60_000)));
+        ok(200, 60_000)(default_limit.request("GET", "/k", None));
     }
-    assert_eq!(w.client.connects, 1);
+    assert_eq!(default_limit.client.connects(), 1);
 }
 
 /// A server that sends bytes past the body it declared, inside the same
@@ -537,7 +523,7 @@ fn bytes_past_the_declared_body_are_rejected_over_tls() {
     w.server.script(Behavior::Raw(honest));
     ok(200, body_len as u32)(w.request("GET", "/k", None));
 
-    let mut w = world(31, Faults::default());
+    w = world(31, Faults::default());
     w.server.script(Behavior::Raw(smuggling));
     assert_eq!(
         w.request("GET", "/k", None),
@@ -555,22 +541,13 @@ fn bytes_past_the_declared_body_are_rejected_over_tls() {
 fn the_server_name_is_the_host_without_its_port() {
     let mut w = world(41, Faults::default());
     let host = format!("{NAME}:8443");
-    let req = Request {
-        method: "GET",
-        target: "/missing",
-        host: &host,
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req = Request::new("GET", "/missing", &host, 0, ADDR).with_response_buf(Some(RX));
     w.client
         .start(&mut w.io, 500, &req)
         .expect("a connection should be free");
     w.run_until_done(1);
     assert_eq!(
-        w.done[0].result.map(|r| r.status),
+        w.done[0].result().map(|r| r.status()),
         Ok(404),
         "the handshake must succeed and the request be answered"
     );
@@ -590,7 +567,7 @@ fn a_fatal_alert_is_reported_as_a_tls_error() {
     );
     // The connection is gone; the next request handshakes again and works.
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!(w.client.connects, 2);
+    assert_eq!(w.client.connects(), 2);
 }
 
 /// The same over TLS, with the extra bytes in a record of their own: the
@@ -610,7 +587,7 @@ fn a_record_after_a_complete_response_is_not_taken_for_the_next_response() {
     w.server.script(Behavior::Raw(reply));
     ok(200, body_len as u32)(w.request("GET", "/k", None));
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!((w.client.idle_dirty, w.client.connects), (1, 2));
+    assert_eq!((w.client.idle_dirty(), w.client.connects()), (1, 2));
 }
 
 /// A TLS peer that closed while the connection sat idle is found by the
@@ -624,7 +601,11 @@ fn a_tls_connection_closed_while_idle_is_replaced_before_it_is_used() {
     w.settle(20);
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        (w.client.idle_closed, w.client.idle_dirty, w.client.connects),
+        (
+            w.client.idle_closed(),
+            w.client.idle_dirty(),
+            w.client.connects()
+        ),
         (1, 0, 2)
     );
 }
@@ -642,7 +623,7 @@ fn close_notify_in_place_of_a_response_is_a_close_not_a_tls_error() {
         Err(Error::Closed { reused: true })
     );
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!((w.client.connects, w.client.idle_closed), (2, 0));
+    assert_eq!((w.client.connects(), w.client.idle_closed()), (2, 0));
 }
 
 /// Session tickets arrive after the handshake as records that are not
@@ -654,7 +635,11 @@ fn an_idle_tls_connection_with_only_tickets_waiting_is_reused() {
         ok(404, 0)(w.request("GET", "/missing", None));
     }
     assert_eq!(
-        (w.client.connects, w.client.idle_dirty, w.client.idle_closed),
+        (
+            w.client.connects(),
+            w.client.idle_dirty(),
+            w.client.idle_closed()
+        ),
         (1, 0, 0)
     );
 }

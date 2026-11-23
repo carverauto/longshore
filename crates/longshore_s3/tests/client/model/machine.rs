@@ -34,7 +34,7 @@ pub fn model_within(switches: usize, f: impl Fn() + Sync + Send + 'static) {
     // The model's first thread has a small stack, so the test runs on one
     // of its own.
     builder.check(move || {
-        counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _: u64 = counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let f = f.clone();
         spawn(move || f()).join().unwrap();
     });
@@ -199,7 +199,7 @@ impl Machine {
 }
 
 pub struct World {
-    pub client: Client,
+    client: Client,
     threads: Vec<loom::thread::JoinHandle<Machine>>,
     signals: Vec<Arc<Signal>>,
     stop: Arc<AtomicBool>,
@@ -214,34 +214,22 @@ impl World {
         let (mut lanes, mut machines, mut signals, mut failed) = (vec![], vec![], vec![], vec![]);
         for (n, &fate) in fates.iter().enumerate() {
             let signal = Arc::new(Signal::default());
-            let limits = Limits {
-                ops_max: LIMITS.ops_max + 2,
-                ..LIMITS
-            };
+            let limits = LIMITS.with_ops_max(LIMITS.ops_max() + 2);
             let mut io = Woken {
                 io: SimIo::new(limits, 40 + n as u64, Faults::default()),
                 signal: signal.clone(),
             };
-            let mut server = Server::new(server::Config {
-                listener: Sock(0),
-                connections_max: CONNS,
-                first_sock: 1 + CONNS,
-                first_buf: 0,
-                head_max: 2048,
-                buffer_size: BUF,
-                objects_max: 8,
-                token_base: 2 << 40,
-                checksum: None,
-            });
-            server.start(&mut io, ADDR).unwrap();
-            let layout = Layout {
-                operations,
-                first_buffer: TX,
-                buffers,
-                token_base: 7 << 40,
-                heartbeat_ns: 10 * MS,
-            };
-            let (mut worker, lane) = Worker::new(&mut io, S3::new(s3_config(3, false)), layout);
+            let mut server = Server::new(
+                server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+                    .head_max(2048)
+                    .objects_max(8)
+                    .build()
+                    .unwrap(),
+            );
+            let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
+            let layout = Layout::new(operations, TX, buffers, 7 << 40, 10 * MS);
+            let (mut worker, lane) = Worker::new(&mut io, S3::new(s3_config(3, false)), layout)
+                .expect("the simulator can be woken");
             worker.start(&mut io);
             lanes.push(lane);
             signals.push(signal);
@@ -271,6 +259,11 @@ impl World {
             stop,
             failed,
         }
+    }
+
+    /// The client the model's callers share.
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Wait until lane `n`'s I/O has failed.

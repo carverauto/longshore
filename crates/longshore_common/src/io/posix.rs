@@ -127,13 +127,13 @@ impl Drop for Posix {
         for s in self.socks.iter_mut() {
             if s.fd >= 0 {
                 self.poller.before_close(s);
-                unsafe { close(s.fd) };
+                let _: i32 = unsafe { close(s.fd) };
                 s.reset();
             }
         }
         for fd in self.file_fds.iter_mut() {
             if *fd >= 0 {
-                unsafe { close(*fd) };
+                let _: i32 = unsafe { close(*fd) };
                 *fd = -1;
             }
         }
@@ -176,8 +176,8 @@ impl PosixIo {
 
 pub(super) fn monotonic_ns() -> u64 {
     let mut ts = timespec::default();
-    unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
-    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+    let _: i32 = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
+    crate::io::clock_ns(ts.tv_sec, ts.tv_nsec)
 }
 
 impl World for Posix {
@@ -187,8 +187,8 @@ impl World for Posix {
 
     fn unix_secs(&self) -> u64 {
         let mut ts = timespec::default();
-        unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
-        ts.tv_sec as u64
+        let _: i32 = unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
+        crate::io::clock_secs(ts.tv_sec)
     }
 
     fn register_file(&mut self, path: &str) -> io::Result<FileId> {
@@ -299,7 +299,29 @@ impl World for Posix {
         match *op {
             Op::ArmedAccept { listener } => self.attempt_accept_armed(listener),
             Op::ArmedRecv { sock } => self.attempt_recv_armed(sock, pool, limits),
-            _ => self.attempt_op(op, pool, limits).map(Attempt::single),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => self.attempt_op(op, pool, limits).map(Attempt::single),
         }
     }
 
@@ -320,7 +342,7 @@ impl World for Posix {
             let s = &mut self.socks[sock.0 as usize];
             if s.kind == SockKind::Connecting && s.fd >= 0 {
                 self.poller.before_close(s);
-                unsafe { close(s.fd) };
+                let _: i32 = unsafe { close(s.fd) };
                 s.reset();
             }
         }
@@ -355,7 +377,24 @@ impl World for Posix {
                     s.want_write = true;
                 }
             }
-            _ => {}
+            Op::ConnectUdp { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {}
         }
     }
 

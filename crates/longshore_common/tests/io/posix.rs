@@ -12,33 +12,37 @@ use longshore_common::io::posix::PosixIo;
 use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 
-const LIMITS: Limits = Limits {
-    sockets_max: 12,
-    buffers: 4,
-    buffer_size: 65536,
-    ops_max: 16,
-    ..Limits::BASE
-};
+#[cfg(test)]
+#[path = "posix/both_directions.rs"]
+mod both_directions;
+
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(12)
+    .with_buffers(4)
+    .with_buffer_size(65536)
+    .with_ops_max(16);
 
 fn v4() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
 }
 
+#[cfg(test)]
 fn drain_n(io: &mut PosixIo, out: &mut Completions, want: usize) -> Vec<(u64, i32)> {
     let mut got = Vec::with_capacity(want);
     while got.len() < want {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            got.push((c.token.0, c.result));
+            got.push((c.token().get(), c.result()));
         }
     }
     got
 }
 
+#[cfg(test)]
 fn pair(io: &mut PosixIo, out: &mut Completions, listener: Sock, server: Sock, client: Sock) {
     let bound = io.listen(listener, v4()).unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
             listener,
             sock: server,
@@ -46,7 +50,7 @@ fn pair(io: &mut PosixIo, out: &mut Completions, listener: Sock, server: Sock, c
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
             sock: client,
             addr: bound,
@@ -59,127 +63,22 @@ fn pair(io: &mut PosixIo, out: &mut Completions, listener: Sock, server: Sock, c
 }
 
 #[test]
-fn both_directions_wait_independently_on_one_socket() {
-    let mut io = PosixIo::new(LIMITS).unwrap();
-    let mut out = Completions::new(8);
-    pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
-
-    // Fill Sock(2)'s send buffer until Send stalls waiting for writability.
-    io.buf(BufId(0)).fill(0xab);
-    let mut tok = 10u64;
-    let mut pending_send_tok = None;
-    for _ in 0..256 {
-        io.submit(
-            Token(tok),
-            Op::Send {
-                sock: Sock(2),
-                buf: BufId(0),
-                off: 0,
-                len: 65536,
-                zero_copy: false,
-            },
-        )
-        .unwrap();
-        io.tick(false, &mut out).unwrap();
-        if let Some(c) = out.pop() {
-            assert!(c.result > 0, "send failed: {}", c.result);
-            tok += 1;
-        } else {
-            pending_send_tok = Some(tok);
-            tok += 1;
-            break;
-        }
-    }
-    let send_tok = pending_send_tok.expect("expected socket send buffer to fill");
-
-    // Now submit Recv on the same Sock(2) while Send is still waiting.
-    let recv_tok = tok;
-    tok += 1;
-    io.submit(
-        Token(recv_tok),
-        Op::Recv {
-            sock: Sock(2),
-            buf: BufId(1),
-            off: 0,
-            len: 64,
-        },
-    )
-    .unwrap();
-
-    // Send 5 bytes from peer Sock(1) -> Sock(2); Recv must complete while Send remains pending.
-    io.buf(BufId(2))[..5].copy_from_slice(b"hello");
-    io.submit(
-        Token(tok),
-        Op::Send {
-            sock: Sock(1),
-            buf: BufId(2),
-            off: 0,
-            len: 5,
-            zero_copy: false,
-        },
-    )
-    .unwrap();
-    tok += 1;
-
-    let mut saw_recv = false;
-    let mut saw_send = false;
-    while !saw_recv {
-        io.tick(true, &mut out).unwrap();
-        while let Some(c) = out.pop() {
-            if c.token.0 == recv_tok {
-                assert_eq!(c.result, 5);
-                assert_eq!(&io.buf(BufId(1))[..5], b"hello");
-                saw_recv = true;
-            } else if c.token.0 == send_tok {
-                saw_send = true;
-            }
-        }
-    }
-    assert!(!saw_send, "send completed before peer drained");
-
-    // Drain Sock(1) until the blocked Send on Sock(2) completes.
-    while !saw_send {
-        io.submit(
-            Token(tok),
-            Op::Recv {
-                sock: Sock(1),
-                buf: BufId(3),
-                off: 0,
-                len: 65536,
-            },
-        )
-        .unwrap();
-        tok += 1;
-        io.tick(true, &mut out).unwrap();
-        while let Some(c) = out.pop() {
-            if c.token.0 == send_tok {
-                assert!(c.result > 0, "stalled send failed: {}", c.result);
-                saw_send = true;
-            }
-        }
-    }
-
-    for (k, sock) in [Sock(0), Sock(1), Sock(2)].into_iter().enumerate() {
-        io.submit(Token(900 + k as u64), Op::Close { sock })
-            .unwrap();
-    }
-    let _ = drain_n(&mut io, &mut out, 3);
-}
-
-#[test]
 fn cross_thread_wake_and_wake_after_drop() {
     let mut io = PosixIo::new(LIMITS).unwrap();
     let mut out = Completions::new(4);
     let waker = io.waker().unwrap();
     let waker2 = io.waker().unwrap();
 
-    io.submit(Token(1), Op::AwaitWake).unwrap();
+    io.submit(Token::new(1), Op::AwaitWake).unwrap();
     let h = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(15));
         waker.wake();
     });
     io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().map(|c| (c.token.0, c.result)), Some((1, 0)));
+    assert_eq!(
+        out.pop().map(|c| (c.token().get(), c.result())),
+        Some((1, 0))
+    );
     h.join().unwrap();
 
     // Waker owns its duplicated fd and must stay safe after PosixIo drops.
@@ -191,21 +90,27 @@ fn cross_thread_wake_and_wake_after_drop() {
 fn full_completions_buffer_does_not_lose_readiness() {
     let mut io = PosixIo::new(LIMITS).unwrap();
     let mut big = Completions::new(16);
-    pair(&mut io, &mut big, Sock(0), Sock(1), Sock(2));
-    pair(&mut io, &mut big, Sock(3), Sock(4), Sock(5));
-    pair(&mut io, &mut big, Sock(6), Sock(7), Sock(8));
-    pair(&mut io, &mut big, Sock(9), Sock(10), Sock(11));
+    pair(&mut io, &mut big, Sock::new(0), Sock::new(1), Sock::new(2));
+    pair(&mut io, &mut big, Sock::new(3), Sock::new(4), Sock::new(5));
+    pair(&mut io, &mut big, Sock::new(6), Sock::new(7), Sock::new(8));
+    pair(
+        &mut io,
+        &mut big,
+        Sock::new(9),
+        Sock::new(10),
+        Sock::new(11),
+    );
 
-    let senders = [Sock(1), Sock(4), Sock(7), Sock(10)];
-    let receivers = [Sock(2), Sock(5), Sock(8), Sock(11)];
+    let senders = [Sock::new(1), Sock::new(4), Sock::new(7), Sock::new(10)];
+    let receivers = [Sock::new(2), Sock::new(5), Sock::new(8), Sock::new(11)];
 
     for (i, &s) in senders.iter().enumerate() {
-        io.buf(BufId(0))[0] = i as u8;
+        io.buf(BufId::new(0))[0] = i as u8;
         io.submit(
-            Token(10 + i as u64),
+            Token::new(10 + i as u64),
             Op::Send {
                 sock: s,
-                buf: BufId(0),
+                buf: BufId::new(0),
                 off: 0,
                 len: 1,
                 zero_copy: false,
@@ -213,17 +118,17 @@ fn full_completions_buffer_does_not_lose_readiness() {
         )
         .unwrap();
     }
-    let _ = drain_n(&mut io, &mut big, 4);
+    let _: Vec<(u64, i32)> = drain_n(&mut io, &mut big, 4);
 
     // Wait briefly so all 4 loopback segments are in the kernel rx buffers, then
     // arm 4 Recvs and drain one per tick with capacity 1.
     std::thread::sleep(std::time::Duration::from_millis(5));
     for (i, &r) in receivers.iter().enumerate() {
         io.submit(
-            Token(100 + i as u64),
+            Token::new(100 + i as u64),
             Op::Recv {
                 sock: r,
-                buf: BufId(i as u32),
+                buf: BufId::new(i as u32),
                 off: 0,
                 len: 1,
             },
@@ -237,8 +142,8 @@ fn full_completions_buffer_does_not_lose_readiness() {
         io.tick(true, &mut small).unwrap();
         let c = small.pop().expect("one completion per tick");
         assert!(small.is_empty());
-        assert_eq!(c.result, 1);
-        got.push(c.token.0);
+        assert_eq!(c.result(), 1);
+        got.push(c.token().get());
     }
     got.sort();
     assert_eq!(got, vec![100, 101, 102, 103]);
@@ -249,13 +154,19 @@ fn continuous_submitting_caller_does_not_starve_ready_socket() {
     let mut io = PosixIo::new(LIMITS).unwrap();
     let mut out = Completions::new(1);
     let mut setup_out = Completions::new(4);
-    pair(&mut io, &mut setup_out, Sock(0), Sock(1), Sock(2));
+    pair(
+        &mut io,
+        &mut setup_out,
+        Sock::new(0),
+        Sock::new(1),
+        Sock::new(2),
+    );
 
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Recv {
-            sock: Sock(2),
-            buf: BufId(0),
+            sock: Sock::new(2),
+            buf: BufId::new(0),
             off: 0,
             len: 8,
         },
@@ -264,12 +175,12 @@ fn continuous_submitting_caller_does_not_starve_ready_socket() {
     io.tick(false, &mut out).unwrap();
     assert!(out.is_empty());
 
-    io.buf(BufId(1))[..4].copy_from_slice(b"data");
+    io.buf(BufId::new(1))[..4].copy_from_slice(b"data");
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Send {
-            sock: Sock(1),
-            buf: BufId(1),
+            sock: Sock::new(1),
+            buf: BufId::new(1),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -281,9 +192,9 @@ fn continuous_submitting_caller_does_not_starve_ready_socket() {
     while !sent {
         io.tick(true, &mut out).unwrap();
         if let Some(c) = out.pop() {
-            if c.token.0 == 2 {
+            if c.token().get() == 2 {
                 sent = true;
-            } else if c.token.0 == 1 {
+            } else if c.token().get() == 1 {
                 return;
             }
         }
@@ -292,11 +203,11 @@ fn continuous_submitting_caller_does_not_starve_ready_socket() {
     // Now submit an immediately-ready Timeout every turn with a 1-slot buffer.
     let mut got_recv = false;
     for k in 10..40 {
-        io.submit(Token(k), Op::Timeout { nanos: 0 }).unwrap();
+        io.submit(Token::new(k), Op::Timeout { nanos: 0 }).unwrap();
         io.tick(true, &mut out).unwrap();
         let c = out.pop().unwrap();
-        if c.token.0 == 1 {
-            assert_eq!(c.result, 4);
+        if c.token().get() == 1 {
+            assert_eq!(c.result(), 4);
             got_recv = true;
             break;
         }
@@ -313,9 +224,9 @@ fn reset_peer_yields_linux_econnreset() {
     let mut out = Completions::new(4);
 
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Connect {
-            sock: Sock(0),
+            sock: Sock::new(0),
             addr,
         },
     )
@@ -324,12 +235,12 @@ fn reset_peer_yields_linux_econnreset() {
     let peer = h.join().unwrap();
 
     // Send unread bytes to peer, wait for delivery, then drop peer so TCP sends RST.
-    io.buf(BufId(0))[..4].copy_from_slice(b"data");
+    io.buf(BufId::new(0))[..4].copy_from_slice(b"data");
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Send {
-            sock: Sock(0),
-            buf: BufId(0),
+            sock: Sock::new(0),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -339,10 +250,10 @@ fn reset_peer_yields_linux_econnreset() {
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(2, 4)]);
 
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Recv {
-            sock: Sock(0),
-            buf: BufId(1),
+            sock: Sock::new(0),
+            buf: BufId::new(1),
             off: 0,
             len: 64,
         },
@@ -356,10 +267,10 @@ fn reset_peer_yields_linux_econnreset() {
 
     // Follow-up send on reset socket yields -ECONNRESET or -EPIPE without SIGPIPE.
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::Send {
-            sock: Sock(0),
-            buf: BufId(0),
+            sock: Sock::new(0),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,

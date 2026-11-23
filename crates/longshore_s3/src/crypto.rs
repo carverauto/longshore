@@ -26,11 +26,9 @@ impl Sha256 {
         self
     }
     pub fn finish(self) -> [u8; SHA256_LEN] {
-        self.0
-            .finish()
-            .as_ref()
-            .try_into()
-            .expect("SHA-256 output is 32 bytes")
+        let mut out = [0u8; SHA256_LEN];
+        out.copy_from_slice(self.0.finish().as_ref());
+        out
     }
 }
 
@@ -42,17 +40,16 @@ impl Default for Sha256 {
 
 pub fn sha256(data: &[u8]) -> [u8; SHA256_LEN] {
     let mut h = Sha256::new();
-    h.update(data);
+    let _: &mut Sha256 = h.update(data);
     h.finish()
 }
 
 /// HMAC-SHA-256 of `data` under `key`.
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; SHA256_LEN] {
     let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    hmac::sign(&key, data)
-        .as_ref()
-        .try_into()
-        .expect("HMAC-SHA-256 output is 32 bytes")
+    let mut out = [0u8; SHA256_LEN];
+    out.copy_from_slice(hmac::sign(&key, data).as_ref());
+    out
 }
 
 /// Lowercase hex of `bytes` into `out`, which must be twice as long.

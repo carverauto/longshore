@@ -35,21 +35,15 @@ pub enum SignError {
 }
 
 pub struct Request<'a> {
-    /// Uppercase.
-    pub method: &'a str,
-    /// Signed as an empty line when zero.
-    pub content_length: u64,
-    pub content_type: &'a str,
-    pub if_none_match: &'a str,
-    pub range: &'a str,
-    /// Every `x-ms-` header the request carries, including `x-ms-date`:
-    /// lowercase names, any order, each name once.
-    pub ms_headers: &'a [(&'a str, &'a str)],
-    pub account: &'a str,
-    /// The path exactly as sent, starting with `/`, without the query.
-    pub path: &'a str,
-    /// Query parameters: lowercase names, decoded values, any order, each name once.
-    pub query: &'a [(&'a str, &'a str)],
+    pub(crate) method: &'a str,
+    pub(crate) content_length: u64,
+    pub(crate) content_type: &'a str,
+    pub(crate) if_none_match: &'a str,
+    pub(crate) range: &'a str,
+    pub(crate) ms_headers: &'a [(&'a str, &'a str)],
+    pub(crate) account: &'a str,
+    pub(crate) path: &'a str,
+    pub(crate) query: &'a [(&'a str, &'a str)],
 }
 
 struct Out<'a> {
@@ -100,7 +94,7 @@ pub fn string_to_sign(req: &Request, out: &mut [u8]) -> Result<usize, SignError>
         length[at] = b'0' + (v % 10) as u8;
         v /= 10;
     }
-    let length = core::str::from_utf8(&length[at..]).expect("digits");
+    let length = crate::text::written(&length[at..]);
 
     let mut o = Out {
         buf: out,
@@ -146,7 +140,7 @@ pub fn authorization(req: &Request, key: &[u8], out: &mut [u8]) -> Result<usize,
     let n = string_to_sign(req, &mut string)?;
     let mac = hmac_sha256(key, &string[..n]);
     let mut signature = [0u8; 44];
-    base64(&mac, &mut signature);
+    let _: usize = base64(&mac, &mut signature);
     let mut o = Out {
         buf: out,
         len: 0,
@@ -171,14 +165,14 @@ pub fn decode_key(text: &str, out: &mut [u8; KEY_MAX]) -> Option<usize> {
         return None;
     }
     let value = |c: u8| -> Option<u32> {
-        Some(match c {
+        Some(u32::from(match c {
             b'A'..=b'Z' => c - b'A',
             b'a'..=b'z' => c - b'a' + 26,
             b'0'..=b'9' => c - b'0' + 52,
             b'+' => 62,
             b'/' => 63,
             _ => return None,
-        } as u32)
+        }))
     };
     let mut n = 0;
     for (i, quad) in text.chunks(4).enumerate() {
@@ -207,3 +201,141 @@ pub fn decode_key(text: &str, out: &mut [u8; KEY_MAX]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests;
+
+impl<'a> Request<'a> {
+    /// A `method` request to `path` in `account`, with no body, no
+    /// `x-ms-` headers, no query and none of the optional headers; the
+    /// `with_*` setters add them.
+    #[inline]
+    pub const fn new(method: &'a str, account: &'a str, path: &'a str) -> Self {
+        Request {
+            method,
+            content_length: 0,
+            content_type: "",
+            if_none_match: "",
+            range: "",
+            ms_headers: &[],
+            account,
+            path,
+            query: &[],
+        }
+    }
+
+    /// Uppercase.
+    #[inline]
+    pub const fn method(&self) -> &'a str {
+        self.method
+    }
+
+    /// This value with [`Request::method`] set to `method`.
+    #[inline]
+    pub const fn with_method(mut self, method: &'a str) -> Self {
+        self.method = method;
+        self
+    }
+
+    /// Signed as an empty line when zero.
+    #[inline]
+    pub const fn content_length(&self) -> u64 {
+        self.content_length
+    }
+
+    /// This value with [`Request::content_length`] set to `content_length`.
+    #[inline]
+    pub const fn with_content_length(mut self, content_length: u64) -> Self {
+        self.content_length = content_length;
+        self
+    }
+
+    /// The `Content-Type` header, or empty.
+    #[inline]
+    pub const fn content_type(&self) -> &'a str {
+        self.content_type
+    }
+
+    /// This value with [`Request::content_type`] set to `content_type`.
+    #[inline]
+    pub const fn with_content_type(mut self, content_type: &'a str) -> Self {
+        self.content_type = content_type;
+        self
+    }
+
+    /// The `If-None-Match` header, or empty.
+    #[inline]
+    pub const fn if_none_match(&self) -> &'a str {
+        self.if_none_match
+    }
+
+    /// This value with [`Request::if_none_match`] set to `if_none_match`.
+    #[inline]
+    pub const fn with_if_none_match(mut self, if_none_match: &'a str) -> Self {
+        self.if_none_match = if_none_match;
+        self
+    }
+
+    /// The `Range` header, or empty.
+    #[inline]
+    pub const fn range(&self) -> &'a str {
+        self.range
+    }
+
+    /// This value with [`Request::range`] set to `range`.
+    #[inline]
+    pub const fn with_range(mut self, range: &'a str) -> Self {
+        self.range = range;
+        self
+    }
+
+    /// Every `x-ms-` header the request carries, including `x-ms-date`:
+    /// lowercase names, any order, each name once.
+    #[inline]
+    pub const fn ms_headers(&self) -> &'a [(&'a str, &'a str)] {
+        self.ms_headers
+    }
+
+    /// This value with [`Request::ms_headers`] set to `ms_headers`.
+    #[inline]
+    pub const fn with_ms_headers(mut self, ms_headers: &'a [(&'a str, &'a str)]) -> Self {
+        self.ms_headers = ms_headers;
+        self
+    }
+
+    /// The storage account name.
+    #[inline]
+    pub const fn account(&self) -> &'a str {
+        self.account
+    }
+
+    /// This value with [`Request::account`] set to `account`.
+    #[inline]
+    pub const fn with_account(mut self, account: &'a str) -> Self {
+        self.account = account;
+        self
+    }
+
+    /// The path exactly as sent, starting with `/`, without the query.
+    #[inline]
+    pub const fn path(&self) -> &'a str {
+        self.path
+    }
+
+    /// This value with [`Request::path`] set to `path`.
+    #[inline]
+    pub const fn with_path(mut self, path: &'a str) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Query parameters: lowercase names, decoded values, any order, each name once.
+    #[inline]
+    pub const fn query(&self) -> &'a [(&'a str, &'a str)] {
+        self.query
+    }
+
+    /// This value with [`Request::query`] set to `query`.
+    #[inline]
+    pub const fn with_query(mut self, query: &'a [(&'a str, &'a str)]) -> Self {
+        self.query = query;
+        self
+    }
+}

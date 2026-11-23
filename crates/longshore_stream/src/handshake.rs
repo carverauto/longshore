@@ -6,6 +6,7 @@
 //! Driving the TLS handshake over the stream until traffic keys are installed.
 
 use crate::stream::{Step, Stream};
+use crate::TlsError;
 use longshore_common::io::{Io, Op, ECONNRESET};
 use longshore_tls::handshake::Handshake;
 
@@ -15,10 +16,10 @@ impl Stream {
     /// Begin a TLS handshake on a connected socket. Drive it by passing
     /// send and receive completions to [`Stream::on_handshake`].
     pub fn start_handshake<IO: Io>(&mut self, io: &mut IO, handshake: Handshake) -> Step {
-        let t = self
-            .tls
-            .as_mut()
-            .expect("start_handshake needs TLS buffers");
+        // A stream built without TLS buffers cannot carry a handshake.
+        let Some(t) = self.tls.as_mut() else {
+            return Step::Tls(TlsError::Setup);
+        };
         t.handshake = Some(handshake);
         t.active = true;
         (t.rx_start, t.rx_end, t.spill_len, t.closed) = (0, 0, 0, false);
@@ -27,9 +28,14 @@ impl Stream {
 
     pub(super) fn pump_handshake<IO: Io>(&mut self, io: &mut IO) -> Step {
         let (sock, send_token, recv_token) = (self.sock, self.send_token, self.recv_token);
-        let t = self.tls.as_mut().expect("handshake state");
+        let Some(t) = self.tls.as_mut() else {
+            return Step::Tls(TlsError::Setup);
+        };
         loop {
-            let hs = t.handshake.as_mut().expect("handshake in progress");
+            // Driven after the handshake ended: not a handshake any more.
+            let Some(hs) = t.handshake.as_mut() else {
+                return Step::Tls(TlsError::Handshake);
+            };
             let n = hs.write(&mut io.buf(t.tx_buf)[..t.cap as usize]);
             if n > 0 {
                 (t.cipher_len, t.cipher_sent) = (n as u32, 0);
@@ -47,14 +53,15 @@ impl Stream {
                 return Step::Pending;
             }
             if hs.is_done() {
-                let hs = t.handshake.take().expect("checked above");
-                return match hs.finish(&mut t.tx, &mut t.rx) {
+                #[expect(clippy::expect_used, reason = "hs, just found done, is this handshake")]
+                let done = t.handshake.take().expect("checked above");
+                return match done.finish(&mut t.tx, &mut t.rx) {
                     Ok(()) => Step::Done(0),
                     Err(e) => Step::Tls(e.into()),
                 };
             }
             let used = match hs.read(&io.buf(t.rx_buf)[t.rx_start as usize..t.rx_end as usize]) {
-                Ok(n) => n as u32,
+                Ok(consumed) => consumed as u32,
                 Err(e) => return Step::Tls(e.into()),
             };
             t.rx_start += used;
@@ -84,13 +91,15 @@ impl Stream {
     /// `Done` or `Done(0)` on a receive of zero bytes is reported as given.
     pub fn on_handshake<IO: Io>(&mut self, io: &mut IO, sent: bool, result: i32) -> Step {
         let (sock, send_token) = (self.sock, self.send_token);
-        let t = self.tls.as_mut().expect("handshake state");
+        let Some(t) = self.tls.as_mut() else {
+            return Step::Tls(TlsError::Setup);
+        };
         if result <= 0 {
             // A negative errno, or the peer closed mid-handshake.
             return Step::Done(if result == 0 { -ECONNRESET } else { result });
         }
         if sent {
-            t.cipher_sent += result as u32;
+            t.cipher_sent += result.unsigned_abs();
             if t.cipher_sent < t.cipher_len {
                 Self::submit(
                     io,
@@ -106,7 +115,7 @@ impl Stream {
                 return Step::Pending;
             }
         } else {
-            t.rx_end += result as u32;
+            t.rx_end += result.unsigned_abs();
         }
         self.pump_handshake(io)
     }

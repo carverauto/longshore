@@ -6,7 +6,7 @@
 //! Generic slot pools with preallocated waiter queues that grow dynamically
 //! if exceeded, plus single- and multi-pool waiting helpers.
 
-use crate::sync::Mutex;
+use crate::sync::{unpoisoned, Mutex};
 use core::task::{Context, Poll, Waker};
 use std::collections::VecDeque;
 
@@ -63,7 +63,7 @@ impl Pool {
     /// Take a free slot, or register `id` to be woken when one is returned.
     /// Re-polling updates the stored waker in place.
     pub fn poll_take(&self, id: u64, cx: &mut Context<'_>) -> Poll<u32> {
-        let mut s = self.state.lock().expect("pool lock");
+        let mut s = unpoisoned(self.state.lock());
         if let Some(slot) = s.free.pop() {
             s.waiters.retain(|(w, _)| *w != id);
             return Poll::Ready(slot);
@@ -78,14 +78,14 @@ impl Pool {
     /// Remove `id` from the waiter queue, passing its wake on if a slot is
     /// already free.
     pub fn forget(&self, id: u64) {
-        let mut s = self.state.lock().expect("pool lock");
+        let mut s = unpoisoned(self.state.lock());
         s.waiters.retain(|(w, _)| *w != id);
         s.pass_on();
     }
 
     /// Wake every currently queued waiter.
     pub fn wake_all(&self) {
-        let mut s = self.state.lock().expect("pool lock");
+        let mut s = unpoisoned(self.state.lock());
         while let Some((_, w)) = s.waiters.pop_front() {
             w.wake();
         }
@@ -93,7 +93,7 @@ impl Pool {
 
     /// Return `slot` to the pool and wake the longest-waiting caller.
     pub fn give(&self, slot: u32) {
-        let mut s = self.state.lock().expect("pool lock");
+        let mut s = unpoisoned(self.state.lock());
         s.free.push(slot);
         s.pass_on();
     }

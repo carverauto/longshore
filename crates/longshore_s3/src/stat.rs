@@ -10,20 +10,11 @@ use crate::multipart::PartTag;
 /// The result of `S3::stat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stat {
-    /// The object's length in bytes.
-    pub size: u64,
-    /// When it was last written, in Unix seconds, if the store said so in a
-    /// form this client reads.
-    pub modified: Option<u64>,
-    /// The store's checksum of the object as its header carries it, padded
-    /// with zeros: twelve base64 characters of CRC-64/NVME on S3, eight of
-    /// CRC-32C on Google Cloud Storage.
-    pub checksum: Option<[u8; 12]>,
-    /// The object's `ETag`, quotes included, if it fits.
-    pub tag: Option<PartTag>,
-    /// With a buffer given to `stat`: how many bytes of the response head
-    /// were copied into it. Read headers from them with [`header_in`].
-    pub head_len: u32,
+    pub(crate) size: u64,
+    pub(crate) modified: Option<u64>,
+    pub(crate) checksum: Option<[u8; 12]>,
+    pub(crate) tag: Option<PartTag>,
+    pub(crate) head_len: u32,
 }
 
 /// The value of header `name` in a response head, as `stat` copies it into
@@ -43,3 +34,39 @@ pub fn header_in<'a>(head: &'a [u8], name: &str) -> Option<&'a [u8]> {
 
 #[cfg(test)]
 mod tests;
+
+impl Stat {
+    /// The object's length in bytes.
+    #[inline]
+    pub const fn size(self) -> u64 {
+        self.size
+    }
+
+    /// When it was last written, in Unix seconds, if the store said so in a
+    /// form this client reads.
+    #[inline]
+    pub const fn modified(self) -> Option<u64> {
+        self.modified
+    }
+
+    /// The store's checksum of the object as its header carries it, padded
+    /// with zeros: twelve base64 characters of CRC-64/NVME on S3, eight of
+    /// CRC-32C on Google Cloud Storage.
+    #[inline]
+    pub const fn checksum(self) -> Option<[u8; 12]> {
+        self.checksum
+    }
+
+    /// The object's `ETag`, quotes included, if it fits.
+    #[inline]
+    pub const fn tag(self) -> Option<PartTag> {
+        self.tag
+    }
+
+    /// With a buffer given to `stat`: how many bytes of the response head
+    /// were copied into it. Read headers from them with [`header_in`].
+    #[inline]
+    pub const fn head_len(self) -> u32 {
+        self.head_len
+    }
+}

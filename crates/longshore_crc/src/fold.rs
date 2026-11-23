@@ -132,8 +132,8 @@ impl<G: Reg, const M: usize> Bulk for Wide<G, M> {
                 p = p.add(M * width);
                 left -= M * width;
             }
-            let acc = G::narrow(collapse::<G, M>(&v, keys), keys);
-            (acc, &rest[rest.len() - left..])
+            let narrowed = G::narrow(collapse::<G, M>(&v, keys), keys);
+            (narrowed, &rest[rest.len() - left..])
         }
     }
 }
@@ -271,7 +271,7 @@ pub(crate) unsafe fn crc32c<B: Bulk>(state: u32, data: &[u8]) -> u32 {
         if data.len() < 32 {
             return crc32c_short::<B::C>(state, data);
         }
-        let (lo, hi) = <B::C>::get(body::<B>(state as u64, data, &KEYS32));
+        let (lo, hi) = <B::C>::get(body::<B>(u64::from(state), data, &KEYS32));
         // The processor's CRC instruction does the final reduction.
         <B::C>::crc32c_u64(<B::C>::crc32c_u64(0, lo), hi)
     }
@@ -306,7 +306,7 @@ pub(crate) unsafe fn crc32c_fused<G: Reg, const M: usize, const S: usize>(
         if data.len() < fused_min(M * width, S) {
             return crc32c::<Wide<G, M>>(state, data);
         }
-        let (acc, rest) = head::<G::C>(state as u64, data, &KEYS32);
+        let (acc, rest) = head::<G::C>(u64::from(state), data, &KEYS32);
         let rounds = rest.len() / step;
         let stream = 8 * S * rounds;
         let (folded, rest) = rest.split_at(M * width * rounds);
@@ -330,18 +330,18 @@ pub(crate) unsafe fn crc32c_fused<G: Reg, const M: usize, const S: usize>(
                 }
             }
             for word in 0..S {
-                for (c, q) in c.iter_mut().zip(&q) {
-                    let w = q.add(word * 8).cast::<u64>().read_unaligned();
-                    *c = <G::C>::crc32c_u64(*c, u64::from_le(w));
+                for (part, ptr) in c.iter_mut().zip(&q) {
+                    let w = ptr.add(word * 8).cast::<u64>().read_unaligned();
+                    *part = <G::C>::crc32c_u64(*part, u64::from_le(w));
                 }
             }
             p = p.add(M * width);
-            for q in &mut q {
-                *q = q.add(S * 8);
+            for ptr in &mut q {
+                *ptr = ptr.add(S * 8);
             }
         }
-        let acc = G::narrow(collapse::<G, M>(&v, &KEYS32), &KEYS32);
-        let (lo, hi) = <G::C>::get(acc);
+        let narrowed = G::narrow(collapse::<G, M>(&v, &KEYS32), &KEYS32);
+        let (lo, hi) = <G::C>::get(narrowed);
         let mut crc = <G::C>::crc32c_u64(<G::C>::crc32c_u64(0, lo), hi);
 
         // x^(8 * stream - 33): a multiplication by it, through the CRC
@@ -350,11 +350,11 @@ pub(crate) unsafe fn crc32c_fused<G: Reg, const M: usize, const S: usize>(
         let mut bits = 8 * stream as u64;
         while bits != 0 {
             let k = SHIFT32[bits.trailing_zeros() as usize];
-            past = <G::C>::crc32c_u64(0, <G::C>::mul(past as u64, k as u64).0);
+            past = <G::C>::crc32c_u64(0, <G::C>::mul(u64::from(past), u64::from(k)).0);
             bits &= bits - 1;
         }
-        for c in c {
-            crc = <G::C>::crc32c_u64(0, <G::C>::mul(crc as u64, past as u64).0) ^ c;
+        for part in c {
+            crc = <G::C>::crc32c_u64(0, <G::C>::mul(u64::from(crc), u64::from(past)).0) ^ part;
         }
         crc32c::<Wide<G, M>>(crc, after)
     }

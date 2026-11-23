@@ -24,25 +24,16 @@ struct SealedMsg {
 }
 
 pub fn run_mailbox_queue_and_waiters_sealed() {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4);
     let mut sim = SimIo::new(limits, 9003, Faults::default());
     let mut out = Completions::new(8);
-    let (tx, mut io_rx) = mailbox::<SealedMsg, u64, _>(
-        &mut sim,
-        Config {
-            capacity: 8,
-            slots: 2,
-            waiters_prealloc: 8,
-            wake_token: Token(1),
-        },
-    )
-    .expect("mailbox");
+    let (tx, mut io_rx) =
+        mailbox::<SealedMsg, u64, _>(&mut sim, Config::new(8, 2, 8, Token::new(1)))
+            .expect("mailbox");
     io_rx.arm(&mut sim).expect("arm");
     let waker = Waker::noop();
 
@@ -60,7 +51,7 @@ pub fn run_mailbox_queue_and_waiters_sealed() {
             while let Some(c) = out.pop() {
                 if io_rx.on_completion(&mut sim, c).unwrap_or(false) {
                     while let TryRecv::Message(m) = io_rx.try_recv() {
-                        let _ = io_rx.answer(m.slot, m.val * 2);
+                        let _: Option<u32> = io_rx.answer(m.slot, m.val * 2);
                     }
                 }
             }
@@ -87,21 +78,18 @@ pub fn run_threaded_s3_client_sealed() {
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     )
     .unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds);
-    b.port = server.port();
-    b.address = Some(server.addr());
-    b.bucket_in_path = Some("sealed".into());
-    b.tls = false;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.threads = 1;
-    b.buffers = 2;
-    b.buffer_size = 64 * 1024;
-    b.connections = 2;
-    b.operations = 4;
-    b.waiters = 16;
+    let b = Builder::new("127.0.0.1", "us-east-1", creds)
+        .port(server.port())
+        .address(Some(server.addr()))
+        .bucket_in_path(Some("sealed".into()))
+        .tls(false)
+        .portable(true)
+        .threads(1)
+        .buffers(2)
+        .buffer_size(64 * 1024)
+        .connections(2)
+        .operations(4)
+        .waiters(16);
     let client = b.build().expect("client");
 
     // Pre-borrow buffer and warm-up connection outside `sealed` so initial DNS/connect setup

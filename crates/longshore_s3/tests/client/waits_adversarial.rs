@@ -6,8 +6,14 @@
 //! Tier 5 adversarial waiter, lane-close retry, buffer-drop, and `Budget`
 //! abandon tests for `longshore_s3::client` (`GAP-C1`).
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
+#[expect(
+    dead_code,
+    reason = "these tests poll each operation by hand with `Rig::pump` and never fill a body, so `Rig::run`, `fill` and `LEN` go unused in this binary"
+)]
+#[cfg(test)]
 mod rig;
 use longshore_s3::client::{Budget, Error};
 use longshore_s3::report::{Cause, End, Expect, Put};
@@ -116,8 +122,8 @@ fn worker_abandon_with_budget_report_ops_unsent_and_sent() {
             panic!("sent get must resolve on abandon");
         };
         let rep_g = res_g.expect("report op returns Ok(Report) on sent abandon");
-        assert_eq!(rep_g.end, End::Unknown(Cause::Closed));
-        assert_eq!(rep_g.sent, 1);
+        assert_eq!(rep_g.end(), End::Unknown(Cause::Closed));
+        assert_eq!(rep_g.sent(), 1);
         assert_eq!(b_ret2.is_empty(), !quiet);
     }
 }

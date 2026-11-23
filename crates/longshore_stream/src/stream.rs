@@ -123,7 +123,7 @@ impl Stream {
             rx_buf,
             cap,
             batch,
-            src: BufId(0),
+            src: BufId::new(0),
             src_off: 0,
             src_len: 0,
             sealed: 0,
@@ -134,7 +134,7 @@ impl Stream {
             rx_end: 0,
             spill_at: 0,
             spill_len: 0,
-            dst: BufId(0),
+            dst: BufId::new(0),
             dst_off: 0,
             dst_max: 0,
             closed: false,
@@ -207,6 +207,10 @@ impl Stream {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "a stream keeps one send and one receive in flight, which Limits::ops_max must cover"
+    )]
     pub(super) fn submit<IO: Io>(io: &mut IO, token: Token, op: Op) {
         io.submit(token, op)
             .expect("Limits::ops_max must cover one send and one receive per connection");
@@ -285,7 +289,7 @@ impl Stream {
     pub fn on_send<IO: Io>(&mut self, io: &mut IO, result: i32) -> Step {
         #[cfg(not(feature = "tls"))]
         {
-            let _ = io;
+            let _: &mut IO = io;
             Step::Done(result)
         }
         #[cfg(feature = "tls")]
@@ -299,7 +303,7 @@ impl Stream {
             if result < 0 || (result == 0 && t.cipher_len > 0) {
                 return Step::Done(result);
             }
-            t.cipher_sent += result as u32;
+            t.cipher_sent += result.unsigned_abs();
             if t.cipher_sent < t.cipher_len {
                 Self::submit(
                     io,
@@ -323,7 +327,7 @@ impl Stream {
                 t.seal_batch(io, sock, send_token);
                 return Step::Pending;
             }
-            Step::Done(t.src_len as i32)
+            Step::Done(longshore_common::io::count_result(t.src_len))
         }
     }
 
@@ -354,7 +358,7 @@ impl Stream {
     pub fn on_recv<IO: Io>(&mut self, io: &mut IO, result: i32) -> Step {
         #[cfg(not(feature = "tls"))]
         {
-            let _ = io;
+            let _: &mut IO = io;
             Step::Done(result)
         }
         #[cfg(feature = "tls")]
@@ -366,7 +370,7 @@ impl Stream {
             if result <= 0 {
                 return Step::Done(result);
             }
-            t.rx_end += result as u32;
+            t.rx_end += result.unsigned_abs();
             t.pump_rx(io, sock, recv_token)
         }
     }

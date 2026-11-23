@@ -35,16 +35,8 @@ fuzz_target!(|data: &[u8]| {
         let tail = &data[data.len().saturating_sub(12)..];
         sum[..tail.len()].copy_from_slice(tail);
         let parts = [
-            Part {
-                number: 1,
-                tag,
-                checksum: Some(sum),
-            },
-            Part {
-                number: 2,
-                tag,
-                checksum: None,
-            },
+            Part::new(1, tag, Some(sum)),
+            Part::new(2, tag, None),
         ];
         let mut out = [0xA5u8; 1024];
         if let Some(n) = write_manifest(&mut out[..900], &parts) {

@@ -7,87 +7,115 @@
 //! `submit_chain` over mailbox, `power_loss` closing mailbox, and S3 client
 //! plain vs `--no-default-features` TLS rejection.
 
-#[allow(unused_imports)]
 use super::WriteCmd;
-#[allow(unused_imports)]
-use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
-#[allow(unused_imports)]
+use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
 use longshore::mailbox::{block_on, mailbox, Config, TryRecv, TrySendError};
+
+#[cfg(feature = "sim")]
+use longshore::sim::SimIo;
+
+/// The simulated disk both storage-core scenarios mount.
+#[cfg(feature = "sim")]
+fn small_disk() -> longshore::sim::DiskConfig {
+    longshore::sim::DiskConfig::BASE
+        .with_max_files(8)
+        .with_max_dirs(4)
+        .with_max_bytes_per_file(64 * 1024)
+        .with_max_name_len(128)
+        .with_write_log_entries(16)
+        .with_write_log_bytes(32 * 1024)
+        .with_read_error_sectors(4)
+        .with_sector_size(512)
+}
+
+/// Opens `path` read-write-create into `FileSlot(0)` and waits for the open.
+#[cfg(feature = "sim")]
+fn open_slot0(core: &mut SimIo, out: &mut Completions, limits: Limits, path: &str, direct: bool) {
+    use super::super::harness::{drive_until, write_nul_path};
+    let plen = write_nul_path(core, limits.small(0), 0, path);
+    core.submit(
+        Token::new(1),
+        Op::FileOpen {
+            slot: FileSlot::new(0),
+            path_buf: limits.small(0),
+            path_off: 0,
+            path_len: plen,
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true)
+                .with_direct(direct),
+        },
+    )
+    .unwrap();
+    let _: Vec<Completion> = drive_until(core, out, 100, |v| v.len() == 1).unwrap();
+}
+
+/// The mailbox both storage-core scenarios hand write commands through.
+#[cfg(feature = "sim")]
+fn write_mailbox_config() -> Config {
+    Config::new(4, 2, 4, Token::new(10))
+}
+
+/// Submits the aligned write-then-datasync chain that serves `cmd`.
+#[cfg(feature = "sim")]
+fn submit_write_sync_chain(core: &mut SimIo, limits: Limits, cmd: WriteCmd) {
+    use super::super::harness::write_pool_bytes;
+    write_pool_bytes(core, limits.aligned(0), 0, &[cmd.fill; 4096]);
+    core.submit_chain(&[
+        (
+            Token::new(20),
+            Op::FileWrite {
+                slot: FileSlot::new(0),
+                buf: limits.aligned(0),
+                off: 0,
+                len: cmd.len,
+                file_off: cmd.file_off,
+            },
+        ),
+        (
+            Token::new(21),
+            Op::FileSync {
+                slot: FileSlot::new(0),
+                datasync: true,
+            },
+        ),
+    ])
+    .unwrap();
+}
 
 #[cfg(feature = "sim")]
 #[test]
 fn t3_23_mailbox_to_storage_core_aligned_submit_chain() {
-    use super::super::harness::{drive_until, write_nul_path, write_pool_bytes};
-    use longshore::sim::{Faults, SimIo};
+    use longshore::sim::Faults;
     use std::future::Future;
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
-    let limits_a = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    };
-    let limits_b = Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        files_max: 2,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits_a = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4);
+    let limits_b = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_files_max(2)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(8);
     let mut core_a = SimIo::new(limits_a, 323, Faults::default());
     let mut core_b = SimIo::new(limits_b, 324, Faults::default());
-    core_b.setup_disk(longshore::sim::DiskConfig {
-        max_files: 8,
-        max_dirs: 4,
-        max_bytes_per_file: 64 * 1024,
-        max_name_len: 128,
-        write_log_entries: 16,
-        write_log_bytes: 32 * 1024,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    core_b.setup_disk(small_disk());
     let mut out_b = Completions::new(8);
+    open_slot0(&mut core_b, &mut out_b, limits_b, "/core_b.dat", true);
 
-    let plen = write_nul_path(&mut core_b, limits_b.small(0), 0, "/core_b.dat");
-    core_b
-        .submit(
-            Token(1),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: limits_b.small(0),
-                path_off: 0,
-                path_len: plen,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    direct: true,
-                    ..Default::default()
-                },
-            },
-        )
-        .unwrap();
-    let _ = drive_until(&mut core_b, &mut out_b, 100, |v| v.len() == 1).unwrap();
-
-    let (tx_b, mut io_rx_b) = mailbox::<WriteCmd, i32, _>(
-        &mut core_b,
-        Config {
-            capacity: 4,
-            slots: 2,
-            waiters_prealloc: 4,
-            wake_token: Token(10),
-        },
-    )
-    .unwrap();
+    let (tx_b, mut io_rx_b) =
+        mailbox::<WriteCmd, i32, _>(&mut core_b, write_mailbox_config()).unwrap();
     io_rx_b.arm(&mut core_b).unwrap();
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
@@ -112,33 +140,12 @@ fn t3_23_mailbox_to_storage_core_aligned_submit_chain() {
         while let Some(c) = out_b.pop() {
             if io_rx_b.on_completion(&mut core_b, c).unwrap() {
                 while let TryRecv::Message(cmd) = io_rx_b.try_recv() {
-                    write_pool_bytes(&mut core_b, limits_b.aligned(0), 0, &[cmd.fill; 4096]);
-                    core_b
-                        .submit_chain(&[
-                            (
-                                Token(20),
-                                Op::FileWrite {
-                                    slot: FileSlot(0),
-                                    buf: limits_b.aligned(0),
-                                    off: 0,
-                                    len: cmd.len,
-                                    file_off: cmd.file_off,
-                                },
-                            ),
-                            (
-                                Token(21),
-                                Op::FileSync {
-                                    slot: FileSlot(0),
-                                    datasync: true,
-                                },
-                            ),
-                        ])
-                        .unwrap();
+                    submit_write_sync_chain(&mut core_b, limits_b, cmd);
                     pending_slot = Some(cmd.slot);
                 }
-            } else if c.token == Token(21) {
+            } else if c.token().get() == 21 {
                 assert!(io_rx_b
-                    .answer(pending_slot.take().unwrap(), c.result)
+                    .answer(pending_slot.take().unwrap(), c.result())
                     .is_none());
                 answered = true;
                 break;
@@ -155,65 +162,27 @@ fn t3_23_mailbox_to_storage_core_aligned_submit_chain() {
 #[cfg(feature = "sim")]
 #[test]
 fn t3_24_storage_core_power_loss_closes_mailbox_and_settles_disk() {
-    use super::super::harness::{drive_until, write_nul_path, write_pool_bytes};
-    use longshore::sim::{Faults, SimIo};
+    use super::super::harness::write_pool_bytes;
+    use longshore::sim::Faults;
     use std::future::Future;
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        files_max: 2,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_files_max(2)
+        .with_ops_max(8);
     let mut core_b = SimIo::new(limits, 3240, Faults::default());
-    core_b.setup_disk(longshore::sim::DiskConfig {
-        max_files: 8,
-        max_dirs: 4,
-        max_bytes_per_file: 64 * 1024,
-        max_name_len: 128,
-        write_log_entries: 16,
-        write_log_bytes: 32 * 1024,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    core_b.setup_disk(small_disk());
     let mut out_b = Completions::new(8);
+    open_slot0(&mut core_b, &mut out_b, limits, "/crash_b.dat", false);
 
-    let plen = write_nul_path(&mut core_b, limits.small(0), 0, "/crash_b.dat");
-    core_b
-        .submit(
-            Token(1),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: limits.small(0),
-                path_off: 0,
-                path_len: plen,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    ..Default::default()
-                },
-            },
-        )
-        .unwrap();
-    let _ = drive_until(&mut core_b, &mut out_b, 100, |v| v.len() == 1).unwrap();
-
-    let (tx_b, mut io_rx_b) = mailbox::<WriteCmd, i32, _>(
-        &mut core_b,
-        Config {
-            capacity: 4,
-            slots: 2,
-            waiters_prealloc: 4,
-            wake_token: Token(10),
-        },
-    )
-    .unwrap();
+    let (tx_b, mut io_rx_b) =
+        mailbox::<WriteCmd, i32, _>(&mut core_b, write_mailbox_config()).unwrap();
     io_rx_b.arm(&mut core_b).unwrap();
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
@@ -233,13 +202,13 @@ fn t3_24_storage_core_power_loss_closes_mailbox_and_settles_disk() {
     while let Some(c) = out_b.pop() {
         if io_rx_b.on_completion(&mut core_b, c).unwrap() {
             while let TryRecv::Message(cmd) = io_rx_b.try_recv() {
-                write_pool_bytes(&mut core_b, BufId(0), 0, &[cmd.fill; 1024]);
+                write_pool_bytes(&mut core_b, BufId::new(0), 0, &[cmd.fill; 1024]);
                 core_b
                     .submit(
-                        Token(20),
+                        Token::new(20),
                         Op::FileWrite {
-                            slot: FileSlot(0),
-                            buf: BufId(0),
+                            slot: FileSlot::new(0),
+                            buf: BufId::new(0),
                             off: 0,
                             len: cmd.len,
                             file_off: cmd.file_off,
@@ -276,21 +245,18 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     )
     .unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds);
-    b.port = server.port();
-    b.address = Some(server.addr());
-    b.bucket_in_path = Some("bucket".into());
-    b.tls = false;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.waiters = 32;
-    b.threads = 1;
-    b.buffers = 2;
-    b.buffer_size = 64 * 1024;
-    b.connections = 2;
-    b.operations = 4;
+    let b = Builder::new("127.0.0.1", "us-east-1", creds)
+        .port(server.port())
+        .address(Some(server.addr()))
+        .bucket_in_path(Some("bucket".into()))
+        .tls(false)
+        .portable(true)
+        .waiters(32)
+        .threads(1)
+        .buffers(2)
+        .buffer_size(64 * 1024)
+        .connections(2)
+        .operations(4);
     let client = b.build().expect("plain client");
     let mut buf = client.buffer_blocking();
     buf.as_mut_slice()[..5].copy_from_slice(b"hello");
@@ -301,11 +267,11 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
 
     #[cfg(not(feature = "tls"))]
     {
-        let mut bt = Builder::new("127.0.0.1", "us-east-1", creds);
-        bt.port = server.port();
-        bt.address = Some(server.addr());
-        bt.tls = true;
-        bt.waiters = 32;
+        let bt = Builder::new("127.0.0.1", "us-east-1", creds)
+            .port(server.port())
+            .address(Some(server.addr()))
+            .tls(true)
+            .waiters(32);
         match bt.build() {
             Err(BuildError::Setting(msg)) => {
                 assert!(msg.contains("tls"), "error must name tls feature: {msg}");
@@ -315,5 +281,5 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
         }
     }
     #[cfg(feature = "tls")]
-    let _ = BuildError::Unsupported;
+    let _: BuildError = BuildError::Unsupported;
 }

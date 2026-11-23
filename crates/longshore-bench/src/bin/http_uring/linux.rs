@@ -33,14 +33,11 @@ const MSG_TRUNC: c_int = 0x20;
 const HEARTBEAT: u64 = 1 << 50;
 const MS: u64 = 1_000_000;
 
-fn die(msg: &str) -> ! {
-    eprintln!("http_uring: {msg}");
-    std::process::exit(1)
-}
+use crate::die::die;
 
 fn thread_cpu_secs() -> f64 {
     let mut ts = [0i64; 2];
-    unsafe { clock_gettime(3, &mut ts) };
+    let _: i32 = unsafe { clock_gettime(3, &mut ts) };
     ts[0] as f64 + ts[1] as f64 / 1e9
 }
 
@@ -101,10 +98,10 @@ pub fn main() {
     while let Some(k) = it.next() {
         let v = it
             .next()
-            .unwrap_or_else(|| die(&format!("missing value for {k}")));
+            .unwrap_or_else(|| die(format_args!("missing value for {k}")));
         let num = || {
             v.parse::<u64>()
-                .unwrap_or_else(|_| die(&format!("bad number for {k}: {v}")))
+                .unwrap_or_else(|_| die(format_args!("bad number for {k}: {v}")))
         };
         match k.as_str() {
             "--tls-cert" => a.trust_file = Some(v),
@@ -116,7 +113,7 @@ pub fn main() {
             "--secs" => a.secs = num(),
             "--cpu" => a.cpu = Some(num() as usize),
             "--crc" => a.crc = num() != 0,
-            _ => die(&format!("unknown flag {k}")),
+            _ => die(format_args!("unknown flag {k}")),
         }
     }
     match a.cmd.as_str() {
@@ -124,24 +121,23 @@ pub fn main() {
         "sink" => sink(a.port, a.size, a.trust_file.as_deref()),
         "put" => bench(&a, true),
         "get" => bench(&a, false),
-        other => die(&format!("unknown command {other}")),
+        other => die(format_args!("unknown command {other}")),
     }
 }
 
-fn client_cfg(conns: u32, buffer_size: u32, first_sock: u32) -> client::Config {
-    client::Config {
-        connections_max: conns,
-        first_sock,
-        first_buf: 0,
-        head_max: 4096,
-        buffer_size,
-        max_age_ns: 3_600_000 * MS,
-        max_requests: u32::MAX,
-        request_timeout_ns: 30_000 * MS,
-        zero_copy_min: 64 * 1024,
-        token_base: 1 << 40,
-        tls_batch: 1 << 20,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    }
+/// The client's configuration before the caller changes any of it: `conns`
+/// connections from `first_sock`, their heads from `first_buf`.
+fn client_cfg(
+    conns: u32,
+    buffer_size: u32,
+    first_sock: u32,
+    first_buf: u32,
+) -> client::ClientConfigBuilder {
+    client::ClientConfig::builder(conns, first_sock, first_buf, buffer_size, 1 << 40)
+        .head_max(4096)
+        .max_age_ns(3_600_000 * MS)
+        .max_requests(u32::MAX)
+        .request_timeout_ns(30_000 * MS)
+        .zero_copy_min(64 * 1024)
+        .tls_batch(1 << 20)
 }

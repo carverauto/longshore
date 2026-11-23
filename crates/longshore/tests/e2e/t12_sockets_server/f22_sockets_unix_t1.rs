@@ -26,64 +26,66 @@ pub(super) const SIM_ADDR: SocketAddr =
 
 #[cfg(any(feature = "sim", unix))]
 pub(super) fn unix_limits() -> Limits {
-    Limits {
-        sockets_max: 16,
-        buffers: 4,
-        buffer_size: 2048,
-        ops_max: 16,
-        accept_range_start: 8,
-        accept_range_len: 4,
-        ring_buffers: 8,
-        ring_buffer_size: 1024,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(16)
+        .with_buffers(4)
+        .with_buffer_size(2048)
+        .with_ops_max(16)
+        .with_accept_range_start(8)
+        .with_accept_range_len(4)
+        .with_ring_buffers(8)
+        .with_ring_buffer_size(1024)
 }
 
 #[cfg(any(feature = "sim", unix))]
 fn check_shutdown_before_close<IO: Io>(io: &mut IO, addr: SocketAddr) {
     let mut out = Completions::new(16);
-    let bound = io.listen(Sock(0), addr).unwrap();
+    let bound = io.listen(Sock::new(0), addr).unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr: bound,
         },
     )
     .unwrap();
-    drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
 
-    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
+    io.submit(Token::new(3), Op::ArmedRecv { sock: Sock::new(2) })
         .unwrap();
     io.tick(false, &mut out).unwrap();
-    io.submit(Token(4), Op::Close { sock: Sock(2) }).unwrap();
+    io.submit(Token::new(4), Op::Close { sock: Sock::new(2) })
+        .unwrap();
     let cs = drive_until(io, &mut out, 50, |v| {
-        v.iter().any(|c| c.token == Token(3) && !c.more) && v.iter().any(|c| c.token == Token(4))
+        v.iter().any(|c| c.token().get() == 3 && !c.more())
+            && v.iter().any(|c| c.token().get() == 4)
     })
     .unwrap();
-    assert!(!cs.iter().find(|c| c.token == Token(3)).unwrap().more);
+    assert!(!cs.iter().find(|c| c.token().get() == 3).unwrap().more());
 
     io.submit(
-        Token(5),
+        Token::new(5),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(5))).unwrap();
+    let eof = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token().get() == 5)).unwrap();
     assert_eq!(
-        cs[0].result, 0,
+        eof[0].result(),
+        0,
         "peer must see EOF after shutdown-before-close"
     );
 }
@@ -112,37 +114,37 @@ fn t1_f22_2_socket_options_nodelay_and_keepalive_configure_cleanly() {
     posix.keep_alive(true);
     let mut out = Completions::new(16);
     let bound = posix
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .unwrap();
     posix
         .submit(
-            Token(1),
+            Token::new(1),
             Op::Accept {
-                listener: Sock(0),
-                sock: Sock(2),
+                listener: Sock::new(0),
+                sock: Sock::new(2),
             },
         )
         .unwrap();
     posix
         .submit(
-            Token(2),
+            Token::new(2),
             Op::Connect {
-                sock: Sock(1),
+                sock: Sock::new(1),
                 addr: bound,
             },
         )
         .unwrap();
     let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
     for c in cs {
-        assert_eq!(c.result, 0, "connect/accept with TCP opts failed: {c:?}");
+        assert_eq!(c.result(), 0, "connect/accept with TCP opts failed: {c:?}");
     }
-    write_pool_bytes(&mut posix, BufId(0), 0, b"nodelay");
+    write_pool_bytes(&mut posix, BufId::new(0), 0, b"nodelay");
     posix
         .submit(
-            Token(3),
+            Token::new(3),
             Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
+                sock: Sock::new(1),
+                buf: BufId::new(0),
                 off: 0,
                 len: 7,
                 zero_copy: false,
@@ -151,17 +153,19 @@ fn t1_f22_2_socket_options_nodelay_and_keepalive_configure_cleanly() {
         .unwrap();
     posix
         .submit(
-            Token(4),
+            Token::new(4),
             Op::Recv {
-                sock: Sock(2),
-                buf: BufId(1),
+                sock: Sock::new(2),
+                buf: BufId::new(1),
                 off: 0,
                 len: 64,
             },
         )
         .unwrap();
-    let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
-    assert!(cs.iter().any(|c| c.token == Token(4) && c.result == 7));
+    let exchanged = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
+    assert!(exchanged
+        .iter()
+        .any(|c| c.token().get() == 4 && c.result() == 7));
 }
 
 #[cfg(unix)]
@@ -173,24 +177,24 @@ fn t1_f22_3_unix_domain_socket_listen_connect_and_echo() {
     let mut out = Completions::new(16);
 
     posix
-        .listen_unix(Sock(0), sock_path.to_str().unwrap())
+        .listen_unix(Sock::new(0), sock_path.to_str().unwrap())
         .expect("listen_unix");
-    let path_len = write_nul_path(&mut posix, BufId(0), 0, sock_path.to_str().unwrap());
+    let path_len = write_nul_path(&mut posix, BufId::new(0), 0, sock_path.to_str().unwrap());
     posix
         .submit(
-            Token(1),
+            Token::new(1),
             Op::Accept {
-                listener: Sock(0),
-                sock: Sock(2),
+                listener: Sock::new(0),
+                sock: Sock::new(2),
             },
         )
         .unwrap();
     posix
         .submit(
-            Token(2),
+            Token::new(2),
             Op::ConnectUnix {
-                sock: Sock(1),
-                path_buf: BufId(0),
+                sock: Sock::new(1),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len,
             },
@@ -198,16 +202,16 @@ fn t1_f22_3_unix_domain_socket_listen_connect_and_echo() {
         .unwrap();
     let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
     for c in cs {
-        assert_eq!(c.result, 0);
+        assert_eq!(c.result(), 0);
     }
 
-    write_pool_bytes(&mut posix, BufId(1), 0, b"unix-stream-payload");
+    write_pool_bytes(&mut posix, BufId::new(1), 0, b"unix-stream-payload");
     posix
         .submit(
-            Token(3),
+            Token::new(3),
             Op::Send {
-                sock: Sock(1),
-                buf: BufId(1),
+                sock: Sock::new(1),
+                buf: BufId::new(1),
                 off: 0,
                 len: 19,
                 zero_copy: false,
@@ -216,19 +220,26 @@ fn t1_f22_3_unix_domain_socket_listen_connect_and_echo() {
         .unwrap();
     posix
         .submit(
-            Token(4),
+            Token::new(4),
             Op::Recv {
-                sock: Sock(2),
-                buf: BufId(2),
+                sock: Sock::new(2),
+                buf: BufId::new(2),
                 off: 0,
                 len: 64,
             },
         )
         .unwrap();
-    let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
-    assert_eq!(cs.iter().find(|c| c.token == Token(4)).unwrap().result, 19);
+    let exchanged = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
     assert_eq!(
-        read_pool_bytes(&mut posix, BufId(2), 0, 19),
+        exchanged
+            .iter()
+            .find(|c| c.token().get() == 4)
+            .unwrap()
+            .result(),
+        19
+    );
+    assert_eq!(
+        read_pool_bytes(&mut posix, BufId::new(2), 0, 19),
         b"unix-stream-payload"
     );
 }
@@ -242,53 +253,58 @@ fn t1_f22_4_unix_domain_armed_accept_and_recv_with_give_back() {
     let mut out = Completions::new(16);
 
     posix
-        .listen_unix(Sock(0), sock_path.to_str().unwrap())
+        .listen_unix(Sock::new(0), sock_path.to_str().unwrap())
         .expect("listen_unix");
     posix
-        .submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
+        .submit(
+            Token::new(1),
+            Op::ArmedAccept {
+                listener: Sock::new(0),
+            },
+        )
         .unwrap();
 
-    let path_len = write_nul_path(&mut posix, BufId(0), 0, sock_path.to_str().unwrap());
+    let path_len = write_nul_path(&mut posix, BufId::new(0), 0, sock_path.to_str().unwrap());
     posix
         .submit(
-            Token(2),
+            Token::new(2),
             Op::ConnectUnix {
-                sock: Sock(1),
-                path_buf: BufId(0),
+                sock: Sock::new(1),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len,
             },
         )
         .unwrap();
     let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 2).unwrap();
-    let acc = cs.iter().find(|c| c.token == Token(1)).unwrap();
-    assert!(acc.more);
-    let srv_sock = Sock(acc.result as u32);
-    assert!((8..12).contains(&srv_sock.0));
+    let acc = cs.iter().find(|c| c.token().get() == 1).unwrap();
+    assert!(acc.more());
+    let srv_sock = Sock::new(u32::try_from(acc.result()).unwrap());
+    assert!((8..12).contains(&srv_sock.get()));
 
     posix
-        .submit(Token(3), Op::ArmedRecv { sock: srv_sock })
+        .submit(Token::new(3), Op::ArmedRecv { sock: srv_sock })
         .unwrap();
-    write_pool_bytes(&mut posix, BufId(1), 0, b"armed-unix");
+    write_pool_bytes(&mut posix, BufId::new(1), 0, b"armed-unix");
     posix
         .submit(
-            Token(4),
+            Token::new(4),
             Op::Send {
-                sock: Sock(1),
-                buf: BufId(1),
+                sock: Sock::new(1),
+                buf: BufId::new(1),
                 off: 0,
                 len: 10,
                 zero_copy: false,
             },
         )
         .unwrap();
-    let cs = drive_until(&mut posix, &mut out, 50, |v| {
-        v.iter().any(|c| c.token == Token(3))
+    let received = drive_until(&mut posix, &mut out, 50, |v| {
+        v.iter().any(|c| c.token().get() == 3)
     })
     .unwrap();
-    let rc = cs.iter().find(|c| c.token == Token(3)).unwrap();
-    assert!(rc.more);
-    let id = rc.buf.expect("ring buf");
+    let rc = received.iter().find(|c| c.token().get() == 3).unwrap();
+    assert!(rc.more());
+    let id = rc.buf().expect("ring buf");
     assert_eq!(read_pool_bytes(&mut posix, id, 0, 10), b"armed-unix");
     posix.give_back(id);
 }
@@ -304,47 +320,47 @@ fn t1_f22_5_mixed_tcp_and_unix_listeners_skip_tcp_opts_on_unix() {
     let mut out = Completions::new(16);
 
     let tcp_addr = posix
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .unwrap();
     posix
-        .listen_unix(Sock(3), sock_path.to_str().unwrap())
+        .listen_unix(Sock::new(3), sock_path.to_str().unwrap())
         .unwrap();
 
     posix
         .submit(
-            Token(1),
+            Token::new(1),
             Op::Accept {
-                listener: Sock(0),
-                sock: Sock(2),
+                listener: Sock::new(0),
+                sock: Sock::new(2),
             },
         )
         .unwrap();
     posix
         .submit(
-            Token(2),
+            Token::new(2),
             Op::Connect {
-                sock: Sock(1),
+                sock: Sock::new(1),
                 addr: tcp_addr,
             },
         )
         .unwrap();
 
-    let path_len = write_nul_path(&mut posix, BufId(0), 0, sock_path.to_str().unwrap());
+    let path_len = write_nul_path(&mut posix, BufId::new(0), 0, sock_path.to_str().unwrap());
     posix
         .submit(
-            Token(3),
+            Token::new(3),
             Op::Accept {
-                listener: Sock(3),
-                sock: Sock(5),
+                listener: Sock::new(3),
+                sock: Sock::new(5),
             },
         )
         .unwrap();
     posix
         .submit(
-            Token(4),
+            Token::new(4),
             Op::ConnectUnix {
-                sock: Sock(4),
-                path_buf: BufId(0),
+                sock: Sock::new(4),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len,
             },
@@ -352,6 +368,6 @@ fn t1_f22_5_mixed_tcp_and_unix_listeners_skip_tcp_opts_on_unix() {
         .unwrap();
     let cs = drive_until(&mut posix, &mut out, 50, |v| v.len() == 4).unwrap();
     for c in cs {
-        assert_eq!(c.result, 0, "mixed TCP/Unix failed: {c:?}");
+        assert_eq!(c.result(), 0, "mixed TCP/Unix failed: {c:?}");
     }
 }

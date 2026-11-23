@@ -5,6 +5,7 @@
 
 //! Shared [`Io`] contract checks executable against any backend (`SimIo`, `PosixIo`, `UringIo`).
 
+use crate::io::must::{fail, must_len, Must};
 use crate::io::scenario::echo;
 use crate::io::{BufId, Busy, Completions, Io, Limits, Op, Sock, Token, EAGAIN, ECANCELED};
 use std::net::SocketAddr;
@@ -16,7 +17,7 @@ const SERVER: Sock = Sock(2);
 fn drain_n<IO: Io>(io: &mut IO, out: &mut Completions, expected: usize) -> Vec<(u64, i32)> {
     let mut got = Vec::with_capacity(expected);
     while got.len() < expected {
-        io.tick(true, out).expect("tick");
+        io.must_tick(true, out);
         while let Some(c) = out.pop() {
             got.push((c.token.0, c.result));
         }
@@ -25,16 +26,15 @@ fn drain_n<IO: Io>(io: &mut IO, out: &mut Completions, expected: usize) -> Vec<(
 }
 
 fn connect_pair<IO: Io>(io: &mut IO, out: &mut Completions, addr: SocketAddr) -> SocketAddr {
-    let bound = io.listen(LISTENER, addr).expect("listen");
-    io.submit(Token(1), accept_op(LISTENER, SERVER)).unwrap();
-    io.submit(
+    let bound = io.must_listen(LISTENER, addr);
+    io.must_submit(Token(1), accept_op(LISTENER, SERVER));
+    io.must_submit(
         Token(2),
         Op::Connect {
             sock: CLIENT,
             addr: bound,
         },
-    )
-    .unwrap();
+    );
     for (t, r) in drain_n(io, out, 2) {
         assert!(r >= 0, "pair setup op {t} failed: {r}");
     }
@@ -74,65 +74,54 @@ fn send_op(sock: Sock, buf: BufId, off: u32, len: u32) -> Op {
 }
 
 fn io_limits() -> Limits {
-    Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 1024,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_ops_max(8)
 }
 
 fn small_limits() -> Limits {
-    Limits {
-        sockets_max: 1,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(1)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4)
 }
 
 fn close_sockets<IO: Io>(io: &mut IO, out: &mut Completions, socks: &[Sock]) {
     for (k, &sock) in socks.iter().enumerate() {
-        io.submit(Token(900 + k as u64), Op::Close { sock })
-            .unwrap();
+        io.must_submit(Token(900 + k as u64), Op::Close { sock });
     }
-    let _ = drain_n(io, out, socks.len());
+    let _: Vec<(u64, i32)> = drain_n(io, out, socks.len());
 }
 
 /// Echo scenario with `zero_copy: false` and `zero_copy: true`, plus single-completion check.
 pub fn one_completion_and_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
-    let limits = Limits {
-        buffers: 3,
-        buffer_size: 4096,
-        ops_max: 4,
-        ..io_limits()
-    };
+    let limits = io_limits()
+        .with_buffers(3)
+        .with_buffer_size(4096)
+        .with_ops_max(4);
     for zc in [false, true] {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        io.submit(Token(42), Op::Timeout { nanos: 0 }).unwrap();
+        io.must_submit(Token(42), Op::Timeout { nanos: 0 });
         assert_eq!(drain_n(&mut io, &mut out, 1), vec![(42, 0)]);
-        io.tick(false, &mut out).unwrap();
+        io.must_tick(false, &mut out);
         assert!(out.is_empty(), "extra completion delivered");
 
         let stats = echo(&mut io, addr, 64 * 1024, 4096, zc, &mut out)
-            .unwrap_or_else(|e| panic!("echo(zc={zc}) failed: {e:?}"));
+            .unwrap_or_else(|e| fail(format_args!("echo(zc={zc}) failed: {e:?}")));
         assert!(stats.sends > 0 && stats.recvs > 0 && stats.ticks > 0);
     }
 }
 
 /// `submit` refuses with `Busy` when `ops_max` are in flight and delivers no extra completion.
 pub fn capacity_busy<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
-    let mut io = make(Limits {
-        ops_max: 3,
-        ..small_limits()
-    });
+    let mut io = make(small_limits().with_ops_max(3));
     let mut out = Completions::new(8);
     for t in 1..=3 {
-        io.submit(Token(t), Op::Timeout { nanos: 5_000_000 })
-            .unwrap();
+        io.must_submit(Token(t), Op::Timeout { nanos: 5_000_000 });
     }
     assert_eq!(
         io.submit(Token(4), Op::Timeout { nanos: 0 }),
@@ -142,10 +131,10 @@ pub fn capacity_busy<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     let mut got = drain_n(&mut io, &mut out, 3);
     got.sort_by_key(|x| x.0);
     assert_eq!(got, vec![(1, 0), (2, 0), (3, 0)]);
-    io.tick(false, &mut out).unwrap();
+    io.must_tick(false, &mut out);
     assert!(out.is_empty(), "refused Busy op must not complete");
 
-    io.submit(Token(5), Op::Timeout { nanos: 0 }).unwrap();
+    io.must_submit(Token(5), Op::Timeout { nanos: 0 });
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(5, 0)]);
 }
 
@@ -157,14 +146,12 @@ pub fn cancel_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAdd
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        connect_pair(&mut io, &mut out, addr);
-        io.submit(Token(10), recv_op(SERVER, BufId(0), 1024))
-            .unwrap();
-        io.tick(false, &mut out).unwrap();
+        let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
+        io.must_submit(Token(10), recv_op(SERVER, BufId(0), 1024));
+        io.must_tick(false, &mut out);
         assert!(out.is_empty());
 
-        io.submit(Token(11), Op::Cancel { target: Token(10) })
-            .unwrap();
+        io.must_submit(Token(11), Op::Cancel { target: Token(10) });
         let mut res = drain_n(&mut io, &mut out, 2);
         res.sort_by_key(|x| x.0);
         assert_eq!(res, vec![(10, -ECANCELED), (11, 0)]);
@@ -175,8 +162,7 @@ pub fn cancel_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAdd
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        io.submit(Token(20), Op::Cancel { target: Token(999) })
-            .unwrap();
+        io.must_submit(Token(20), Op::Cancel { target: Token(999) });
         let res = drain_n(&mut io, &mut out, 1);
         assert_eq!(res[0].0, 20);
         assert!(res[0].1 < 0, "cancel of missing token must be negative");
@@ -186,10 +172,8 @@ pub fn cancel_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAdd
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        io.submit(Token(30), Op::Cancel { target: Token(77) })
-            .unwrap();
-        io.submit(Token(77), Op::Timeout { nanos: 1_000_000 })
-            .unwrap();
+        io.must_submit(Token(30), Op::Cancel { target: Token(77) });
+        io.must_submit(Token(77), Op::Timeout { nanos: 1_000_000 });
         let mut res = drain_n(&mut io, &mut out, 2);
         res.sort_by_key(|x| x.0);
         assert_eq!(res[0].0, 30);
@@ -206,11 +190,10 @@ pub fn close_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        connect_pair(&mut io, &mut out, addr);
-        io.submit(Token(10), recv_op(SERVER, BufId(0), 1024))
-            .unwrap();
-        io.tick(false, &mut out).unwrap();
-        io.submit(Token(11), Op::Close { sock: SERVER }).unwrap();
+        let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
+        io.must_submit(Token(10), recv_op(SERVER, BufId(0), 1024));
+        io.must_tick(false, &mut out);
+        io.must_submit(Token(11), Op::Close { sock: SERVER });
         let mut res = drain_n(&mut io, &mut out, 2);
         res.sort_by_key(|x| x.0);
         assert_eq!(res[0].0, 10);
@@ -223,10 +206,10 @@ pub fn close_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        let _ = io.listen(LISTENER, addr).expect("listen");
-        io.submit(Token(20), accept_op(LISTENER, SERVER)).unwrap();
-        io.tick(false, &mut out).unwrap();
-        io.submit(Token(21), Op::Close { sock: LISTENER }).unwrap();
+        let _: SocketAddr = io.must_listen(LISTENER, addr);
+        io.must_submit(Token(20), accept_op(LISTENER, SERVER));
+        io.must_tick(false, &mut out);
+        io.must_submit(Token(21), Op::Close { sock: LISTENER });
         let mut res = drain_n(&mut io, &mut out, 2);
         res.sort_by_key(|x| x.0);
         assert_eq!(res[0].0, 20);
@@ -238,11 +221,11 @@ pub fn close_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        io.submit(Token(30), Op::Close { sock: Sock(0) }).unwrap();
+        io.must_submit(Token(30), Op::Close { sock: Sock(0) });
         let res = drain_n(&mut io, &mut out, 1);
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].0, 30);
-        io.tick(false, &mut out).unwrap();
+        io.must_tick(false, &mut out);
         assert!(out.is_empty());
     }
 }
@@ -252,12 +235,9 @@ pub fn timers<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     let mut io = make(small_limits());
     let mut out = Completions::new(8);
     let t0 = io.now_ns();
-    io.submit(Token(1), Op::Timeout { nanos: 60_000_000 })
-        .unwrap();
-    io.submit(Token(2), Op::Timeout { nanos: 10_000_000 })
-        .unwrap();
-    io.submit(Token(3), Op::Timeout { nanos: 35_000_000 })
-        .unwrap();
+    io.must_submit(Token(1), Op::Timeout { nanos: 60_000_000 });
+    io.must_submit(Token(2), Op::Timeout { nanos: 10_000_000 });
+    io.must_submit(Token(3), Op::Timeout { nanos: 35_000_000 });
     let mut res = drain_n(&mut io, &mut out, 3);
     let elapsed = io.now_ns().saturating_sub(t0);
     assert!(
@@ -272,9 +252,9 @@ pub fn timers<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
 pub fn wake_ready<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     let mut io = make(small_limits());
     let mut out = Completions::new(8);
-    let waker = io.waker().expect("waker");
+    let waker = io.must_waker();
     waker.wake();
-    io.submit(Token(1), Op::AwaitWake).unwrap();
+    io.must_submit(Token(1), Op::AwaitWake);
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(1, 0)]);
 }
 
@@ -283,10 +263,9 @@ pub fn wake_ready<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
 pub fn recv_now_and_closed_peer<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
     let mut io = make(io_limits());
     let mut out = Completions::new(8);
-    connect_pair(&mut io, &mut out, addr);
+    let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
 
-    io.submit(Token(10), recv_now_op(SERVER, BufId(0), 64))
-        .unwrap();
+    io.must_submit(Token(10), recv_now_op(SERVER, BufId(0), 64));
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(10, -EAGAIN)]);
 
     let msg = b"contract-stream-bytes";
@@ -295,29 +274,26 @@ pub fn recv_now_and_closed_peer<IO: Io>(make: &mut impl FnMut(Limits) -> IO, add
     let mut tok = 20u64;
     while sent < msg.len() {
         let rem = (msg.len() - sent) as u32;
-        io.submit(Token(tok), send_op(CLIENT, BufId(1), sent as u32, rem))
-            .unwrap();
+        io.must_submit(Token(tok), send_op(CLIENT, BufId(1), sent as u32, rem));
         let res = drain_n(&mut io, &mut out, 1)[0].1;
         assert!(res > 0, "send failed: {res}");
-        sent += res as usize;
+        sent += must_len(res);
         tok += 1;
     }
 
     let mut got = Vec::new();
     while got.len() < msg.len() {
-        io.submit(Token(tok), recv_op(SERVER, BufId(0), 64))
-            .unwrap();
+        io.must_submit(Token(tok), recv_op(SERVER, BufId(0), 64));
         let n = drain_n(&mut io, &mut out, 1)[0].1;
         assert!(n > 0, "recv failed: {n}");
-        got.extend_from_slice(&io.buf(BufId(0))[..n as usize]);
+        got.extend_from_slice(&io.buf(BufId(0))[..must_len(n)]);
         tok += 1;
     }
     assert_eq!(got.as_slice(), msg);
 
     // Close client, expect EOF (0) on server.
     close_sockets(&mut io, &mut out, &[CLIENT]);
-    io.submit(Token(tok), recv_op(SERVER, BufId(0), 64))
-        .unwrap();
+    io.must_submit(Token(tok), recv_op(SERVER, BufId(0), 64));
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(tok, 0)]);
     tok += 1;
 
@@ -325,17 +301,15 @@ pub fn recv_now_and_closed_peer<IO: Io>(make: &mut impl FnMut(Limits) -> IO, add
     let mut failed = false;
     for _ in 0..16 {
         io.buf(BufId(1))[..16].fill(0x5a);
-        io.submit(Token(tok), send_op(SERVER, BufId(1), 0, 16))
-            .unwrap();
+        io.must_submit(Token(tok), send_op(SERVER, BufId(1), 0, 16));
         let r = drain_n(&mut io, &mut out, 1)[0].1;
         tok += 1;
         if r < 0 {
             failed = true;
             break;
         }
-        io.submit(Token(tok), Op::Timeout { nanos: 1_000_000 })
-            .unwrap();
-        let _ = drain_n(&mut io, &mut out, 1);
+        io.must_submit(Token(tok), Op::Timeout { nanos: 1_000_000 });
+        let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 1);
         tok += 1;
     }
     assert!(failed, "send to closed peer should fail negatively");
@@ -348,19 +322,18 @@ pub fn cancel_never_cancels_close<IO: Io>(make: &mut impl FnMut(Limits) -> IO, a
         for tick_recv in [false, true] {
             let mut io = make(io_limits());
             let mut out = Completions::new(8);
-            connect_pair(&mut io, &mut out, addr);
+            let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
             for k in 0..shift {
-                io.submit(Token(100 + k), Op::Timeout { nanos: 0 }).unwrap();
+                io.must_submit(Token(100 + k), Op::Timeout { nanos: 0 });
                 assert_eq!(drain_n(&mut io, &mut out, 1), vec![(100 + k, 0)]);
             }
-            io.submit(Token(10), recv_op(SERVER, BufId(0), 64)).unwrap();
+            io.must_submit(Token(10), recv_op(SERVER, BufId(0), 64));
             if tick_recv {
-                io.tick(false, &mut out).unwrap();
+                io.must_tick(false, &mut out);
                 assert!(out.is_empty());
             }
-            io.submit(Token(11), Op::Close { sock: SERVER }).unwrap();
-            io.submit(Token(12), Op::Cancel { target: Token(11) })
-                .unwrap();
+            io.must_submit(Token(11), Op::Close { sock: SERVER });
+            io.must_submit(Token(12), Op::Cancel { target: Token(11) });
             let mut res = drain_n(&mut io, &mut out, 3);
             res.sort_by_key(|x| x.0);
             assert!(res[0].0 == 10 && res[0].1 < 0, "recv failed: {res:?}");
@@ -368,16 +341,14 @@ pub fn cancel_never_cancels_close<IO: Io>(make: &mut impl FnMut(Limits) -> IO, a
             assert!(res[2].0 == 12 && res[2].1 < 0, "Cancel(Close): {res:?}");
             let mut eof = -EAGAIN;
             for step in 0..64u64 {
-                io.submit(Token(13 + step * 2), recv_now_op(CLIENT, BufId(1), 64))
-                    .unwrap();
+                io.must_submit(Token(13 + step * 2), recv_now_op(CLIENT, BufId(1), 64));
                 let r = drain_n(&mut io, &mut out, 1)[0].1;
                 if r != -EAGAIN {
                     eof = r;
                     break;
                 }
-                io.submit(Token(14 + step * 2), Op::Timeout { nanos: 500_000 })
-                    .unwrap();
-                let _ = drain_n(&mut io, &mut out, 1);
+                io.must_submit(Token(14 + step * 2), Op::Timeout { nanos: 500_000 });
+                let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 1);
             }
             assert_eq!(eof, 0, "peer EOF");
             close_sockets(&mut io, &mut out, &[CLIENT, LISTENER]);

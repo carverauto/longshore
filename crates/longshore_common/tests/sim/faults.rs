@@ -13,19 +13,18 @@ use longshore_common::sim::scenario::{echo, EchoStats};
 use longshore_common::sim::{Faults, SimIo};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-const LIMITS: Limits = Limits {
-    sockets_max: 4,
-    buffers: 3,
-    buffer_size: 4096,
-    ops_max: 4,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(4)
+    .with_buffers(3)
+    .with_buffer_size(4096)
+    .with_ops_max(4);
 const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
 const TOTAL: u64 = 300_000;
 const CHUNK: u32 = 4096;
 /// Sends or receives it takes to move `TOTAL` bytes a chunk at a time.
 const CHUNKS: u64 = TOTAL.div_ceil(CHUNK as u64);
 
+#[cfg(test)]
 fn run(seed: u64, faults: Faults) -> EchoStats {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let mut out = Completions::new(8);
@@ -37,8 +36,8 @@ fn run(seed: u64, faults: Faults) -> EchoStats {
 fn without_faults_every_send_and_receive_moves_a_whole_chunk() {
     for seed in 0..20 {
         let plain = run(seed, Faults::default());
-        assert_eq!(plain.sends, CHUNKS, "seed {seed}");
-        assert!(plain.recvs >= CHUNKS, "seed {seed}: {plain:?}");
+        assert_eq!(plain.sends(), CHUNKS, "seed {seed}");
+        assert!(plain.recvs() >= CHUNKS, "seed {seed}: {plain:?}");
     }
 }
 
@@ -46,15 +45,9 @@ fn without_faults_every_send_and_receive_moves_a_whole_chunk() {
 fn short_sends_take_more_sends() {
     for seed in 0..20 {
         let plain = run(seed, Faults::default());
-        let faulty = run(
-            seed,
-            Faults {
-                short_send: 300_000,
-                ..Faults::default()
-            },
-        );
+        let faulty = run(seed, Faults::NONE.with_short_send(300_000));
         assert!(
-            faulty.sends > plain.sends,
+            faulty.sends() > plain.sends(),
             "seed {seed}: {faulty:?} against {plain:?}"
         );
     }
@@ -64,15 +57,9 @@ fn short_sends_take_more_sends() {
 fn partial_receives_take_more_receives() {
     for seed in 0..20 {
         let plain = run(seed, Faults::default());
-        let faulty = run(
-            seed,
-            Faults {
-                partial_recv: 300_000,
-                ..Faults::default()
-            },
-        );
+        let faulty = run(seed, Faults::NONE.with_partial_recv(300_000));
         assert!(
-            faulty.recvs > plain.recvs,
+            faulty.recvs() > plain.recvs(),
             "seed {seed}: {faulty:?} against {plain:?}"
         );
         // Sends are not compared: a reader that falls behind fills the
@@ -84,18 +71,12 @@ fn partial_receives_take_more_receives() {
 fn delays_take_more_ticks_and_change_nothing_else() {
     for seed in 0..20 {
         let plain = run(seed, Faults::default());
-        let faulty = run(
-            seed,
-            Faults {
-                delay: 200_000,
-                ..Faults::default()
-            },
-        );
+        let faulty = run(seed, Faults::NONE.with_delay(200_000));
         assert!(
-            faulty.ticks > plain.ticks,
+            faulty.ticks() > plain.ticks(),
             "seed {seed}: {faulty:?} against {plain:?}"
         );
-        assert_eq!(faulty.sends, CHUNKS, "seed {seed}");
+        assert_eq!(faulty.sends(), CHUNKS, "seed {seed}");
     }
 }
 

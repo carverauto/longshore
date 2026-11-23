@@ -6,6 +6,7 @@
 //! The S3 store against the in-tree HTTP server on one simulated `Io`, with
 //! heap allocation forbidden while operations run.
 
+#[cfg(test)]
 mod common;
 use common::*;
 
@@ -20,14 +21,7 @@ fn retried_no_clobber_store_recognises_its_own_object() {
     w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     // PUT (applied, response lost), PUT (412), HEAD (checksums agree).
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 3
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 3));
     let sent = w.io.buf(TX)[..1000].to_vec();
     assert_eq!(w.server.object("/k"), Some(&sent[..]));
 }
@@ -40,7 +34,7 @@ fn retried_no_clobber_store_rejects_a_different_object() {
     w.fill_tx(1000, 7);
     w.s3.store(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     let theirs = w.io.buf(TX)[..1000].to_vec();
 
     w.fill_tx(1000, 8);
@@ -49,11 +43,7 @@ fn retried_no_clobber_store_rejects_a_different_object() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::AlreadyExists { after_retry: false },
-            attempts: 3
-        }
+        Done::new(2, Outcome::AlreadyExists { after_retry: false }, 3)
     );
     assert_eq!(
         w.server.object("/k"),
@@ -73,26 +63,20 @@ fn retried_no_clobber_store_without_a_checksum_is_undecided() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 2
-        }
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 2)
     );
 
     // This server keeps no checksums.
-    let mut w = world_with(14, Faults::default(), 4, false);
-    w.fill_tx(1000, 1);
-    w.server.script(Behavior::ApplyThenClose);
-    w.s3.store_no_clobber(&mut w.io, 1, "a", TX, 1000, Checksum::Compute)
+    let mut checksumless = world_with(14, Faults::default(), 4, false);
+    checksumless.fill_tx(1000, 1);
+    checksumless.server.script(Behavior::ApplyThenClose);
+    checksumless
+        .s3
+        .store_no_clobber(&mut checksumless.io, 1, "a", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 3
-        }
+        checksumless.last(),
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 3)
     );
 }
 
@@ -100,13 +84,11 @@ fn retried_no_clobber_store_without_a_checksum_is_undecided() {
 /// one must end as stored, never as a false already-exists.
 #[test]
 fn no_clobber_stores_under_faults_are_never_falsely_refused() {
-    let faults = Faults {
-        reset: 30_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_reset(30_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000)
+        .with_delay(200_000);
     let keys = ["a", "b", "c", "d", "e", "f"];
     let mut comparisons = 0;
     for seed in 0..40 {
@@ -116,9 +98,13 @@ fn no_clobber_stores_under_faults_are_never_falsely_refused() {
             w.s3.store_no_clobber(&mut w.io, i as u64, key, TX, 1000, Checksum::Compute)
                 .unwrap();
             let d = w.last();
-            assert_eq!(d.outcome, Outcome::Stored, "seed {seed}, key {key}: {d:?}");
+            assert_eq!(
+                d.outcome(),
+                Outcome::Stored,
+                "seed {seed}, key {key}: {d:?}"
+            );
         }
-        comparisons += w.s3.store_comparisons;
+        comparisons += w.s3.store_comparisons();
     }
     assert!(comparisons > 0, "no seed lost a response after the store applied it; the faults are too mild to test anything");
 }
@@ -143,54 +129,43 @@ fn a_failed_comparison_still_reports_that_an_object_exists() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 3
-        }
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 3)
     );
 
     // Throttled on the last attempt the budget allows.
-    let mut w = world_with(23, Faults::default(), 3, true);
-    w.fill_tx(1000, 1);
+    let mut throttled_last = world_with(23, Faults::default(), 3, true);
+    throttled_last.fill_tx(1000, 1);
     for b in [
         Behavior::ApplyThenClose,
         Behavior::Normal,
         Behavior::Status(503),
     ] {
-        w.server.script(b);
+        throttled_last.server.script(b);
     }
-    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+    throttled_last
+        .s3
+        .store_no_clobber(&mut throttled_last.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::AlreadyExists { after_retry: true },
-            attempts: 3
-        }
+        throttled_last.last(),
+        Done::new(1, Outcome::AlreadyExists { after_retry: true }, 3)
     );
 
     // Throttled with attempts to spare: the comparison is simply tried again.
-    let mut w = world_with(24, Faults::default(), 5, true);
-    w.fill_tx(1000, 1);
+    let mut throttled_spare = world_with(24, Faults::default(), 5, true);
+    throttled_spare.fill_tx(1000, 1);
     for b in [
         Behavior::ApplyThenClose,
         Behavior::Normal,
         Behavior::Status(503),
     ] {
-        w.server.script(b);
+        throttled_spare.server.script(b);
     }
-    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+    throttled_spare
+        .s3
+        .store_no_clobber(&mut throttled_spare.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 4
-        }
-    );
+    assert_eq!(throttled_spare.last(), Done::new(1, Outcome::Stored, 4));
 }
 
 /// The object is gone by the time the comparison asks about it: the refusal
@@ -210,36 +185,27 @@ fn an_object_that_vanishes_before_the_comparison_is_stored_again() {
     w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     // PUT (applied, lost), PUT (412), HEAD (404), PUT (412), HEAD (ours).
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 5
-        }
-    );
-    assert_eq!(w.s3.store_comparisons, 2);
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 5));
+    assert_eq!(w.s3.store_comparisons(), 2);
     let sent = w.io.buf(TX)[..1000].to_vec();
     assert_eq!(w.server.object("/k"), Some(&sent[..]));
 
     // With no attempt left to store it again, nothing is known to be there.
-    let mut w = world_with(27, Faults::default(), 3, true);
-    w.fill_tx(1000, 1);
+    let mut out_of_attempts = world_with(27, Faults::default(), 3, true);
+    out_of_attempts.fill_tx(1000, 1);
     for b in [
         Behavior::ApplyThenClose,
         Behavior::Normal,
         Behavior::Status(404),
     ] {
-        w.server.script(b);
+        out_of_attempts.server.script(b);
     }
-    w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
+    out_of_attempts
+        .s3
+        .store_no_clobber(&mut out_of_attempts.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 3
-        }
+        out_of_attempts.last(),
+        Done::new(1, Outcome::Fatal(Fatal::RetriesExhausted), 3)
     );
 }

@@ -1,0 +1,112 @@
+// Copyright 2026 Carver Automation Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License").
+// SPDX-License-Identifier: Apache-2.0
+
+//! What a finished operation reports ([`Completion`]), and the fixed buffer
+//! [`super::Io::tick`] delivers them into ([`Completions`]).
+
+use super::{BufId, Token};
+
+/// `result` is a byte count or 0 on success, or a negated Linux errno.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Completion {
+    pub(crate) token: Token,
+    pub(crate) result: i32,
+    pub(crate) more: bool,
+    pub(crate) buf: Option<BufId>,
+}
+
+impl Completion {
+    /// A single final completion carrying no selected buffer.
+    #[inline]
+    pub const fn new(token: Token, result: i32) -> Self {
+        Self {
+            token,
+            result,
+            more: false,
+            buf: None,
+        }
+    }
+
+    /// This completion, saying whether more follow for its token.
+    #[inline]
+    pub const fn with_more(mut self, more: bool) -> Self {
+        self.more = more;
+        self
+    }
+
+    /// This completion, carrying the buffer an armed receive selected.
+    #[inline]
+    pub const fn with_buf(mut self, buf: Option<BufId>) -> Self {
+        self.buf = buf;
+        self
+    }
+
+    /// The token the operation was submitted with.
+    #[inline]
+    pub const fn token(self) -> Token {
+        self.token
+    }
+
+    /// A byte count or 0 on success, or a negated Linux errno.
+    #[inline]
+    pub const fn result(self) -> i32 {
+        self.result
+    }
+
+    /// Whether more completions will follow for [`Completion::token`].
+    #[inline]
+    pub const fn more(self) -> bool {
+        self.more
+    }
+
+    /// Buffer selected for this completion by an armed receive, if any.
+    #[inline]
+    pub const fn buf(self) -> Option<BufId> {
+        self.buf
+    }
+}
+
+/// Fixed-capacity completion buffer; `tick` never delivers more than fit.
+pub struct Completions {
+    items: Box<[Completion]>,
+    len: usize,
+}
+
+impl Completions {
+    pub fn new(capacity: usize) -> Completions {
+        Completions {
+            items: vec![Completion::new(Token(0), 0); capacity].into_boxed_slice(),
+            len: 0,
+        }
+    }
+    pub fn is_full(&self) -> bool {
+        self.len == self.items.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    #[cfg(any(test, feature = "sim"))]
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
+    }
+    /// Caller must check `is_full` first.
+    pub fn push(&mut self, c: Completion) {
+        self.items[self.len] = c;
+        self.len += 1;
+    }
+    pub fn pop(&mut self) -> Option<Completion> {
+        if self.len == 0 {
+            return None;
+        }
+        // Deliver in arrival order.
+        let c = self.items[0];
+        self.items.copy_within(1..self.len, 0);
+        self.len -= 1;
+        Some(c)
+    }
+}

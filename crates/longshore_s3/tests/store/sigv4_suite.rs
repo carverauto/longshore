@@ -13,6 +13,7 @@ use longshore_s3::time::amz_date;
 
 const SECRET: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
 
+#[cfg(test)]
 fn case(name: &str) -> (String, String, bool) {
     let dir = format!("{}/tests/store/sigv4/{name}", env!("CARGO_MANIFEST_DIR"));
     let read = |f: &str| {
@@ -30,6 +31,7 @@ fn case(name: &str) -> (String, String, bool) {
 }
 
 /// The signed header names of a case, as its canonical request lists them.
+#[cfg(test)]
 fn signed_headers(name: &str) -> String {
     let path = format!(
         "{}/tests/store/sigv4/{name}/header-canonical-request.txt",
@@ -41,12 +43,13 @@ fn signed_headers(name: &str) -> String {
 }
 
 /// Sign the request in `request.txt` the way a caller would.
+#[cfg(test)]
 fn sign(request: &str, sign_body: bool) -> (String, String) {
     let mut lines = request.lines();
     let start = lines.next().unwrap();
     let (method, rest) = start.split_once(' ').unwrap();
     let target = rest.rsplit_once(' ').unwrap().0;
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let (path, raw_query) = target.split_once('?').unwrap_or((target, ""));
     let headers: Vec<(String, String)> = lines
         .take_while(|l| !l.is_empty())
         .map(|l| {
@@ -83,7 +86,7 @@ fn sign(request: &str, sign_body: bool) -> (String, String) {
         String::from_utf8(out[..n].to_vec()).unwrap()
     };
     let canonical_uri = enc(path, false);
-    let pairs: Vec<(String, String)> = query
+    let pairs: Vec<(String, String)> = raw_query
         .split('&')
         .filter(|p| !p.is_empty())
         .map(|p| p.split_once('=').unwrap_or((p, "")))
@@ -97,20 +100,8 @@ fn sign(request: &str, sign_body: bool) -> (String, String) {
     if sign_body {
         signed.push(("X-Amz-Content-Sha256", &payload));
     }
-    let req = Request {
-        method,
-        canonical_uri: &canonical_uri,
-        query: &query,
-        headers: &signed,
-        payload_hash: &payload,
-    };
-    let scope = Scope {
-        access_key: "AKIDEXAMPLE",
-        secret_key: SECRET,
-        region: "us-east-1",
-        service: "service",
-        amz_date: &date,
-    };
+    let req = Request::new(method, &canonical_uri, &query, &signed, &payload);
+    let scope = Scope::new("AKIDEXAMPLE", SECRET, "us-east-1", "service", &date);
     let sig = String::from_utf8(signature(&req, &scope).unwrap().to_vec()).unwrap();
     let mut auth = [0u8; 512];
     let n = authorization(&req, &scope, &mut auth).unwrap();

@@ -69,5 +69,16 @@ name = "http_server_refusals"
 path = "tests/http/server_refusals.rs"
 
 [[test]]
+name = "http_server_config"
+path = "tests/http/server_config.rs"
+
+[[test]]
 name = "http_adversarial"
 path = "tests/http/adversarial.rs"
+
+[[test]]
+name = "http_client_config"
+path = "tests/http/client_config.rs"
+
+[lints]
+workspace = true

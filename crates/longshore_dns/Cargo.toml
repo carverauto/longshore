@@ -43,3 +43,6 @@ path = "tests/dns/resolver_families.rs"
 [[test]]
 name = "dns_resolver_segments"
 path = "tests/dns/resolver_segments.rs"
+
+[lints]
+workspace = true

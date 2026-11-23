@@ -15,6 +15,12 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
@@ -59,23 +65,64 @@ impl WorkDir {
 #[cfg(target_os = "linux")]
 impl Drop for WorkDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        // Best-effort cleanup; Drop must not panic over a leftover temporary file.
+        let _: Option<()> = std::fs::remove_dir_all(&self.0).ok();
     }
 }
 
+/// What the command line asked for.
 #[cfg(target_os = "linux")]
-fn main() {
-    let mut args = std::env::args().skip(1);
-    let mut dir_arg: Option<std::path::PathBuf> = None;
-    let mut posix = false;
-    let mut do_bench = false;
-    let mut chain_first = false;
-    let mut interleave = false;
-    let mut iters = 400usize;
-    let mut memlock_child = false;
-    let mut do_throughput = false;
-    let (mut size_gib, mut block_kib, mut depth, mut runs) = (16u64, 1024u64, 32u64, 3u64);
+struct Args {
+    dir: Option<std::path::PathBuf>,
+    posix: bool,
+    bench: bool,
+    chain_first: bool,
+    interleave: bool,
+    iters: usize,
+    memlock_child: bool,
+    throughput: bool,
+    size_gib: u64,
+    block_kib: u64,
+    depth: u64,
+    runs: u64,
+}
 
+/// The count after `--iters`, or exit status 2.
+#[cfg(target_os = "linux")]
+fn iters(args: &mut impl Iterator<Item = String>) -> usize {
+    let Some(val) = args.next() else {
+        eprintln!("--iters requires a count");
+        std::process::exit(2);
+    };
+    let iters = val.parse().unwrap_or_else(|e| {
+        eprintln!("invalid --iters {val}: {e}");
+        std::process::exit(2);
+    });
+    if iters == 0 {
+        eprintln!("--iters must be at least 1");
+        std::process::exit(2);
+    }
+    iters
+}
+
+/// Parse the command line; exit status 2 on a flag it does not know.
+#[cfg(target_os = "linux")]
+fn parse_args() -> Args {
+    let mut args = std::env::args().skip(1);
+    let mut a = Args {
+        dir: None,
+        posix: false,
+        bench: false,
+        chain_first: false,
+        interleave: false,
+        iters: 400,
+        memlock_child: false,
+        throughput: false,
+        size_gib: 16,
+        block_kib: 1024,
+        depth: 32,
+        runs: 3,
+    };
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--dir" => {
@@ -83,45 +130,39 @@ fn main() {
                     eprintln!("--dir requires a path argument");
                     std::process::exit(2);
                 };
-                dir_arg = Some(std::path::PathBuf::from(val));
+                a.dir = Some(std::path::PathBuf::from(val));
             }
-            "--posix" => posix = true,
-            "--bench" => do_bench = true,
-            "--chain-first" => chain_first = true,
-            "--interleave" => interleave = true,
-            "--iters" => {
-                let Some(val) = args.next() else {
-                    eprintln!("--iters requires a count");
-                    std::process::exit(2);
-                };
-                iters = val.parse().unwrap_or_else(|e| {
-                    eprintln!("invalid --iters {val}: {e}");
-                    std::process::exit(2);
-                });
-                if iters == 0 {
-                    eprintln!("--iters must be at least 1");
-                    std::process::exit(2);
-                }
-            }
-            "--memlock-child" => memlock_child = true,
-            "--throughput" => do_throughput = true,
-            "--size-gib" => size_gib = number(&mut args, "--size-gib"),
-            "--block-kib" => block_kib = number(&mut args, "--block-kib"),
-            "--depth" => depth = number(&mut args, "--depth"),
-            "--runs" => runs = number(&mut args, "--runs"),
+            "--posix" => a.posix = true,
+            "--bench" => a.bench = true,
+            "--chain-first" => a.chain_first = true,
+            "--interleave" => a.interleave = true,
+            "--iters" => a.iters = iters(&mut args),
+            "--memlock-child" => a.memlock_child = true,
+            "--throughput" => a.throughput = true,
+            "--size-gib" => a.size_gib = number(&mut args, "--size-gib"),
+            "--block-kib" => a.block_kib = number(&mut args, "--block-kib"),
+            "--depth" => a.depth = number(&mut args, "--depth"),
+            "--runs" => a.runs = number(&mut args, "--runs"),
             other => {
                 eprintln!("unknown flag: {other}");
                 std::process::exit(2);
             }
         }
     }
+    a
+}
 
-    if memlock_child {
+#[cfg(target_os = "linux")]
+fn main() {
+    let args = parse_args();
+    if args.memlock_child {
         checks::run_memlock_child();
         return;
     }
 
-    let base = dir_arg.unwrap_or_else(|| std::env::current_dir().expect("cwd"));
+    let base = args
+        .dir
+        .unwrap_or_else(|| std::env::current_dir().or_die("cwd"));
     let work = match WorkDir::create(&base) {
         Ok(w) => w,
         Err(e) => {
@@ -130,29 +171,31 @@ fn main() {
         }
     };
 
-    if do_bench {
-        let order = if interleave {
+    if args.bench {
+        let order = if args.interleave {
             bench::Order::Interleaved
         } else {
-            bench::Order::Blocks { chain_first }
+            bench::Order::Blocks {
+                chain_first: args.chain_first,
+            }
         };
-        bench::run_direct_sync_bench(&work.0, iters, order);
+        bench::run_direct_sync_bench(&work.0, args.iters, order);
         return;
     }
 
-    if do_throughput {
+    if args.throughput {
         throughput::run(
             &work.0,
             throughput::Shape {
-                size: size_gib << 30,
-                block: (block_kib << 10) as u32,
-                depth: depth as u32,
-                runs: runs as u32,
+                size: args.size_gib << 30,
+                block: (args.block_kib << 10) as u32,
+                depth: args.depth as u32,
+                runs: args.runs as u32,
             },
         );
         return;
     }
 
-    checks::run_all(&work.0, posix);
+    checks::run_all(&work.0, args.posix);
     println!("ok file_uring (16401 buffers, direct-io, submit-all, rlimit-checks)");
 }

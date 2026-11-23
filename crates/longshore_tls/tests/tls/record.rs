@@ -14,6 +14,7 @@ use longshore_tls::record::*;
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
+#[cfg(test)]
 fn hex(s: &str) -> Vec<u8> {
     let s: String = s.split_whitespace().collect();
     (0..s.len())
@@ -31,6 +32,7 @@ const RECORD_0: &str = "17 03 03 00 43 a2 3f 70 54 b6 2c 94 d0 af fa fe 82 28 ba
 // "{client} send alert record" (close_notify), sequence number 1.
 const RECORD_1: &str = "17 03 03 00 13 c9 87 27 60 65 56 66 b7 4d 7f f1 15 3e fd 6d b6 d0 b0 e3";
 
+#[cfg(test)]
 fn direction(key: &[u8], iv: &[u8], seq: u64) -> Direction {
     let mut d = Direction::new();
     let suite = if key.len() == 16 {
@@ -55,8 +57,12 @@ fn seals_the_rfc_8448_records_byte_for_byte() {
         &hex(RECORD_0)[..],
         "application data record, sequence 0"
     );
-    let n = d.seal(CONTENT_ALERT, &[1, 0], &mut out).unwrap();
-    assert_eq!(&out[..n], &hex(RECORD_1)[..], "alert record, sequence 1");
+    let alert_len = d.seal(CONTENT_ALERT, &[1, 0], &mut out).unwrap();
+    assert_eq!(
+        &out[..alert_len],
+        &hex(RECORD_1)[..],
+        "alert record, sequence 1"
+    );
     assert_eq!(d.sequence(), 2);
 }
 
@@ -344,7 +350,9 @@ fn arbitrary_records_are_rejected(tc: TestCase) {
     let junk = tc.draw(gs::binary().max_size(300));
     let mut out = [0u8; 400];
     assert!(d.open(&junk, &mut out).is_err());
-    let _ = record_len(&junk);
+    if let Ok(Some(n)) = record_len(&junk) {
+        assert!(n > HEADER_LEN);
+    }
 }
 
 #[test]

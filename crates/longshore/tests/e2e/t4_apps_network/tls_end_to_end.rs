@@ -19,32 +19,31 @@ use std::net::SocketAddr;
 const TLS_BUF_CAP: u32 = 40 * 1024;
 
 fn tls_stream_limits() -> Limits {
-    Limits {
-        sockets_max: 6,
-        buffers: 8,
-        buffer_size: TLS_BUF_CAP,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        accept_range_start: 3,
-        accept_range_len: 3,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(8)
+        .with_buffer_size(TLS_BUF_CAP)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_accept_range_start(3)
+        .with_accept_range_len(3)
+        .with_ops_max(16)
 }
 
-fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr) {
-    let id = make_tls_identity(&["localhost", "127.0.0.1"]);
-    let srv_setup = id.server_setup();
-    let cli_setup = id.client_setup();
-    let mut out = Completions::new(16);
-
-    let bound = io.listen(Sock(0), addr).unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+/// Connects `Sock(1)` through an armed accept; returns the server socket.
+fn accept_one<IO: Io>(io: &mut IO, out: &mut Completions, addr: SocketAddr) -> Sock {
+    let bound = io.listen(Sock::new(0), addr).unwrap();
     io.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr: bound,
         },
     )
@@ -53,33 +52,47 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
     let mut srv_sock: Option<Sock> = None;
     let mut cli_ok = false;
     while srv_sock.is_none() || !cli_ok {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 1 && c.result >= 0 {
-                srv_sock = Some(Sock(c.result as u32));
-            } else if c.token.0 == 2 {
-                assert_eq!(c.result, 0);
+            if c.token().get() == 1 && c.result() >= 0 {
+                srv_sock = Some(Sock::new(u32::try_from(c.result()).unwrap()));
+            } else if c.token().get() == 2 {
+                assert_eq!(c.result(), 0);
                 cli_ok = true;
             }
         }
     }
-    let srv_sock = srv_sock.unwrap();
+    srv_sock.unwrap()
+}
 
-    let mut cli_stream = Stream::new(Sock(1), Token(10), Token(11)).with_tls_buffers(
-        BufId(0),
-        BufId(1),
-        TLS_BUF_CAP,
-        16 * 1024,
-        32 * 1024,
-    );
-    let mut srv_stream = Stream::new(srv_sock, Token(20), Token(21)).with_tls_buffers(
-        BufId(2),
-        BufId(3),
-        TLS_BUF_CAP,
-        16 * 1024,
-        32 * 1024,
-    );
+/// Feeds one handshake completion to `stream`; returns whether it finished.
+fn handshake_step<IO: Io>(
+    stream: &mut Stream,
+    io: &mut IO,
+    send: bool,
+    res: i32,
+    who: &str,
+) -> bool {
+    let step = stream.on_handshake(io, send, res);
+    if let Step::Done(0) = step {
+        true
+    } else if let Step::Tls(e) = step {
+        panic!("{who} TLS handshake error: {e:?}");
+    } else {
+        false
+    }
+}
 
+/// Runs the client and server TLS 1.3 handshakes to completion.
+fn complete_handshakes<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    cli_stream: &mut Stream,
+    srv_stream: &mut Stream,
+) {
+    let id = make_tls_identity(&["localhost", "127.0.0.1"]);
+    let srv_setup = id.server_setup();
+    let cli_setup = id.client_setup();
     assert_eq!(
         cli_stream.start_handshake(io, Handshake::client(&cli_setup, "localhost").unwrap()),
         Step::Pending
@@ -92,38 +105,37 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
     let mut cli_hs_done = false;
     let mut srv_hs_done = false;
     while !(cli_hs_done && srv_hs_done) {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            match c.token.0 {
+            match c.token().get() {
                 10 | 11 => {
-                    let step = cli_stream.on_handshake(io, c.token.0 == 10, c.result);
-                    if let Step::Done(0) = step {
-                        cli_hs_done = true;
-                    } else if let Step::Tls(e) = step {
-                        panic!("client TLS handshake error: {e:?}");
-                    }
+                    cli_hs_done |=
+                        handshake_step(cli_stream, io, c.token().get() == 10, c.result(), "client");
                 }
                 20 | 21 => {
-                    let step = srv_stream.on_handshake(io, c.token.0 == 20, c.result);
-                    if let Step::Done(0) = step {
-                        srv_hs_done = true;
-                    } else if let Step::Tls(e) = step {
-                        panic!("server TLS handshake error: {e:?}");
-                    }
+                    srv_hs_done |=
+                        handshake_step(srv_stream, io, c.token().get() == 20, c.result(), "server");
                 }
                 _ => {}
             }
         }
     }
+}
 
-    // Exchange encrypted application payloads in both directions.
-    let msg = b"TLS-1.3-E2E-APPLICATION-PAYLOAD";
-    write_pool_bytes(io, BufId(4), 0, msg);
-    cli_stream.send(io, BufId(4), 0, msg.len() as u32, u32::MAX);
-    let mut srv_got = match srv_stream.recv(io, BufId(5), 0, 1024) {
+/// The client sends `msg` encrypted; the server decrypts it into `BufId(5)`.
+fn exchange_payload<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    cli_stream: &mut Stream,
+    srv_stream: &mut Stream,
+    msg: &[u8],
+) {
+    write_pool_bytes(io, BufId::new(4), 0, msg);
+    cli_stream.send(io, BufId::new(4), 0, msg.len() as u32, u32::MAX);
+    let mut srv_got = match srv_stream.recv(io, BufId::new(5), 0, 1024) {
         Step::Done(n) => {
             assert!(n > 0);
-            n as usize
+            usize::try_from(n).unwrap()
         }
         Step::Pending => 0,
         other => panic!("unexpected initial recv step: {other:?}"),
@@ -131,52 +143,93 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
 
     let mut cli_sent = false;
     while srv_got == 0 || !cli_sent {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            match c.token.0 {
+            match c.token().get() {
                 10 => {
-                    if let Step::Done(n) = cli_stream.on_send(io, c.result) {
-                        assert_eq!(n, msg.len() as i32);
+                    if let Step::Done(n) = cli_stream.on_send(io, c.result()) {
+                        assert_eq!(n, i32::try_from(msg.len()).unwrap());
                         cli_sent = true;
                     }
                 }
                 21 => {
-                    if let Step::Done(n) = srv_stream.on_recv(io, c.result) {
+                    if let Step::Done(n) = srv_stream.on_recv(io, c.result()) {
                         assert!(n > 0);
-                        srv_got = n as usize;
+                        srv_got = usize::try_from(n).unwrap();
                     }
                 }
                 _ => {}
             }
         }
     }
-    assert_eq!(&io.buf(BufId(5))[..srv_got], msg);
+    assert_eq!(&io.buf(BufId::new(5))[..srv_got], msg);
+}
 
-    // IdleCheck on healthy idle TLS socket reports IdleCheck::Clean (not Dirty or Closed).
-    let mut idle = srv_stream.check_idle(io, BufId(6), 0);
+/// `IdleCheck` on a healthy idle TLS socket reports `Clean` (not Dirty or Closed).
+fn idle_check_is_clean<IO: Io>(io: &mut IO, out: &mut Completions, srv_stream: &mut Stream) {
+    let mut idle = srv_stream.check_idle(io, BufId::new(6), 0);
     while idle == IdleCheck::Pending {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 21 {
-                idle = srv_stream.on_idle_check(io, c.result);
+            if c.token().get() == 21 {
+                idle = srv_stream.on_idle_check(io, c.result());
             }
         }
     }
     assert_eq!(idle, IdleCheck::Clean);
+}
 
-    // Server closes connection -> client TLS stream observes clean EOF (Step::Done(0)).
-    io.submit(Token(40), Op::Close { sock: srv_sock }).unwrap();
-    let mut saw_eof = matches!(cli_stream.recv(io, BufId(6), 0, 1024), Step::Done(0));
+/// The server closes; the client TLS stream observes clean EOF (`Step::Done(0)`).
+fn server_close_gives_client_eof<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    cli_stream: &mut Stream,
+    srv_sock: Sock,
+) {
+    io.submit(Token::new(40), Op::Close { sock: srv_sock })
+        .unwrap();
+    let mut saw_eof = matches!(cli_stream.recv(io, BufId::new(6), 0, 1024), Step::Done(0));
     while !saw_eof {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 11 {
-                if let Step::Done(0) = cli_stream.on_recv(io, c.result) {
+            if c.token().get() == 11 {
+                if let Step::Done(0) = cli_stream.on_recv(io, c.result()) {
                     saw_eof = true;
                 }
             }
         }
     }
+}
+
+fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr) {
+    let mut out = Completions::new(16);
+    let srv_sock = accept_one(io, &mut out, addr);
+
+    let mut cli_stream = Stream::new(Sock::new(1), Token::new(10), Token::new(11))
+        .with_tls_buffers(
+            BufId::new(0),
+            BufId::new(1),
+            TLS_BUF_CAP,
+            16 * 1024,
+            32 * 1024,
+        );
+    let mut srv_stream = Stream::new(srv_sock, Token::new(20), Token::new(21)).with_tls_buffers(
+        BufId::new(2),
+        BufId::new(3),
+        TLS_BUF_CAP,
+        16 * 1024,
+        32 * 1024,
+    );
+    complete_handshakes(io, &mut out, &mut cli_stream, &mut srv_stream);
+    exchange_payload(
+        io,
+        &mut out,
+        &mut cli_stream,
+        &mut srv_stream,
+        b"TLS-1.3-E2E-APPLICATION-PAYLOAD",
+    );
+    idle_check_is_clean(io, &mut out, &mut srv_stream);
+    server_close_gives_client_eof(io, &mut out, &mut cli_stream, srv_sock);
 }
 
 #[cfg(feature = "sim")]
@@ -202,19 +255,16 @@ fn t4_08_tls_http_store_and_client_handshake_and_reuse() {
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     )
     .unwrap();
-    let mut b = Builder::new("localhost", "us-east-1", creds);
-    b.tls = true;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.bucket_in_path = Some("tls-bucket".into());
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    let b = Builder::new("localhost", "us-east-1", creds)
+        .tls(true)
+        .port(store.port())
+        .address(Some(store.addr()))
+        .bucket_in_path(Some("tls-bucket".into()))
+        .buffers(4)
+        .buffer_size(16 * 1024)
+        .connections(4)
+        .operations(8)
+        .portable(true);
     // Note: Builder::build verifies against public root CAs unless configured;
     // when custom self-signed cert is served, client connect attempts TLS 1.3 handshake
     // cleanly and surfaces Fatal TLS/Untrusted error without panicking.

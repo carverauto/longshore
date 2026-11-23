@@ -12,6 +12,8 @@
 
 use crate::crypto::{hex, hmac_sha256, Sha256};
 
+mod parts;
+
 pub const HEADERS_MAX: usize = 16;
 pub const QUERY_MAX: usize = 16;
 /// Value of `x-amz-content-sha256` when the body is not signed.
@@ -28,24 +30,19 @@ pub enum SignError {
 }
 
 pub struct Request<'a> {
-    pub method: &'a str,
-    /// Already URI-encoded path, e.g. from [`uri_encode`] with `encode_slash = false`.
-    pub canonical_uri: &'a str,
-    /// Already URI-encoded names and values, in any order.
-    pub query: &'a [(&'a str, &'a str)],
-    /// Headers to sign, in any order and any case. Must include `host`.
-    pub headers: &'a [(&'a str, &'a str)],
-    /// Value for the last line of the canonical request.
-    pub payload_hash: &'a str,
+    pub(crate) method: &'a str,
+    pub(crate) canonical_uri: &'a str,
+    pub(crate) query: &'a [(&'a str, &'a str)],
+    pub(crate) headers: &'a [(&'a str, &'a str)],
+    pub(crate) payload_hash: &'a str,
 }
 
 pub struct Scope<'a> {
-    pub access_key: &'a str,
-    pub secret_key: &'a str,
-    pub region: &'a str,
-    pub service: &'a str,
-    /// `YYYYMMDDTHHMMSSZ`.
-    pub amz_date: &'a [u8; 16],
+    pub(crate) access_key: &'a str,
+    pub(crate) secret_key: &'a str,
+    pub(crate) region: &'a str,
+    pub(crate) service: &'a str,
+    pub(crate) amz_date: &'a [u8; 16],
 }
 
 /// Indices of `items` ordered by `key`, without allocating.
@@ -82,17 +79,17 @@ fn update_trimmed(h: &mut Sha256, value: &str) {
             continue;
         }
         if pending_space {
-            h.update(b" ");
+            let _: &mut Sha256 = h.update(b" ");
             pending_space = false;
         }
         started = true;
-        h.update(&[b]);
+        let _: &mut Sha256 = h.update(&[b]);
     }
 }
 
 fn update_lower(h: &mut Sha256, s: &str) {
     for b in s.bytes() {
-        h.update(&[b.to_ascii_lowercase()]);
+        let _: &mut Sha256 = h.update(&[b.to_ascii_lowercase()]);
     }
 }
 
@@ -113,20 +110,22 @@ pub fn canonical_request_sha256(req: &Request) -> Result<[u8; 32], SignError> {
 
     // Canonical request, hashed as it is generated.
     let mut h = Sha256::new();
-    h.update(req.method.as_bytes())
+    let _: &mut Sha256 = h
+        .update(req.method.as_bytes())
         .update(b"\n")
         .update(req.canonical_uri.as_bytes())
         .update(b"\n");
     for (n, i) in query[..req.query.len()].iter().enumerate() {
         let (name, value) = req.query[*i];
         if n > 0 {
-            h.update(b"&");
+            let _: &mut Sha256 = h.update(b"&");
         }
-        h.update(name.as_bytes())
+        let _: &mut Sha256 = h
+            .update(name.as_bytes())
             .update(b"=")
             .update(value.as_bytes());
     }
-    h.update(b"\n");
+    let _: &mut Sha256 = h.update(b"\n");
     // A name given more than once is one header: its values are joined
     // with commas in the order given (the sort is stable), and the name is
     // listed once among the signed headers.
@@ -140,32 +139,32 @@ pub fn canonical_request_sha256(req: &Request) -> Result<[u8; 32], SignError> {
     for (k, i) in order.iter().enumerate() {
         let (name, value) = req.headers[*i];
         if repeats(k) {
-            h.update(b",");
+            let _: &mut Sha256 = h.update(b",");
         } else {
             if k > 0 {
-                h.update(b"\n");
+                let _: &mut Sha256 = h.update(b"\n");
             }
             update_lower(&mut h, name);
-            h.update(b":");
+            let _: &mut Sha256 = h.update(b":");
         }
         update_trimmed(&mut h, value);
     }
     if !order.is_empty() {
-        h.update(b"\n");
+        let _: &mut Sha256 = h.update(b"\n");
     }
-    h.update(b"\n");
+    let _: &mut Sha256 = h.update(b"\n");
     let mut first = true;
     for (k, i) in order.iter().enumerate() {
         if repeats(k) {
             continue;
         }
         if !first {
-            h.update(b";");
+            let _: &mut Sha256 = h.update(b";");
         }
         first = false;
         update_lower(&mut h, req.headers[*i].0);
     }
-    h.update(b"\n").update(req.payload_hash.as_bytes());
+    let _: &mut Sha256 = h.update(b"\n").update(req.payload_hash.as_bytes());
     Ok(h.finish())
 }
 
@@ -183,7 +182,7 @@ pub fn signed_headers(req: &Request, out: &mut [u8]) -> Result<usize, SignError>
         if k > 0 && req.headers[order[k - 1]].0.eq_ignore_ascii_case(name) {
             continue;
         }
-        let end = n + (k > 0) as usize + name.len();
+        let end = n + usize::from(k > 0) + name.len();
         let room = out.get_mut(n..end).ok_or(SignError::OutputTooSmall)?;
         if k > 0 {
             room[0] = b';';

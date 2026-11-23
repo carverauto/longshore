@@ -28,11 +28,11 @@ impl Wake for Parker {
 }
 
 #[cfg(not(longshore_model))]
-fn with_parker(f: &mut dyn FnMut(&Waker)) {
+fn with_parker<R>(f: impl FnOnce(&Waker) -> R) -> R {
     thread_local! {
         static PARKER: Waker = Waker::from(Arc::new(Parker(current())));
     }
-    PARKER.with(f);
+    PARKER.with(f)
 }
 
 /// Drive `f` to completion on the calling thread, parking between polls.
@@ -53,19 +53,26 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
     #[cfg(not(longshore_model))]
     {
         let mut f = pin!(f);
-        let mut out = None;
-        with_parker(&mut |waker| {
-            out = Some(drive(f.as_mut(), waker));
-        });
-        out.expect("with_parker invokes closure once")
+        with_parker(|waker| drive(f.as_mut(), waker))
     }
     // The model checker's threads do not outlive one run of the model.
     #[cfg(longshore_model)]
     drive(pin!(f), &Waker::from(Arc::new(Parker(current()))))
 }
 
-enum Stage<A, F> {
-    Slot { build: Option<F>, closed: Option<A> },
+enum Stage<M, A, F> {
+    Slot {
+        build: F,
+        closed: A,
+    },
+    /// A slot is held and the message built, but the queue was full. Other
+    /// senders' messages can fill it whatever its capacity, so the send is
+    /// tried again on the next poll.
+    Queued {
+        slot: u32,
+        msg: M,
+        closed: A,
+    },
     Sent(u32),
     Done,
 }
@@ -74,7 +81,7 @@ enum Stage<A, F> {
 pub struct CallFuture<'a, M: Copy, A, F: FnOnce(u32) -> M> {
     sender: &'a Sender<M, A>,
     waiter: SlotWaiter,
-    stage: Stage<A, F>,
+    stage: Stage<M, A, F>,
 }
 
 impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
@@ -82,57 +89,60 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
         Self {
             sender,
             waiter: SlotWaiter::new(),
-            stage: Stage::Slot {
-                build: Some(build),
-                closed: Some(closed),
-            },
+            stage: Stage::Slot { build, closed },
         }
     }
 
     fn poll_slot(&mut self, cx: &mut Context<'_>) -> Poll<Option<A>> {
-        if !matches!(self.stage, Stage::Slot { .. }) {
-            return Poll::Ready(None);
+        match self.stage {
+            Stage::Slot { .. } => {}
+            Stage::Queued { .. } => return self.send_queued(cx),
+            Stage::Sent(_) | Stage::Done => return Poll::Ready(None),
         }
         match self
             .waiter
             .poll_one(self.sender.pool(), || !self.sender.is_closed(), cx)
         {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => {
-                let closed = match &mut self.stage {
-                    Stage::Slot { closed, .. } => closed.take().expect("closed once"),
-                    _ => unreachable!(),
-                };
-                self.stage = Stage::Done;
-                Poll::Ready(Some(closed))
-            }
+            Poll::Ready(None) => match core::mem::replace(&mut self.stage, Stage::Done) {
+                Stage::Slot { closed, .. } => Poll::Ready(Some(closed)),
+                Stage::Queued { .. } | Stage::Sent(_) | Stage::Done => unreachable!(),
+            },
             Poll::Ready(Some(slot)) => {
-                let build = match &mut self.stage {
-                    Stage::Slot { build, .. } => build.take().expect("build once"),
-                    _ => unreachable!(),
-                };
-                let msg = build(slot);
-                match self.sender.send_slot(slot, None, msg) {
-                    Ok(()) => {
-                        self.stage = Stage::Sent(slot);
-                        Poll::Ready(None)
+                match core::mem::replace(&mut self.stage, Stage::Done) {
+                    Stage::Slot { build, closed } => {
+                        let msg = build(slot);
+                        self.stage = Stage::Queued { slot, msg, closed };
                     }
-                    Err(TrySendError::Closed(_)) => {
-                        self.sender.pool().give(slot);
-                        let closed = match &mut self.stage {
-                            Stage::Slot { closed, .. } => closed.take().expect("closed once"),
-                            _ => unreachable!(),
-                        };
-                        self.stage = Stage::Done;
-                        Poll::Ready(Some(closed))
-                    }
-                    Err(TrySendError::Full(_)) => {
-                        self.sender.pool().give(slot);
-                        panic!(
-                            "mailbox queue full while holding a slot (capacity must be >= slots)"
-                        );
-                    }
+                    Stage::Queued { .. } | Stage::Sent(_) | Stage::Done => unreachable!(),
                 }
+                self.send_queued(cx)
+            }
+        }
+    }
+
+    /// Send the built message for the slot held. A full queue is not an
+    /// error: the receiver drains it, so the future wakes itself and tries
+    /// again on the next poll.
+    fn send_queued(&mut self, cx: &mut Context<'_>) -> Poll<Option<A>> {
+        let Stage::Queued { slot, msg, .. } = self.stage else {
+            return Poll::Ready(None);
+        };
+        match self.sender.send_slot(slot, None, msg) {
+            Ok(()) => {
+                self.stage = Stage::Sent(slot);
+                Poll::Ready(None)
+            }
+            Err(TrySendError::Closed(_)) => {
+                self.sender.pool().give(slot);
+                match core::mem::replace(&mut self.stage, Stage::Done) {
+                    Stage::Queued { closed, .. } => Poll::Ready(Some(closed)),
+                    Stage::Slot { .. } | Stage::Sent(_) | Stage::Done => unreachable!(),
+                }
+            }
+            Err(TrySendError::Full(_)) => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
         }
     }
@@ -148,7 +158,9 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
                 self.stage = Stage::Done;
                 ans
             }
-            Stage::Slot { .. } | Stage::Done => unreachable!("slot already acquired"),
+            Stage::Slot { .. } | Stage::Queued { .. } | Stage::Done => {
+                unreachable!("slot already acquired and the message sent")
+            }
         }
     }
 }
@@ -170,7 +182,13 @@ impl<M: Copy, A, F: FnOnce(u32) -> M> Future for CallFuture<'_, M, A, F> {
                 }
                 Poll::Pending => Poll::Pending,
             },
-            Stage::Slot { .. } => unreachable!("slot already acquired"),
+            Stage::Slot { .. } | Stage::Queued { .. } => {
+                unreachable!("slot already acquired and the message sent")
+            }
+            #[expect(
+                clippy::panic,
+                reason = "polling a future after it returned Ready breaks the Future contract"
+            )]
             Stage::Done => panic!("polled CallFuture after completion"),
         }
     }
@@ -180,8 +198,10 @@ impl<M: Copy, A, F: FnOnce(u32) -> M> Drop for CallFuture<'_, M, A, F> {
     fn drop(&mut self) {
         match self.stage {
             Stage::Slot { .. } => self.waiter.forget_one(self.sender.pool()),
+            // The message never went out: nobody will answer this slot.
+            Stage::Queued { slot, .. } => self.sender.pool().give(slot),
             Stage::Sent(slot) => {
-                let _ = self.sender.detach(slot);
+                let _: Option<A> = self.sender.detach(slot);
             }
             Stage::Done => {}
         }

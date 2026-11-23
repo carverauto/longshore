@@ -5,6 +5,7 @@
 
 //! `getrlimit` (`RLIMIT_NOFILE` and `RLIMIT_MEMLOCK`) checks for `file_uring`.
 
+use crate::die::OrDie;
 use longshore::io::sys::{getrlimit, rlimit, RLIMIT_MEMLOCK, RLIMIT_NOFILE};
 use longshore::io::uring::UringIo;
 use longshore::io::Limits;
@@ -25,19 +26,17 @@ extern "C" {
 pub(super) fn check_rlimit_nofile() {
     let mut rlim = rlimit::default();
     assert_eq!(unsafe { getrlimit(RLIMIT_NOFILE, &mut rlim) }, 0);
-    let wanted = rlim.rlim_cur.saturating_add(16).min(u32::MAX as u64) as u32;
+    let wanted = rlim.rlim_cur.saturating_add(16).min(u64::from(u32::MAX)) as u32;
     let sockets_max = wanted / 2;
     let files_max = wanted - sockets_max;
-    let limits = Limits {
-        sockets_max,
-        files_max,
-        buffers: 1,
-        buffer_size: 4096,
-        ops_max: 2,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(sockets_max)
+        .with_files_max(files_max)
+        .with_buffers(1)
+        .with_buffer_size(4096)
+        .with_ops_max(2);
     let err = match UringIo::new(limits) {
-        Ok(_) => panic!("expected RLIMIT_NOFILE failure"),
+        Ok(_) => crate::die::die("expected RLIMIT_NOFILE failure"),
         Err(e) => e,
     };
     let msg = err.to_string();
@@ -49,11 +48,11 @@ pub(super) fn check_rlimit_nofile() {
 }
 
 pub(super) fn check_memlock_in_child() {
-    let exe = std::env::current_exe().expect("current_exe");
+    let exe = std::env::current_exe().or_die("current_exe");
     let out = std::process::Command::new(exe)
         .arg("--memlock-child")
         .output()
-        .expect("spawn memlock child");
+        .or_die("spawn memlock child");
     assert!(
         out.status.success(),
         "memlock child failed:\nstdout={}\nstderr={}",
@@ -74,11 +73,7 @@ pub(super) fn run_memlock_child() {
         "getrlimit"
     );
 
-    let tiny = Limits {
-        sockets_max: 2,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let tiny = Limits::BASE.with_sockets_max(2).with_ops_max(4);
     let mut chosen = None;
     for shift in 17..=28 {
         let cap = 1u64 << shift;
@@ -98,17 +93,17 @@ pub(super) fn run_memlock_child() {
             break;
         }
     }
-    let cap = chosen.expect("found RLIMIT_MEMLOCK high enough for ring setup");
+    let cap = chosen.or_die("found RLIMIT_MEMLOCK high enough for ring setup");
     let pool_target = (cap as u32).saturating_add(1 << 20);
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: pool_target,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(pool_target)
+        .with_ops_max(4);
     let err = match UringIo::new(limits) {
-        Ok(_) => panic!("expected RLIMIT_MEMLOCK OutOfMemory for cap={cap}"),
+        Ok(_) => crate::die::die(format_args!(
+            "expected RLIMIT_MEMLOCK OutOfMemory for cap={cap}"
+        )),
         Err(e) => e,
     };
     assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);

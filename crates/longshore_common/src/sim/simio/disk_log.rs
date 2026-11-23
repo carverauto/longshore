@@ -40,7 +40,9 @@ impl WriteLogEntry {
     fn byte_len(self) -> usize {
         match self.kind {
             LogKind::Write { len, .. } => len as usize,
-            _ => 0,
+            LogKind::Empty | LogKind::Punch { .. } | LogKind::Truncate | LogKind::Extend { .. } => {
+                0
+            }
         }
     }
 }
@@ -55,7 +57,7 @@ impl SimDisk {
             }
             match entry.kind {
                 LogKind::Write { file_off, len, .. } => {
-                    sz = sz.max(file_off + len as u64);
+                    sz = sz.max(file_off + u64::from(len));
                 }
                 LogKind::Truncate => sz = 0,
                 LogKind::Extend { end } => sz = sz.max(end),
@@ -106,7 +108,10 @@ impl SimDisk {
                 len,
                 buf_off,
             },
-            other => other,
+            other @ (LogKind::Empty
+            | LogKind::Punch { .. }
+            | LogKind::Truncate
+            | LogKind::Extend { .. }) => other,
         };
         self.log_entries[self.log_len] = WriteLogEntry {
             inode: ii as u32,
@@ -138,7 +143,10 @@ impl SimDisk {
             LogKind::Write { file_off, .. } => {
                 self.write_bytes_to_durable(ii, file_off, bytes);
             }
-            other => self.apply_kind_to_durable(ii, other),
+            other @ (LogKind::Empty
+            | LogKind::Punch { .. }
+            | LogKind::Truncate
+            | LogKind::Extend { .. }) => self.apply_kind_to_durable(ii, other),
         }
     }
 

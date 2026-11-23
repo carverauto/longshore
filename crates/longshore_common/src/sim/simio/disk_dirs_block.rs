@@ -53,7 +53,9 @@ impl SimDisk {
                     let removed_parent = match ej {
                         DirChangeKind::Unlink { parent, .. } => Some(parent),
                         DirChangeKind::Rename { old_parent, .. } => Some(old_parent),
-                        _ => None,
+                        DirChangeKind::Empty
+                        | DirChangeKind::Create { .. }
+                        | DirChangeKind::Mkdir { .. } => None,
                     };
                     if let Some(p) = removed_parent {
                         if self.inode_is_same_or_descendant_at(j, moved, p) {
@@ -116,7 +118,11 @@ impl SimDisk {
                         parent = Some(p);
                         break;
                     }
-                    _ => {}
+                    DirChangeKind::Empty
+                    | DirChangeKind::Create { .. }
+                    | DirChangeKind::Mkdir { .. }
+                    | DirChangeKind::Unlink { .. }
+                    | DirChangeKind::Rename { .. } => {}
                 }
             }
             if let Some(p) = parent {

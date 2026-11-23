@@ -15,14 +15,14 @@ impl Server {
         if let Some(i) = self.conns.iter().position(|c| c.state == State::Free) {
             self.conns[i].state = State::Accepting;
             self.accepting = true;
-            io.submit(
-                Token(self.accept_token()),
+            Self::submit_as(
+                io,
+                Token::new(self.accept_token()),
                 Op::Accept {
-                    listener: self.cfg.listener,
+                    listener: self.cfg.listener(),
                     sock: self.sock(i),
                 },
-            )
-            .expect("Limits::ops_max must cover Server::ops_in_flight_max");
+            );
         }
     }
 
@@ -62,7 +62,7 @@ impl Server {
 
     pub(super) fn recv_head<IO: Io>(&mut self, io: &mut IO, i: usize, have: u32) {
         self.conns[i].state = State::RecvHead { have };
-        self.recv_into(io, i, self.head_buf(i), have, self.cfg.head_max - have);
+        self.recv_into(io, i, self.head_buf(i), have, self.cfg.head_max() - have);
     }
 
     /// Send `len` bytes of the head buffer, then `body_len` of the body buffer.
@@ -82,7 +82,10 @@ impl Server {
         self.send_from(io, i, self.head_buf(i), 0, head_len as u32);
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "writes one response head from its parts: the connection, the status line, the two lengths and whether to close"
+    )]
     pub(super) fn status<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -93,34 +96,39 @@ impl Server {
         body_len: u32,
         close: bool,
     ) {
-        let limit = self.cfg.head_max as usize;
+        let limit = self.cfg.head_max() as usize;
         let buf = &mut io.buf(self.head_buf(i))[..limit];
         let mut w = HeadWriter::response(buf, status, reason);
-        w.header_u64("Content-Length", content_length);
+        let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", content_length);
         if close {
-            w.header("Connection", b"close");
+            let _: &mut HeadWriter<'_> = w.header("Connection", b"close");
         }
         if let Some(sum) = self.conns[i].reply_checksum.take() {
             if sum[8..] == [0; 4] {
                 let mut value = *b"crc32c=AAAAAAAA";
                 value[7..].copy_from_slice(&sum[..8]);
-                w.header("x-goog-hash", &value);
+                let _: &mut HeadWriter<'_> = w.header("x-goog-hash", &value);
             } else {
-                w.header("x-amz-checksum-crc64nvme", &sum);
+                let _: &mut HeadWriter<'_> = w.header("x-amz-checksum-crc64nvme", &sum);
             }
         }
         if let Some(slot) = self.conns[i].reply_object.take() {
             let o = &self.objects[slot as usize];
-            w.header("ETag", &multipart::tag(&o.data[..o.len as usize]));
-            w.header("Last-Modified", describing::LAST_MODIFIED);
+            let _: &mut HeadWriter<'_> =
+                w.header("ETag", &multipart::tag(&o.data[..o.len as usize]));
+            let _: &mut HeadWriter<'_> = w.header("Last-Modified", describing::LAST_MODIFIED);
             for (name, value) in describing::lines(&o.describing[..o.describing_len]) {
-                w.header(name, value);
+                let _: &mut HeadWriter<'_> = w.header(name, value);
             }
         }
         if let Some(tag) = self.conns[i].reply_tag.take() {
-            w.header("ETag", &tag);
+            let _: &mut HeadWriter<'_> = w.header("ETag", &tag);
         }
         self.identify(&mut w, i);
+        #[expect(
+            clippy::expect_used,
+            reason = "a reply head is fields the server wrote or already parsed as valid, far below head_max"
+        )]
         let n = w.finish().expect("server heads are small and well-formed");
         self.respond(io, i, n, body_len, close);
     }

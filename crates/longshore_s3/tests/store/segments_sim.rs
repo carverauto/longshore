@@ -6,6 +6,7 @@
 //! The store with a preference for large TCP segments, against a name
 //! whose addresses differ in the segment size their connections get.
 
+#[cfg(test)]
 mod common;
 use common::names::*;
 use common::*;
@@ -38,6 +39,7 @@ fn world_of_fronts(prefer: Option<usize>, sizes: [u32; 3]) -> (World, Nameserver
 }
 
 /// Store three objects at once, which opens a connection to each address.
+#[cfg(test)]
 fn store_three_at_once(w: &mut World, ns: &Nameserver) {
     w.fill_tx(100, 0);
     for (token, key) in [(1, "a"), (2, "b"), (3, "c")] {
@@ -46,7 +48,7 @@ fn store_three_at_once(w: &mut World, ns: &Nameserver) {
     }
     for _ in 0..3 {
         let d = next_done(w, ns);
-        assert_eq!((d.outcome, d.attempts), (Outcome::Stored, 1), "{d:?}");
+        assert_eq!((d.outcome(), d.attempts()), (Outcome::Stored, 1), "{d:?}");
     }
 }
 
@@ -54,7 +56,7 @@ fn store_three_at_once(w: &mut World, ns: &Nameserver) {
 fn store_many(w: &mut World, ns: &Nameserver, first: u64, n: u64) {
     for token in first..first + n {
         let d = store(w, ns, token, "k");
-        assert_eq!((d.outcome, d.attempts), (Outcome::Stored, 1), "{d:?}");
+        assert_eq!((d.outcome(), d.attempts()), (Outcome::Stored, 1), "{d:?}");
     }
 }
 
@@ -68,7 +70,8 @@ fn connections_move_to_the_address_with_large_segments() {
         "one connection to each address"
     );
     assert_eq!(
-        w.s3.small_segment_retired, 2,
+        w.s3.small_segment_retired(),
+        2,
         "the two connections with small segments are not reused"
     );
     // Three more at once: the retired connections are replaced, and the
@@ -79,7 +82,7 @@ fn connections_move_to_the_address_with_large_segments() {
     store_many(&mut w, &ns, 100, 12);
     store_three_at_once(&mut w, &ns);
     assert_eq!([0, 1, 2].map(|i| w.io.route_connects(front(i))), [1, 1, 3]);
-    assert_eq!((w.s3.connects(), w.s3.small_segment_retired), (5, 2));
+    assert_eq!((w.s3.connects(), w.s3.small_segment_retired()), (5, 2));
 }
 
 #[test]
@@ -88,7 +91,7 @@ fn a_client_with_one_connection_learns_one_address_and_keeps_it() {
     // connection is the best seen and stays in use.
     let (mut w, ns) = world_of_fronts(Some(1), [SMALL, SMALL, LARGE]);
     store_many(&mut w, &ns, 1, 12);
-    assert_eq!((w.s3.connects(), w.s3.small_segment_retired), (1, 0));
+    assert_eq!((w.s3.connects(), w.s3.small_segment_retired()), (1, 0));
 }
 
 #[test]
@@ -96,7 +99,7 @@ fn equal_segment_sizes_leave_every_address_in_use() {
     let (mut w, ns) = world_of_fronts(Some(1), [LARGE, LARGE, LARGE]);
     store_three_at_once(&mut w, &ns);
     store_three_at_once(&mut w, &ns);
-    assert_eq!(w.s3.small_segment_retired, 0);
+    assert_eq!(w.s3.small_segment_retired(), 0);
     assert_eq!(w.s3.connects(), 3, "three connections, reused");
 }
 
@@ -105,7 +108,7 @@ fn without_the_preference_a_small_segment_connection_is_kept() {
     let (mut w, ns) = world_of_fronts(None, [SMALL, SMALL, LARGE]);
     store_three_at_once(&mut w, &ns);
     store_three_at_once(&mut w, &ns);
-    assert_eq!(w.s3.small_segment_retired, 0);
+    assert_eq!(w.s3.small_segment_retired(), 0);
     assert_eq!(w.s3.connects(), 3, "three connections, reused");
 }
 
@@ -115,7 +118,7 @@ fn an_unmeasured_backend_changes_nothing() {
     let (mut w, ns) = world_of_fronts(Some(1), [0, 0, 0]);
     store_three_at_once(&mut w, &ns);
     store_three_at_once(&mut w, &ns);
-    assert_eq!(w.s3.small_segment_retired, 0);
+    assert_eq!(w.s3.small_segment_retired(), 0);
     assert_eq!(w.s3.connects(), 3);
 }
 
@@ -124,9 +127,9 @@ fn the_preference_can_be_turned_on_while_the_store_runs() {
     let (mut w, ns) = world_of_fronts(None, [SMALL, SMALL, LARGE]);
     store_three_at_once(&mut w, &ns);
     store_three_at_once(&mut w, &ns);
-    assert_eq!((w.s3.connects(), w.s3.small_segment_retired), (3, 0));
+    assert_eq!((w.s3.connects(), w.s3.small_segment_retired()), (3, 0));
     w.s3.prefer_large_segments(&mut w.io, Some(1));
-    assert_eq!(w.s3.small_segment_retired, 2);
+    assert_eq!(w.s3.small_segment_retired(), 2);
     store_three_at_once(&mut w, &ns);
     assert_eq!(
         [0, 1, 2].map(|i| w.io.route_connects(front(i))),
@@ -136,7 +139,7 @@ fn the_preference_can_be_turned_on_while_the_store_runs() {
     // Off again: nothing is closed, and every address is handed out again.
     w.s3.prefer_large_segments(&mut w.io, None);
     store_three_at_once(&mut w, &ns);
-    assert_eq!((w.s3.connects(), w.s3.small_segment_retired), (5, 2));
+    assert_eq!((w.s3.connects(), w.s3.small_segment_retired()), (5, 2));
 }
 
 #[test]
@@ -159,7 +162,7 @@ fn turning_it_on_replaces_connections_that_were_never_measured() {
     let on_large = w.io.route_connects(front(2));
     store_three_at_once(&mut w, &ns);
     assert_eq!(w.io.route_connects(front(2)), on_large, "settled");
-    assert!(w.s3.small_segment_retired >= 1);
+    assert!(w.s3.small_segment_retired() >= 1);
 }
 
 #[test]
@@ -176,7 +179,7 @@ fn a_name_with_only_small_addresses_is_asked_again_until_a_large_one_appears() {
         w.io.route(front(i), ADDR, size);
     }
     store_three_at_once(&mut w, &ns);
-    assert_eq!(w.s3.small_segment_retired, 0, "nowhere better to go yet");
+    assert_eq!(w.s3.small_segment_retired(), 0, "nowhere better to go yet");
     // The store's own traffic keeps time moving. The resolver's refresh
     // interval is 30 s, so only an early refresh can pick up the change.
     ns.a = &FRONTS;
@@ -185,7 +188,7 @@ fn a_name_with_only_small_addresses_is_asked_again_until_a_large_one_appears() {
         store_three_at_once(&mut w, &ns);
     }
     assert!(w.io.route_connects(front(2)) >= 3);
-    assert!(w.s3.small_segment_retired >= 2);
+    assert!(w.s3.small_segment_retired() >= 2);
     // Settled: every connection is on the large-segment address.
     let connects = w.s3.connects();
     store_three_at_once(&mut w, &ns);

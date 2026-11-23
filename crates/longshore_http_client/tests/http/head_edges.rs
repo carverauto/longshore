@@ -16,9 +16,10 @@ fn response(headers: &str) -> Vec<u8> {
     format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n").into_bytes()
 }
 
+#[cfg(test)]
 fn status_of(line: &str) -> Result<u16, HttpError> {
     parse_response(format!("{line}\r\n\r\n").as_bytes(), LIMIT)
-        .map(|h| h.expect("a complete head").status)
+        .map(|h| h.expect("a complete head").status())
 }
 
 #[test]
@@ -29,7 +30,7 @@ fn the_size_limit_is_exact() {
         let fits = head(limit);
         assert_eq!(fits.len(), limit);
         let parsed = parse_response(&fits, limit).unwrap().unwrap();
-        assert_eq!(parsed.fields.head_len, limit);
+        assert_eq!(parsed.fields().head_len(), limit);
         assert_eq!(
             parse_response(&head(limit + 1), limit),
             Err(HttpError::HeadTooLarge),
@@ -57,7 +58,7 @@ fn the_size_limit_is_exact() {
 
 #[test]
 fn framing_headers_are_refused_in_every_ambiguous_form() {
-    let p = |h: &str| parse_response(&response(h), LIMIT).map(|h| h.unwrap().fields);
+    let p = |h: &str| parse_response(&response(h), LIMIT).map(|h| h.unwrap().fields());
     for bad in [
         "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked",
         "Transfer-Encoding: gzip, chunked",
@@ -71,7 +72,7 @@ fn framing_headers_are_refused_in_every_ambiguous_form() {
         assert_eq!(p(bad).err(), Some(HttpError::BadFraming), "{bad}");
     }
     let f = p("transfer-ENCODING:  CHUNKED\t").unwrap();
-    assert!(f.chunked && f.content_length.is_none());
+    assert!(f.chunked() && f.content_length().is_none());
     for bad in [
         "Content-Length: 5\r\nContent-Length: 6",
         "Content-Length: 5, 5",
@@ -85,11 +86,11 @@ fn framing_headers_are_refused_in_every_ambiguous_form() {
     assert_eq!(
         p("Content-Length: 7\r\nContent-Length: 7")
             .unwrap()
-            .content_length,
+            .content_length(),
         Some(7),
         "a repeated equal length is one length"
     );
-    assert_eq!(p("Content-Length: 007").unwrap().content_length, Some(7));
+    assert_eq!(p("Content-Length: 007").unwrap().content_length(), Some(7));
 }
 
 /// `close` and `keep-alive` are whole tokens. A parser that looked for the
@@ -101,8 +102,8 @@ fn connection_tokens_are_matched_whole() {
         parse_response(format!("{version} 200 OK\r\n{h}\r\n\r\n").as_bytes(), LIMIT)
             .unwrap()
             .unwrap()
-            .fields
-            .close
+            .fields()
+            .close()
     };
     for not_close in [
         "Connection: closed",
@@ -133,7 +134,7 @@ fn connection_tokens_are_matched_whole() {
 #[test]
 fn header_names_and_values_at_their_edges() {
     let buf = response("A:\tv\t\r\nEmpty:\r\nDup: first\r\nDUP: second\r\nSpaces:   \r\nB: a b");
-    let f = parse_response(&buf, LIMIT).unwrap().unwrap().fields;
+    let f = parse_response(&buf, LIMIT).unwrap().unwrap().fields();
     assert_eq!(f.header(&buf, "a"), Some(&b"v"[..]));
     assert_eq!(f.header(&buf, "empty"), Some(&b""[..]));
     assert_eq!(f.header(&buf, "spaces"), Some(&b""[..]));
@@ -233,8 +234,8 @@ fn request_lines_are_refused_in_every_malformed_form() {
 fn the_writer_fits_exactly_or_not_at_all() {
     let write = |buf: &mut [u8]| {
         let mut w = HeadWriter::request(buf, "PUT", "/key");
-        w.header("Host", b"objects.test");
-        w.header_u64("Content-Length", u64::MAX);
+        let _: &mut HeadWriter<'_> = w.header("Host", b"objects.test");
+        let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", u64::MAX);
         w.finish()
     };
     let mut big = [0u8; 256];
@@ -250,5 +251,5 @@ fn the_writer_fits_exactly_or_not_at_all() {
         assert_eq!(write(&mut buf), Err(HttpError::BadRequest), "{short} bytes");
     }
     let parsed = parse_request(&exact, LIMIT).unwrap().unwrap();
-    assert_eq!(parsed.fields.content_length, Some(u64::MAX));
+    assert_eq!(parsed.fields().content_length(), Some(u64::MAX));
 }

@@ -10,30 +10,27 @@ use super::*;
 impl S3 {
     /// How many bytes a credentials read asks for.
     pub(super) fn credentials_read_len(&self) -> u32 {
-        self.cfg.http.buffer_size.min(CREDENTIALS_FILE_MAX)
+        self.cfg.http.buffer_size().min(CREDENTIALS_FILE_MAX)
     }
 
     /// The credentials file was read (or not): decide whether to try what it holds.
     pub(super) fn on_credentials_read<IO: Io>(
         &mut self,
         io: &mut IO,
-        f: CredentialsFile,
+        f: &CredentialsFile,
         result: i32,
     ) {
         let again = Provider::Idle {
             at: io.now_ns() + f.reread_ns,
         };
         // A read that filled the whole request may have cut the file short.
-        let result = if result >= self.credentials_read_len() as i32 {
-            -1
-        } else {
-            result
-        };
-        let text = &io.buf(f.buf)[..result.max(0) as usize];
-        let parsed = match (result < 0, self.cfg.vendor) {
-            (true, _) => None,
-            (false, Vendor::S3) => Credentials::parse(text),
-            (false, Vendor::Gcs) => Credentials::parse_bearer(text),
+        let read = usize::try_from(result)
+            .ok()
+            .filter(|&n| n < self.credentials_read_len() as usize);
+        let parsed = match (read, self.cfg.vendor) {
+            (None, _) => None,
+            (Some(n), Vendor::S3) => Credentials::parse(&io.buf(f.buf)[..n]),
+            (Some(n), Vendor::Gcs) => Credentials::parse_bearer(&io.buf(f.buf)[..n]),
         };
         let Some(candidate) = parsed else {
             self.credential_failures += 1;

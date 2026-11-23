@@ -16,13 +16,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
-const LIMITS: Limits = Limits {
-    sockets_max: 4,
-    buffers: 3,
-    buffer_size: 4096,
-    ops_max: 4,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(4)
+    .with_buffers(3)
+    .with_buffer_size(4096)
+    .with_ops_max(4);
 
 #[test]
 fn posix_echo_allocates_nothing_after_setup() {
@@ -31,5 +29,5 @@ fn posix_echo_allocates_nothing_after_setup() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
     let stats = sealed(|| echo(&mut io, addr, 300_000, 4096, false, &mut out))
         .expect("echo under alloc_guard");
-    assert!(stats.sends > 0 && stats.recvs > 0);
+    assert!(stats.sends() > 0 && stats.recvs() > 0);
 }

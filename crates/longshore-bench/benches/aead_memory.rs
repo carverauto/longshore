@@ -23,7 +23,8 @@
 //! The cold cases use `SETS` (32) bodies of 8 MiB, 256 MiB each of source
 //! and destination.
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::measurement::WallTime;
+use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use std::hint::black_box;
 
 const RECORD: usize = 16384; // largest TLS 1.3 plaintext fragment
@@ -159,57 +160,61 @@ fn bench(c: &mut Criterion) {
     assert_ne!(over[..RECORD], src[..RECORD], "output must be encrypted");
 
     let mut g = c.benchmark_group("aes128gcm_tls13_record_seal_memory/8MiB");
-    g.throughput(Throughput::Bytes(BODY as u64));
+    let _: &mut BenchmarkGroup<'_, WallTime> = g.throughput(Throughput::Bytes(BODY as u64));
 
     let mut one = vec![0u8; SLOT];
-    g.bench_function("hot: 16 KiB destination reused", |b| {
-        b.iter(|| {
-            for (seq, rec) in src.as_chunks::<RECORD>().0.iter().enumerate() {
-                let (body, tail) = one.split_at_mut(RECORD);
-                // SAFETY: the slices have the lengths the call is given.
-                unsafe {
-                    cipher.seal(
-                        seq as u64,
-                        black_box(rec).as_ptr(),
-                        RECORD,
-                        body.as_mut_ptr(),
-                        tail.as_mut_ptr(),
-                    )
-                };
-            }
-            black_box(&one);
-        })
-    });
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.bench_function("hot: 16 KiB destination reused", |b| {
+            b.iter(|| {
+                for (seq, rec) in src.as_chunks::<RECORD>().0.iter().enumerate() {
+                    let (body, tail) = one.split_at_mut(RECORD);
+                    // SAFETY: the slices have the lengths the call is given.
+                    unsafe {
+                        cipher.seal(
+                            seq as u64,
+                            black_box(rec).as_ptr(),
+                            RECORD,
+                            body.as_mut_ptr(),
+                            tail.as_mut_ptr(),
+                        )
+                    };
+                }
+                let _: &Vec<u8> = black_box(&one);
+            })
+        });
 
     let mut dst = vec![0u8; SLOT * RECORDS];
-    g.bench_function("batch: 8 MiB destination reused", |b| {
-        b.iter(|| {
-            cipher.body_to(black_box(&src), &mut dst);
-            black_box(&dst);
-        })
-    });
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.bench_function("batch: 8 MiB destination reused", |b| {
+            b.iter(|| {
+                cipher.body_to(black_box(&src), &mut dst);
+                let _: &Vec<u8> = black_box(&dst);
+            })
+        });
 
     let sources: Vec<Vec<u8>> = (0..SETS).map(|i| filled(BODY, i as u32)).collect();
     let mut dests: Vec<Vec<u8>> = (0..SETS).map(|_| vec![1u8; SLOT * RECORDS]).collect();
     let mut at = 0usize;
-    g.bench_function(format!("cold: {SETS} sources, {SETS} destinations"), |b| {
-        b.iter(|| {
-            at = (at + 1) % SETS;
-            cipher.body_to(black_box(&sources[at]), &mut dests[at]);
-            black_box(&dests[at]);
-        })
-    });
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.bench_function(format!("cold: {SETS} sources, {SETS} destinations"), |b| {
+            b.iter(|| {
+                at = (at + 1) % SETS;
+                cipher.body_to(black_box(&sources[at]), &mut dests[at]);
+                let _: &Vec<u8> = black_box(&dests[at]);
+            })
+        });
     drop(dests);
 
     let mut bodies = sources;
-    let mut at = 0usize;
-    g.bench_function(format!("cold, in place: {SETS} bodies"), |b| {
-        b.iter(|| {
-            at = (at + 1) % SETS;
-            cipher.body_in_place(black_box(&mut bodies[at]), &mut tails);
-            black_box(&bodies[at]);
-        })
-    });
+    at = 0;
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.bench_function(format!("cold, in place: {SETS} bodies"), |b| {
+            b.iter(|| {
+                at = (at + 1) % SETS;
+                cipher.body_in_place(black_box(&mut bodies[at]), &mut tails);
+                let _: &Vec<u8> = black_box(&bodies[at]);
+            })
+        });
     g.finish();
 }
 

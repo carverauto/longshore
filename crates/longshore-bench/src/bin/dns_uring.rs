@@ -15,73 +15,96 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
+/// Up to two nameservers from /etc/resolv.conf.
 #[cfg(target_os = "linux")]
-fn main() {
+fn nameservers() -> Vec<std::net::SocketAddr> {
     use longshore::dns::codec::parse_resolv_conf;
-    use longshore::dns::{Config, Family, Resolver};
-    use longshore::io::alloc_guard::sealed;
-    use longshore::io::uring::UringIo;
-    use longshore::io::{BufId, Completions, Io, Limits, Sock};
     use std::net::SocketAddr;
 
-    let hosts: Vec<String> = std::env::args().skip(1).collect();
-    if hosts.is_empty() {
-        eprintln!("usage: dns_uring HOST [HOST...]");
-        std::process::exit(2);
-    }
-    let conf = std::fs::read_to_string("/etc/resolv.conf").expect("read /etc/resolv.conf");
+    let conf = std::fs::read_to_string("/etc/resolv.conf").or_die("read /etc/resolv.conf");
     let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
         .into_iter()
         .take(2)
         .map(|ip| SocketAddr::new(ip, 53))
         .collect();
     assert!(!servers.is_empty(), "no nameserver in /etc/resolv.conf");
-    // DNS_FAMILY: 4 (the default), 6, prefer6 or prefer4.
-    let family = match std::env::var("DNS_FAMILY").as_deref() {
+    servers
+}
+
+/// The address family DNS_FAMILY asks for: 4 (the default), 6, prefer6 or prefer4.
+#[cfg(target_os = "linux")]
+fn family() -> longshore::dns::Family {
+    use longshore::dns::Family;
+
+    match std::env::var("DNS_FAMILY").as_deref() {
         Err(_) | Ok("4") => Family::V4,
         Ok("6") => Family::V6,
         Ok("prefer6") => Family::PreferV6,
         Ok("prefer4") => Family::PreferV4,
-        Ok(other) => panic!("DNS_FAMILY={other}: expected 4, 6, prefer6 or prefer4"),
-    };
+        Ok(other) => die::die(format_args!(
+            "DNS_FAMILY={other}: expected 4, 6, prefer6 or prefer4"
+        )),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn main() {
+    use longshore::dns::{Config, Resolver};
+    use longshore::io::alloc_guard::sealed;
+    use longshore::io::uring::UringIo;
+    use longshore::io::{BufId, Completions, Io, Limits, Sock};
+
+    let hosts: Vec<String> = std::env::args().skip(1).collect();
+    if hosts.is_empty() {
+        eprintln!("usage: dns_uring HOST [HOST...]");
+        std::process::exit(2);
+    }
+    let servers = nameservers();
+    let family = family();
     println!("nameservers: {servers:?}");
 
-    let mut io = UringIo::new(Limits {
-        sockets_max: 2,
-        buffers: 3,
-        buffer_size: 1024,
-        ops_max: 8,
-        ..Limits::BASE
-    })
-    .unwrap_or_else(|e| {
-        eprintln!("dns_uring: {e}");
-        std::process::exit(1);
-    });
+    let mut io = UringIo::new(
+        Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(3)
+            .with_buffer_size(1024)
+            .with_ops_max(8),
+    )
+    .unwrap_or_else(|e| die::die(e));
     let n = hosts.len();
-    let mut r = Resolver::new(Config {
-        servers,
-        hosts,
-        family,
-        prefer_large_segments: None,
-        refresh_ns: 30_000_000_000,
-        timeout_ns: 1_000_000_000,
-        socks: [Sock(0), Sock(1)],
-        rx_bufs: [BufId(0), BufId(1)],
-        tx_buf: BufId(2),
-        token_base: 1 << 40,
-    });
+    let mut r = Resolver::new(
+        Config::new(
+            servers,
+            hosts,
+            [Sock::new(0), Sock::new(1)],
+            [BufId::new(0), BufId::new(1)],
+            BufId::new(2),
+            1 << 40,
+        )
+        .with_family(family)
+        .with_prefer_large_segments(None)
+        .with_refresh_ns(30_000_000_000)
+        .with_timeout_ns(1_000_000_000),
+    )
+    .unwrap_or_else(|e| die::die(e));
     let mut out = Completions::new(8);
     let t0 = io.now_ns();
     r.start(&mut io);
     sealed(|| {
         // One full pass over the hosts, or 5 seconds.
-        while r.cycles == 0 && io.now_ns() - t0 < 5_000_000_000 {
-            io.tick(true, &mut out).expect("tick");
+        while r.cycles() == 0 && io.now_ns() - t0 < 5_000_000_000 {
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
-                r.on_completion(&mut io, c);
+                let _: bool = r.on_completion(&mut io, c);
             }
         }
     });
@@ -92,8 +115,8 @@ fn main() {
     println!(
         "ready={} queries={} failures={} elapsed_ms={ms:.1} enters={}",
         r.ready(),
-        r.queries,
-        r.failures,
+        r.queries(),
+        r.failures(),
         io.enters()
     );
     std::process::exit(if r.ready() { 0 } else { 1 });

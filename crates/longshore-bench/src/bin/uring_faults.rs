@@ -14,6 +14,12 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
@@ -24,16 +30,17 @@ fn check_connect_ring_lost() {
     use longshore::io::{Completions, Io, Limits, Op, Sock, Token, EINVAL};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 
-    let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
-    let addr = listener.local_addr().unwrap();
-    let mut io = UringIo::new(Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    })
-    .unwrap();
+    let listener =
+        TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).or_die("bind");
+    let addr = listener.local_addr().or_die("local_addr");
+    let mut io = UringIo::new(
+        Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(1)
+            .with_buffer_size(64)
+            .with_ops_max(4),
+    )
+    .or_die("UringIo::new");
     io.no_delay(true);
     io.keep_alive(true);
     io.inject(Fault::RingLost);
@@ -41,22 +48,22 @@ fn check_connect_ring_lost() {
     let mut out = Completions::new(4);
     let c = sealed(|| {
         io.submit(
-            Token(1),
+            Token::new(1),
             Op::Connect {
-                sock: Sock(0),
+                sock: Sock::new(0),
                 addr,
             },
         )
-        .unwrap();
-        io.tick(false, &mut out).unwrap();
-        out.pop().expect("connect failure completion")
+        .or_die("submit");
+        io.tick(false, &mut out).or_die("tick");
+        out.pop().or_die("connect failure completion")
     });
-    assert_eq!(c.token, Token(1));
-    assert!(!c.more && c.buf.is_none());
+    assert_eq!(c.token(), Token::new(1));
+    assert!(!c.more() && c.buf().is_none());
     assert!(
-        c.result < 0 && c.result != -EINVAL,
+        c.result() < 0 && c.result() != -EINVAL,
         "expected true negative OS errno without EINVAL masking, got {}",
-        c.result
+        c.result()
     );
 }
 
@@ -67,25 +74,33 @@ fn check_armed_accept_empty_range() {
     use longshore::io::{Completion, Completions, Io, Limits, Op, Sock, Token, ENFILE};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    let mut io = UringIo::new(Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    })
-    .unwrap();
+    let mut io = UringIo::new(
+        Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(1)
+            .with_buffer_size(64)
+            .with_ops_max(4),
+    )
+    .or_die("UringIo::new");
     let _bound = io
-        .listen(Sock(0), SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .unwrap();
+        .listen(
+            Sock::new(0),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .or_die("listen");
     let mut out = Completions::new(4);
     let c = sealed(|| {
-        io.submit(Token(2), Op::ArmedAccept { listener: Sock(0) })
-            .unwrap();
-        io.tick(false, &mut out).unwrap();
-        out.pop().expect("armed accept failure completion")
+        io.submit(
+            Token::new(2),
+            Op::ArmedAccept {
+                listener: Sock::new(0),
+            },
+        )
+        .or_die("submit");
+        io.tick(false, &mut out).or_die("tick");
+        out.pop().or_die("armed accept failure completion")
     });
-    assert_eq!(c, Completion::new(Token(2), -ENFILE));
+    assert_eq!(c, Completion::new(Token::new(2), -ENFILE));
 }
 
 #[cfg(target_os = "linux")]

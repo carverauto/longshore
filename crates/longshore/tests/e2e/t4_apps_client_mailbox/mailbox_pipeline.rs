@@ -9,9 +9,11 @@
 
 use super::super::harness::posix_backend;
 use longshore::io::{Completions, Io, Limits, Token};
-use longshore::mailbox::{block_on, mailbox, Config, Sender, SlotWaiter, TryRecv, TrySendError};
+use longshore::mailbox::{
+    block_on, mailbox, Config, Receiver, Sender, SlotWaiter, TryRecv, TrySendError,
+};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::thread;
 
@@ -21,36 +23,105 @@ struct Job {
     slot: u32,
 }
 
+type Gate = Arc<(Mutex<bool>, Condvar)>;
+type Tags = Arc<Mutex<Vec<u32>>>;
+
+/// Blocks until `gate` is opened.
+fn wait_gate(gate: &Gate) {
+    let (lock, cv) = &**gate;
+    let mut ready = lock.lock().unwrap();
+    while !*ready {
+        ready = cv.wait(ready).unwrap();
+    }
+}
+
+/// Opens `gate`, releasing a receiver parked on it.
+fn open_gate(gate: &Gate) {
+    let (lock, cv) = &**gate;
+    *lock.lock().unwrap() = true;
+    cv.notify_one();
+}
+
+/// What draining the receiver's queue ended on.
+enum Drained {
+    Empty,
+    Stopped,
+    ClosedEarly,
+}
+
+/// The receiver thread's bookkeeping and test knobs.
+struct ReceiverState {
+    tx_done: Arc<AtomicUsize>,
+    detached_tags: Tags,
+    close_after_n: Option<usize>,
+    answer_gate: Option<Gate>,
+    handled: usize,
+}
+
+impl ReceiverState {
+    /// Closes the receiver, recording each detached caller's tag.
+    fn close(&self, io_rx: &mut Receiver<Job, u32>) {
+        io_rx.close(
+            |_| {},
+            || u32::MAX,
+            |tag| self.detached_tags.lock().unwrap().push(tag),
+        );
+    }
+
+    /// Answers every queued job with `val * 2` (the first one only once the
+    /// gate opens), closing early after `close_after_n` jobs.
+    fn drain(&mut self, io_rx: &mut Receiver<Job, u32>) -> Drained {
+        loop {
+            match io_rx.try_recv() {
+                TryRecv::Message(job) => {
+                    self.handled += 1;
+                    let _: usize = self.tx_done.fetch_add(1, Ordering::Relaxed);
+                    if self.handled == 1 {
+                        if let Some(gate) = &self.answer_gate {
+                            wait_gate(gate);
+                        }
+                    }
+                    if let Some(tag) = io_rx.answer(job.slot, job.val * 2) {
+                        self.detached_tags.lock().unwrap().push(tag);
+                    }
+                    if self.close_after_n == Some(self.handled) {
+                        self.close(io_rx);
+                        return Drained::ClosedEarly;
+                    }
+                }
+                TryRecv::Stop | TryRecv::Closed => return Drained::Stopped,
+                TryRecv::Empty => return Drained::Empty,
+            }
+        }
+    }
+}
+
 fn spawn_posix_receiver(
     tx_done: Arc<AtomicUsize>,
-    detached_tags: Arc<std::sync::Mutex<Vec<u32>>>,
+    detached_tags: Tags,
     close_after_n: Option<usize>,
-    answer_gate: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+    answer_gate: Option<Gate>,
 ) -> (Sender<Job, u32>, thread::JoinHandle<()>) {
-    let lim = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 256,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let lim = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(256)
+        .with_ops_max(8);
     let (tx_ready, rx_ready) = std::sync::mpsc::sync_channel(1);
+    let mut state = ReceiverState {
+        tx_done,
+        detached_tags,
+        close_after_n,
+        answer_gate,
+        handled: 0,
+    };
 
     let handle = thread::spawn(move || {
         let mut io = posix_backend(lim).unwrap();
-        let (tx, mut io_rx) = mailbox::<Job, u32, _>(
-            &mut io,
-            Config {
-                capacity: 16,
-                slots: 4,
-                waiters_prealloc: 16,
-                wake_token: Token(1),
-            },
-        )
-        .unwrap();
+        let (tx, mut io_rx) =
+            mailbox::<Job, u32, _>(&mut io, Config::new(16, 4, 16, Token::new(1))).unwrap();
         tx_ready.send(tx).unwrap();
         let mut out = Completions::new(8);
-        let mut handled = 0usize;
         io_rx.arm(&mut io).unwrap();
 
         loop {
@@ -58,47 +129,15 @@ fn spawn_posix_receiver(
             let mut saw_stop = false;
             while let Some(c) = out.pop() {
                 if io_rx.on_completion(&mut io, c).unwrap() {
-                    loop {
-                        match io_rx.try_recv() {
-                            TryRecv::Message(job) => {
-                                handled += 1;
-                                tx_done.fetch_add(1, Ordering::Relaxed);
-                                if handled == 1 {
-                                    if let Some(gate) = &answer_gate {
-                                        let (lock, cv) = &**gate;
-                                        let mut ready = lock.lock().unwrap();
-                                        while !*ready {
-                                            ready = cv.wait(ready).unwrap();
-                                        }
-                                    }
-                                }
-                                if let Some(tag) = io_rx.answer(job.slot, job.val * 2) {
-                                    detached_tags.lock().unwrap().push(tag);
-                                }
-                                if close_after_n == Some(handled) {
-                                    io_rx.close(
-                                        |_| {},
-                                        || u32::MAX,
-                                        |tag| detached_tags.lock().unwrap().push(tag),
-                                    );
-                                    return;
-                                }
-                            }
-                            TryRecv::Stop | TryRecv::Closed => {
-                                saw_stop = true;
-                                break;
-                            }
-                            TryRecv::Empty => break,
-                        }
+                    match state.drain(&mut io_rx) {
+                        Drained::Empty => {}
+                        Drained::Stopped => saw_stop = true,
+                        Drained::ClosedEarly => return,
                     }
                 }
             }
             if saw_stop {
-                io_rx.close(
-                    |_| {},
-                    || u32::MAX,
-                    |tag| detached_tags.lock().unwrap().push(tag),
-                );
+                state.close(&mut io_rx);
                 break;
             }
         }
@@ -107,15 +146,60 @@ fn spawn_posix_receiver(
     (rx_ready.recv().unwrap(), handle)
 }
 
-#[cfg(unix)]
-#[test]
-fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
-    // Phase A: 2 Posix receiver threads, multi-pool selection, blocking + Future callers,
-    // caller cancellation returning u32 tag, and graceful Sender::stop().
+/// Sends `val` in `slot` with caller tag `tag`, detaches the caller at once,
+/// then opens `gate` so the receiver answers into the detached slot.
+fn send_detached(tx: &Sender<Job, u32>, slot: u32, tag: u32, val: u32, gate: &Gate) {
+    tx.send_slot(slot, Some(tag), Job { val, slot }).unwrap();
+    assert_eq!(tx.detach(slot), None);
+    open_gate(gate);
+}
+
+/// Takes every slot of `tx`'s pool through blocking waits.
+fn hold_all_slots(tx: &Sender<Job, u32>) -> Vec<u32> {
+    let mut held = Vec::with_capacity(4);
+    let mut w_hold = SlotWaiter::new();
+    while held.len() < 4 {
+        let slot = block_on(core::future::poll_fn(|poll_cx| {
+            w_hold.poll_one(tx.pool(), || !tx.is_closed(), poll_cx)
+        }))
+        .expect("tx0 pool should yield all 4 slots");
+        held.push(slot);
+    }
+    held
+}
+
+/// Four workers alternate blocking `wait` calls on `tx0` with `block_on`
+/// futures on `tx1`, each checking its doubled answer.
+fn run_mixed_callers(tx0: &Sender<Job, u32>, tx1: &Sender<Job, u32>) {
+    let mut workers = Vec::new();
+    for wid in 0..4u32 {
+        let t0 = tx0.clone();
+        let t1 = tx1.clone();
+        workers.push(thread::spawn(move || {
+            for iter in 0..8u32 {
+                let val = wid * 100 + iter;
+                if iter % 2 == 0 {
+                    let ans = t0.call(|slot| Job { val, slot }, u32::MAX).wait();
+                    assert_eq!(ans, val * 2);
+                } else {
+                    let ans = block_on(t1.call(|slot| Job { val, slot }, u32::MAX));
+                    assert_eq!(ans, val * 2);
+                }
+            }
+        }));
+    }
+    for w in workers {
+        w.join().unwrap();
+    }
+}
+
+/// Phase A: 2 Posix receiver threads, multi-pool selection, blocking + Future
+/// callers, caller cancellation returning u32 tag, and graceful `Sender::stop()`.
+fn multipool_detach_and_stop() {
     let handled_a = Arc::new(AtomicUsize::new(0));
-    let tags_a = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let gate0 = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-    let gate1 = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let tags_a = Arc::new(Mutex::new(Vec::new()));
+    let gate0 = Arc::new((Mutex::new(false), Condvar::new()));
+    let gate1 = Arc::new((Mutex::new(false), Condvar::new()));
     let (tx0, h0) = spawn_posix_receiver(
         Arc::clone(&handled_a),
         Arc::clone(&tags_a),
@@ -137,32 +221,10 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     else {
         panic!("tx0 slot should be free");
     };
-    tx0.send_slot(
-        slot0,
-        Some(0xBEEF),
-        Job {
-            val: 7,
-            slot: slot0,
-        },
-    )
-    .unwrap();
-    assert_eq!(tx0.detach(slot0), None);
-    {
-        let (lock, cv) = &*gate0;
-        *lock.lock().unwrap() = true;
-        cv.notify_one();
-    }
+    send_detached(&tx0, slot0, 0xBEEF, 7, &gate0);
 
     // Multi-pool wait across [&tx0, &tx1] via SlotWaiter::poll_many.
-    let mut held = Vec::with_capacity(4);
-    let mut w_hold = SlotWaiter::new();
-    while held.len() < 4 {
-        let slot = block_on(core::future::poll_fn(|cx| {
-            w_hold.poll_one(tx0.pool(), || !tx0.is_closed(), cx)
-        }))
-        .expect("tx0 pool should yield all 4 slots");
-        held.push(slot);
-    }
+    let held = hold_all_slots(&tx0);
     let mut w_many = SlotWaiter::new();
     let Poll::Ready(Some((which, slot1))) = w_many.poll_many(
         &[&tx0, &tx1],
@@ -175,46 +237,12 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
         panic!("tx1 should satisfy poll_many while tx0 is full");
     };
     assert_eq!(which, 1);
-    tx1.send_slot(
-        slot1,
-        Some(0xCAFE),
-        Job {
-            val: 9,
-            slot: slot1,
-        },
-    )
-    .unwrap();
-    assert_eq!(tx1.detach(slot1), None);
-    {
-        let (lock, cv) = &*gate1;
-        *lock.lock().unwrap() = true;
-        cv.notify_one();
-    }
+    send_detached(&tx1, slot1, 0xCAFE, 9, &gate1);
     for s in held {
         tx0.pool().give(s);
     }
 
-    // 4 worker threads mixing blocking wait and Future + block_on across both receivers.
-    let mut workers = Vec::new();
-    for wid in 0..4u32 {
-        let t0 = tx0.clone();
-        let t1 = tx1.clone();
-        workers.push(thread::spawn(move || {
-            for iter in 0..8u32 {
-                let val = wid * 100 + iter;
-                if iter % 2 == 0 {
-                    let ans = t0.call(|slot| Job { val, slot }, u32::MAX).wait();
-                    assert_eq!(ans, val * 2);
-                } else {
-                    let ans = block_on(t1.call(|slot| Job { val, slot }, u32::MAX));
-                    assert_eq!(ans, val * 2);
-                }
-            }
-        }));
-    }
-    for w in workers {
-        w.join().unwrap();
-    }
+    run_mixed_callers(&tx0, &tx1);
 
     // Graceful stop: queued items drain before stop, subsequent sends get Closed.
     tx0.stop();
@@ -228,10 +256,13 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     let tags = tags_a.lock().unwrap();
     assert!(tags.contains(&0xBEEF));
     assert!(tags.contains(&0xCAFE));
+}
 
-    // Phase B: Receiver close() racing active senders — every message either answered or Closed.
+/// Phase B: receiver `close()` racing active senders; every message is
+/// either answered or `Closed`.
+fn receiver_close_races_senders() {
     let handled_b = Arc::new(AtomicUsize::new(0));
-    let tags_b = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let tags_b = Arc::new(Mutex::new(Vec::new()));
     let (tx_race, h_race) = spawn_posix_receiver(Arc::clone(&handled_b), tags_b, Some(5), None);
     let stop_flag = Arc::new(AtomicBool::new(false));
     let mut racers = Vec::new();
@@ -258,11 +289,11 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
                     )
                     .wait();
                 if ans == u32::MAX {
-                    cc.fetch_add(1, Ordering::Relaxed);
+                    let _: usize = cc.fetch_add(1, Ordering::Relaxed);
                     sf.store(true, Ordering::Relaxed);
                 } else {
                     assert_eq!(ans, (rid * 10 + k) * 2);
-                    ac.fetch_add(1, Ordering::Relaxed);
+                    let _: usize = ac.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }));
@@ -273,4 +304,11 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
     }
     assert_eq!(answered_cnt.load(Ordering::Relaxed), 5);
     assert!(closed_cnt.load(Ordering::Relaxed) >= 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
+    multipool_detach_and_stop();
+    receiver_close_races_senders();
 }

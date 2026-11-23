@@ -11,7 +11,7 @@ use longshore_common::sim::{Faults, SimIo};
 use longshore_dns::Resolver;
 use longshore_http_client::client;
 use longshore_s3::creds::Credentials;
-use longshore_s3::s3::{Checksum, Config, Endpoint, Fatal, Outcome, SubmitError, Vendor, S3};
+use longshore_s3::s3::{Checksum, Config, Done, Endpoint, Fatal, Outcome, SubmitError, Vendor, S3};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
@@ -20,103 +20,30 @@ static ALLOC: Guard = Guard;
 const MS: u64 = 1_000_000;
 const HEARTBEAT: u64 = 1 << 50;
 // Large buffers: user tx 0. Small buffers: one HTTP head, three for name resolution.
-#[allow(clippy::needless_update)]
-const LIMITS: Limits = Limits {
-    sockets_max: 3,
-    buffers: 1,
-    buffer_size: 4096,
-    small_buffers: 4,
-    small_buffer_size: 2048,
-    ops_max: 16,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(3)
+    .with_buffers(1)
+    .with_buffer_size(4096)
+    .with_small_buffers(4)
+    .with_small_buffer_size(2048)
+    .with_ops_max(16);
 
 #[test]
 fn operations_end_when_the_name_never_resolves() {
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
-    // Nothing listens at the nameserver's address, so no query is answered.
-    let resolver = Resolver::new(longshore_dns::Config {
-        servers: vec![SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)),
-            53,
-        )],
-        hosts: vec!["bucket.objects.test".into()],
-        family: longshore_dns::Family::V4,
-        prefer_large_segments: None,
-        refresh_ns: 30_000 * MS,
-        timeout_ns: 200 * MS,
-        socks: [Sock(1), Sock(2)],
-        rx_bufs: [LIMITS.small(1), LIMITS.small(2)],
-        tx_buf: LIMITS.small(3),
-        token_base: 3 << 40,
-    });
-    let http = client::Config {
-        connections_max: 1,
-        first_sock: 0,
-        first_buf: LIMITS.small(0).0,
-        head_max: 2048,
-        buffer_size: 4096,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 500 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    };
-    let mut s3 = S3::new(Config {
-        vendor: Vendor::S3,
-        host: "bucket.objects.test".into(),
-        bucket_in_path: None,
-        port: 80,
-        region: "us-test-1".into(),
-        credentials: Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
-        credentials_file: None,
-        requests_max: 2,
-        attempts_max: 3,
-        backoff_ns: 100 * MS,
-        backoff_max_ns: 800 * MS,
-        require_checksums: false,
-        http,
-        #[cfg(feature = "tls")]
-        tls: None,
-        endpoint: Endpoint::Resolved(resolver),
-    });
+    let mut s3 = s3_behind_a_silent_nameserver();
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
-    s3.store(&mut io, 1, "a", BufId(0), 100, Checksum::None)
+    s3.store(&mut io, 1, "a", BufId::new(0), 100, Checksum::None)
         .unwrap();
     s3.erase(&mut io, 2, "b").unwrap();
     assert_eq!(s3.erase(&mut io, 3, "c"), Err(SubmitError::Busy));
 
-    let mut out = Completions::new(16);
-    let mut done = Vec::with_capacity(4);
-    sealed(|| {
-        while done.len() < 2 {
-            assert!(
-                io.now_ns() < 60_000 * MS,
-                "operations were still waiting for an address after a minute"
-            );
-            io.tick(true, &mut out).expect("simulation deadlock");
-            while let Some(c) = out.pop() {
-                if c.token.0 == HEARTBEAT {
-                    s3.tick(&mut io);
-                    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
-                        .unwrap();
-                } else {
-                    assert!(s3.on_completion(&mut io, c), "unrouted completion {c:?}");
-                }
-            }
-            while let Some(d) = s3.poll() {
-                done.push(d);
-            }
-        }
-    });
+    let done = run_until_done(&mut io, &mut s3, 2);
     for d in &done {
         assert_eq!(
-            (d.outcome, d.attempts),
+            (d.outcome(), d.attempts()),
             (Outcome::Fatal(Fatal::NoAddress), 0),
             "{d:?}"
         );
@@ -129,4 +56,85 @@ fn operations_end_when_the_name_never_resolves() {
     );
     // The slots are free again.
     s3.erase(&mut io, 3, "c").unwrap();
+}
+
+/// A store at a name only a nameserver could resolve. Nothing listens at
+/// the nameserver's address, so no query is answered.
+#[cfg(test)]
+fn s3_behind_a_silent_nameserver() -> S3 {
+    let resolver = Resolver::new(
+        longshore_dns::Config::new(
+            vec![SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)),
+                53,
+            )],
+            vec!["bucket.objects.test".into()],
+            [Sock::new(1), Sock::new(2)],
+            [LIMITS.small(1), LIMITS.small(2)],
+            LIMITS.small(3),
+            3 << 40,
+        )
+        .with_family(longshore_dns::Family::V4)
+        .with_prefer_large_segments(None)
+        .with_refresh_ns(30_000 * MS)
+        .with_timeout_ns(200 * MS),
+    )
+    .expect("resolver config");
+    let http = client::ClientConfig::builder(1, 0, LIMITS.small(0).get(), 4096, 1 << 40)
+        .head_max(2048)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(500 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(256 * 1024)
+        .build()
+        .unwrap();
+    S3::new(
+        Config::new(
+            Vendor::S3,
+            "bucket.objects.test".into(),
+            "us-test-1".into(),
+            Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
+            http,
+            Endpoint::Resolved(resolver),
+        )
+        .with_bucket_in_path(None)
+        .with_port(80)
+        .with_credentials_file(None)
+        .with_requests_max(2)
+        .with_attempts_max(3)
+        .with_backoff_ns(100 * MS)
+        .with_backoff_max_ns(800 * MS)
+        .with_require_checksums(false),
+    )
+}
+
+/// Drives the store with allocation forbidden until `n` operations have
+/// ended, failing if that takes a minute of virtual time.
+#[cfg(test)]
+fn run_until_done(io: &mut SimIo, s3: &mut S3, n: usize) -> Vec<Done> {
+    let mut out = Completions::new(16);
+    let mut done = Vec::with_capacity(4);
+    sealed(|| {
+        while done.len() < n {
+            assert!(
+                io.now_ns() < 60_000 * MS,
+                "operations were still waiting for an address after a minute"
+            );
+            io.tick(true, &mut out).expect("simulation deadlock");
+            while let Some(c) = out.pop() {
+                if c.token().get() == HEARTBEAT {
+                    s3.tick(io);
+                    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        .unwrap();
+                } else {
+                    assert!(s3.on_completion(io, c), "unrouted completion {c:?}");
+                }
+            }
+            while let Some(d) = s3.poll() {
+                done.push(d);
+            }
+        }
+    });
+    done
 }

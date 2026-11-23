@@ -20,12 +20,15 @@ use std::os::fd::IntoRawFd;
 
 mod backend;
 mod completions;
+mod completions_steps;
 #[cfg(feature = "fault-injection")]
 mod fault;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
 mod ops;
 mod ops_file;
+mod ops_sock;
+mod quiesce;
 mod setup;
 #[cfg(test)]
 mod tests;
@@ -205,13 +208,13 @@ struct EventFd(i32);
 impl crate::io::Wake for EventFd {
     fn wake(&self) {
         let one: u64 = 1;
-        unsafe { write(self.0, (&one as *const u64).cast(), 8) };
+        let _: isize = unsafe { write(self.0, (&one as *const u64).cast(), 8) };
     }
 }
 
 impl Drop for EventFd {
     fn drop(&mut self) {
-        unsafe { close(self.0) };
+        let _: i32 = unsafe { close(self.0) };
     }
 }
 
@@ -220,7 +223,7 @@ impl Drop for UringIo {
         let quiet = self.quiesce();
         unsafe { ManuallyDrop::drop(&mut self.ring) };
         if self.wake_fd >= 0 {
-            unsafe { close(self.wake_fd) };
+            let _: i32 = unsafe { close(self.wake_fd) };
         }
         if !quiet {
             self.leak();
@@ -229,90 +232,16 @@ impl Drop for UringIo {
 }
 
 impl UringIo {
-    /// Cancel every operation in flight and reap it, so the kernel touches
-    /// no buffer or slot afterwards. Completions are discarded. True once
-    /// nothing is in flight; false if the ring fails or something has not
-    /// ended within five seconds (a zero-copy send whose data the peer never
-    /// acknowledges can hold its buffer that long). Dropping calls this.
-    pub fn quiesce(&mut self) -> bool {
-        self.ready.clear(&mut self.slots, &mut self.free);
-        if self.in_flight == 0 {
-            return true;
-        }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        // Operations of several steps do not start their next step.
-        for s in self.slots.iter_mut() {
-            s.cancel_requested = true;
-        }
-        let mut timing = false;
-        let mut out = Completions::new(8);
-        while self.in_flight > 0 {
-            if std::time::Instant::now() > deadline {
-                return false;
-            }
-            for k in 0..self.slots.len() {
-                let s = &self.slots[k];
-                let opcode = match s.state {
-                    State::Free
-                    | State::Close
-                    | State::FileClose
-                    | State::FileSlotClose
-                    | State::ConnectRelease
-                    | State::AwaitNotif => continue,
-                    State::Timer => IORING_OP_TIMEOUT_REMOVE,
-                    _ => IORING_OP_ASYNC_CANCEL,
-                };
-                let cancel = io_uring_sqe {
-                    opcode,
-                    fd: -1,
-                    addr: k as u64 | s.phase,
-                    user_data: QUIESCE,
-                    ..Default::default()
-                };
-                if !self.push_flushing(cancel) {
-                    return false;
-                }
-            }
-            if !timing {
-                let timer = io_uring_sqe {
-                    opcode: IORING_OP_TIMEOUT,
-                    addr: &*self.quiet_ts as *const timespec as u64,
-                    len: 1,
-                    user_data: QUIESCE | 1,
-                    ..Default::default()
-                };
-                if !self.push_flushing(timer) {
-                    return false;
-                }
-                timing = true;
-            }
-            if self.ring.enter(1).is_err() {
-                return false;
-            }
-            while let Some(c) = self.reap() {
-                match c.user_data {
-                    QUIESCE | INTERNAL_CANCEL | INTERNAL_SHUTDOWN => {}
-                    t if t == QUIESCE | 1 => timing = false,
-                    _ => {
-                        self.on_cqe(c, &mut out);
-                        while out.pop().is_some() {}
-                    }
-                }
-            }
-        }
-        true
-    }
-
     /// Everything the kernel may still read or write, given up for good
     /// because it may still be in use.
     fn leak(&mut self) {
-        Box::leak(core::mem::take(&mut self.slots));
-        Box::leak(core::mem::take(&mut self.bufs));
-        Box::leak(core::mem::take(&mut self.quiet_ts));
-        Box::leak(core::mem::take(&mut self.buf_range));
+        let _: &mut [Slot] = Box::leak(core::mem::take(&mut self.slots));
+        let _: &mut [u8] = Box::leak(core::mem::take(&mut self.bufs));
+        let _: &mut timespec = Box::leak(core::mem::take(&mut self.quiet_ts));
+        let _: &mut [u16] = Box::leak(core::mem::take(&mut self.buf_range));
         core::mem::forget(self.buf_ring.take());
-        Box::leak(core::mem::take(&mut self.ring_in_ring));
-        Box::leak(core::mem::take(&mut self.ready.items));
+        let _: &mut [bool] = Box::leak(core::mem::take(&mut self.ring_in_ring));
+        let _: &mut [(u32, Completion)] = Box::leak(core::mem::take(&mut self.ready.items));
         core::mem::forget(core::mem::take(&mut self.files));
     }
 
@@ -321,7 +250,7 @@ impl UringIo {
     fn push_flushing(&mut self, sqe: io_uring_sqe) -> bool {
         let pushed = self.ring.push(sqe).is_ok()
             || (self.ring.enter(0).is_ok() && self.ring.push(sqe).is_ok());
-        self.in_flight += pushed as u32;
+        self.in_flight += u32::from(pushed);
         pushed
     }
 
@@ -337,7 +266,7 @@ impl UringIo {
 
     /// `io_uring_enter` calls made so far.
     pub fn enters(&self) -> u64 {
-        self.ring.enters
+        self.ring.enters()
     }
 
     fn buf_ptr(&self, buf: BufId, off: u32, len: u32) -> u64 {
@@ -349,7 +278,7 @@ impl UringIo {
     fn fixed(&self, sock: Sock) -> io_uring_sqe {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         io_uring_sqe {
-            fd: sock.0 as i32,
+            fd: fixed_fd(sock.0),
             flags: IOSQE_FIXED_FILE,
             ..Default::default()
         }
@@ -358,12 +287,16 @@ impl UringIo {
     fn fixed_file(&self, slot: FileSlot) -> io_uring_sqe {
         assert!(slot.0 < self.limits.files_max, "file slot out of range");
         io_uring_sqe {
-            fd: (self.limits.sockets_max + slot.0) as i32,
+            fd: fixed_fd(self.limits.sockets_max + slot.0),
             flags: IOSQE_FIXED_FILE,
             ..Default::default()
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the submission queue has room for ops_max entries and a slot is held for each"
+    )]
     fn push(&mut self, sqe: io_uring_sqe) {
         self.ring
             .push(sqe)

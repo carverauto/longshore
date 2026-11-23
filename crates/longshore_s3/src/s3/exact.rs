@@ -35,6 +35,10 @@ pub(super) struct Exact {
 }
 
 /// The evidence of a request as it was signed.
+#[expect(
+    clippy::expect_used,
+    reason = "called only for a request that was just signed, so it is within every signing limit"
+)]
 pub(super) fn describe(method: &'static str, date: &[u8; 16], req: &sigv4::Request) -> Signed {
     let mut names = [0u8; crate::report::SIGNED_HEADERS_MAX];
     let n = sigv4::signed_headers(req, &mut names)
@@ -55,7 +59,10 @@ impl S3 {
     /// Nothing is decided here: a refusal because the object exists is a
     /// report whose answer has status 412, and the comparison that
     /// [`S3::store_no_clobber`] makes after a refused retry is not made.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn put<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -124,7 +131,10 @@ impl S3 {
     /// [`Outcome::Report`]. A ranged fetch that the store answers with the
     /// whole object is an answer with status 200, and the range a store
     /// did serve is in the answer for the caller to compare.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn get<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -157,7 +167,10 @@ impl S3 {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the one path behind `put`, `head` and `get`, which pass their request's parts through to it unchanged"
+    )]
     fn submit_exact<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -185,9 +198,13 @@ impl S3 {
         if let Some(version) = version {
             let name = b"versionId=";
             query[..name.len()].copy_from_slice(name);
-            query_len = name.len()
-                + uri_encode(version.as_bytes(), true, &mut query[name.len()..])
-                    .expect("QUERY_MAX holds any version id encoded");
+            #[expect(
+                clippy::expect_used,
+                reason = "QUERY_MAX is sized for VERSION_ID_MAX bytes encoded, the most a VersionId holds"
+            )]
+            let encoded = uri_encode(version.as_bytes(), true, &mut query[name.len()..])
+                .expect("QUERY_MAX holds any version id encoded");
+            query_len = name.len() + encoded;
         }
         let query = &query[..query_len];
         let i = self.prepare(io, token, key, kind, body, response_buf, checksum, query)?;
@@ -227,20 +244,27 @@ impl S3 {
 
     /// End slot `i` with no answer to its last attempt.
     pub(super) fn end_unanswered(&mut self, i: usize, cause: Cause) {
+        #[expect(clippy::expect_used, reason = "only exact operations end unanswered")]
         let exact = self.slots[i].exact.expect("only such operations end so");
-        self.finish(i, Outcome::Report(exact.report(cause)));
+        self.finish(i, &Outcome::Report(exact.report(cause)));
     }
 
     /// End slot `i` because its attempt could not begin.
     pub(super) fn fail_unsent(&mut self, i: usize, fatal: Fatal) {
         if self.slots[i].exact.is_none() {
-            return self.finish(i, Outcome::Fatal(fatal));
+            return self.finish(i, &Outcome::Fatal(fatal));
         }
         self.end_unanswered(
             i,
             match fatal {
                 Fatal::Transport(e) => Cause::Transport(e),
-                _ => Cause::NoAddress,
+                Fatal::Status(_)
+                | Fatal::RetriesExhausted
+                | Fatal::ChecksumMismatch
+                | Fatal::NoAddress
+                | Fatal::RangeIgnored
+                | Fatal::BadResponse
+                | Fatal::ErrorDocument => Cause::NoAddress,
             },
         );
     }
@@ -262,7 +286,7 @@ impl S3 {
                         ..exact
                     });
                     if let Handled::Done(d) = self.client.cancel(io, i as u64) {
-                        self.on_attempt_done(io, i, d.result, d.sent);
+                        self.on_attempt_done(io, i, d.result(), d.sent());
                     }
                 }
                 State::Free | State::Finished => {}
@@ -278,6 +302,10 @@ impl S3 {
         sent: bool,
     ) {
         let s = self.slots[i];
+        #[expect(
+            clippy::expect_used,
+            reason = "on_done calls this only when exact is set"
+        )]
         let mut exact = s.exact.expect("called for such operations only");
         if sent {
             exact.sent += 1;
@@ -286,7 +314,7 @@ impl S3 {
         exact.signing = None;
         let answer = result.ok().map(|r| self.answer_of(io, &s, r));
         if sent {
-            exact.unanswered += answer.is_none() as u32;
+            exact.unanswered += u32::from(answer.is_none());
             exact.answer = answer;
         }
         let mut class = classify(&result);
@@ -304,7 +332,7 @@ impl S3 {
                 self.slots[i].delays += 1;
                 return self.wait(io, i, delay);
             }
-            _ => {}
+            Class::Success | Class::Retry | Class::RetryDelayed | Class::Fatal => {}
         }
         let cause = match result {
             // A request stopped for the deadline ends as a timeout.
@@ -313,7 +341,7 @@ impl S3 {
             // Not used: an answer is what the operation ends with.
             Ok(_) => Cause::Closed,
         };
-        self.finish(i, Outcome::Report(exact.report(cause)));
+        self.finish(i, &Outcome::Report(exact.report(cause)));
     }
 
     /// What the response on `r.conn` said, for the operation in slot `s`.
@@ -321,25 +349,26 @@ impl S3 {
         let mut malformed = false;
         // A header that is there but does not fit or parse is reported as
         // such, not as absent.
-        let etag = present(self.client.header(io, r.conn, "etag"), &mut malformed).map(Fixed::new);
+        let etag =
+            present(self.client.header(io, r.conn(), "etag"), &mut malformed).map(Fixed::new);
         let version = present(
-            self.client.header(io, r.conn, "x-amz-version-id"),
+            self.client.header(io, r.conn(), "x-amz-version-id"),
             &mut malformed,
         )
         .map(Fixed::new);
         let request_id = present(
-            self.client.header(io, r.conn, "x-amz-request-id"),
+            self.client.header(io, r.conn(), "x-amz-request-id"),
             &mut malformed,
         )
         .map(Fixed::new);
         let content_range = present(
-            self.client.header(io, r.conn, "content-range"),
+            self.client.header(io, r.conn(), "content-range"),
             &mut malformed,
         )
         .map(ContentRange::parse);
         let encryption = present(
             self.client
-                .header(io, r.conn, "x-amz-server-side-encryption"),
+                .header(io, r.conn(), "x-amz-server-side-encryption"),
             &mut malformed,
         )
         .map(|v| match v {
@@ -347,12 +376,12 @@ impl S3 {
             _ => ServerEncryption::Other,
         });
         let sha256 = present(
-            self.client.header(io, r.conn, "x-amz-checksum-sha256"),
+            self.client.header(io, r.conn(), "x-amz-checksum-sha256"),
             &mut malformed,
         )
         .map(base64_decode);
         let crc64 = present(
-            self.client.header(io, r.conn, CHECKSUM_HEADER),
+            self.client.header(io, r.conn(), CHECKSUM_HEADER),
             &mut malformed,
         )
         .map(|v| <[u8; 12]>::try_from(v).ok());
@@ -363,23 +392,23 @@ impl S3 {
             || sha256 == Some(None)
             || crc64 == Some(None);
         let mut answer = Answer {
-            status: r.status,
+            status: r.status(),
             etag: etag.flatten(),
             version: version.flatten(),
             request_id: request_id.flatten(),
-            content_length: self.client.content_length(r.conn),
+            content_length: self.client.content_length(r.conn()),
             content_range: content_range.flatten(),
             encryption,
             sha256: sha256.flatten(),
             crc64: crc64.flatten(),
-            body_len: s.response_buf.map_or(0, |_| r.body_len),
+            body_len: s.response_buf.map_or(0, |_| r.body_len()),
             verified: None,
             malformed,
         };
         if let (Kind::Fetch { range: None }, 200, Some(theirs), Some(buf)) =
-            (s.kind, r.status, answer.crc64, s.response_buf)
+            (s.kind, r.status(), answer.crc64, s.response_buf)
         {
-            let body = &io.buf(buf)[..r.body_len as usize];
+            let body = &io.buf(buf)[..r.body_len() as usize];
             let ours = longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body));
             answer.verified = Some(ours == theirs);
         }

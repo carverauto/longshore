@@ -6,9 +6,55 @@
 //! Seeded write settlement tests for `power_loss`: 3-way multi-sector,
 //! 2-way single-sector, overlapping writes, and deterministic replay.
 
-use super::{drive, make_sim, open_path, rw_create, rw_open, sync_dir_path};
-use longshore_common::io::{BufId, Completions, FileSlot, Io, Op};
+use super::{
+    make_sim, open_path, read_at, rw_create, rw_open, sync_dir_path, sync_slot, write_fill,
+};
+use longshore_common::io::{BufId, Completions, FileSlot, Io};
+use longshore_common::sim::SimIo;
 use std::collections::BTreeSet;
+
+/// A fresh disk with `path` created in slot 0 and its entry made durable (tokens 1, 10..13).
+fn fresh_file(seed: u64, sector_size: u32, log_bytes: usize, path: &str) -> (SimIo, Completions) {
+    let mut sim = make_sim(seed, sector_size, 16, log_bytes);
+    let mut out = Completions::new(16);
+    assert_eq!(
+        open_path(&mut sim, &mut out, 1, FileSlot::new(0), path, rw_create()),
+        0
+    );
+    sync_dir_path(&mut sim, &mut out, 10, "/");
+    (sim, out)
+}
+
+/// Power loss, then reopen `path` in slot 0 (token 30).
+fn crash_and_reopen(sim: &mut SimIo, out: &mut Completions, path: &str) {
+    sim.power_loss();
+    assert_eq!(
+        open_path(sim, out, 30, FileSlot::new(0), path, rw_open()),
+        0
+    );
+}
+
+/// Synced `0x11`, unsynced `0x22` over it, power loss; returns what reads back.
+#[cfg(test)]
+fn settle_overwrite(seed: u64, sector_size: u32, write_len: u32) -> Vec<u8> {
+    let (mut sim, mut out) = fresh_file(seed, sector_size, 64 * 1024, "/t.dat");
+    let full = i32::try_from(write_len).unwrap();
+    assert_eq!(
+        write_fill(&mut sim, &mut out, 20, FileSlot::new(0), 0, write_len, 0x11),
+        full
+    );
+    assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot::new(0)), 0);
+    assert_eq!(
+        write_fill(&mut sim, &mut out, 22, FileSlot::new(0), 0, write_len, 0x22),
+        full
+    );
+    crash_and_reopen(&mut sim, &mut out, "/t.dat");
+    assert_eq!(
+        read_at(&mut sim, &mut out, 31, FileSlot::new(0), 0, write_len),
+        full
+    );
+    sim.buf(BufId::new(2))[..write_len as usize].to_vec()
+}
 
 #[test]
 fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
@@ -19,83 +65,8 @@ fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
         let mut cuts = BTreeSet::new();
 
         for seed in 0..48u64 {
-            let run = |s: u64| -> Vec<u8> {
-                let mut sim = make_sim(s, sector_size, 16, 64 * 1024);
-                let mut out = Completions::new(16);
-                assert_eq!(
-                    open_path(&mut sim, &mut out, 1, FileSlot(0), "/t.dat", rw_create()),
-                    0
-                );
-                sync_dir_path(&mut sim, &mut out, 10, "/");
-                sim.buf(BufId(1))[..write_len as usize].fill(0x11);
-                assert_eq!(
-                    drive(
-                        &mut sim,
-                        &mut out,
-                        20,
-                        Op::FileWrite {
-                            slot: FileSlot(0),
-                            buf: BufId(1),
-                            off: 0,
-                            len: write_len,
-                            file_off: 0,
-                        },
-                    ),
-                    write_len as i32
-                );
-                assert_eq!(
-                    drive(
-                        &mut sim,
-                        &mut out,
-                        21,
-                        Op::FileSync {
-                            slot: FileSlot(0),
-                            datasync: false,
-                        },
-                    ),
-                    0
-                );
-                sim.buf(BufId(1))[..write_len as usize].fill(0x22);
-                assert_eq!(
-                    drive(
-                        &mut sim,
-                        &mut out,
-                        22,
-                        Op::FileWrite {
-                            slot: FileSlot(0),
-                            buf: BufId(1),
-                            off: 0,
-                            len: write_len,
-                            file_off: 0,
-                        },
-                    ),
-                    write_len as i32
-                );
-                sim.power_loss();
-                assert_eq!(
-                    open_path(&mut sim, &mut out, 30, FileSlot(0), "/t.dat", rw_open()),
-                    0
-                );
-                assert_eq!(
-                    drive(
-                        &mut sim,
-                        &mut out,
-                        31,
-                        Op::FileRead {
-                            slot: FileSlot(0),
-                            buf: BufId(2),
-                            off: 0,
-                            len: write_len,
-                            file_off: 0,
-                        },
-                    ),
-                    write_len as i32
-                );
-                sim.buf(BufId(2))[..write_len as usize].to_vec()
-            };
-
-            let b1 = run(seed);
-            let b2 = run(seed);
+            let b1 = settle_overwrite(seed, sector_size, write_len);
+            let b2 = settle_overwrite(seed, sector_size, write_len);
             assert_eq!(b1, b2, "deterministic replay failed for seed {seed}");
 
             let prefix = b1.iter().take_while(|&&b| b == 0x22).count();
@@ -108,7 +79,7 @@ fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
             } else {
                 assert_eq!(prefix % sector_size as usize, 0);
                 assert!(b1[prefix..].iter().all(|&b| b == 0x11));
-                cuts.insert(prefix);
+                let _: bool = cuts.insert(prefix);
             }
         }
         assert!(saw_drop && saw_whole && !cuts.is_empty());
@@ -117,118 +88,48 @@ fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
 
 #[test]
 fn power_loss_single_sector_never_tears_and_overlapping_writes_settle_in_order() {
+    single_sector_write_is_all_or_nothing();
+    overlapping_writes_settle_per_sector_in_order();
+}
+
+fn single_sector_write_is_all_or_nothing() {
     let mut saw_zero = false;
     let mut saw_full = false;
     for seed in 0..24u64 {
-        let mut sim = make_sim(seed, 512, 16, 16 * 1024);
-        let mut out = Completions::new(16);
+        let (mut sim, mut out) = fresh_file(seed, 512, 16 * 1024, "/one.dat");
         assert_eq!(
-            open_path(&mut sim, &mut out, 1, FileSlot(0), "/one.dat", rw_create()),
-            0
-        );
-        sync_dir_path(&mut sim, &mut out, 10, "/");
-        sim.buf(BufId(1))[..256].fill(0xAA);
-        assert_eq!(
-            drive(
-                &mut sim,
-                &mut out,
-                20,
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 256,
-                    file_off: 0,
-                },
-            ),
+            write_fill(&mut sim, &mut out, 20, FileSlot::new(0), 0, 256, 0xAA),
             256
         );
-        sim.power_loss();
-        assert_eq!(
-            open_path(&mut sim, &mut out, 30, FileSlot(0), "/one.dat", rw_open()),
-            0
-        );
-        let n = drive(
-            &mut sim,
-            &mut out,
-            31,
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(2),
-                off: 0,
-                len: 256,
-                file_off: 0,
-            },
-        );
+        crash_and_reopen(&mut sim, &mut out, "/one.dat");
+        let n = read_at(&mut sim, &mut out, 31, FileSlot::new(0), 0, 256);
         if n == 0 {
             saw_zero = true;
         } else {
             assert_eq!(n, 256);
-            assert!(sim.buf(BufId(2))[..256].iter().all(|&b| b == 0xAA));
+            assert!(sim.buf(BufId::new(2))[..256].iter().all(|&b| b == 0xAA));
             saw_full = true;
         }
     }
     assert!(saw_zero && saw_full);
+}
 
+#[cfg(test)]
+fn overlapping_writes_settle_per_sector_in_order() {
     let mut saw_11_under_22 = false;
     for seed in 0..32u64 {
-        let mut sim = make_sim(seed, 512, 16, 16 * 1024);
-        let mut out = Completions::new(16);
+        let (mut sim, mut out) = fresh_file(seed, 512, 16 * 1024, "/ov.dat");
         assert_eq!(
-            open_path(&mut sim, &mut out, 1, FileSlot(0), "/ov.dat", rw_create()),
-            0
-        );
-        sync_dir_path(&mut sim, &mut out, 10, "/");
-        sim.buf(BufId(1))[..1024].fill(0x11);
-        assert_eq!(
-            drive(
-                &mut sim,
-                &mut out,
-                20,
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 1024,
-                    file_off: 0,
-                },
-            ),
+            write_fill(&mut sim, &mut out, 20, FileSlot::new(0), 0, 1024, 0x11),
             1024
         );
-        sim.buf(BufId(1))[..1024].fill(0x22);
         assert_eq!(
-            drive(
-                &mut sim,
-                &mut out,
-                21,
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 1024,
-                    file_off: 512,
-                },
-            ),
+            write_fill(&mut sim, &mut out, 21, FileSlot::new(0), 512, 1024, 0x22),
             1024
         );
-        sim.power_loss();
-        assert_eq!(
-            open_path(&mut sim, &mut out, 30, FileSlot(0), "/ov.dat", rw_open()),
-            0
-        );
-        let n = drive(
-            &mut sim,
-            &mut out,
-            31,
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(2),
-                off: 0,
-                len: 1536,
-                file_off: 0,
-            },
-        );
-        let got = &sim.buf(BufId(2))[..n as usize];
+        crash_and_reopen(&mut sim, &mut out, "/ov.dat");
+        let n = read_at(&mut sim, &mut out, 31, FileSlot::new(0), 0, 1536);
+        let got = &sim.buf(BufId::new(2))[..usize::try_from(n).unwrap()];
         for chunk in got.chunks(512) {
             assert!(chunk.iter().all(|&b| b == chunk[0]));
         }

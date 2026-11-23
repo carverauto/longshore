@@ -69,126 +69,16 @@ impl Backend for PosixIo {
 
 /// One I/O thread: build everything, report the lane, then run until
 /// shut down.
-pub fn run<B: Backend>(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
-    #[cfg(target_os = "linux")]
-    if let Some((first, step)) = b.pin {
-        let cpu = first + n as usize * step;
-        let mut mask = [0u64; 16];
-        if cpu < 1024 {
-            mask[cpu / 64] |= 1 << (cpu % 64);
-            unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = n;
-
-    let conns = b.connections;
-    // Large buffers: two per connection for TLS records, then the lent
-    // ones. Small buffers: one head per connection, three for DNS, one for
-    // rereading the credentials file.
-    let tls_buffers = if cfg!(feature = "tls") && b.tls {
-        2 * conns
-    } else {
-        0
-    };
-    let buffer_size = b.buffer_size.max(if cfg!(feature = "tls") && b.tls {
-        256 * 1024
-    } else {
-        8192
-    });
-    #[allow(clippy::needless_update)]
-    let limits = Limits {
-        sockets_max: conns + 2,
-        buffers: tls_buffers + b.buffers,
-        buffer_size,
-        small_buffers: conns + 4,
-        small_buffer_size: 8192,
-        // Per connection: a send, a receive and a close or cancel. Then
-        // the resolver's four, the store's timer, the worker's two and
-        // the read of the credentials file.
-        ops_max: conns * 3 + 4 + 1 + 2 + 1,
-        ..Limits::BASE
-    };
-    let mut io = match B::build(limits) {
-        Ok(io) => io,
+pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<Lane>>>) {
+    pin(b, n);
+    let (mut io, mut worker, lane) = match setup::<B>(b) {
+        Ok(built) => built,
         Err(e) => {
-            let _ = ready.send(Err(e));
+            // The builder may have stopped waiting; this thread ends either way.
+            let _: Option<()> = ready.send(Err(e)).ok();
             return;
         }
     };
-    io.measure_segment_sizes(b.prefer_large_segments.is_some());
-    let credentials_file = match &b.credentials_file {
-        None => None,
-        Some(path) => match io.register_file(&path.to_string_lossy()) {
-            Ok(file) => Some(CredentialsFile {
-                file,
-                buf: limits.small(conns + 3),
-                reread_ns: b.credentials_reread_secs.max(1) * 1000 * MS,
-                token: 6 << 40,
-                validate: b.credentials_validate,
-            }),
-            Err(e) => {
-                let _ = ready.send(Err(e));
-                return;
-            }
-        },
-    };
-    let endpoint = match b.address {
-        Some(addr) => Endpoint::Fixed(addr),
-        None => Endpoint::Resolved(Resolver::new(longshore_dns::Config {
-            servers: b.nameservers.clone(),
-            hosts: vec![b.host.clone()],
-            family: b.family,
-            prefer_large_segments: b.prefer_large_segments,
-            refresh_ns: 30_000 * MS,
-            timeout_ns: 2_000 * MS,
-            socks: [Sock(conns), Sock(conns + 1)],
-            rx_bufs: [limits.small(conns), limits.small(conns + 1)],
-            tx_buf: limits.small(conns + 2),
-            token_base: 3 << 40,
-        })),
-    };
-    let s3 = S3::new(Config {
-        vendor: Vendor::S3,
-        host: b.host.clone(),
-        bucket_in_path: b.bucket_in_path.clone(),
-        port: b.port,
-        region: b.region.clone(),
-        credentials: b.credentials,
-        credentials_file,
-        requests_max: b.operations,
-        attempts_max: 4,
-        backoff_ns: 200 * MS,
-        backoff_max_ns: 5_000 * MS,
-        require_checksums: false,
-        http: http::Config {
-            connections_max: conns,
-            first_sock: 0,
-            first_buf: limits.small(0).0,
-            head_max: 8192,
-            buffer_size,
-            max_age_ns: 300_000 * MS,
-            max_requests: 100_000,
-            request_timeout_ns: 60_000 * MS,
-            zero_copy_min: 64 * 1024,
-            token_base: 1 << 40,
-            tls_batch: buffer_size.min(3 << 20),
-            tls_records_max: http::TLS_RECORDS_MAX,
-            check_idle: true,
-        },
-        #[cfg(feature = "tls")]
-        tls: b.tls.then(|| (ClientSetup::with_public_roots(), 0)),
-        endpoint,
-    });
-    let layout = Layout {
-        operations: b.operations,
-        first_buffer: BufId(tls_buffers),
-        buffers: b.buffers,
-        token_base: 7 << 40,
-        heartbeat_ns: 50 * MS,
-    };
-    let (mut worker, lane) = Worker::with_waiters(&mut io, s3, layout, b.waiters as usize);
-    worker.start(&mut io);
     #[cfg(all(feature = "fault-injection", target_os = "linux"))]
     let asked = lane.clone();
     if ready.send(Ok(lane)).is_err() {
@@ -220,8 +110,153 @@ pub fn run<B: Backend>(b: Builder, n: u32, ready: Sender<std::io::Result<Arc<Lan
             return;
         }
         while let Some(c) = out.pop() {
-            worker.on_completion(&mut io, c);
+            let _: bool = worker.on_completion(&mut io, c);
         }
     }
     worker.close();
+}
+
+/// Pin thread `n` to its core, if the builder asks for pinning.
+fn pin(b: &Builder, n: u32) {
+    #[cfg(target_os = "linux")]
+    if let Some((first, step)) = b.pin {
+        let cpu = first + n as usize * step;
+        let mut mask = [0u64; 16];
+        if cpu < 1024 {
+            mask[cpu / 64] |= 1 << (cpu % 64);
+            let _: i32 = unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _: (&Builder, u32) = (b, n);
+}
+
+/// Build the backend, the store and the worker, and start the worker.
+fn setup<B: Backend>(b: &Builder) -> std::io::Result<(B, Worker, Arc<Lane>)> {
+    let (limits, tls_buffers) = limits(b);
+    let mut io = B::build(limits)?;
+    io.measure_segment_sizes(b.prefer_large_segments.is_some());
+    let credentials_file = credentials_file(b, &mut io, limits)?;
+    let endpoint = endpoint(b, limits)?;
+    let mut config = store_config(b, limits, endpoint)?;
+    config.credentials_file = credentials_file;
+    let s3 = S3::new(config);
+    let layout = Layout::new(
+        b.operations,
+        BufId::new(tls_buffers),
+        b.buffers,
+        7 << 40,
+        50 * MS,
+    );
+    let (mut worker, lane) = Worker::with_waiters(&mut io, s3, layout, b.waiters as usize)
+        .map_err(std::io::Error::other)?;
+    worker.start(&mut io);
+    Ok((io, worker, lane))
+}
+
+/// The backend's limits, and how many large buffers TLS takes before the
+/// lent ones.
+fn limits(b: &Builder) -> (Limits, u32) {
+    let conns = b.connections;
+    // Large buffers: two per connection for TLS records, then the lent
+    // ones. Small buffers: one head per connection, three for DNS, one for
+    // rereading the credentials file.
+    let tls_buffers = if cfg!(feature = "tls") && b.tls {
+        2 * conns
+    } else {
+        0
+    };
+    let buffer_size = b.buffer_size.max(if cfg!(feature = "tls") && b.tls {
+        256 * 1024
+    } else {
+        8192
+    });
+    let limits = Limits::BASE
+        .with_sockets_max(conns + 2)
+        .with_buffers(tls_buffers + b.buffers)
+        .with_buffer_size(buffer_size)
+        .with_small_buffers(conns + 4)
+        .with_small_buffer_size(8192)
+        // Per connection: a send, a receive and a close or cancel. Then
+        // the resolver's four, the store's timer, the worker's two and
+        // the read of the credentials file.
+        .with_ops_max(conns * 3 + 4 + 1 + 2 + 1);
+    (limits, tls_buffers)
+}
+
+/// The credentials file to reread, registered with the backend, if any.
+fn credentials_file<B: Backend>(
+    b: &Builder,
+    io: &mut B,
+    limits: Limits,
+) -> std::io::Result<Option<CredentialsFile>> {
+    let Some(path) = &b.credentials_file else {
+        return Ok(None);
+    };
+    let file = io.register_file(&path.to_string_lossy())?;
+    Ok(Some(CredentialsFile::new(
+        file,
+        limits.small(b.connections + 3),
+        b.credentials_reread_secs.max(1) * 1000 * MS,
+        6 << 40,
+        b.credentials_validate,
+    )))
+}
+
+/// The fixed address, or a resolver for the host name.
+fn endpoint(b: &Builder, limits: Limits) -> std::io::Result<Endpoint> {
+    let conns = b.connections;
+    if let Some(addr) = b.address {
+        return Ok(Endpoint::Fixed(addr));
+    }
+    let resolver = Resolver::new(
+        longshore_dns::Config::new(
+            b.nameservers.clone(),
+            vec![b.host.clone()],
+            [Sock::new(conns), Sock::new(conns + 1)],
+            [limits.small(conns), limits.small(conns + 1)],
+            limits.small(conns + 2),
+            3 << 40,
+        )
+        .with_family(b.family)
+        .with_prefer_large_segments(b.prefer_large_segments)
+        .with_refresh_ns(30_000 * MS)
+        .with_timeout_ns(2_000 * MS),
+    )
+    // The host name or the nameservers cannot be used: the builder is
+    // told why, as for any other start-up failure.
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    Ok(Endpoint::Resolved(resolver))
+}
+
+/// The store's configuration for this thread, without the credentials file.
+/// A connection count or buffer size the HTTP client cannot work with is
+/// refused here, as for any other start-up failure.
+fn store_config(b: &Builder, limits: Limits, endpoint: Endpoint) -> std::io::Result<Config> {
+    let http = http::ClientConfig::builder(
+        b.connections,
+        0,
+        limits.small(0).get(),
+        limits.buffer_size(),
+        1 << 40,
+    )
+    .build()
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    let config = Config::new(
+        Vendor::S3,
+        b.host.clone(),
+        b.region.clone(),
+        b.credentials,
+        http,
+        endpoint,
+    )
+    .with_bucket_in_path(b.bucket_in_path.clone())
+    .with_port(b.port)
+    .with_requests_max(b.operations)
+    .with_attempts_max(4)
+    .with_backoff_ns(200 * MS)
+    .with_backoff_max_ns(5_000 * MS);
+    #[cfg(feature = "tls")]
+    let config = config.with_tls(b.tls.then(|| (ClientSetup::with_public_roots(), 0)));
+    Ok(config)
 }

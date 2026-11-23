@@ -60,11 +60,8 @@ pub fn write_manifest(out: &mut [u8], keys: &[&str]) -> Option<usize> {
 /// One key the store did not erase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Failure<'a> {
-    /// The key as it appears in the XML, possibly with character references.
-    /// Decode it with [`crate::list::unescape`].
-    pub key_raw: &'a [u8],
-    /// The store's error code, such as `AccessDenied`.
-    pub code: &'a [u8],
+    pub(crate) key_raw: &'a [u8],
+    pub(crate) code: &'a [u8],
 }
 
 /// The response to a batch erase.
@@ -101,7 +98,7 @@ impl<'a> Iterator for Failures<'a> {
     type Item = Result<Failure<'a>, ListError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        find(self.rest, b"<Error>")?;
+        let _: usize = find(self.rest, b"<Error>")?;
         let Some((error, past)) = between(self.rest, b"<Error>", b"</Error>") else {
             self.rest = &[];
             return Some(Err(ListError::Malformed));
@@ -121,3 +118,18 @@ impl<'a> Iterator for Failures<'a> {
 
 #[cfg(test)]
 mod tests;
+
+impl<'a> Failure<'a> {
+    /// The key as it appears in the XML, possibly with character references.
+    /// Decode it with [`crate::list::unescape`].
+    #[inline]
+    pub const fn key_raw(self) -> &'a [u8] {
+        self.key_raw
+    }
+
+    /// The store's error code, such as `AccessDenied`.
+    #[inline]
+    pub const fn code(self) -> &'a [u8] {
+        self.code
+    }
+}

@@ -14,7 +14,14 @@ use longshore_common::sim::PlacedFault;
 fn placed_fail_and_fail_after_and_sync_unstable() {
     let (mut sim, mut out, mut tok) = make_storage(1, 512);
     assert_eq!(
-        open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+        open_file(
+            &mut sim,
+            &mut out,
+            tok,
+            FileSlot::new(0),
+            "/d/f",
+            rw_create()
+        ),
         0
     );
     tok += 1;
@@ -23,21 +30,21 @@ fn placed_fail_and_fail_after_and_sync_unstable() {
 
     sim.place_disk_fault(9, PlacedFault::Fail);
     assert_eq!(
-        write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"data"),
+        write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"data"),
         -EIO
     );
     tok += 1;
     assert_eq!(read_all(&mut sim, &mut out, tok, "/d/f"), Ok(Vec::new()));
     tok += 30;
     assert_eq!(
-        write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"data"),
+        write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"data"),
         4
     );
     tok += 1;
 
     sim.place_disk_fault(14, PlacedFault::FailAfter);
     assert_eq!(
-        write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"next"),
+        write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"next"),
         -EIO
     );
     tok += 1;
@@ -48,7 +55,7 @@ fn placed_fail_and_fail_after_and_sync_unstable() {
             &mut out,
             tok,
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: false,
             },
         ),
@@ -68,14 +75,21 @@ fn placed_fail_on_sync_leaves_contents_unsynced() {
     for seed in 0..16u64 {
         let (mut sim, mut out, mut tok) = make_storage(seed, 512);
         assert_eq!(
-            open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+            open_file(
+                &mut sim,
+                &mut out,
+                tok,
+                FileSlot::new(0),
+                "/d/f",
+                rw_create()
+            ),
             0
         );
         tok += 1;
         sync_dir(&mut sim, &mut out, tok, "/d");
         tok += 5;
         assert_eq!(
-            write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"data"),
+            write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"data"),
             4
         );
         tok += 1;
@@ -86,7 +100,7 @@ fn placed_fail_on_sync_leaves_contents_unsynced() {
                 &mut out,
                 tok,
                 Op::FileSync {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     datasync: false,
                 },
             ),

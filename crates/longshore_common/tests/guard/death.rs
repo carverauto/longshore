@@ -54,46 +54,13 @@ fn child() {
             assert_eq!(sealed(|| 7), 7);
             drop(black_box(vec![0u8; 64]));
         }
-        "other-thread" => {
-            // The seal is this thread's alone.
-            static STOP: AtomicBool = AtomicBool::new(false);
-            static RUNNING: AtomicBool = AtomicBool::new(false);
-            let other = std::thread::spawn(|| {
-                let mut made = 0u64;
-                while !STOP.load(Ordering::Acquire) {
-                    drop(black_box(vec![0u8; 64]));
-                    made += 1;
-                    RUNNING.store(true, Ordering::Release);
-                }
-                made
-            });
-            sealed(|| {
-                while !RUNNING.load(Ordering::Acquire) {
-                    std::hint::spin_loop();
-                }
-                RUNNING.store(false, Ordering::Release);
-                while !RUNNING.load(Ordering::Acquire) {
-                    std::hint::spin_loop();
-                }
-                STOP.store(true, Ordering::Release);
-            });
-            assert!(other.join().unwrap() > 0);
-        }
+        "other-thread" => allocate_on_another_thread_while_sealed(),
         "panic" => sealed(|| panic!("{PANIC_MESSAGE}")),
         "panic-formatted" => sealed(|| {
             let got: Result<u32, String> = black_box(Err(String::new()));
             assert_eq!(got, Ok(1), "{PANIC_MESSAGE}");
         }),
-        "panic-drop-allocates" => sealed(|| {
-            struct AllocatesWhenDropped;
-            impl Drop for AllocatesWhenDropped {
-                fn drop(&mut self) {
-                    drop(black_box(Vec::<u8>::with_capacity(64)));
-                }
-            }
-            let _guard = AllocatesWhenDropped;
-            panic!("{PANIC_MESSAGE}");
-        }),
+        "panic-drop-allocates" => sealed(panic_with_a_destructor_that_allocates),
         "panic-caught" => {
             let caught = std::panic::catch_unwind(|| sealed(|| panic!("{PANIC_MESSAGE}")));
             assert!(caught.is_err());
@@ -117,12 +84,54 @@ fn child() {
     }
 }
 
+#[cfg(test)]
+/// The seal is this thread's alone: another thread allocates freely while
+/// this one stays sealed.
+fn allocate_on_another_thread_while_sealed() {
+    static STOP: AtomicBool = AtomicBool::new(false);
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    let other = std::thread::spawn(|| {
+        let mut made = 0u64;
+        while !STOP.load(Ordering::Acquire) {
+            drop(black_box(vec![0u8; 64]));
+            made += 1;
+            RUNNING.store(true, Ordering::Release);
+        }
+        made
+    });
+    sealed(|| {
+        while !RUNNING.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+        RUNNING.store(false, Ordering::Release);
+        while !RUNNING.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+        STOP.store(true, Ordering::Release);
+    });
+    assert!(other.join().unwrap() > 0);
+}
+
+#[cfg(test)]
+/// Panics with a value in scope whose destructor allocates during the unwind.
+fn panic_with_a_destructor_that_allocates() {
+    struct AllocatesWhenDropped;
+    impl Drop for AllocatesWhenDropped {
+        fn drop(&mut self) {
+            drop(black_box(Vec::<u8>::with_capacity(64)));
+        }
+    }
+    let _guard = AllocatesWhenDropped;
+    panic!("{PANIC_MESSAGE}");
+}
+
 /// Run `case` in a child, with the test harness capturing its output or not.
+#[cfg(test)]
 fn run(case: &str, capture: bool) -> (Output, String) {
     let mut cmd = Command::new(std::env::current_exe().unwrap());
-    cmd.args(["--exact", "child", "--test-threads", "1"]);
+    let _: &mut Command = cmd.args(["--exact", "child", "--test-threads", "1"]);
     if !capture {
-        cmd.arg("--nocapture");
+        let _: &mut Command = cmd.arg("--nocapture");
     }
     let out = cmd.env(CASE, case).output().unwrap();
     let text = format!(

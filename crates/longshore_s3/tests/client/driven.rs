@@ -5,8 +5,10 @@
 
 //! The shareable client over workers driven by hand in the simulator.
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
+#[cfg(test)]
 mod rig;
 use common::Behavior;
 use longshore_s3::client::{Buffer, Error};

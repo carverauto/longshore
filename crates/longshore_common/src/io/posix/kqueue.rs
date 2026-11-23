@@ -10,14 +10,20 @@
 use super::abi_macos::*;
 use super::SockSlot;
 use crate::io::Wake;
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
+use core::time::Duration;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const WAKE_IDENT: usize = 1;
 const EVENTS_CAP: usize = 64;
-const MAX_WAIT_SECS: u64 = 86_400;
+
+/// The `nevents` argument: never more than the event buffer holds.
+fn max_events() -> c_int {
+    c_int::try_from(EVENTS_CAP).unwrap_or(c_int::MAX)
+}
+const MAX_WAIT_SECS: i64 = 86_400;
 
 struct KqueueWaker {
     woken: Arc<AtomicBool>,
@@ -36,7 +42,7 @@ impl Wake for KqueueWaker {
             udata: core::ptr::null_mut(),
         };
         unsafe {
-            kevent(
+            let _: i32 = kevent(
                 self.kq_dup,
                 &kev,
                 1,
@@ -51,7 +57,7 @@ impl Wake for KqueueWaker {
 impl Drop for KqueueWaker {
     fn drop(&mut self) {
         if self.kq_dup >= 0 {
-            unsafe { close(self.kq_dup) };
+            let _: i32 = unsafe { close(self.kq_dup) };
         }
     }
 }
@@ -69,7 +75,7 @@ impl Poller {
         }
         if unsafe { fcntl(kq, F_SETFD, FD_CLOEXEC) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(kq) };
+            let _: i32 = unsafe { close(kq) };
             return Err(err);
         }
         let wake_reg = kevent {
@@ -92,7 +98,7 @@ impl Poller {
         } < 0
         {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(kq) };
+            let _: i32 = unsafe { close(kq) };
             return Err(err);
         }
         Ok(Self {
@@ -107,11 +113,14 @@ impl Poller {
     }
 
     pub(super) fn arm_read(&mut self, slot: usize, s: &mut SockSlot) {
-        if s.fd < 0 || s.armed_read {
+        let Ok(ident) = usize::try_from(s.fd) else {
+            return;
+        };
+        if s.armed_read {
             return;
         }
         let kev = kevent {
-            ident: s.fd as usize,
+            ident,
             filter: EVFILT_READ,
             flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
             fflags: 0,
@@ -134,11 +143,14 @@ impl Poller {
     }
 
     pub(super) fn arm_write(&mut self, slot: usize, s: &mut SockSlot) {
-        if s.fd < 0 || s.armed_write {
+        let Ok(ident) = usize::try_from(s.fd) else {
+            return;
+        };
+        if s.armed_write {
             return;
         }
         let kev = kevent {
-            ident: s.fd as usize,
+            ident,
             filter: EVFILT_WRITE,
             flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
             fflags: 0,
@@ -176,18 +188,18 @@ impl Poller {
                     core::ptr::null(),
                     0,
                     self.events.as_mut_ptr(),
-                    EVENTS_CAP as i32,
+                    max_events(),
                     &zero,
                 )
             };
-            if n < 0 {
+            let Ok(n) = usize::try_from(n) else {
                 if os_errno() == OS_EINTR {
                     continue;
                 }
                 return;
-            }
-            self.apply(n as usize, socks);
-            if (n as usize) < EVENTS_CAP {
+            };
+            self.apply(n, socks);
+            if n < EVENTS_CAP {
                 return;
             }
         }
@@ -207,13 +219,16 @@ impl Poller {
                     if rem == 0 {
                         return Ok(());
                     }
-                    let secs = rem / 1_000_000_000;
-                    if secs >= MAX_WAIT_SECS {
-                        ts.tv_sec = MAX_WAIT_SECS as i64;
-                        ts.tv_nsec = 0;
-                    } else {
-                        ts.tv_sec = secs as i64;
-                        ts.tv_nsec = (rem % 1_000_000_000) as i64;
+                    let wait = Duration::from_nanos(rem);
+                    match i64::try_from(wait.as_secs()) {
+                        Ok(secs) if secs < MAX_WAIT_SECS => {
+                            ts.tv_sec = secs;
+                            ts.tv_nsec = i64::from(wait.subsec_nanos());
+                        }
+                        Ok(_) | Err(_) => {
+                            ts.tv_sec = MAX_WAIT_SECS;
+                            ts.tv_nsec = 0;
+                        }
                     }
                     &ts as *const timespec
                 }
@@ -225,19 +240,19 @@ impl Poller {
                     core::ptr::null(),
                     0,
                     self.events.as_mut_ptr(),
-                    EVENTS_CAP as i32,
+                    max_events(),
                     ts_ptr,
                 )
             };
-            if n < 0 {
+            let Ok(n) = usize::try_from(n) else {
                 let err = os_errno();
                 if err == OS_EINTR {
                     continue;
                 }
                 return Err(io::Error::from_raw_os_error(err));
-            }
+            };
             if n > 0 {
-                self.apply(n as usize, socks);
+                self.apply(n, socks);
             }
             return Ok(());
         }
@@ -250,7 +265,7 @@ impl Poller {
             }
             let idx = ev.udata as usize;
             if let Some(s) = socks.get_mut(idx) {
-                if s.fd >= 0 && s.fd as usize == ev.ident {
+                if usize::try_from(s.fd) == Ok(ev.ident) {
                     if ev.filter == EVFILT_READ {
                         s.armed_read = false;
                         s.read_ready = true;
@@ -267,7 +282,7 @@ impl Poller {
 impl Drop for Poller {
     fn drop(&mut self) {
         if self.kq >= 0 {
-            unsafe { close(self.kq) };
+            let _: i32 = unsafe { close(self.kq) };
         }
     }
 }

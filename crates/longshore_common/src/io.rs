@@ -16,14 +16,19 @@ use std::io;
 use std::net::SocketAddr;
 
 pub mod alloc_guard;
+mod completion;
 pub mod contract;
 pub mod contract_chains;
 pub mod contract_files;
 pub mod contract_net;
 pub mod engine;
+pub use completion::{Completion, Completions};
 pub mod files;
+mod ids;
 pub use files::{file_size, FileSlot, OpenFlags};
+pub use ids::{BufId, FileId, Sock, Token};
 pub mod limits;
+mod must;
 pub use limits::Limits;
 #[cfg(unix)]
 pub mod posix;
@@ -33,25 +38,13 @@ pub use segment::Segment;
 #[cfg(target_os = "linux")]
 pub mod ring;
 #[cfg(target_os = "linux")]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "kernel ABI mirrors: the layout and every field are the kernel's, and tcp_raw builds raw sqes"
+)]
 pub mod sys;
 #[cfg(target_os = "linux")]
 pub mod uring;
-
-/// Caller-chosen identifier returned in the matching [`Completion`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Token(pub u64);
-
-/// Index into the buffer pool.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct BufId(pub u32);
-
-/// A file registered at initialization with [`Io::register_file`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct FileId(pub u32);
-
-/// Index into the socket table. The caller assigns slots.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Sock(pub u32);
 
 #[derive(Clone, Copy, Debug)]
 pub enum Op {
@@ -213,27 +206,20 @@ pub enum Op {
     },
 }
 
-/// `result` is a byte count or 0 on success, or a negated Linux errno.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Completion {
-    pub token: Token,
-    pub result: i32,
-    /// Whether more completions will follow for `token`.
-    pub more: bool,
-    /// Buffer selected for this completion by an armed receive, if any.
-    pub buf: Option<BufId>,
+/// A `clock_gettime` reading in nanoseconds. A reading before the clock's
+/// epoch, which only `CLOCK_REALTIME` can give, counts as zero.
+#[cfg(unix)]
+pub(crate) fn clock_ns(sec: i64, nsec: i64) -> u64 {
+    match (u64::try_from(sec), u64::try_from(nsec)) {
+        (Ok(sec), Ok(nsec)) => sec * 1_000_000_000 + nsec,
+        (Err(_), _) | (_, Err(_)) => 0,
+    }
 }
 
-impl Completion {
-    /// A single final completion carrying no selected buffer.
-    pub const fn new(token: Token, result: i32) -> Self {
-        Self {
-            token,
-            result,
-            more: false,
-            buf: None,
-        }
-    }
+/// The whole seconds of a `clock_gettime` reading, zero before the epoch.
+#[cfg(unix)]
+pub(crate) fn clock_secs(sec: i64) -> u64 {
+    u64::try_from(sec).unwrap_or(0)
 }
 
 pub const ECONNRESET: i32 = 104;
@@ -250,48 +236,14 @@ pub const ENFILE: i32 = 23;
 pub const EMFILE: i32 = 24;
 pub const ENAMETOOLONG: i32 = 36;
 pub const ENOBUFS: i32 = 105;
+pub const EOVERFLOW: i32 = 75;
 
-/// Fixed-capacity completion buffer; `tick` never delivers more than fit.
-pub struct Completions {
-    items: Box<[Completion]>,
-    len: usize,
-}
-
-impl Completions {
-    pub fn new(capacity: usize) -> Completions {
-        Completions {
-            items: vec![Completion::new(Token(0), 0); capacity].into_boxed_slice(),
-            len: 0,
-        }
-    }
-    pub fn is_full(&self) -> bool {
-        self.len == self.items.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-    pub fn len(&self) -> usize {
-        self.len
-    }
-    #[cfg(any(test, feature = "sim"))]
-    pub(crate) fn clear(&mut self) {
-        self.len = 0;
-    }
-    /// Caller must check `is_full` first.
-    pub fn push(&mut self, c: Completion) {
-        self.items[self.len] = c;
-        self.len += 1;
-    }
-    pub fn pop(&mut self) -> Option<Completion> {
-        if self.len == 0 {
-            return None;
-        }
-        // Deliver in arrival order.
-        let c = self.items[0];
-        self.items.copy_within(1..self.len, 0);
-        self.len -= 1;
-        Some(c)
-    }
+/// A byte count or slot index as a completion result. Linux never moves more
+/// than `MAX_RW_COUNT` (below `i32::MAX`) bytes in one operation; a count
+/// that does not fit the `i32` result reads as `-EOVERFLOW` instead of
+/// wrapping into something that looks like a negated errno.
+pub fn count_result<N: TryInto<i32>>(n: N) -> i32 {
+    n.try_into().unwrap_or(-EOVERFLOW)
 }
 
 /// Signals a backend from another thread. See [`Io::waker`].
@@ -302,6 +254,10 @@ pub trait Wake: Send + Sync {
 
 /// All operation slots are in use.
 #[derive(Debug, PartialEq, Eq)]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a unit struct has no fields to make private"
+)]
 pub struct Busy;
 
 pub trait Io {

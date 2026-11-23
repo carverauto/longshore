@@ -23,6 +23,7 @@ fn inside(part: &[u8], whole: &[u8]) -> bool {
     part.is_empty() || (w.start <= p.start && p.end <= w.end)
 }
 
+#[cfg(test)]
 fn unescaped(raw: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; raw.len()];
     let n = unescape(raw, &mut out).expect("references this crate wrote");
@@ -31,6 +32,7 @@ fn unescaped(raw: &[u8]) -> Vec<u8> {
 }
 
 /// The texts between each `open` and the `close` after it.
+#[cfg(test)]
 fn between<'a>(doc: &'a str, open: &str, close: &str) -> Vec<&'a str> {
     doc.split(open)
         .skip(1)
@@ -69,8 +71,8 @@ fn arbitrary_bytes_are_safe_to_parse(tc: TestCase) {
         let errors = all.iter().filter(|f| f.is_err()).count();
         assert!(errors <= 1 && all.iter().rev().skip(1).all(|f| f.is_ok()));
         for f in all.into_iter().flatten() {
-            assert!(!f.key_raw.is_empty() && inside(f.key_raw, &data));
-            assert!(inside(f.code, &data));
+            assert!(!f.key_raw().is_empty() && inside(f.key_raw(), &data));
+            assert!(inside(f.code(), &data));
         }
     }
     for name in ["etag", "content-length", ""] {
@@ -78,11 +80,11 @@ fn arbitrary_bytes_are_safe_to_parse(tc: TestCase) {
             assert!(inside(value, &data));
         }
     }
-    let _ = parse_http_date(&data);
-    let _ = Credentials::parse(&data);
-    let _ = Credentials::parse_bearer(&data);
+    let _: Option<u64> = parse_http_date(&data);
+    let _: Option<Credentials> = Credentials::parse(&data);
+    let _: Option<Credentials> = Credentials::parse_bearer(&data);
     if let Ok(text) = core::str::from_utf8(&data) {
-        let _ = sharedkey::decode_key(text, &mut [0u8; sharedkey::KEY_MAX]);
+        let _: Option<usize> = sharedkey::decode_key(text, &mut [0u8; sharedkey::KEY_MAX]);
     }
 }
 
@@ -131,11 +133,7 @@ fn a_completion_manifest_lists_its_parts(tc: TestCase) {
         let checksum = tc
             .draw(gs::booleans())
             .then(|| longshore_crc::crc64_header_value(tc.draw(gs::integers::<u64>())));
-        parts.push(Part {
-            number,
-            tag: PartTag::new(&tag).unwrap(),
-            checksum,
-        });
+        parts.push(Part::new(number, PartTag::new(&tag).unwrap(), checksum));
     }
     assert!(number <= PART_NUMBER_MAX);
     let mut out = vec![0u8; 4096];
@@ -146,16 +144,17 @@ fn a_completion_manifest_lists_its_parts(tc: TestCase) {
     assert_eq!(listed.len(), parts.len());
     for (text, part) in listed.iter().zip(&parts) {
         let numbers = between(text, "<PartNumber>", "</PartNumber>");
-        assert_eq!(numbers, [part.number.to_string()]);
+        assert_eq!(numbers, [part.number().to_string()]);
         let tags = between(text, "<ETag>", "</ETag>");
         assert_eq!(tags.len(), 1);
         assert!(!tags[0].contains(['<', '>', '"']));
-        assert_eq!(unescaped(tags[0].as_bytes()), part.tag.as_bytes());
+        assert_eq!(unescaped(tags[0].as_bytes()), part.tag().as_bytes());
         let sums: Vec<&[u8]> = between(text, "<ChecksumCRC64NVME>", "</ChecksumCRC64NVME>")
             .into_iter()
             .map(str::as_bytes)
             .collect();
-        let expected: Vec<&[u8]> = part.checksum.iter().map(|c| &c[..]).collect();
+        let checksum = part.checksum();
+        let expected: Vec<&[u8]> = checksum.iter().map(|c| &c[..]).collect();
         assert_eq!(sums, expected);
     }
     assert_eq!(multipart::write_manifest(&mut out[..n - 1], &parts), None);
@@ -171,7 +170,8 @@ fn a_completion_manifest_lists_its_parts(tc: TestCase) {
         swapped.swap(at, at + 1);
         assert_eq!(multipart::write_manifest(&mut out, &swapped), None);
         let mut repeated = parts.clone();
-        repeated[at + 1].number = repeated[at].number;
+        let next = repeated[at + 1];
+        repeated[at + 1] = Part::new(repeated[at].number(), next.tag(), next.checksum());
         assert_eq!(multipart::write_manifest(&mut out, &repeated), None);
     }
 }
@@ -228,8 +228,8 @@ fn a_report_of_failures_is_read_back(tc: TestCase) {
         .map(|f| {
             let f = f.expect("a well-formed failure");
             (
-                String::from_utf8(unescaped(f.key_raw)).unwrap(),
-                String::from_utf8(f.code.to_vec()).unwrap(),
+                String::from_utf8(unescaped(f.key_raw())).unwrap(),
+                String::from_utf8(f.code().to_vec()).unwrap(),
             )
         })
         .collect();
@@ -254,7 +254,7 @@ fn a_report_of_failures_is_read_back(tc: TestCase) {
 fn a_header_is_found_in_a_head_by_name(tc: TestCase) {
     const NAME: &[u8] = b"abcdefghijklmnopqrstuvwxyz-";
     const VALUE: &[u8] = b"abcXYZ019/+=;:,.\"'()*_~ ";
-    let pick = |tc: &TestCase, alphabet: &[u8], min: usize| -> String {
+    let pick = |alphabet: &[u8], min: usize| -> String {
         tc.draw(gs::binary().min_size(min).max_size(12))
             .iter()
             .map(|b| alphabet[*b as usize % alphabet.len()] as char)
@@ -262,7 +262,7 @@ fn a_header_is_found_in_a_head_by_name(tc: TestCase) {
     };
     let headers: Vec<(String, String)> = (0..tc
         .draw(gs::integers::<usize>().min_value(0).max_value(6)))
-        .map(|i| (format!("h{i}{}", pick(&tc, NAME, 0)), pick(&tc, VALUE, 0)))
+        .map(|i| (format!("h{i}{}", pick(NAME, 0)), pick(VALUE, 0)))
         .collect();
     let mut head = String::from("HTTP/1.1 200 OK\r\n");
     for (name, value) in &headers {

@@ -10,6 +10,7 @@
 
 pub mod direct_io_punch;
 pub mod dual_chaos;
+mod partitioned_disk;
 pub mod partitioned_service;
 pub mod wal_lifecycle;
 mod wal_stack;

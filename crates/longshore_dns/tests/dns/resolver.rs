@@ -5,6 +5,7 @@
 
 //! Resolver against a simulated DNS server, with allocation sealed while running.
 
+#[cfg(test)]
 mod common;
 use common::*;
 
@@ -29,16 +30,16 @@ fn resolves_every_host_at_startup_and_rotates_addresses() {
     let mut distinct = seen[..3].to_vec();
     distinct.sort();
     assert_eq!(distinct, zone_addrs(0), "rotation covers every address");
-    assert_eq!(r.failures, 0);
+    assert_eq!(r.failures(), 0);
 }
 
 #[test]
 fn refresh_runs_on_the_configured_interval_whatever_the_ttl() {
     let cycles = |ttl: u32| {
         let (mut io, mut r, mut s, mut out) = world(2, Faults::default(), &[NS1], NS1, SEC);
-        s.ttl = ttl;
+        s.set_ttl(ttl);
         pump(&mut io, &mut r, &mut s, &mut out, 10 * SEC + 500 * MS);
-        (r.cycles, s.queries)
+        (r.cycles(), s.queries())
     };
     let short = cycles(1);
     assert_eq!(
@@ -63,23 +64,23 @@ fn a_failed_refresh_keeps_the_previous_answer() {
     let (mut io, mut r, mut s, mut out) = world(3, Faults::default(), &[NS1], NS1, SEC);
     pump(&mut io, &mut r, &mut s, &mut out, 100 * MS);
     assert!(r.ready());
-    s.answering = false;
+    s.set_answering(false);
     pump(&mut io, &mut r, &mut s, &mut out, 5 * SEC);
     assert!(
-        r.failures >= 4,
+        r.failures() >= 4,
         "timeouts should be counted, got {}",
-        r.failures
+        r.failures()
     );
     assert_eq!(
         (r.addrs(0), r.addrs(1)),
         (&zone_addrs(0)[..], &zone_addrs(1)[..])
     );
     assert!(r.lookup(0).is_some());
-    s.answering = true;
-    let before = r.cycles;
+    s.set_answering(true);
+    let before = r.cycles();
     pump(&mut io, &mut r, &mut s, &mut out, 8 * SEC);
     assert!(
-        r.cycles > before,
+        r.cycles() > before,
         "refresh resumes once the server answers again"
     );
 }
@@ -91,12 +92,15 @@ fn falls_back_to_the_second_nameserver() {
     pump(&mut io, &mut r, &mut s, &mut out, SEC);
     assert!(r.ready());
     assert!(
-        r.failures >= 1,
+        r.failures() >= 1,
         "the dead server should cost at least one timeout"
     );
     // Exactly one: having moved to the server that answers, the resolver
     // stays with it for the next host instead of asking the dead one again.
-    assert_eq!((r.failures, r.queries, s.queries, r.cycles), (1, 3, 2, 1));
+    assert_eq!(
+        (r.failures(), r.queries(), s.queries(), r.cycles()),
+        (1, 3, 2, 1)
+    );
     assert_eq!(
         (r.addrs(0), r.addrs(1)),
         (&zone_addrs(0)[..], &zone_addrs(1)[..])
@@ -105,12 +109,10 @@ fn falls_back_to_the_second_nameserver() {
 
 #[test]
 fn survives_lost_and_delayed_datagrams_without_caching_a_wrong_address() {
-    let faults = Faults {
-        udp_drop: 400_000,
-        bit_flip: 50_000,
-        delay: 300_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_udp_drop(400_000)
+        .with_bit_flip(50_000)
+        .with_delay(300_000);
     for seed in 0..100 {
         let (mut io, mut r, mut s, mut out) = world(seed, faults, &[NS1], NS1, 200 * MS);
         pump(&mut io, &mut r, &mut s, &mut out, 20 * SEC);
@@ -133,12 +135,14 @@ fn unknown_host_counts_as_failure_and_does_not_block_the_others() {
     let mut io = SimIo::new(LIMITS, 5, Faults::default());
     let mut s = Server::start(&mut io, NS1);
     let mut cfg = config(&[NS1], SEC, Family::V4);
-    cfg.hosts.insert(0, "missing.example.org".into());
-    let mut r = Resolver::new(cfg);
+    let mut hosts = cfg.hosts().to_vec();
+    hosts.insert(0, "missing.example.org".into());
+    cfg = cfg.with_hosts(hosts);
+    let mut r = Resolver::new(cfg).expect("resolver config");
     r.start(&mut io);
     let mut out = Completions::new(8);
     pump(&mut io, &mut r, &mut s, &mut out, 200 * MS);
     assert!(!r.ready() && r.lookup(0).is_none());
     assert_eq!(r.addrs(1), &zone_addrs(0)[..]);
-    assert!(r.failures >= 1);
+    assert!(r.failures() >= 1);
 }

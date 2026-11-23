@@ -18,13 +18,13 @@ fn example_creds() -> Credentials {
 }
 
 fn target(creds: &Credentials) -> Target<'_> {
-    Target {
-        scheme: "https",
-        host: "examplebucket.s3.amazonaws.com",
-        root: "",
-        region: "us-east-1",
-        credentials: creds,
-    }
+    Target::new(
+        "https",
+        "examplebucket.s3.amazonaws.com",
+        "",
+        "us-east-1",
+        creds,
+    )
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn a_store_url_and_a_session_token_change_the_signature() {
         "token/with+odd=chars",
     )
     .unwrap();
-    let m = presign(
+    let url_len = presign(
         &mut b,
         &target(&temporary),
         Access::Fetch,
@@ -93,7 +93,7 @@ fn a_store_url_and_a_session_token_change_the_signature() {
         60,
     )
     .unwrap();
-    let url = core::str::from_utf8(&b[..m]).unwrap();
+    let url = core::str::from_utf8(&b[..url_len]).unwrap();
     assert!(
         url.contains("&X-Amz-Security-Token=token%2Fwith%2Bodd%3Dchars&X-Amz-SignedHeaders=host&")
     );
@@ -122,7 +122,7 @@ fn refuses_what_a_store_would_refuse_and_what_does_not_fit() {
     let t = target(&creds);
     let mut out = [0u8; 1024];
     let call =
-        |out: &mut [u8], key, expires| presign(out, &t, Access::Fetch, key, EXAMPLE_TIME, expires);
+        |buf: &mut [u8], key, expires| presign(buf, &t, Access::Fetch, key, EXAMPLE_TIME, expires);
     assert_eq!(call(&mut out, "", 60), Err(PresignError::BadKey));
     assert_eq!(call(&mut out, "k", 0), Err(PresignError::BadExpiry));
     assert_eq!(
@@ -209,7 +209,7 @@ fn each_part_of_a_url_changes_its_signature() {
 fn a_key_is_signed_up_to_what_its_path_holds() {
     let creds = example_creds();
     let mut out = vec![0u8; 16 * 1024];
-    let root = format!("/{}", "b".repeat(63));
+    let longest = format!("/{}", "b".repeat(63));
     let mut call = |root: &str, key: &str| {
         let t = Target {
             root,
@@ -217,10 +217,10 @@ fn a_key_is_signed_up_to_what_its_path_holds() {
         };
         presign(&mut out, &t, Access::Fetch, key, EXAMPLE_TIME, 60)
     };
-    assert!(call(&root, &" ".repeat(1024)).is_ok());
-    assert_eq!(call(&root, &" ".repeat(1025)), Err(PresignError::BadKey));
-    assert!(call(&root, &"a".repeat(3072)).is_ok());
-    assert_eq!(call(&root, &"a".repeat(3073)), Err(PresignError::BadKey));
+    assert!(call(&longest, &" ".repeat(1024)).is_ok());
+    assert_eq!(call(&longest, &" ".repeat(1025)), Err(PresignError::BadKey));
+    assert!(call(&longest, &"a".repeat(3072)).is_ok());
+    assert_eq!(call(&longest, &"a".repeat(3073)), Err(PresignError::BadKey));
     assert!(call("", &"a".repeat(3072 + 64)).is_ok());
     assert_eq!(call("", &"a".repeat(3072 + 65)), Err(PresignError::BadKey));
 }

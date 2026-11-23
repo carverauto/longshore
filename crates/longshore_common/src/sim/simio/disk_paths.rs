@@ -139,28 +139,7 @@ impl SimDisk {
             Err(e) => return e,
         };
         if let Some(ni) = self.find_name(&self.scratch_a[..len]) {
-            if flags.create && flags.exclusive {
-                return -EEXIST;
-            }
-            let ii = self.names[ni].inode as usize;
-            if self.inodes[ii].is_dir {
-                if flags.write || flags.empty || flags.create {
-                    return -EISDIR;
-                }
-            } else {
-                if flags.directory {
-                    return -ENOTDIR;
-                }
-                if flags.empty {
-                    self.push_log_entry(ii, LogKind::Truncate, &[]);
-                }
-            }
-            self.inodes[ii].opens += 1;
-            self.open_slots[slot.0 as usize] = Some(SimOpenFile {
-                inode: ii as u32,
-                flags,
-            });
-            return 0;
+            return self.open_existing(slot, ni, flags);
         }
         if !flags.create || flags.directory {
             return -ENOENT;
@@ -204,6 +183,32 @@ impl SimDisk {
             a_range,
             0..0,
         );
+        0
+    }
+
+    /// Opens the file or directory that name `ni` already names.
+    fn open_existing(&mut self, slot: FileSlot, ni: usize, flags: OpenFlags) -> i32 {
+        if flags.create && flags.exclusive {
+            return -EEXIST;
+        }
+        let ii = self.names[ni].inode as usize;
+        if self.inodes[ii].is_dir {
+            if flags.write || flags.empty || flags.create {
+                return -EISDIR;
+            }
+        } else {
+            if flags.directory {
+                return -ENOTDIR;
+            }
+            if flags.empty {
+                self.push_log_entry(ii, LogKind::Truncate, &[]);
+            }
+        }
+        self.inodes[ii].opens += 1;
+        self.open_slots[slot.0 as usize] = Some(SimOpenFile {
+            inode: ii as u32,
+            flags,
+        });
         0
     }
 

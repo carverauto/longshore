@@ -7,8 +7,12 @@
 //! response, responses the client must refuse, timeouts in every state that
 //! waits for the peer, and the request bytes themselves.
 
+#[cfg(test)]
 mod common;
+use common::raw::raw_exchange;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
 fn get(reply: &[u8]) -> Result<Response, Error> {
     raw_exchange(client_cfg(), "GET", &[], Some(RX), reply).result
@@ -50,10 +54,7 @@ fn bytes_after_a_complete_response_in_the_same_read_are_refused() {
 #[test]
 fn bytes_after_a_chunked_body_that_fills_the_buffer_are_refused() {
     const CAP: usize = 8192;
-    let cfg = client::Config {
-        buffer_size: CAP as u32,
-        ..client_cfg()
-    };
+    let cfg = client_builder_with(CONNS, CAP as u32).build().unwrap();
     let reply = |tail: &str| {
         let mut r = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
         r.extend(format!("{CAP:x}\r\n").into_bytes());
@@ -151,10 +152,7 @@ fn a_peer_that_stops_mid_response_is_timed_out_in_every_state() {
     assert_eq!(get(flood.as_bytes()), TIMEOUT, "interim responses only");
     // A chunked body that fills the buffer, its end never sent.
     const CAP: usize = 8192;
-    let cfg = client::Config {
-        buffer_size: CAP as u32,
-        ..client_cfg()
-    };
+    let cfg = client_builder_with(CONNS, CAP as u32).build().unwrap();
     let mut reply =
         format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{CAP:x}\r\n").into_bytes();
     reply.extend(std::iter::repeat_n(b'c', CAP));
@@ -212,32 +210,21 @@ fn the_request_on_the_wire_is_exactly_this() {
 fn a_discarded_body_is_kept_intact_when_it_fits_beside_the_head() {
     let mut w = world(
         11,
-        Faults {
-            short_send: 300_000,
-            partial_recv: 300_000,
-            ..Faults::default()
-        },
+        Faults::NONE
+            .with_short_send(300_000)
+            .with_partial_recv(300_000),
     );
     for (i, body) in [1u32, 2, 300, 1500, 5000, 20_000].into_iter().enumerate() {
         w.server.script(Behavior::StatusWithBody(412, body));
-        let req = Request {
-            method: "GET",
-            target: "/k",
-            host: "objects.test",
-            host_id: 0,
-            addr: ADDR,
-            headers: &[],
-            body: None,
-            response_buf: None,
-        };
+        let req = Request::new("GET", "/k", "objects.test", 0, ADDR);
         w.client.start(&mut w.io, 500, &req).unwrap();
         w.run_until_done(i + 1);
-        let r = w.done[i].result.expect("an error status is a response");
-        assert_eq!((r.status, r.body_len), (412, body));
-        let head_len = w.client.copy_head(&mut w.io, r.conn, RX);
+        let r = w.done[i].result().expect("an error status is a response");
+        assert_eq!((r.status(), r.body_len()), (412, body));
+        let head_len = w.client.copy_head(&mut w.io, r.conn(), RX);
         assert!(w.io.buf(RX)[..head_len as usize].ends_with(b"\r\n\r\n"));
-        assert_eq!(w.client.content_length(r.conn), Some(body as u64));
-        let kept = w.client.discarded_body(&mut w.io, r.conn).to_vec();
+        assert_eq!(w.client.content_length(r.conn()), Some(u64::from(body)));
+        let kept = w.client.discarded_body(&mut w.io, r.conn()).to_vec();
         if body <= HEAD_MAX - head_len {
             assert_eq!(kept.len(), body as usize, "body of {body}");
             assert!(
@@ -251,7 +238,7 @@ fn a_discarded_body_is_kept_intact_when_it_fits_beside_the_head() {
             );
         }
     }
-    assert_eq!(w.client.connects, 1, "discarding costs no connection");
+    assert_eq!(w.client.connects(), 1, "discarding costs no connection");
 }
 
 /// Chunks of one and of seven bytes put a chunk header in nearly every
@@ -259,12 +246,10 @@ fn a_discarded_body_is_kept_intact_when_it_fits_beside_the_head() {
 /// would not fit the server's buffer.
 #[test]
 fn tiny_chunks_decode_to_the_stored_bytes() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 400_000,
-        delay: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(400_000)
+        .with_delay(100_000);
     for seed in 0..8u64 {
         let mut w = world(seed, faults);
         let len = 2_000u32;
@@ -280,7 +265,7 @@ fn tiny_chunks_decode_to_the_stored_bytes() {
                 "seed {seed}, chunk size {chunk}: decoded bytes differ"
             );
         }
-        assert_eq!(w.client.connects, 1);
+        assert_eq!(w.client.connects(), 1);
     }
 }
 

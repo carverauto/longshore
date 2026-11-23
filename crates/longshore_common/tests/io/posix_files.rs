@@ -19,6 +19,7 @@ static ALLOC: Guard = Guard;
 
 struct TempDir(PathBuf);
 
+#[cfg(test)]
 impl TempDir {
     fn new(tag: &str) -> Self {
         let p = std::env::temp_dir().join(format!(
@@ -36,7 +37,8 @@ impl TempDir {
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        // Best-effort cleanup; Drop must not panic over a leftover temporary file.
+        let _: Option<()> = std::fs::remove_dir_all(&self.0).ok();
     }
 }
 
@@ -52,60 +54,61 @@ fn posix_file_and_chain_contracts_with_zero_alloc() {
 
     let dir_s = TempDir::new("posix_sealed");
     let path = format!("{}/sealed.dat\0", dir_s.0.display());
-    let limits = Limits {
-        buffers: 2,
-        buffer_size: 4096,
-        files_max: 2,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_ops_max(8);
     let mut io = PosixIo::new(limits).unwrap();
     let mut out = Completions::new(8);
-    io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
-    io.buf(BufId(1))[..8].copy_from_slice(b"posixwal");
+    io.buf(BufId::new(0))[..path.len()].copy_from_slice(path.as_bytes());
+    io.buf(BufId::new(1))[..8].copy_from_slice(b"posixwal");
 
     sealed(|| {
         io.submit_chain(&[
             (
-                Token(1),
+                Token::new(1),
                 Op::FileOpen {
-                    slot: FileSlot(0),
-                    path_buf: BufId(0),
+                    slot: FileSlot::new(0),
+                    path_buf: BufId::new(0),
                     path_off: 0,
                     path_len: path.len() as u32,
-                    flags: OpenFlags {
-                        read: true,
-                        write: true,
-                        create: true,
-                        ..Default::default()
-                    },
+                    flags: OpenFlags::NONE
+                        .with_read(true)
+                        .with_write(true)
+                        .with_create(true),
                 },
             ),
             (
-                Token(2),
+                Token::new(2),
                 Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
+                    slot: FileSlot::new(0),
+                    buf: BufId::new(1),
                     off: 0,
                     len: 8,
                     file_off: 0,
                 },
             ),
             (
-                Token(3),
+                Token::new(3),
                 Op::FileSync {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     datasync: true,
                 },
             ),
-            (Token(4), Op::FileClose { slot: FileSlot(0) }),
+            (
+                Token::new(4),
+                Op::FileClose {
+                    slot: FileSlot::new(0),
+                },
+            ),
         ])
         .unwrap();
         let mut done = 0;
         while done < 4 {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                assert!(c.result >= 0);
+                assert!(c.result() >= 0);
                 done += 1;
             }
         }

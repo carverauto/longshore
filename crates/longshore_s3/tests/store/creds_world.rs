@@ -6,17 +6,13 @@
 //! A store that rereads a credentials file, beside the in-tree server on
 //! one simulated `Io`, shared by the credential tests.
 
-#![allow(dead_code)]
-
 use longshore_common::io::alloc_guard::sealed;
 use longshore_common::io::{BufId, Completions, FileId, Io, Limits, Op, Sock, Token};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_http_client::client;
 use longshore_http_client::server::{self, Server};
 use longshore_s3::creds::Credentials;
-use longshore_s3::s3::{
-    Checksum, Config, CredentialsFile, Done, Endpoint, KeyPrefix, Validate, S3,
-};
+use longshore_s3::s3::{Checksum, Config, CredentialsFile, Done, Endpoint, Validate, S3};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 pub const CONNS: u32 = 3;
@@ -27,16 +23,14 @@ pub const HEARTBEAT: u64 = 1 << 50;
 pub const CREDS_TOKEN: u64 = 1 << 51;
 pub const REREAD_MS: u64 = 200;
 // Buffers: client heads 0..3, server pairs 3..9, user tx 9, (10 unused), credentials 11.
-pub const TX: BufId = BufId(9);
-pub const CREDS_BUF: BufId = BufId(11);
+pub const TX: BufId = BufId::new(9);
+pub const CREDS_BUF: BufId = BufId::new(11);
 pub const fn limits(buffer_size: u32) -> Limits {
-    Limits {
-        sockets_max: 1 + CONNS * 2,
-        buffers: 12,
-        buffer_size,
-        ops_max: CONNS * 3 + CONNS + 1 + 2,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(1 + CONNS * 2)
+        .with_buffers(12)
+        .with_buffer_size(buffer_size)
+        .with_ops_max(CONNS * 3 + CONNS + 1 + 2)
 }
 
 pub const KEY_A: &str = "AKIDOLD";
@@ -57,71 +51,53 @@ pub struct World {
     pub creds: FileId,
 }
 
-pub fn world(seed: u64, faults: Faults) -> World {
-    world_with_buffers(seed, faults, BUF)
-}
-
-pub fn world_with_buffers(seed: u64, faults: Faults, buf: u32) -> World {
-    world_validating(seed, faults, buf, Validate::List(KeyPrefix::EMPTY))
-}
-
-pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: Validate) -> World {
+pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate) -> World {
     let mut io = SimIo::new(limits(buf), seed, faults);
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: CONNS,
-        head_max: 2048,
-        buffer_size: buf,
-        objects_max: 4,
-        token_base: 2 << 40,
-        checksum: None,
-    });
-    server.start(&mut io, ADDR).unwrap();
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, CONNS, buf, 2 << 40)
+            .head_max(2048)
+            .objects_max(4)
+            .build()
+            .unwrap(),
+    );
+    let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[KEY_A]);
     let creds = io.register_file("/etc/store/credentials").unwrap();
-    let http = client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: 0,
-        head_max: 2048,
-        buffer_size: buf,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 1_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 1 << 20,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    };
-    let mut s3 = S3::new(Config {
-        vendor: longshore_s3::s3::Vendor::S3,
-        host: "bucket.objects.test".into(),
-        bucket_in_path: None,
-        port: 80,
-        region: "us-test-1".into(),
-        credentials: Credentials::new(KEY_A, &format!("secret-for-{KEY_A}")).unwrap(),
-        credentials_file: Some(CredentialsFile {
-            file: creds,
-            buf: CREDS_BUF,
-            reread_ns: REREAD_MS * MS,
-            token: CREDS_TOKEN,
-            validate,
-        }),
-        requests_max: 4,
-        attempts_max: 3,
-        backoff_ns: 50 * MS,
-        backoff_max_ns: 400 * MS,
-        require_checksums: false,
-        http,
-        #[cfg(feature = "tls")]
-        tls: None,
-        endpoint: Endpoint::Fixed(ADDR),
-    });
+    let http = client::ClientConfig::builder(CONNS, 1, 0, buf, 1 << 40)
+        .head_max(2048)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(1_000 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(1 << 20)
+        .build()
+        .unwrap();
+    let mut s3 = S3::new(
+        Config::new(
+            longshore_s3::s3::Vendor::S3,
+            "bucket.objects.test".into(),
+            "us-test-1".into(),
+            Credentials::new(KEY_A, &format!("secret-for-{KEY_A}")).unwrap(),
+            http,
+            Endpoint::Fixed(ADDR),
+        )
+        .with_bucket_in_path(None)
+        .with_port(80)
+        .with_credentials_file(Some(CredentialsFile::new(
+            creds,
+            CREDS_BUF,
+            REREAD_MS * MS,
+            CREDS_TOKEN,
+            *validate,
+        )))
+        .with_requests_max(4)
+        .with_attempts_max(3)
+        .with_backoff_ns(50 * MS)
+        .with_backoff_max_ns(400 * MS)
+        .with_require_checksums(false),
+    );
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     World {
         io,
@@ -148,9 +124,9 @@ impl World {
             while done.len() < n || io.now_ns() < until {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         s3.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     } else if !s3.on_completion(io, c) {
                         assert!(server.on_completion(io, c), "unrouted completion {c:?}");

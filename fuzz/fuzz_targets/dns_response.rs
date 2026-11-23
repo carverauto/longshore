@@ -20,7 +20,8 @@ fuzz_target!(|data: &[u8]| {
     for name in ["s3.example.com", "a.b", "bucket.us-east-1.linodeobjects.com"] {
         for record in [Record::A, Record::Aaaa] {
             if let Ok(a) = parse_response_for(data, id, name, record) {
-                assert!(a.len >= 1 && a.len <= a.addrs.len());
+                // `as_slice` panics if the count is past the array.
+                assert!(!a.as_slice().is_empty());
                 assert!(a.as_slice().iter().all(|ip| ip.is_ipv6() == (record == Record::Aaaa)));
             }
         }

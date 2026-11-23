@@ -19,6 +19,9 @@ use crate::multipart::Fixed;
 use crate::s3::Checksum;
 use longshore_http_client::client::Error;
 
+mod options;
+mod results;
+
 /// Longest `ETag` kept, quotes included.
 pub const ETAG_MAX: usize = 258;
 /// Longest version id kept. S3 allows them up to this length.
@@ -54,13 +57,9 @@ pub enum ServerEncryption {
 /// How to store an object with `put`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Put {
-    /// Store only if no object exists at the key: `If-None-Match: *`.
-    pub no_clobber: bool,
-    pub encryption: Option<Encryption>,
-    /// The checksum the body is sent with. A store takes one kind per
-    /// object, so [`Checksum::Sha256`] is sent instead of a CRC-64/NVME,
-    /// not beside it.
-    pub checksum: Checksum,
+    pub(crate) no_clobber: bool,
+    pub(crate) encryption: Option<Encryption>,
+    pub(crate) checksum: Checksum,
 }
 
 impl Default for Put {
@@ -79,41 +78,30 @@ impl Default for Put {
 /// if what is at the key is something else.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Expect {
-    /// Sent as `If-Match`: the object must have this `ETag`.
-    pub etag: Option<ETag>,
-    /// Sent as `versionId`: this version of the object is the one asked about.
-    pub version: Option<VersionId>,
+    pub(crate) etag: Option<ETag>,
+    pub(crate) version: Option<VersionId>,
 }
 
 /// How far one operation may go, in the store's own clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limit {
-    /// Requests the operation may send, counting the first. Zero is read
-    /// as one, and more than the store's own limit as that limit.
-    pub attempts: u32,
-    /// On the clock of `Io::now_ns`. No request is started at or after
-    /// this time, and one in progress is cancelled at the store's first
-    /// `tick` at or after it.
-    pub deadline_ns: Option<u64>,
+    pub(crate) attempts: u32,
+    pub(crate) deadline_ns: Option<u64>,
 }
 
 /// How a `put`, `head` or `get` ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Report {
-    pub end: End,
-    /// The last request handed to the `Io` for sending. `None` exactly
-    /// when none was, which is when `sent` is zero.
-    pub request: Option<Signed>,
-    /// Requests handed to the `Io` for sending.
-    pub sent: u32,
-    /// Of those, the ones that ended with no answer from the store. Each
-    /// may or may not have been carried out.
-    pub unanswered: u32,
+    pub(crate) end: End,
+    pub(crate) request: Option<Signed>,
+    pub(crate) sent: u32,
+    pub(crate) unanswered: u32,
 }
 
-// A report is held in a slot that exists whether or not it is used, so
-// boxing the large variant would only add an allocation.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a report is held in a slot that exists whether or not it is used, so boxing the large variant would only add an allocation"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum End {
     /// Nothing was sent. The store cannot have acted.
@@ -143,44 +131,26 @@ pub enum Cause {
 /// What the store's response said.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Answer {
-    pub status: u16,
-    /// `ETag`.
-    pub etag: Option<ETag>,
-    /// `x-amz-version-id`, as sent. A bucket whose versioning is suspended
-    /// answers `null`, and that is kept as those four characters.
-    pub version: Option<VersionId>,
-    /// `x-amz-request-id`.
-    pub request_id: Option<RequestId>,
-    /// `Content-Length`. For a `head` this is the object's length.
-    pub content_length: Option<u64>,
-    /// `Content-Range`.
-    pub content_range: Option<ContentRange>,
-    /// `x-amz-server-side-encryption`.
-    pub encryption: Option<ServerEncryption>,
-    /// `x-amz-checksum-sha256`, decoded.
-    pub sha256: Option<[u8; 32]>,
-    /// `x-amz-checksum-crc64nvme`, as its twelve base64 characters.
-    pub crc64: Option<[u8; 12]>,
-    /// Bytes of response body written into the caller's buffer. They are
-    /// the object's bytes only when `status` is 200 or 206. Always zero for
-    /// `put` and `head`.
-    pub body_len: u32,
-    /// For a `get` of a whole object answered with 200 and a CRC-64/NVME:
-    /// whether the bytes received match it. `None` when there was nothing
-    /// to compare.
-    pub verified: Option<bool>,
-    /// One of the headers above was present but did not parse or did not
-    /// fit its type. Its field is `None`. Nothing is cut short.
-    pub malformed: bool,
+    pub(crate) status: u16,
+    pub(crate) etag: Option<ETag>,
+    pub(crate) version: Option<VersionId>,
+    pub(crate) request_id: Option<RequestId>,
+    pub(crate) content_length: Option<u64>,
+    pub(crate) content_range: Option<ContentRange>,
+    pub(crate) encryption: Option<ServerEncryption>,
+    pub(crate) sha256: Option<[u8; 32]>,
+    pub(crate) crc64: Option<[u8; 12]>,
+    pub(crate) body_len: u32,
+    pub(crate) verified: Option<bool>,
+    pub(crate) malformed: bool,
 }
 
 /// A `Content-Range: bytes first-last/size` header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContentRange {
-    pub first: u64,
-    pub last: u64,
-    /// The whole object's length. `None` if the store wrote `*`.
-    pub size: Option<u64>,
+    pub(crate) first: u64,
+    pub(crate) last: u64,
+    pub(crate) size: Option<u64>,
 }
 
 impl ContentRange {
@@ -214,17 +184,10 @@ impl ContentRange {
 /// holds nothing secret: no signature, no key and no session token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Signed {
-    /// `PUT`, `HEAD` or `GET`.
-    pub method: &'static str,
-    /// The `x-amz-date` it carried: `YYYYMMDDTHHMMSSZ`.
-    pub date: [u8; 16],
-    /// SHA-256 of the canonical request the signature was made over: the
-    /// method, the path, the query, every signed header with its value,
-    /// the list of their names, and the payload line. Rebuild it from the
-    /// values expected with [`crate::sigv4::canonical_request_sha256`].
-    pub canonical_request_sha256: [u8; 32],
-    /// The names of the signed headers, in lower case, joined by `;`.
-    pub signed_headers: Fixed<SIGNED_HEADERS_MAX>,
+    pub(crate) method: &'static str,
+    pub(crate) date: [u8; 16],
+    pub(crate) canonical_request_sha256: [u8; 32],
+    pub(crate) signed_headers: Fixed<SIGNED_HEADERS_MAX>,
 }
 
 /// Decode base64 with padding into exactly `N` bytes. `None` for any
@@ -249,7 +212,7 @@ pub(crate) fn base64_decode<const N: usize>(text: &[u8]) -> Option<[u8; N]> {
             b'/' => 63,
             _ => return None,
         };
-        bits = bits << 6 | v as u32;
+        bits = bits << 6 | u32::from(v);
         count += 6;
         if count >= 8 {
             count -= 8;

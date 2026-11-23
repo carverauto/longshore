@@ -20,34 +20,33 @@ pub const LINUX_EEXIST: i32 = 17;
 pub const LINUX_EOPNOTSUPP: i32 = 95;
 
 pub fn file_ops_limits() -> Limits {
-    Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 8192,
-        small_buffers: 2,
-        small_buffer_size: 128,
-        files_max: 4,
-        aligned_buffers: 2,
-        aligned_buffer_size: 8192,
-        block_size: 4096,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(8192)
+        .with_small_buffers(2)
+        .with_small_buffer_size(128)
+        .with_files_max(4)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(8192)
+        .with_block_size(4096)
+        .with_ops_max(16)
 }
 
 #[cfg(feature = "sim")]
 pub fn make_sim(limits: Limits, seed: u64) -> SimIo {
     let mut sim = SimIo::new(limits, seed, Faults::default());
-    sim.setup_disk(longshore::sim::DiskConfig {
-        max_files: 32,
-        max_dirs: 16,
-        max_bytes_per_file: 1024 * 1024,
-        max_name_len: 256,
-        write_log_entries: 64,
-        write_log_bytes: 256 * 1024,
-        read_error_sectors: 16,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        longshore::sim::DiskConfig::BASE
+            .with_max_files(32)
+            .with_max_dirs(16)
+            .with_max_bytes_per_file(1024 * 1024)
+            .with_max_name_len(256)
+            .with_write_log_entries(64)
+            .with_write_log_bytes(256 * 1024)
+            .with_read_error_sectors(16)
+            .with_sector_size(512),
+    );
     sim
 }
 
@@ -141,7 +140,7 @@ pub fn open_slot(
     submit_and_wait_one(
         &mut d,
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileOpen {
             slot,
             path_buf,
@@ -152,19 +151,72 @@ pub fn open_slot(
         10_000,
     )
     .expect("open")
-    .result
+    .result()
 }
 
 pub fn close_slot(io: &mut dyn Io, out: &mut Completions, tok: u64, slot: FileSlot) -> i32 {
     submit_and_wait_one(
         &mut DynIo(io),
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileClose { slot },
         10_000,
     )
     .expect("close")
-    .result
+    .result()
+}
+
+/// Submits `op` under `Token(tok)`, waits for it, and returns its result.
+pub fn run_op(io: &mut dyn Io, out: &mut Completions, tok: u64, op: Op, what: &str) -> i32 {
+    submit_and_wait_one(&mut DynIo(io), out, Token::new(tok), op, 10_000)
+        .expect(what)
+        .result()
+}
+
+/// Read, write, and create.
+pub fn rw_create() -> OpenFlags {
+    OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
+}
+
+/// `FileWrite` of `len` bytes from the start of `buf` at `file_off` in `slot`.
+pub fn write_at(slot: FileSlot, buf: BufId, len: u32, file_off: u64) -> Op {
+    Op::FileWrite {
+        slot,
+        buf,
+        off: 0,
+        len,
+        file_off,
+    }
+}
+
+/// `FileRead` of `len` bytes into the start of `buf` from `file_off` in `slot`.
+pub fn read_at(slot: FileSlot, buf: BufId, len: u32, file_off: u64) -> Op {
+    Op::FileRead {
+        slot,
+        buf,
+        off: 0,
+        len,
+        file_off,
+    }
+}
+
+/// Renames `old` to `new`, staging the paths in buffers 0 and 1.
+pub fn rename(io: &mut dyn Io, out: &mut Completions, tok: u64, old: &str, new: &str) -> i32 {
+    let mut d = DynIo(io);
+    let old_len = write_nul_path(&mut d, BufId::new(0), 0, old);
+    let new_len = write_nul_path(&mut d, BufId::new(1), 0, new);
+    let op = Op::FileRename {
+        old_buf: BufId::new(0),
+        old_off: 0,
+        old_len,
+        new_buf: BufId::new(1),
+        new_off: 0,
+        new_len,
+    };
+    run_op(io, out, tok, op, "rename")
 }
 
 pub fn stat_size(
@@ -180,7 +232,7 @@ pub fn stat_size(
     let res = submit_and_wait_one(
         &mut d,
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileStatus {
             path_buf,
             path_off: 0,
@@ -191,7 +243,7 @@ pub fn stat_size(
         10_000,
     )
     .expect("status")
-    .result;
+    .result();
     if res < 0 {
         Err(res)
     } else {

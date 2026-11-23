@@ -13,11 +13,12 @@ use longshore::client::Builder;
 use longshore::store::creds::Credentials;
 
 let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
-settings.tls = true;
-settings.port = 443;
-settings.threads = 4; // four independent I/O threads
-let client = settings.build().unwrap();
+let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+    .tls(true)
+    .port(443)
+    .threads(4) // four independent I/O threads
+    .build()
+    .unwrap();
 
 // A body lives in a registered buffer borrowed from the client, so the
 // client never copies it. The operation takes the buffer and hands it back.
@@ -71,17 +72,16 @@ success or failure.
 # let (mut body, len, digest) = (client.buffer_blocking(), 5, [0u8; 32]);
 // One request, started before the deadline or not at all.
 let budget = Budget::once(Instant::now() + Duration::from_secs(10));
-let options = Put {
-    no_clobber: true,                        // If-None-Match: *
-    encryption: Some(Encryption::Aes256),    // ask the store to encrypt it
-    checksum: Checksum::Sha256(digest),      // the caller's SHA-256 of the body
-};
+let options = Put::default()
+    .with_no_clobber(true)                        // If-None-Match: *
+    .with_encryption(Some(Encryption::Aes256))    // ask the store to encrypt it
+    .with_checksum(Checksum::Sha256(digest));     // the caller's SHA-256 of the body
 let (put, body) = client.put("clips/0001.mp4", body, len, &options, budget).wait();
-match put.expect("an error means nothing was sent").end {
+match put.expect("an error means nothing was sent").end() {
     // Any status. 200 stored it, 412 means an object was already there.
     End::Answered(answer) => {
         // Bind every later read to the object the store named.
-        let expect = Expect { etag: answer.etag, version: answer.version };
+        let expect = Expect::default().with_etag(answer.etag()).with_version(answer.version());
         let head = client.head("clips/0001.mp4", &expect, budget).wait();
         let (part, body) = client.get("clips/0001.mp4", Some((0, 99)), &expect, body, budget).wait();
     }
@@ -123,7 +123,8 @@ match put.expect("an error means nothing was sent").end {
 
 ## Settings
 
-Settings on the builder cover what a long-running program needs:
+Setters on the builder, named after the settings, cover what a
+long-running program needs:
 
 - `credentials_file`: a file the client rereads its keys from. Temporary
   keys expire, and a client that only has the keys it was built with stops

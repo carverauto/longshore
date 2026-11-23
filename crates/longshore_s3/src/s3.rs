@@ -15,9 +15,9 @@
 //! does not depend on object size.
 
 use crate::creds::{Credentials, TOKEN_MAX};
-use crate::multipart::{self, PartTag, UploadId, PART_NUMBER_MAX, UPLOAD_ID_MAX};
+use crate::multipart::{self, PartTag, UploadId, PART_NUMBER_MAX};
 use crate::options::{Options, NAME_MAX, OPTIONS_MAX};
-use crate::report::{Report, VERSION_ID_MAX};
+use crate::report::Report;
 use crate::retry::{classify, Class, STATUS_PRECONDITION_FAILED};
 use crate::sigv4::{self, authorization, uri_encode, EMPTY_SHA256, UNSIGNED_PAYLOAD};
 use crate::stat::Stat;
@@ -25,125 +25,6 @@ use crate::time::{amz_date, parse_http_date};
 use longshore_common::io::{BufId, Completion, Io, Op, Token};
 use longshore_http_client::client::{self, Client, Error, Handled, Request};
 use std::net::SocketAddr;
-
-pub const KEY_ENCODED_MAX: usize = 512;
-/// A bucket name's longest length.
-pub const BUCKET_MAX: usize = 63;
-/// A request path: the bucket when it is addressed there, then the key.
-const PATH_MAX: usize = 1 + BUCKET_MAX + KEY_ENCODED_MAX;
-/// The longest continuation token a listing can be resumed with, once
-/// percent-encoded.
-pub const LIST_TOKEN_ENCODED_MAX: usize = 1024;
-/// A slot's request target: a path, or a listing's query with a token.
-const TARGET_MAX: usize = PATH_MAX + b"continuation-token=&".len() + LIST_TOKEN_ENCODED_MAX;
-/// Room for a slot's query: `partNumber=10000&uploadId=` and an upload id,
-/// or `versionId=` and a version id, with every byte percent-encoded.
-const QUERY_MAX: usize = {
-    let multipart = 32 + 3 * UPLOAD_ID_MAX;
-    let version = b"versionId=".len() + 3 * VERSION_ID_MAX;
-    if multipart > version {
-        multipart
-    } else {
-        version
-    }
-};
-/// A credentials file must be smaller than this and than the HTTP buffer
-/// size; a larger one is refused rather than read in part.
-pub const CREDENTIALS_FILE_MAX: u32 = 8192;
-
-const CHECKSUM_HEADER: &str = "x-amz-checksum-crc64nvme";
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Provider {
-    /// Waiting to reread at this time.
-    Idle {
-        at: u64,
-    },
-    Reading,
-    /// A validation listing signed with the candidate is in progress.
-    Validating,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Kind {
-    Store {
-        no_clobber: bool,
-    },
-    Fetch {
-        range: Option<(u64, u64)>,
-    },
-    Erase,
-    List,
-    /// Begin a multipart upload, asking for whole-object checksums if set.
-    Begin {
-        checksums: bool,
-    },
-    /// Store one part; its number is in the slot's query.
-    Part,
-    Complete,
-    Abort,
-    /// Ask about an object without fetching it.
-    Stat,
-    /// Copy inside the store; the source is in the slot's query field.
-    Copy,
-    /// Erase the keys named in the body.
-    EraseMany,
-}
-
-impl Kind {
-    /// The request carries the caller's bytes as an object or part of one.
-    fn stores_bytes(self) -> bool {
-        matches!(self, Kind::Store { .. } | Kind::Part)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum State {
-    Free,
-    InFlight,
-    /// Waiting to (re)try at this time.
-    Waiting {
-        until: u64,
-    },
-    /// Finished; the slot's `outcome` is waiting to be collected.
-    Finished,
-}
-
-#[derive(Clone, Copy)]
-struct Slot {
-    state: State,
-    /// The result, once `state` is `Finished`.
-    outcome: Outcome,
-    token: u64,
-    kind: Kind,
-    path: [u8; TARGET_MAX],
-    path_len: usize,
-    /// Encoded query of a multipart request, in the sorted order signing
-    /// requires. For a copy, the source as its header carries it. Empty
-    /// for every other kind.
-    query: [u8; QUERY_MAX],
-    query_len: usize,
-    /// Optional headers of a store or of beginning an upload.
-    options: Options,
-    body: Option<(BufId, u32)>,
-    response_buf: Option<BufId>,
-    attempts: u32,
-    delays: u32,
-    /// Times this operation waited for an address without starting an attempt.
-    address_waits: u32,
-    /// Sign with the candidate credentials (the validation request only).
-    candidate: bool,
-    /// A retried conditional store was refused as already existing: this
-    /// attempt asks for the stored object's checksum to see whether an
-    /// earlier attempt of the same operation is what created it.
-    comparing: bool,
-    /// CRC-64/NVME of the body, computed once and reused by every attempt.
-    crc: Option<u64>,
-    /// The caller's SHA-256 of the body, sent instead of a CRC-64/NVME.
-    sha256: Option<[u8; 32]>,
-    /// Set for `put`, `head` and `get`, which end with a [`Report`].
-    exact: Option<exact::Exact>,
-}
 
 pub struct S3 {
     /// What every request path starts with: empty, or `/bucket` when the
@@ -160,40 +41,49 @@ pub struct S3 {
     provider: Provider,
     /// Connections use TLS.
     secure: bool,
-    /// Times new credentials were validated and adopted.
-    pub credential_rotations: u64,
-    /// Times the file could not be read or parsed, or its credentials were refused.
-    pub credential_failures: u64,
-    /// Times a retried conditional store was refused and the stored object's
-    /// checksum was fetched to decide whose object it is.
-    pub store_comparisons: u64,
-    /// Connections retired because their address's segment size ranked too
-    /// small, when the resolver prefers large segments.
-    pub small_segment_retired: u64,
+    credential_rotations: u64,
+    credential_failures: u64,
+    store_comparisons: u64,
+    small_segment_retired: u64,
     /// The resolver's cycle count when its answer was last acted on.
     resolver_cycles: u64,
 }
 
 impl S3 {
     /// End the operation in slot `i` with `outcome`.
-    fn finish(&mut self, i: usize, outcome: Outcome) {
-        self.slots[i].outcome = outcome;
+    fn finish(&mut self, i: usize, outcome: &Outcome) {
+        self.slots[i].outcome = *outcome;
         self.slots[i].state = State::Finished;
     }
 }
 
 mod attempt;
+mod checksum;
+mod config;
+mod consts;
 mod exact;
+mod head;
+mod kind;
 mod multipart_ops;
 mod object_ops;
 mod outcome;
+mod provider;
 mod rotation;
+mod slot;
+mod state;
 mod submit;
 mod types;
 pub use types::*;
 
+pub use consts::{BUCKET_MAX, CREDENTIALS_FILE_MAX, KEY_ENCODED_MAX, LIST_TOKEN_ENCODED_MAX};
+use consts::{CHECKSUM_HEADER, PATH_MAX, QUERY_MAX, TARGET_MAX};
+use kind::Kind;
+use provider::Provider;
+use slot::Slot;
+use state::State;
+
 impl S3 {
-    pub fn new(#[allow(unused_mut)] mut cfg: Config) -> S3 {
+    pub fn new(cfg: Config) -> S3 {
         assert!(cfg.attempts_max >= 1 && cfg.requests_max >= 1);
         // The signature's fixed buffers hold a region of this length with room to spare.
         assert!(cfg.region.len() <= 64, "region is longer than 64 bytes");
@@ -209,6 +99,9 @@ impl S3 {
             }
             None => String::new(),
         };
+        // Only the TLS build takes its setup out of `cfg`.
+        #[cfg(feature = "tls")]
+        let mut cfg = cfg;
         #[cfg(feature = "tls")]
         let (secure, client) = (
             cfg.tls.is_some(),
@@ -297,16 +190,46 @@ impl S3 {
             io.measure_segment_sizes(keep.is_some());
             r.set_prefer_large_segments(keep);
             if keep.is_some() {
-                self.client.retire_unmeasured(0);
+                let _: u32 = self.client.retire_unmeasured(0);
                 let floor = r.segment_floor(0);
-                self.small_segment_retired += self.client.retire_below(0, floor) as u64;
+                self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
             }
         }
     }
 
+    /// Times new credentials were validated and adopted.
+    #[inline]
+    #[must_use]
+    pub const fn credential_rotations(&self) -> u64 {
+        self.credential_rotations
+    }
+
+    /// Times the file could not be read or parsed, or its credentials were refused.
+    #[inline]
+    #[must_use]
+    pub const fn credential_failures(&self) -> u64 {
+        self.credential_failures
+    }
+
+    /// Times a retried conditional store was refused and the stored object's
+    /// checksum was fetched to decide whose object it is.
+    #[inline]
+    #[must_use]
+    pub const fn store_comparisons(&self) -> u64 {
+        self.store_comparisons
+    }
+
+    /// Connections retired because their address's segment size ranked too
+    /// small, when the resolver prefers large segments.
+    #[inline]
+    #[must_use]
+    pub const fn small_segment_retired(&self) -> u64 {
+        self.small_segment_retired
+    }
+
     /// HTTP connections opened so far.
     pub fn connects(&self) -> u64 {
-        self.client.connects
+        self.client.connects()
     }
 
     /// Operations not yet collected.
@@ -339,9 +262,13 @@ impl S3 {
     /// Feed a completion. Returns false if it belongs to neither the HTTP
     /// client nor the resolver.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
-        if let Some(f) = self.cfg.credentials_file.filter(|f| f.token == c.token.0) {
+        if let Some(f) = self
+            .cfg
+            .credentials_file
+            .filter(|f| f.token == c.token().get())
+        {
             if self.provider == Provider::Reading {
-                self.on_credentials_read(io, f, c.result);
+                self.on_credentials_read(io, &f, c.result());
             }
             return true;
         }
@@ -349,11 +276,11 @@ impl S3 {
             if r.on_completion(io, c) {
                 // A new answer: replace connections it ranks too small, and
                 // open one to each address worth measuring.
-                if r.cycles != self.resolver_cycles {
-                    self.resolver_cycles = r.cycles;
+                if r.cycles() != self.resolver_cycles {
+                    self.resolver_cycles = r.cycles();
                     let floor = r.segment_floor(0);
-                    self.small_segment_retired += self.client.retire_below(0, floor) as u64;
-                    self.client.retire_some(0, r.probes_wanted(0) as u32);
+                    self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
+                    let _: u32 = self.client.retire_some(0, r.probes_wanted(0) as u32);
                 }
                 return true;
             }
@@ -361,24 +288,24 @@ impl S3 {
         let handled = self.client.on_completion(io, c);
         // An address that cannot be connected to: let the resolver move to
         // the other family if the name has one.
-        if let Some(addr) = self.client.connect_failure.take() {
+        if let Some(addr) = self.client.take_connect_failure() {
             if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
                 r.connect_failed(0, addr.ip());
             }
         }
         // A measured connection: tell the resolver its address's segment
         // size, and stop reusing connections it now ranks too small.
-        if let Some((addr, segment)) = self.client.connected.take() {
+        if let Some((addr, segment)) = self.client.take_connected() {
             if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
                 let floor = r.connected(0, addr.ip(), segment);
-                self.small_segment_retired += self.client.retire_below(0, floor) as u64;
+                self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
             }
         }
         match handled {
             Handled::NotMine => false,
             Handled::Pending => true,
             Handled::Done(d) => {
-                self.on_attempt_done(io, d.token as usize, d.result, d.sent);
+                self.on_attempt_done(io, d.token() as usize, d.result(), d.sent());
                 self.check_validation(io);
                 true
             }
@@ -394,8 +321,12 @@ impl S3 {
             if now >= at {
                 self.provider = Provider::Reading;
                 let len = self.credentials_read_len();
+                #[expect(
+                    clippy::expect_used,
+                    reason = "Limits::ops_max leaves the credentials read a slot, and only one is in flight"
+                )]
                 io.submit(
-                    Token(f.token),
+                    Token::new(f.token),
                     Op::ReadFile {
                         file: f.file,
                         buf: f.buf,

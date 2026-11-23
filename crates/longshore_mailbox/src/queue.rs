@@ -7,7 +7,7 @@
 //! atomic close.
 
 use crate::sync::{
-    AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Mutex, Ordering, Thread, UnsafeCell,
+    unpoisoned, AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Mutex, Ordering, Thread, UnsafeCell,
 };
 use core::fmt;
 use core::marker::PhantomData;
@@ -31,6 +31,10 @@ const PARK_RECV: u8 = 2;
 
 /// Building a mailbox failed because the `Io` backend provided no waker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a unit struct has no fields to make private"
+)]
 pub struct NoWaker;
 
 impl fmt::Display for NoWaker {
@@ -130,7 +134,7 @@ pub struct QueueSender<M: Copy> {
 
 impl<M: Copy> Clone for QueueSender<M> {
     fn clone(&self) -> Self {
-        self.shared.senders.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.shared.senders.fetch_add(1, Ordering::Relaxed);
         Self {
             shared: self.shared.clone(),
         }
@@ -225,13 +229,13 @@ fn build_queue<M: Copy>(
 /// Build a bounded lock-free MPSC queue without an `Io` backend, for
 /// [`QueueReceiver::recv_parked`] / [`QueueReceiver::wait_stop`].
 pub fn queue_parked<M: Copy>(capacity: usize) -> (QueueSender<M>, QueueReceiver<M>) {
-    build_queue(Arc::new(NoopWake), capacity, Token(0), PARK_RECV)
+    build_queue(Arc::new(NoopWake), capacity, Token::new(0), PARK_RECV)
 }
 
 impl<M: Copy> QueueSender<M> {
     fn unpark_if_parked(&self) {
         if self.shared.notify.swap(NOTIFY_SIGNALED, Ordering::AcqRel) == NOTIFY_PARKED {
-            let guard = self.shared.parker.lock().expect("parker lock");
+            let guard = unpoisoned(self.shared.parker.lock());
             if let Some(t) = &*guard {
                 t.unpark();
             }
@@ -293,7 +297,7 @@ impl<M: Copy> QueueSender<M> {
         let slot = &self.shared.slots[idx];
         debug_assert_eq!(slot.seq.load(Ordering::Acquire), pos);
         slot.val.with_mut(|p| unsafe {
-            (*p).write(Entry::Msg(msg));
+            let _: &mut Entry<M> = (*p).write(Entry::Msg(msg));
         });
         slot.seq.store(pos + 1, Ordering::Release);
         self.signal_msg();
@@ -329,7 +333,7 @@ impl<M: Copy> QueueSender<M> {
             let slot = &self.shared.slots[idx];
             debug_assert_eq!(slot.seq.load(Ordering::Acquire), pos);
             slot.val.with_mut(|p| unsafe {
-                (*p).write(Entry::Stop);
+                let _: &mut Entry<M> = (*p).write(Entry::Stop);
             });
             slot.seq.store(pos + 1, Ordering::Release);
         }

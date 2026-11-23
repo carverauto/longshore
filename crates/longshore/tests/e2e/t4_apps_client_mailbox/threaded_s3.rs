@@ -8,58 +8,47 @@
 //! preallocated waiters, credentials reload, and graceful `Drop` `stop`).
 
 use super::super::harness::{HttpStoreServer, TempDir};
-use longshore::client::Builder;
+use longshore::client::{Builder, Client};
 use longshore::io::alloc_guard::sealed;
 use longshore::mailbox::block_on;
 use longshore::store::creds::Credentials;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Waker};
+use std::task::{Context, Poll, Waker};
 use std::thread;
 
 fn creds(ak: &str, sk: &str) -> Credentials {
     Credentials::new(ak, sk).expect("creds")
 }
 
-#[test]
-fn t4_09_threaded_s3_client_mailbox_sealed_detach_and_reload() {
-    let store = HttpStoreServer::start_plain().unwrap();
-    let tmp = TempDir::new("t4_09_creds").unwrap();
-    let cred_path = tmp.file_path("creds.txt");
-    std::fs::write(
-        &cred_path,
-        "AKIAIOSFODNN7EXAMPLE\nwJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
-    )
-    .unwrap();
-
-    let mut b = Builder::new(
+/// The two-thread plain client whose credentials reload from `cred_path`.
+fn reloading_client(store: &HttpStoreServer, cred_path: &std::path::Path) -> Client {
+    let b = Builder::new(
         "127.0.0.1",
         "us-east-1",
         creds(
             "AKIAIOSFODNN7EXAMPLE",
             "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         ),
-    );
-    b.bucket_in_path = Some("mb-bucket".into());
-    b.tls = false;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.threads = 2;
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    b.waiters = 64;
-    b.credentials_file = Some(cred_path.clone());
-    b.credentials_reread_secs = 1;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    )
+    .bucket_in_path(Some("mb-bucket".into()))
+    .tls(false)
+    .port(store.port())
+    .address(Some(store.addr()))
+    .threads(2)
+    .buffers(4)
+    .buffer_size(16 * 1024)
+    .connections(4)
+    .operations(8)
+    .waiters(64)
+    .credentials_file(Some(cred_path.to_path_buf()))
+    .credentials_reread_secs(1)
+    .portable(true);
+    b.build().expect("build S3 client on mailbox")
+}
 
-    let client = b.build().expect("build S3 client on mailbox");
-
-    // 1. Pre-warm buffers & run steady-state store/fetch under alloc_guard::sealed.
+/// Pre-warms two buffers and runs a store and fetch under `alloc_guard::sealed`.
+fn sealed_store_fetch(client: &Client) {
     let mut b0 = client.buffer_blocking();
     let b1 = client.buffer_blocking();
     let payload = [0x55u8; 256];
@@ -75,8 +64,10 @@ fn t4_09_threaded_s3_client_mailbox_sealed_detach_and_reload() {
     assert_eq!(&b1.as_slice()[..payload.len()], &payload);
     drop(b0);
     drop(b1);
+}
 
-    // 2. Concurrent blocking (.wait) and async (mailbox::block_on) callers across 4 threads.
+/// Concurrent blocking (`.wait`) and async (`mailbox::block_on`) callers across 4 threads.
+fn mixed_callers_round_trip(client: &Client) {
     let mut handles = Vec::new();
     for tid in 0..4usize {
         let c = client.clone();
@@ -106,17 +97,24 @@ fn t4_09_threaded_s3_client_mailbox_sealed_detach_and_reload() {
     for h in handles {
         h.join().unwrap();
     }
+}
 
-    // 3. Caller future detach with lent Buffers: poll once, then drop mid-flight.
-    // The I/O thread must free the mailbox slot first and return the lent Buffer
-    // back to the lane so subsequent callers can borrow all 8 buffers (2 * 4) again.
+/// Caller future detach with lent Buffers: poll once, then drop mid-flight.
+/// The I/O thread must free the mailbox slot first and return the lent Buffer
+/// back to the lane so subsequent callers can borrow all 8 buffers (2 * 4) again.
+fn detached_stores_return_buffers(client: &Client) {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
     for i in 0..4usize {
         let mut buf = client.buffer_blocking();
         buf.as_mut_slice()[..4].copy_from_slice(b"drop");
         let mut fut = client.store(&format!("detached-{i}"), buf, 4);
-        let _ = Pin::new(&mut fut).poll(&mut cx);
+        match Pin::new(&mut fut).poll(&mut cx) {
+            // Dropped in flight next: the detach is what this exercises.
+            Poll::Pending => {}
+            // Finished already: nothing is left to detach, which is also fine.
+            Poll::Ready(_) => {}
+        }
         drop(fut);
     }
     // Verify all 8 buffers across the 2 threads can still be borrowed simultaneously.
@@ -126,11 +124,28 @@ fn t4_09_threaded_s3_client_mailbox_sealed_detach_and_reload() {
     }
     assert_eq!(held.len(), 8);
     drop(held);
+}
 
-    // 4. Verify credential reload counter is accessible and clean, and Drop sends in-band stop.
+#[test]
+fn t4_09_threaded_s3_client_mailbox_sealed_detach_and_reload() {
+    let store = HttpStoreServer::start_plain().unwrap();
+    let tmp = TempDir::new("t4_09_creds").unwrap();
+    let cred_path = tmp.file_path("creds.txt");
+    std::fs::write(
+        &cred_path,
+        "AKIAIOSFODNN7EXAMPLE\nwJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
+    )
+    .unwrap();
+
+    let client = reloading_client(&store, &cred_path);
+    sealed_store_fetch(&client);
+    mixed_callers_round_trip(&client);
+    detached_stores_return_buffers(&client);
+
+    // Verify credential reload counter is accessible and clean, and Drop sends in-band stop.
     let (ok_reloads, fail_reloads) = client.credential_reloads();
     assert_eq!(fail_reloads, 0);
-    let _ = ok_reloads;
+    let _: u64 = ok_reloads;
 
     // Queue final operations right before dropping Client handle to test graceful stop drain.
     let mut final_buf = client.buffer_blocking();

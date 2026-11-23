@@ -148,7 +148,7 @@ impl SimDisk {
                     buf_off,
                 } => {
                     let lo = file_off.max(w_off);
-                    let hi = read_end.min(w_off + w_len as u64);
+                    let hi = read_end.min(w_off + u64::from(w_len));
                     if hi > lo {
                         let d0 = (lo - file_off) as usize;
                         let count = (hi - lo) as usize;
@@ -203,7 +203,7 @@ impl SimDisk {
                 buf_off,
             } = entry.kind
             {
-                if file_off >= w_off && file_off < w_off + w_len as u64 {
+                if file_off >= w_off && file_off < w_off + u64::from(w_len) {
                     self.log_bytes[buf_off + (file_off - w_off) as usize] ^= mask;
                     flipped = true;
                 }
@@ -216,7 +216,7 @@ impl SimDisk {
     }
 
     pub(super) fn settle_write_log(&mut self, rng: &mut Prng) {
-        let s = self.sector_size as u64;
+        let s = u64::from(self.sector_size);
         for idx in 0..self.log_len {
             let entry = self.log_entries[idx];
             let ii = entry.inode as usize;

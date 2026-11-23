@@ -28,3 +28,6 @@ path = "tests/stream/plain.rs"
 [[test]]
 name = "stream_tls"
 path = "tests/stream/tls.rs"
+
+[lints]
+workspace = true

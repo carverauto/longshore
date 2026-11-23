@@ -13,8 +13,8 @@ impl Client {
     /// gave none (the body is then kept only if it fits there).
     pub(super) fn chunked_area(&self, i: usize) -> (BufId, u32) {
         match self.conns[i].response_buf {
-            Some(buf) => (buf, self.cfg.buffer_size),
-            None => (self.head_buf(i), self.cfg.head_max),
+            Some(buf) => (buf, self.cfg.buffer_size()),
+            None => (self.head_buf(i), self.cfg.head_max()),
         }
     }
 
@@ -30,7 +30,7 @@ impl Client {
         let extra = have - head_len;
         let base = match self.conns[i].response_buf {
             Some(dst) => {
-                if extra > self.cfg.buffer_size {
+                if extra > self.cfg.buffer_size() {
                     return self.fail(io, i, Error::BodyTooLarge);
                 }
                 // Move the raw bytes that came with the head into the body buffer.
@@ -90,8 +90,8 @@ impl Client {
     /// Where the end of a chunked body's framing is read once the caller's
     /// buffer is full: the head buffer, after the head it still holds.
     pub(super) fn chunked_tail_area(&self, i: usize) -> (u32, u32) {
-        let head_len = self.conns[i].fields.map_or(0, |f| f.head_len as u32);
-        (head_len, self.cfg.head_max - head_len)
+        let head_len = self.conns[i].fields.map_or(0, |f| f.head_len() as u32);
+        (head_len, self.cfg.head_max() - head_len)
     }
 
     pub(super) fn recv_chunked_tail<IO: Io>(&mut self, io: &mut IO, i: usize) -> Handled {

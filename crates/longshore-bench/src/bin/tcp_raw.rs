@@ -22,6 +22,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 fn main() {
     linux::main()
 }
@@ -48,7 +52,7 @@ mod linux {
         let mut mask = [0u64; 16];
         mask[cpu / 64] |= 1 << (cpu % 64);
         if unsafe { sched_setaffinity(0, core::mem::size_of_val(&mask), mask.as_ptr()) } != 0 {
-            die(&format!(
+            die(format_args!(
                 "cannot pin to cpu {cpu}: {}",
                 std::io::Error::last_os_error()
             ));
@@ -57,7 +61,7 @@ mod linux {
 
     fn thread_cpu_secs() -> f64 {
         let mut ts = [0i64; 2];
-        unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        let _: i32 = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
         ts[0] as f64 + ts[1] as f64 / 1e9
     }
 
@@ -79,10 +83,7 @@ mod linux {
         (total - idle, total)
     }
 
-    fn die(msg: &str) -> ! {
-        eprintln!("tcp_raw: {msg}");
-        std::process::exit(1)
-    }
+    use crate::die::{die, OrDie};
 
     struct Args {
         cmd: String,
@@ -111,10 +112,10 @@ mod linux {
         while let Some(k) = it.next() {
             let v = it
                 .next()
-                .unwrap_or_else(|| die(&format!("missing value for {k}")));
+                .unwrap_or_else(|| die(format_args!("missing value for {k}")));
             let num = || {
                 v.parse::<usize>()
-                    .unwrap_or_else(|_| die(&format!("bad number for {k}: {v}")))
+                    .unwrap_or_else(|_| die(format_args!("bad number for {k}: {v}")))
             };
             match k.as_str() {
                 "--addr" => a.addr = v,
@@ -124,7 +125,7 @@ mod linux {
                 "--chunk" => a.chunk = num(),
                 "--secs" => a.secs = num() as u64,
                 "--cpu" => a.cpu = Some(num()),
-                _ => die(&format!("unknown flag {k}")),
+                _ => die(format_args!("unknown flag {k}")),
             }
         }
         a
@@ -137,7 +138,7 @@ mod linux {
             "source" => peer(a.port, true),
             "send" => run(&a, true),
             "recv" => run(&a, false),
-            other => die(&format!("unknown command {other}")),
+            other => die(format_args!("unknown command {other}")),
         }
     }
 
@@ -145,14 +146,14 @@ mod linux {
     /// kernel-to-user copy so the sink stays ahead of a zero-copy sender.
     fn peer(port: u16, source: bool) {
         let l = TcpListener::bind(("0.0.0.0", port))
-            .unwrap_or_else(|e| die(&format!("bind {port}: {e}")));
+            .unwrap_or_else(|e| die(format_args!("bind {port}: {e}")));
         eprintln!(
             "tcp_raw: {} listening on {port}",
             if source { "source" } else { "sink" }
         );
         for s in l.incoming() {
             let Ok(mut s) = s else { continue };
-            std::thread::spawn(move || {
+            let _: std::thread::JoinHandle<()> = std::thread::spawn(move || {
                 let mut buf = vec![0x5au8; 1 << 20];
                 if source {
                     while s.write_all(&buf).is_ok() {}
@@ -164,7 +165,19 @@ mod linux {
         }
     }
 
-    fn run(a: &Args, sending: bool) {
+    /// The sockets, buffers and ring a run drives, set up before timing.
+    struct Setup {
+        /// Kept open for the run; the ring refers to their descriptors.
+        _socks: Vec<TcpStream>,
+        fds: Vec<i32>,
+        bufs: Vec<Vec<u8>>,
+        ring: Ring,
+        unbatched: bool,
+        zc: bool,
+        fixed_buf: bool,
+    }
+
+    fn setup(a: &Args, sending: bool) -> Setup {
         if let Some(c) = a.cpu {
             pin(c);
         }
@@ -173,13 +186,13 @@ mod linux {
         let fixed_buf = a.mode == "zc-fixed";
         match (sending, a.mode.as_str()) {
             (_, "unbatched" | "batched") | (true, "zc" | "zc-fixed") => {}
-            _ => die(&format!("mode {} is not valid for {}", a.mode, a.cmd)),
+            _ => die(format_args!("mode {} is not valid for {}", a.mode, a.cmd)),
         }
 
         let socks: Vec<TcpStream> = (0..a.conns)
             .map(|_| {
                 TcpStream::connect(&a.addr)
-                    .unwrap_or_else(|e| die(&format!("connect {}: {e}", a.addr)))
+                    .unwrap_or_else(|e| die(format_args!("connect {}: {e}", a.addr)))
             })
             .collect();
         let fds: Vec<i32> = socks.iter().map(|s| s.as_raw_fd()).collect();
@@ -192,10 +205,9 @@ mod linux {
         } else {
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN
         };
-        let mut ring = Ring::new(256, flags).unwrap_or_else(|e| die(&e.to_string()));
+        let mut ring = Ring::new(256, flags).unwrap_or_else(|e| die(e));
         if !unbatched {
-            ring.register_files(&fds)
-                .unwrap_or_else(|e| die(&e.to_string()));
+            ring.register_files(&fds).unwrap_or_else(|e| die(e));
         }
         if fixed_buf {
             let iov: Vec<iovec> = bufs
@@ -205,13 +217,33 @@ mod linux {
                     iov_len: b.len(),
                 })
                 .collect();
-            ring.register_buffers(&iov)
-                .unwrap_or_else(|e| die(&e.to_string()));
+            ring.register_buffers(&iov).unwrap_or_else(|e| die(e));
         }
+        Setup {
+            _socks: socks,
+            fds,
+            bufs,
+            ring,
+            unbatched,
+            zc,
+            fixed_buf,
+        }
+    }
 
-        let make = |i: usize, bufs: &mut [Vec<u8>]| -> io_uring_sqe {
+    fn run(a: &Args, sending: bool) {
+        let Setup {
+            _socks,
+            fds,
+            mut bufs,
+            mut ring,
+            unbatched,
+            zc,
+            fixed_buf,
+        } = setup(a, sending);
+
+        let make = |i: usize, buffers: &mut [Vec<u8>]| -> io_uring_sqe {
             let mut s = io_uring_sqe {
-                addr: bufs[i].as_mut_ptr() as u64,
+                addr: buffers[i].as_mut_ptr() as u64,
                 len: a.chunk as u32,
                 user_data: i as u64,
                 ..Default::default()
@@ -219,7 +251,7 @@ mod linux {
             if unbatched {
                 s.fd = fds[i];
             } else {
-                s.fd = i as i32;
+                s.fd = fixed_fd(u32::try_from(i).or_die("connection index"));
                 s.flags = IOSQE_FIXED_FILE;
             }
             if sending {
@@ -244,31 +276,58 @@ mod linux {
 
         for i in 0..a.conns {
             ring.push(make(i, &mut bufs))
-                .expect("sq sized for all connections");
+                .or_die("sq sized for all connections");
             if unbatched {
-                ring.enter(0).unwrap_or_else(|e| die(&e.to_string()));
+                let _: u32 = ring.enter(0).unwrap_or_else(|e| die(e));
             }
         }
 
+        let t = measure(a, &mut ring, unbatched, &make, &mut bufs);
+        report(a, &t, &ring);
+        // Operations are still in flight and reference `bufs`; exit without unwinding.
+        std::process::exit(0);
+    }
+
+    /// What the timed loop counted, and how long it took.
+    struct Totals {
+        bytes: u64,
+        ops: u64,
+        notifs: u64,
+        copied: u64,
+        wall: f64,
+        cpu: f64,
+        core0: Option<(u64, u64)>,
+    }
+
+    /// The timed loop: keep one operation in flight per connection until
+    /// `a.secs` have passed.
+    fn measure(
+        a: &Args,
+        ring: &mut Ring,
+        unbatched: bool,
+        make: &impl Fn(usize, &mut [Vec<u8>]) -> io_uring_sqe,
+        bufs: &mut [Vec<u8>],
+    ) -> Totals {
         let (mut bytes, mut ops, mut notifs, mut copied) = (0u64, 0u64, 0u64, 0u64);
         let start = Instant::now();
         let cpu0 = thread_cpu_secs();
         let core0 = a.cpu.map(core_busy_and_total);
         let deadline = start + Duration::from_secs(a.secs);
         while Instant::now() < deadline {
-            ring.enter(1)
-                .unwrap_or_else(|e| die(&format!("io_uring_enter: {e}")));
+            let _: u32 = ring
+                .enter(1)
+                .unwrap_or_else(|e| die(format_args!("io_uring_enter: {e}")));
             while let Some(c) = ring.pop() {
                 if c.flags & IORING_CQE_F_NOTIF != 0 {
                     // Second completion of a zero-copy send: buffer released.
                     notifs += 1;
-                    if c.res as u32 & IORING_NOTIF_USAGE_ZC_COPIED != 0 {
+                    if notif_flags(c.res) & IORING_NOTIF_USAGE_ZC_COPIED != 0 {
                         copied += 1;
                     }
                     continue;
                 }
                 if c.res <= 0 {
-                    die(&format!(
+                    die(format_args!(
                         "{} on connection {} failed: {}",
                         a.cmd,
                         c.user_data,
@@ -279,10 +338,10 @@ mod linux {
                         }
                     ));
                 }
-                bytes += c.res as u64;
+                bytes += u64::from(c.res.unsigned_abs());
                 ops += 1;
-                ring.push(make(c.user_data as usize, &mut bufs))
-                    .expect("one op in flight per connection");
+                ring.push(make(c.user_data as usize, bufs))
+                    .or_die("one op in flight per connection");
                 if unbatched {
                     // One completion per syscall: the next `enter(1)` submits this
                     // single SQE and waits again.
@@ -292,9 +351,23 @@ mod linux {
         }
         let wall = start.elapsed().as_secs_f64();
         let cpu = thread_cpu_secs() - cpu0;
-        let gb = bytes as f64 / 1e9;
+        Totals {
+            bytes,
+            ops,
+            notifs,
+            copied,
+            wall,
+            cpu,
+            core0,
+        }
+    }
+
+    /// Print one run as one JSON object.
+    fn report(a: &Args, t: &Totals, ring: &Ring) {
+        let (wall, cpu, ops) = (t.wall, t.cpu, t.ops);
+        let gb = t.bytes as f64 / 1e9;
         // Whole-core utilization of the pinned CPU, including interrupt time.
-        let core_util = match (a.cpu, core0) {
+        let core_util = match (a.cpu, t.core0) {
             (Some(c), Some((b0, t0))) => {
                 let (b1, t1) = core_busy_and_total(c);
                 if t1 > t0 {
@@ -307,9 +380,7 @@ mod linux {
         };
         println!(
             "{{\"cmd\":\"{}\",\"mode\":\"{}\",\"arch\":\"{}\",\"conns\":{},\"chunk\":{},\"secs\":{:.2},\"gb\":{:.2},\"gb_per_s\":{:.2},\"thread_cpu\":{:.2},\"core_util\":{:.2},\"gb_per_cpu_s\":{:.2},\"ops\":{},\"enters\":{},\"ops_per_enter\":{:.2},\"zc_notifs\":{},\"zc_copied\":{}}}",
-            a.cmd, a.mode, std::env::consts::ARCH, a.conns, a.chunk, wall, gb, gb / wall, cpu / wall, core_util, gb / cpu, ops, ring.enters, ops as f64 / ring.enters as f64, notifs, copied
+            a.cmd, a.mode, std::env::consts::ARCH, a.conns, a.chunk, wall, gb, gb / wall, cpu / wall, core_util, gb / cpu, ops, ring.enters(), ops as f64 / ring.enters() as f64, t.notifs, t.copied
         );
-        // Operations are still in flight and reference `bufs`; exit without unwinding.
-        std::process::exit(0);
     }
 }

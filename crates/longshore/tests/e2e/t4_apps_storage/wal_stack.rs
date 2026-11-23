@@ -19,8 +19,8 @@ pub(super) struct StackWal {
     read_buf: BufId,
     path_buf: BufId,
     scratch_buf: BufId,
-    pub cursor: u64,
-    pub next_seq: u64,
+    cursor: u64,
+    next_seq: u64,
     next_tok: u64,
 }
 
@@ -38,8 +38,23 @@ impl StackWal {
         }
     }
 
+    /// File offset the next record is appended at.
+    pub(super) fn cursor(&self) -> u64 {
+        self.cursor
+    }
+
+    /// Sequence number of the next record.
+    pub(super) fn next_seq(&self) -> u64 {
+        self.next_seq
+    }
+
+    /// Append the next record at file offset `cursor`.
+    pub(super) fn set_cursor(&mut self, cursor: u64) {
+        self.cursor = cursor;
+    }
+
     fn tok(&mut self) -> Token {
-        let t = Token(self.next_tok);
+        let t = Token::new(self.next_tok);
         self.next_tok = self.next_tok.wrapping_add(1);
         t
     }
@@ -50,8 +65,8 @@ impl StackWal {
         for _ in 0..2048 {
             sim.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
-                if c.token == tok {
-                    return c.result;
+                if c.token() == tok {
+                    return c.result();
                 }
             }
         }
@@ -85,18 +100,16 @@ impl StackWal {
         reserve: bool,
     ) -> i32 {
         let path_len = self.write_path(sim, self.path_buf, Some(seg));
-        let flags = OpenFlags {
-            read: true,
-            write: true,
-            create,
-            direct: true,
-            ..Default::default()
-        };
+        let flags = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(create)
+            .with_direct(true);
         let res = self.run_one(
             sim,
             out,
             Op::FileOpen {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 path_buf: self.path_buf,
                 path_off: 0,
                 path_len,
@@ -105,7 +118,7 @@ impl StackWal {
         );
         if res >= 0 && reserve {
             let op = Op::FileReserve {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 file_off: 0,
                 len: u64::from(self.block_size) * 16,
                 keep_size: false,
@@ -116,7 +129,13 @@ impl StackWal {
     }
 
     pub(super) fn close_seg(&mut self, sim: &mut SimIo, out: &mut Completions) -> i32 {
-        self.run_one(sim, out, Op::FileClose { slot: FileSlot(0) })
+        self.run_one(
+            sim,
+            out,
+            Op::FileClose {
+                slot: FileSlot::new(0),
+            },
+        )
     }
 
     pub(super) fn append_chained(
@@ -136,14 +155,14 @@ impl StackWal {
         b[HEADER_LEN..HEADER_LEN + payload.len()].copy_from_slice(payload);
         let (tw, ts) = (self.tok(), self.tok());
         let w_op = Op::FileWrite {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: self.write_buf,
             off: 0,
             len: self.block_size,
             file_off: self.cursor,
         };
         let s_op = Op::FileSync {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             datasync: true,
         };
         sim.submit_chain(&[(tw, w_op), (ts, s_op)]).unwrap();
@@ -151,10 +170,10 @@ impl StackWal {
         for _ in 0..2048 {
             sim.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
-                if c.token == tw {
-                    (w, gw) = (c.result, true);
-                } else if c.token == ts {
-                    (s, gs) = (c.result, true);
+                if c.token() == tw {
+                    (w, gw) = (c.result(), true);
+                } else if c.token() == ts {
+                    (s, gs) = (c.result(), true);
                 }
             }
             if gw && gs {
@@ -162,7 +181,7 @@ impl StackWal {
             }
         }
         assert!(gw && gs, "append_chained timed out");
-        if w == self.block_size as i32 && s == 0 {
+        if w == i32::try_from(self.block_size).unwrap() && s == 0 {
             self.cursor += u64::from(self.block_size);
             self.next_seq += 1;
         }
@@ -197,30 +216,28 @@ impl StackWal {
         let dir_len = self.write_path(sim, self.path_buf, None);
         let (t1, t2, t3) = (self.tok(), self.tok(), self.tok());
         let o_op = Op::FileOpen {
-            slot: FileSlot(1),
+            slot: FileSlot::new(1),
             path_buf: self.path_buf,
             path_off: 0,
             path_len: dir_len,
-            flags: OpenFlags {
-                read: true,
-                directory: true,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE.with_read(true).with_directory(true),
         };
         let s_op = Op::FileSync {
-            slot: FileSlot(1),
+            slot: FileSlot::new(1),
             datasync: false,
         };
-        let c_op = Op::FileClose { slot: FileSlot(1) };
+        let c_op = Op::FileClose {
+            slot: FileSlot::new(1),
+        };
         sim.submit_chain(&[(t1, o_op), (t2, s_op), (t3, c_op)])
             .unwrap();
         let (mut sync_res, mut done) = (0, false);
         for _ in 0..2048 {
             sim.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
-                if c.token == t2 {
-                    sync_res = c.result;
-                } else if c.token == t3 {
+                if c.token() == t2 {
+                    sync_res = c.result();
+                } else if c.token() == t3 {
                     done = true;
                 }
             }
@@ -268,7 +285,7 @@ impl StackWal {
                     sim,
                     out,
                     Op::FileRead {
-                        slot: FileSlot(0),
+                        slot: FileSlot::new(0),
                         buf: self.read_buf,
                         off: 0,
                         len: self.block_size,
@@ -279,7 +296,7 @@ impl StackWal {
                     fault_stop = true;
                     break;
                 }
-                match check_frame(&sim.buf(self.read_buf)[..res as usize]) {
+                match check_frame(&sim.buf(self.read_buf)[..usize::try_from(res).unwrap()]) {
                     Ok(None) => break,
                     Err(()) => {
                         fault_stop = true;
@@ -293,7 +310,7 @@ impl StackWal {
                     }
                 }
             }
-            let _ = self.close_seg(sim, out);
+            let _: i32 = self.close_seg(sim, out);
         }
         if last_seq >= self.next_seq {
             self.next_seq = last_seq + 1;

@@ -14,8 +14,6 @@ use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Tok
 #[cfg(feature = "sim")]
 use longshore::sim::{Faults, SimIo};
 
-#[allow(dead_code)]
-pub const LINUX_EEXIST: i32 = 17;
 pub const LINUX_EBUSY: i32 = 16;
 pub const LINUX_EINVAL: i32 = 22;
 
@@ -25,34 +23,33 @@ pub fn file_limits(
     aligned_buffer_size: u32,
     block_size: u32,
 ) -> Limits {
-    Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 512,
-        files_max,
-        aligned_buffers,
-        aligned_buffer_size,
-        block_size,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(512)
+        .with_files_max(files_max)
+        .with_aligned_buffers(aligned_buffers)
+        .with_aligned_buffer_size(aligned_buffer_size)
+        .with_block_size(block_size)
+        .with_ops_max(16)
 }
 
 #[cfg(feature = "sim")]
 pub fn make_sim_with_disk(limits: Limits, seed: u64) -> SimIo {
     let mut sim = SimIo::new(limits, seed, Faults::default());
-    sim.setup_disk(longshore::sim::DiskConfig {
-        max_files: 32,
-        max_dirs: 16,
-        max_bytes_per_file: 1024 * 1024,
-        max_name_len: 256,
-        write_log_entries: 64,
-        write_log_bytes: 256 * 1024,
-        read_error_sectors: 16,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        longshore::sim::DiskConfig::BASE
+            .with_max_files(32)
+            .with_max_dirs(16)
+            .with_max_bytes_per_file(1024 * 1024)
+            .with_max_name_len(256)
+            .with_write_log_entries(64)
+            .with_write_log_bytes(256 * 1024)
+            .with_read_error_sectors(16)
+            .with_sector_size(512),
+    );
     sim
 }
 
@@ -91,7 +88,7 @@ pub fn open_slot(
     submit_and_wait_one(
         &mut DynIo(io),
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileOpen {
             slot,
             path_buf,
@@ -102,19 +99,63 @@ pub fn open_slot(
         10_000,
     )
     .expect("open tick")
-    .result
+    .result()
 }
 
 pub fn close_slot(io: &mut dyn Io, out: &mut Completions, tok: u64, slot: FileSlot) -> i32 {
     submit_and_wait_one(
         &mut DynIo(io),
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileClose { slot },
         10_000,
     )
     .expect("close tick")
-    .result
+    .result()
+}
+
+/// Submits `op` under `Token(tok)`, waits for it, and returns its result.
+pub fn run_op<IO: Io + ?Sized>(
+    io: &mut IO,
+    out: &mut Completions,
+    tok: u64,
+    op: Op,
+    what: &str,
+) -> i32 {
+    submit_and_wait_one(io, out, Token::new(tok), op, 10_000)
+        .expect(what)
+        .result()
+}
+
+/// Read, write, and create; `O_DIRECT` when `direct`.
+pub fn rw_create(direct: bool) -> OpenFlags {
+    OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
+        .with_direct(direct)
+}
+
+/// `FileWrite` of `len` bytes from the start of `buf` to offset 0 of slot 0.
+pub fn write_start(buf: BufId, len: u32) -> Op {
+    Op::FileWrite {
+        slot: FileSlot::new(0),
+        buf,
+        off: 0,
+        len,
+        file_off: 0,
+    }
+}
+
+/// `FileRead` of `len` bytes from offset 0 of slot 0 into the start of `buf`.
+pub fn read_start(buf: BufId, len: u32) -> Op {
+    Op::FileRead {
+        slot: FileSlot::new(0),
+        buf,
+        off: 0,
+        len,
+        file_off: 0,
+    }
 }
 
 /// Thin wrapper so `&mut dyn Io` can pass to generic `IO: Io` harness helpers.

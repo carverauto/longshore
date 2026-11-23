@@ -13,8 +13,12 @@ use longshore_stream::{IdleCheck, Step, Stream, TlsError};
 use longshore_tls::handshake::{ClientSetup, Handshake, ServerSetup};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+#[cfg(test)]
 #[path = "tls/adversarial.rs"]
 mod adversarial;
+#[cfg(test)]
+#[path = "tls/adversarial_records.rs"]
+mod adversarial_records;
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -23,39 +27,38 @@ const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 20)
 const NAME: &str = "stream.test";
 const BUF: u32 = 64 * 1024;
 
-const LISTENER: Sock = Sock(0);
-const CLIENT: Sock = Sock(1);
-const SERVER: Sock = Sock(2);
+const LISTENER: Sock = Sock::new(0);
+const CLIENT: Sock = Sock::new(1);
+const SERVER: Sock = Sock::new(2);
 
-const C_CONN: Token = Token(1);
-const C_SEND: Token = Token(2);
-const C_RECV: Token = Token(3);
-const S_ACCEPT: Token = Token(4);
-const S_SEND: Token = Token(5);
-const S_RECV: Token = Token(6);
+const C_CONN: Token = Token::new(1);
+const C_SEND: Token = Token::new(2);
+const C_RECV: Token = Token::new(3);
+const S_ACCEPT: Token = Token::new(4);
+const S_SEND: Token = Token::new(5);
+const S_RECV: Token = Token::new(6);
 
-const C_TLS_TX: BufId = BufId(0);
-const C_TLS_RX: BufId = BufId(1);
-const S_TLS_TX: BufId = BufId(2);
-const S_TLS_RX: BufId = BufId(3);
-const C_TX: BufId = BufId(4);
-const C_RX: BufId = BufId(5);
-const S_BUF: BufId = BufId(6);
-const SCRATCH: BufId = BufId(7);
+const C_TLS_TX: BufId = BufId::new(0);
+const C_TLS_RX: BufId = BufId::new(1);
+const S_TLS_TX: BufId = BufId::new(2);
+const S_TLS_RX: BufId = BufId::new(3);
+const C_TX: BufId = BufId::new(4);
+const C_RX: BufId = BufId::new(5);
+const S_BUF: BufId = BufId::new(6);
+const SCRATCH: BufId = BufId::new(7);
 
-const LIMITS: Limits = Limits {
-    sockets_max: 3,
-    buffers: 8,
-    buffer_size: BUF,
-    ops_max: 8,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(3)
+    .with_buffers(8)
+    .with_buffer_size(BUF)
+    .with_ops_max(8);
 
 struct Identity {
     cert: Vec<u8>,
     key: Vec<u8>,
 }
 
+#[cfg(test)]
 fn identity(name: &str) -> Identity {
     let k = rcgen::generate_simple_self_signed(vec![name.to_string()]).unwrap();
     Identity {
@@ -64,6 +67,7 @@ fn identity(name: &str) -> Identity {
     }
 }
 
+#[cfg(test)]
 fn setup_streams(
     seed: u64,
     faults: Faults,
@@ -72,7 +76,7 @@ fn setup_streams(
     server_name: &str,
 ) -> (SimIo, Stream, Stream, Step, Step) {
     let mut io = SimIo::new(LIMITS, seed, faults);
-    io.listen(LISTENER, ADDR).unwrap();
+    let _: SocketAddr = io.listen(LISTENER, ADDR).unwrap();
     io.submit(
         S_ACCEPT,
         Op::Accept {
@@ -96,13 +100,13 @@ fn setup_streams(
         while !(c_up && s_up) {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                match c.token {
+                match c.token() {
                     C_CONN => {
-                        assert!(c.result >= 0);
+                        assert!(c.result() >= 0);
                         c_up = true;
                     }
                     S_ACCEPT => {
-                        assert!(c.result >= 0);
+                        assert!(c.result() >= 0);
                         s_up = true;
                     }
                     other => panic!("unexpected token {other:?}"),
@@ -130,11 +134,11 @@ fn setup_streams(
         {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                match c.token {
-                    C_SEND => c_step = client.on_handshake(&mut io, true, c.result),
-                    C_RECV => c_step = client.on_handshake(&mut io, false, c.result),
-                    S_SEND => s_step = server.on_handshake(&mut io, true, c.result),
-                    S_RECV => s_step = server.on_handshake(&mut io, false, c.result),
+                match c.token() {
+                    C_SEND => c_step = client.on_handshake(&mut io, true, c.result()),
+                    C_RECV => c_step = client.on_handshake(&mut io, false, c.result()),
+                    S_SEND => s_step = server.on_handshake(&mut io, true, c.result()),
+                    S_RECV => s_step = server.on_handshake(&mut io, false, c.result()),
                     other => panic!("unexpected token {other:?}"),
                 }
             }
@@ -150,6 +154,7 @@ fn fill_pattern(buf: &mut [u8], seed: u8) {
     }
 }
 
+#[cfg(test)]
 fn drain_recv(
     io: &mut SimIo,
     stream: &mut Stream,
@@ -164,7 +169,7 @@ fn drain_recv(
             Step::Pending => return,
             Step::Done(n) => {
                 assert!(n > 0);
-                *have += n as u32;
+                *have += u32::try_from(n).unwrap();
                 if *have == total {
                     return;
                 }
@@ -176,6 +181,7 @@ fn drain_recv(
     }
 }
 
+#[cfg(test)]
 fn round_trip(
     io: &mut SimIo,
     client: &mut Stream,
@@ -198,42 +204,42 @@ fn round_trip(
         drain_recv(io, server, S_BUF, &mut s_recvd, len, len, step);
         if s_recvd == len {
             server.send(io, S_BUF, 0, len, 4096);
-            let step = client.recv(io, C_RX, 0, rx_chunk.min(len));
-            drain_recv(io, client, C_RX, &mut c_recvd, len, rx_chunk, step);
+            let client_step = client.recv(io, C_RX, 0, rx_chunk.min(len));
+            drain_recv(io, client, C_RX, &mut c_recvd, len, rx_chunk, client_step);
         }
 
         while !c_sent_done || !s_sent_done || s_recvd < len || c_recvd < len {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                match c.token {
-                    C_SEND => match client.on_send(io, c.result) {
+                match c.token() {
+                    C_SEND => match client.on_send(io, c.result()) {
                         Step::Pending => {}
                         Step::Done(n) => {
-                            assert_eq!(n as u32, len);
+                            assert_eq!(u32::try_from(n).unwrap(), len);
                             c_sent_done = true;
                         }
                         Step::Tls(e) => panic!("client send tls error: {e:?}"),
                     },
                     S_RECV => {
-                        let step = server.on_recv(io, c.result);
-                        drain_recv(io, server, S_BUF, &mut s_recvd, len, len, step);
+                        let server_step = server.on_recv(io, c.result());
+                        drain_recv(io, server, S_BUF, &mut s_recvd, len, len, server_step);
                         if s_recvd == len && !s_sent_done {
                             server.send(io, S_BUF, 0, len, 4096);
-                            let step = client.recv(io, C_RX, 0, rx_chunk.min(len));
-                            drain_recv(io, client, C_RX, &mut c_recvd, len, rx_chunk, step);
+                            let client_step = client.recv(io, C_RX, 0, rx_chunk.min(len));
+                            drain_recv(io, client, C_RX, &mut c_recvd, len, rx_chunk, client_step);
                         }
                     }
-                    S_SEND => match server.on_send(io, c.result) {
+                    S_SEND => match server.on_send(io, c.result()) {
                         Step::Pending => {}
                         Step::Done(n) => {
-                            assert_eq!(n as u32, len);
+                            assert_eq!(u32::try_from(n).unwrap(), len);
                             s_sent_done = true;
                         }
                         Step::Tls(e) => panic!("server send tls error: {e:?}"),
                     },
                     C_RECV => {
-                        let step = client.on_recv(io, c.result);
-                        drain_recv(io, client, C_RX, &mut c_recvd, len, rx_chunk, step);
+                        let client_step = client.on_recv(io, c.result());
+                        drain_recv(io, client, C_RX, &mut c_recvd, len, rx_chunk, client_step);
                     }
                     other => panic!("unexpected token {other:?}"),
                 }
@@ -271,12 +277,10 @@ fn tls_streams_survive_short_writes_partial_reads_and_delays() {
     let id = identity(NAME);
     let client_setup = ClientSetup::with_roots(&[&id.cert]).unwrap();
     let server_setup = ServerSetup::new(&[&id.cert], &id.key).unwrap();
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 300_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(300_000)
+        .with_delay(200_000);
     for seed in 0..5 {
         let (mut io, mut client, mut server, c_step, s_step) =
             setup_streams(seed, faults, &client_setup, &server_setup, NAME);
@@ -299,67 +303,70 @@ fn tls_alerts_close_notify_idle_check_and_reset() {
     let client_setup = ClientSetup::with_roots(&[&id.cert]).unwrap();
     let server_setup = ServerSetup::new(&[&id.cert], &id.key).unwrap();
 
-    // 1. Idle check skips post-handshake session tickets and sees Clean; fatal alert surfaces Alert(116).
-    let (mut io, mut client, mut server, c_step, s_step) =
-        setup_streams(11, Faults::default(), &client_setup, &server_setup, NAME);
-    assert_eq!((c_step, s_step), (Step::Done(0), Step::Done(0)));
-
     let mut out = Completions::new(8);
-    sealed(|| {
-        let mut check = client.check_idle(&mut io, SCRATCH, 0);
-        while check == IdleCheck::Pending {
-            io.tick(true, &mut out).unwrap();
-            let c = out.pop().unwrap();
-            assert_eq!(c.token, C_RECV);
-            check = client.on_idle_check(&mut io, c.result);
-        }
-        assert_eq!(check, IdleCheck::Clean);
+    {
+        // 1. Idle check skips post-handshake session tickets and sees Clean; fatal alert surfaces Alert(116).
+        let (mut io, mut client, mut server, c_step, s_step) =
+            setup_streams(11, Faults::default(), &client_setup, &server_setup, NAME);
+        assert_eq!((c_step, s_step), (Step::Done(0), Step::Done(0)));
 
-        server.send_alert(&mut io, S_BUF, 0, 2, 116);
-        let mut r = client.recv(&mut io, C_RX, 0, 16);
-        while matches!(r, Step::Pending) {
-            io.tick(true, &mut out).unwrap();
-            while let Some(c) = out.pop() {
-                match c.token {
-                    S_SEND => assert!(matches!(
-                        server.on_send(&mut io, c.result),
-                        Step::Pending | Step::Done(2)
-                    )),
-                    C_RECV => r = client.on_recv(&mut io, c.result),
-                    other => panic!("unexpected token {other:?}"),
+        sealed(|| {
+            let mut check = client.check_idle(&mut io, SCRATCH, 0);
+            while check == IdleCheck::Pending {
+                io.tick(true, &mut out).unwrap();
+                let c = out.pop().unwrap();
+                assert_eq!(c.token(), C_RECV);
+                check = client.on_idle_check(&mut io, c.result());
+            }
+            assert_eq!(check, IdleCheck::Clean);
+
+            server.send_alert(&mut io, S_BUF, 0, 2, 116);
+            let mut r = client.recv(&mut io, C_RX, 0, 16);
+            while matches!(r, Step::Pending) {
+                io.tick(true, &mut out).unwrap();
+                while let Some(c) = out.pop() {
+                    match c.token() {
+                        S_SEND => assert!(matches!(
+                            server.on_send(&mut io, c.result()),
+                            Step::Pending | Step::Done(2)
+                        )),
+                        C_RECV => r = client.on_recv(&mut io, c.result()),
+                        other => panic!("unexpected token {other:?}"),
+                    }
                 }
             }
-        }
-        assert_eq!(r, Step::Tls(TlsError::Alert(116)));
-    });
+            assert_eq!(r, Step::Tls(TlsError::Alert(116)));
+        });
 
-    client.reset();
-    assert!(!client.is_tls());
-    assert!(!client.has_unread_plaintext());
-    assert_eq!(client.records(), 0);
-
-    // 2. close_notify alert (level 1, description 0) ends the stream cleanly with Done(0).
-    let (mut io, mut client, mut server, c_step, s_step) =
-        setup_streams(12, Faults::default(), &client_setup, &server_setup, NAME);
-    assert_eq!((c_step, s_step), (Step::Done(0), Step::Done(0)));
-    sealed(|| {
-        server.send_alert(&mut io, S_BUF, 0, 1, 0);
-        let mut r = client.recv(&mut io, C_RX, 0, 16);
-        while matches!(r, Step::Pending) {
-            io.tick(true, &mut out).unwrap();
-            while let Some(c) = out.pop() {
-                match c.token {
-                    S_SEND => assert!(matches!(
-                        server.on_send(&mut io, c.result),
-                        Step::Pending | Step::Done(2)
-                    )),
-                    C_RECV => r = client.on_recv(&mut io, c.result),
-                    other => panic!("unexpected token {other:?}"),
+        client.reset();
+        assert!(!client.is_tls());
+        assert!(!client.has_unread_plaintext());
+        assert_eq!(client.records(), 0);
+    }
+    {
+        // 2. close_notify alert (level 1, description 0) ends the stream cleanly with Done(0).
+        let (mut io, mut client, mut server, c_step, s_step) =
+            setup_streams(12, Faults::default(), &client_setup, &server_setup, NAME);
+        assert_eq!((c_step, s_step), (Step::Done(0), Step::Done(0)));
+        sealed(|| {
+            server.send_alert(&mut io, S_BUF, 0, 1, 0);
+            let mut r = client.recv(&mut io, C_RX, 0, 16);
+            while matches!(r, Step::Pending) {
+                io.tick(true, &mut out).unwrap();
+                while let Some(c) = out.pop() {
+                    match c.token() {
+                        S_SEND => assert!(matches!(
+                            server.on_send(&mut io, c.result()),
+                            Step::Pending | Step::Done(2)
+                        )),
+                        C_RECV => r = client.on_recv(&mut io, c.result()),
+                        other => panic!("unexpected token {other:?}"),
+                    }
                 }
             }
-        }
-        assert_eq!(r, Step::Done(0));
-    });
+            assert_eq!(r, Step::Done(0));
+        });
+    }
 }
 
 #[test]
@@ -368,17 +375,17 @@ fn tls_handshake_rejects_untrusted_and_misnamed_certificates() {
     let other_id = identity(NAME);
     let client_setup = ClientSetup::with_roots(&[&other_id.cert]).unwrap();
     let server_setup = ServerSetup::new(&[&server_id.cert], &server_id.key).unwrap();
-    let (_, _, _, c_step, _) =
+    let (_, _, _, untrusted, _) =
         setup_streams(21, Faults::default(), &client_setup, &server_setup, NAME);
-    assert_eq!(c_step, Step::Tls(TlsError::BadCertificate));
+    assert_eq!(untrusted, Step::Tls(TlsError::BadCertificate));
 
     let right_client = ClientSetup::with_roots(&[&server_id.cert]).unwrap();
-    let (_, _, _, c_step, _) = setup_streams(
+    let (_, _, _, misnamed, _) = setup_streams(
         22,
         Faults::default(),
         &right_client,
         &server_setup,
         "wrong.test",
     );
-    assert_eq!(c_step, Step::Tls(TlsError::BadCertificate));
+    assert_eq!(misnamed, Step::Tls(TlsError::BadCertificate));
 }

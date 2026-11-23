@@ -13,7 +13,7 @@ use super::errno::{self, to_linux_errno};
 use super::sock::{accept_socket, open_socket, sockaddr_un_from};
 use super::{Posix, SockKind};
 use crate::io::engine::Attempt;
-use crate::io::{BufId, Limits, Sock};
+use crate::io::{count_result, BufId, Limits, Sock};
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -44,7 +44,7 @@ impl Posix {
                     s.fd = new_fd;
                     s.kind = SockKind::Open;
                     Some(Attempt {
-                        result: slot_idx as i32,
+                        result: count_result(slot_idx),
                         more: true,
                         buf: None,
                     })
@@ -54,14 +54,14 @@ impl Posix {
                         l_linger: 0,
                     };
                     unsafe {
-                        setsockopt(
+                        let _: i32 = setsockopt(
                             new_fd,
                             SOL_SOCKET,
                             SO_LINGER,
                             (&lin as *const linger).cast(),
                             size_of::<linger>() as u32,
                         );
-                        close(new_fd);
+                        let _: i32 = close(new_fd);
                     }
                     Some(Attempt::single(-errno::linux::ENFILE))
                 }
@@ -117,7 +117,7 @@ impl Posix {
         }
 
         let ring_idx = self.ring_free[self.ring_free_len - 1];
-        let buf_id = BufId(self.ring_base + ring_idx as u32);
+        let buf_id = BufId(self.ring_base + u32::from(ring_idx));
         let range = limits.range(buf_id, 0, limits.ring_buffer_size);
         let ptr: *mut c_void = pool[range.clone()].as_mut_ptr().cast();
         let len = range.len();
@@ -176,7 +176,7 @@ impl Posix {
             self.poller.arm_write(idx, &mut self.socks[idx]);
             return None;
         }
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         Some(to_linux_errno(e))
     }
 }

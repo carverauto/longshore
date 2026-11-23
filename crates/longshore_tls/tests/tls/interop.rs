@@ -23,12 +23,14 @@ use std::sync::Arc;
 
 const NAME: &str = "objects.test";
 
+#[cfg(test)]
 fn identity() -> (Vec<u8>, Vec<u8>) {
     let k = rcgen::generate_simple_self_signed(vec![NAME.to_string()]).unwrap();
     (k.cert.der().to_vec(), k.signing_key.serialize_der())
 }
 
 /// A rustls server that offers `suite` and nothing else.
+#[cfg(test)]
 fn rustls_server(cert: &[u8], key: &[u8], suite: CipherSuite) -> Connection {
     let mut provider = default_provider();
     provider.cipher_suites.retain(|s| s.suite() == suite);
@@ -46,6 +48,7 @@ fn rustls_server(cert: &[u8], key: &[u8], suite: CipherSuite) -> Connection {
 }
 
 /// A rustls client with its own defaults, trusting `cert`.
+#[cfg(test)]
 fn rustls_client(cert: &[u8]) -> Connection {
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from(cert.to_vec())).unwrap();
@@ -61,22 +64,25 @@ fn rustls_client(cert: &[u8]) -> Connection {
 }
 
 /// Give `bytes` to rustls, all of them.
+#[cfg(test)]
 fn feed(peer: &mut Connection, mut bytes: &[u8]) {
     while !bytes.is_empty() {
-        peer.read_tls(&mut bytes).unwrap();
-        peer.process_new_packets().unwrap();
+        let _: usize = peer.read_tls(&mut bytes).unwrap();
+        let _: rustls::IoState = peer.process_new_packets().unwrap();
     }
 }
 
 /// Everything rustls has to send.
+#[cfg(test)]
 fn drain(peer: &mut Connection, out: &mut Vec<u8>) {
     while peer.wants_write() {
-        peer.write_tls(out).unwrap();
+        let _: usize = peer.write_tls(out).unwrap();
     }
 }
 
 /// Run the handshake to completion. Returns what rustls sent that the
 /// wrapper left for the record layer.
+#[cfg(test)]
 fn handshake(ours: &mut Handshake, peer: &mut Connection) -> Vec<u8> {
     let mut to_us = Vec::new();
     let mut buf = vec![0u8; 65536];
@@ -85,7 +91,7 @@ fn handshake(ours: &mut Handshake, peer: &mut Connection) -> Vec<u8> {
         feed(peer, &buf[..n]);
         drain(peer, &mut to_us);
         let used = ours.read(&to_us).unwrap();
-        to_us.drain(..used);
+        let _: std::vec::Drain<'_, u8> = to_us.drain(..used);
         if ours.is_done() && !peer.is_handshaking() && !peer.wants_write() {
             return to_us;
         }
@@ -94,6 +100,7 @@ fn handshake(ours: &mut Handshake, peer: &mut Connection) -> Vec<u8> {
 }
 
 /// Open every record in `bytes` with `rx`: (content type, content) of each.
+#[cfg(test)]
 fn open_all(rx: &mut Direction, mut bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
     let mut opened = Vec::new();
     let mut out = vec![0u8; 20_000];
@@ -108,6 +115,7 @@ fn open_all(rx: &mut Direction, mut bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
     opened
 }
 
+#[cfg(test)]
 fn suite_of(peer: &Connection) -> CipherSuite {
     peer.negotiated_cipher_suite().unwrap().suite()
 }
@@ -137,8 +145,8 @@ fn a_client_exchanges_records_with_a_rustls_server_under_each_suite() {
             let n = tx.seal(CONTENT_APPLICATION_DATA, msg, &mut rec).unwrap();
             assert_eq!(n, msg.len() + OVERHEAD);
             feed(&mut server, &rec[..n]);
-            let n = server.reader().read(&mut got).unwrap();
-            assert_eq!(&got[..n], msg, "{suite:?}: client to rustls");
+            let read = server.reader().read(&mut got).unwrap();
+            assert_eq!(&got[..read], msg, "{suite:?}: client to rustls");
         }
 
         server.writer().write_all(b"pong").unwrap();
@@ -168,8 +176,8 @@ fn a_server_hands_over_past_the_tickets_it_sent_to_a_rustls_client() {
     let setup = ServerSetup::new(&[&cert], &key).unwrap();
     let mut client = rustls_client(&cert);
     let mut server = Handshake::server(&setup).unwrap();
-    let from_client = handshake(&mut server, &mut client);
-    assert!(from_client.is_empty(), "the client has sent no data yet");
+    let leftover = handshake(&mut server, &mut client);
+    assert!(leftover.is_empty(), "the client has sent no data yet");
     let (mut tx, mut rx) = (Direction::new(), Direction::new());
     server.finish(&mut tx, &mut rx).unwrap();
     assert!(
@@ -184,8 +192,8 @@ fn a_server_hands_over_past_the_tickets_it_sent_to_a_rustls_client() {
         .unwrap();
     feed(&mut client, &rec[..n]);
     let mut got = [0u8; 64];
-    let n = client.reader().read(&mut got).unwrap();
-    assert_eq!(&got[..n], b"pong", "server to rustls");
+    let read = client.reader().read(&mut got).unwrap();
+    assert_eq!(&got[..read], b"pong", "server to rustls");
 
     client.writer().write_all(b"ping").unwrap();
     let mut from_client = Vec::new();

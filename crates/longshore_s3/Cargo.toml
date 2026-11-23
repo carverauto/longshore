@@ -31,8 +31,8 @@ ring.workspace = true
 [target.'cfg(longshore_model)'.dependencies]
 loom.workspace = true
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(longshore_model)'] }
+[lints]
+workspace = true
 
 [dev-dependencies]
 # Turns the simulator on for this crate's own tests.

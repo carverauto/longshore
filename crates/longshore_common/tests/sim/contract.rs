@@ -23,12 +23,10 @@ fn sim_keeps_the_shared_io_contract() {
 #[test]
 fn sim_keeps_the_shared_io_contract_under_delay() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
-    let faults = Faults {
-        delay: 200_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_delay(200_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000);
     contract::run_all(&mut |limits| SimIo::new(limits, 42, faults), addr);
     contract_net::run_all(
         &mut |limits| SimIo::new(limits, 42, faults),

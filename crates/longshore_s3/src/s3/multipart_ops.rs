@@ -18,6 +18,10 @@ use super::*;
 
 impl S3 {
     /// `name=` followed by the encoded upload id, after `prefix`.
+    #[expect(
+        clippy::expect_used,
+        reason = "QUERY_MAX is sized for UPLOAD_ID_MAX bytes encoded, the most an UploadId holds"
+    )]
     fn upload_query(prefix: &[u8], upload: &UploadId, out: &mut [u8; QUERY_MAX]) -> usize {
         let mut n = prefix.len();
         out[..n].copy_from_slice(prefix);
@@ -59,7 +63,10 @@ impl S3 {
     /// Store `len` bytes of `body` as part `number` (1 to 10000) of an
     /// upload. The outcome is [`Outcome::PartStored`]. Storing the same
     /// number again replaces the part.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn multipart_store_part<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -106,7 +113,10 @@ impl S3 {
     /// S3. With it the store verifies the assembled object, and a completion
     /// whose response was lost can be confirmed instead of reported as a
     /// failure. It needs an upload begun with `checksums`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn multipart_complete<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -166,7 +176,7 @@ impl S3 {
     ) -> Option<Result<Outcome, Class>> {
         match kind {
             Kind::Begin { .. } => {
-                let doc = self.client.discarded_body(io, r.conn);
+                let doc = self.client.discarded_body(io, r.conn());
                 let upload = multipart::upload_id_in(doc).and_then(UploadId::new);
                 Some(Ok(upload
                     .map_or(Outcome::Fatal(Fatal::BadResponse), |upload| {
@@ -176,7 +186,7 @@ impl S3 {
             Kind::Part => {
                 let tag = self
                     .client
-                    .header(io, r.conn, "etag")
+                    .header(io, r.conn(), "etag")
                     .and_then(PartTag::new);
                 Some(Ok(tag.map_or(Outcome::Fatal(Fatal::BadResponse), |tag| {
                     Outcome::PartStored {
@@ -189,8 +199,8 @@ impl S3 {
             Kind::Complete | Kind::Copy => {
                 // The store may take long enough to assemble or copy the object
                 // that it has already sent 200 when it fails: the body says which.
-                let doc = self.client.discarded_body(io, r.conn);
-                if doc.is_empty() && r.body_len > 0 {
+                let doc = self.client.discarded_body(io, r.conn());
+                if doc.is_empty() && r.body_len() > 0 {
                     return Some(Ok(Outcome::Fatal(Fatal::BadResponse)));
                 }
                 let code = multipart::error_code_in(doc)?;
@@ -206,7 +216,13 @@ impl S3 {
                     Ok(Outcome::Fatal(Fatal::ErrorDocument))
                 })
             }
-            _ => None,
+            Kind::Store { .. }
+            | Kind::Fetch { .. }
+            | Kind::Erase
+            | Kind::List
+            | Kind::Abort
+            | Kind::Stat
+            | Kind::EraseMany => None,
         }
     }
 }

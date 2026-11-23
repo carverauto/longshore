@@ -8,6 +8,7 @@
 //! lack what they must carry. Against the in-tree HTTP server on one
 //! simulated `Io`, with heap allocation forbidden while operations run.
 
+#[cfg(test)]
 mod common;
 use common::parts::*;
 use common::*;
@@ -19,11 +20,7 @@ fn raw(response: String) -> Behavior {
 }
 
 fn bad_response(token: u64) -> Done {
-    Done {
-        token,
-        outcome: Outcome::Fatal(Fatal::BadResponse),
-        attempts: 1,
-    }
+    Done::new(token, Outcome::Fatal(Fatal::BadResponse), 1)
 }
 
 /// The completion's response is lost and the retry finds the upload gone,
@@ -36,13 +33,13 @@ fn a_lost_completion_is_not_confirmed_by_someone_elses_object() {
     let theirs = w.io.buf(TX)[..1000].to_vec();
     w.s3.store(&mut w.io, 50, "k", TX, 1000, Checksum::Compute)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
 
     let upload = w.begin(1, "k", true);
     let (len, object) = w.three_parts("k", &upload);
     let crc = longshore_crc::crc64_nvme(&object);
     w.s3.multipart_abort(&mut w.io, 51, "k", &upload).unwrap();
-    assert_eq!(w.last().outcome, Outcome::Aborted);
+    assert_eq!(w.last().outcome(), Outcome::Aborted);
 
     // POST (lost), POST (404: no such upload), HEAD (another checksum).
     w.server.script(Behavior::CloseBeforeResponse);
@@ -50,13 +47,9 @@ fn a_lost_completion_is_not_confirmed_by_someone_elses_object() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 20,
-            outcome: Outcome::Fatal(Fatal::Status(404)),
-            attempts: 3
-        }
+        Done::new(20, Outcome::Fatal(Fatal::Status(404)), 3)
     );
-    assert_eq!(w.s3.store_comparisons, 1);
+    assert_eq!(w.s3.store_comparisons(), 1);
     assert_eq!(w.server.object("/k"), Some(&theirs[..]));
 }
 
@@ -78,14 +71,7 @@ fn the_comparison_after_a_lost_completion_is_retried() {
     }
     w.s3.multipart_complete(&mut w.io, 20, "k", &upload, TX, len, Some(crc))
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 20,
-            outcome: Outcome::Stored,
-            attempts: 4
-        }
-    );
+    assert_eq!(w.last(), Done::new(20, Outcome::Stored, 4));
     assert_eq!(w.server.object("/k"), Some(&object[..]));
 }
 
@@ -110,11 +96,7 @@ fn a_comparison_that_runs_out_of_attempts_says_so_and_not_that_the_upload_is_gon
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 20,
-            outcome: Outcome::Fatal(Fatal::RetriesExhausted),
-            attempts: 3
-        }
+        Done::new(20, Outcome::Fatal(Fatal::RetriesExhausted), 3)
     );
     assert_eq!(w.server.object("/k"), Some(&object[..]));
 }
@@ -148,14 +130,14 @@ fn a_part_stored_without_a_usable_tag_is_a_bad_response() {
     let crc = longshore_crc::crc64_nvme(&part_bytes(1));
     assert_eq!(
         w.last(),
-        Done {
-            token: 4,
-            outcome: Outcome::PartStored {
+        Done::new(
+            4,
+            Outcome::PartStored {
                 tag: PartTag::new(longest.as_bytes()).unwrap(),
                 checksum: Some(crc)
             },
-            attempts: 1
-        }
+            1
+        )
     );
 
     // Any other success status says nothing about a tag.
@@ -204,7 +186,7 @@ fn an_upload_begun_without_a_usable_id_is_a_bad_response() {
     )));
     w.s3.multipart_begin(&mut w.io, 6, "k", false).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Begun {
             upload: UploadId::new(id.as_bytes()).unwrap()
         }

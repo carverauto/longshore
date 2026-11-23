@@ -15,18 +15,7 @@ pub(super) fn check_non_lifecycle(
     limits: &Limits,
     use_sim: bool,
 ) -> Result<(), i32> {
-    let slot_ok = |slot: FileSlot| -> Result<bool, i32> {
-        let s = slots.get(slot.0 as usize).ok_or(-EBADF)?;
-        let (active, direct) = if use_sim {
-            (s.sim_active, s.sim_direct)
-        } else {
-            (s.is_usable(), s.direct)
-        };
-        if !active {
-            return Err(-EBADF);
-        }
-        Ok(direct)
-    };
+    let slot_ok = |slot: FileSlot| active_slot(slots, slot, use_sim);
 
     match *op {
         Op::FileRead {
@@ -44,24 +33,10 @@ pub(super) fn check_non_lifecycle(
             file_off,
         } => {
             let direct = slot_ok(slot)?;
-            check_buf_range(limits, buf, off, len)?;
-            if direct {
-                if !limits.is_aligned_buf(buf) {
-                    return Err(-EINVAL);
-                }
-                let bs = limits.block_size as u64;
-                if bs == 0
-                    || !(off as u64).is_multiple_of(bs)
-                    || !(len as u64).is_multiple_of(bs)
-                    || !file_off.is_multiple_of(bs)
-                {
-                    return Err(-EINVAL);
-                }
-            }
-            Ok(())
+            check_rw(limits, direct, buf, off, len, file_off)
         }
         Op::FileSync { slot, .. } | Op::FileReserve { slot, .. } => {
-            let _ = slot_ok(slot)?;
+            let _: bool = slot_ok(slot)?;
             Ok(())
         }
         Op::FilePunch {
@@ -69,13 +44,39 @@ pub(super) fn check_non_lifecycle(
             file_off,
             len,
         } => {
-            let _ = slot_ok(slot)?;
-            let bs = limits.block_size as u64;
+            let _: bool = slot_ok(slot)?;
+            let bs = u64::from(limits.block_size);
             if bs == 0 || !file_off.is_multiple_of(bs) || !len.is_multiple_of(bs) {
                 return Err(-EINVAL);
             }
             Ok(())
         }
+        Op::FileStatus { .. }
+        | Op::FileRename { .. }
+        | Op::FileUnlink { .. }
+        | Op::FileMkdir { .. } => check_path_op(op, pool, limits),
+        Op::FileOpen { .. } | Op::FileClose { .. } => unreachable!(),
+        Op::Connect { .. }
+        | Op::ConnectUnix { .. }
+        | Op::ConnectUdp { .. }
+        | Op::Accept { .. }
+        | Op::ArmedAccept { .. }
+        | Op::ArmedRecv { .. }
+        | Op::Send { .. }
+        | Op::Recv { .. }
+        | Op::RecvNow { .. }
+        | Op::Close { .. }
+        | Op::AwaitWake
+        | Op::ReadFile { .. }
+        | Op::Timeout { .. }
+        | Op::Cancel { .. } => Err(-EINVAL),
+    }
+}
+
+/// Checks the paths (and status output range) of a file operation that
+/// names paths rather than an open slot.
+fn check_path_op(op: &Op, pool: &[u8], limits: &Limits) -> Result<(), i32> {
+    match *op {
         Op::FileStatus {
             path_buf,
             path_off,
@@ -107,9 +108,71 @@ pub(super) fn check_non_lifecycle(
             path_off,
             path_len,
         } => check_path(pool, limits, path_buf, path_off, path_len),
-        Op::FileOpen { .. } | Op::FileClose { .. } => unreachable!(),
-        _ => Err(-EINVAL),
+        Op::Connect { .. }
+        | Op::ConnectUnix { .. }
+        | Op::ConnectUdp { .. }
+        | Op::Accept { .. }
+        | Op::ArmedAccept { .. }
+        | Op::ArmedRecv { .. }
+        | Op::Send { .. }
+        | Op::Recv { .. }
+        | Op::RecvNow { .. }
+        | Op::Close { .. }
+        | Op::AwaitWake
+        | Op::ReadFile { .. }
+        | Op::Timeout { .. }
+        | Op::Cancel { .. }
+        | Op::FileOpen { .. }
+        | Op::FileClose { .. }
+        | Op::FileRead { .. }
+        | Op::FileWrite { .. }
+        | Op::FileSync { .. }
+        | Op::FileReserve { .. }
+        | Op::FilePunch { .. } => Err(-EINVAL),
     }
+}
+
+/// Whether `slot` holds an open file (in the chain simulation when
+/// `use_sim`); `Ok` carries whether it was opened for direct I/O.
+fn active_slot(slots: &[SlotEntry], slot: FileSlot, use_sim: bool) -> Result<bool, i32> {
+    let s = slots.get(slot.0 as usize).ok_or(-EBADF)?;
+    let (active, direct) = if use_sim {
+        (s.sim_active, s.sim_direct)
+    } else {
+        (s.is_usable(), s.direct)
+    };
+    if !active {
+        return Err(-EBADF);
+    }
+    Ok(direct)
+}
+
+/// Checks a read or write's buffer range, and for a direct-I/O file its
+/// buffer, offsets and length against the block alignment.
+fn check_rw(
+    limits: &Limits,
+    direct: bool,
+    buf: BufId,
+    off: u32,
+    len: u32,
+    file_off: u64,
+) -> Result<(), i32> {
+    check_buf_range(limits, buf, off, len)?;
+    if !direct {
+        return Ok(());
+    }
+    if !limits.is_aligned_buf(buf) {
+        return Err(-EINVAL);
+    }
+    let bs = u64::from(limits.block_size);
+    if bs == 0
+        || !u64::from(off).is_multiple_of(bs)
+        || !u64::from(len).is_multiple_of(bs)
+        || !file_off.is_multiple_of(bs)
+    {
+        return Err(-EINVAL);
+    }
+    Ok(())
 }
 
 pub(super) fn slot_of(op: &Op) -> Option<FileSlot> {
@@ -121,7 +184,24 @@ pub(super) fn slot_of(op: &Op) -> Option<FileSlot> {
         | Op::FileSync { slot, .. }
         | Op::FileReserve { slot, .. }
         | Op::FilePunch { slot, .. } => Some(slot),
-        _ => None,
+        Op::Connect { .. }
+        | Op::ConnectUnix { .. }
+        | Op::ConnectUdp { .. }
+        | Op::Accept { .. }
+        | Op::ArmedAccept { .. }
+        | Op::ArmedRecv { .. }
+        | Op::Send { .. }
+        | Op::Recv { .. }
+        | Op::RecvNow { .. }
+        | Op::Close { .. }
+        | Op::AwaitWake
+        | Op::ReadFile { .. }
+        | Op::Timeout { .. }
+        | Op::Cancel { .. }
+        | Op::FileStatus { .. }
+        | Op::FileRename { .. }
+        | Op::FileUnlink { .. }
+        | Op::FileMkdir { .. } => None,
     }
 }
 
@@ -130,7 +210,7 @@ pub(super) fn check_buf_range(limits: &Limits, buf: BufId, off: u32, len: u32) -
         return Err(-EINVAL);
     }
     let (_, size) = limits.span(buf);
-    if off as u64 + len as u64 > size as u64 {
+    if u64::from(off) + u64::from(len) > size as u64 {
         return Err(-EINVAL);
     }
     Ok(())
@@ -147,7 +227,7 @@ pub(crate) fn check_path(
         return Err(-EINVAL);
     }
     let (base, size) = limits.span(buf);
-    if off as u64 + len as u64 > size as u64 {
+    if u64::from(off) + u64::from(len) > size as u64 {
         return Err(-EINVAL);
     }
     let start = base + off as usize;

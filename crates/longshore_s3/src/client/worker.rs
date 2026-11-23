@@ -12,7 +12,7 @@ use super::lane::{Finished, Kind, Lane, Request};
 use super::sync::{AtomicBool, AtomicU32, AtomicU64};
 use crate::s3::S3;
 use longshore_common::io::{BufId, Completion, Io, Op, Token};
-use longshore_mailbox::{Config, Pool, Receiver, Recv, TryRecv};
+use longshore_mailbox::{Config, NoWaker, Pool, Receiver, Recv, TryRecv};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -21,16 +21,11 @@ const DEFAULT_WAITERS: usize = 256;
 /// How a worker lays its lane out over the store it is given.
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
-    /// Operations in progress at most. The store must allow as many.
-    pub operations: u32,
-    /// The first buffer lent to callers, and how many follow it. They must
-    /// be large buffers of the `Io`, used by nothing else.
-    pub first_buffer: BufId,
-    pub buffers: u32,
-    /// Tokens used are `token_base` and `token_base + 1`.
-    pub token_base: u64,
-    /// How often the store's own timers run.
-    pub heartbeat_ns: u64,
+    pub(crate) operations: u32,
+    pub(crate) first_buffer: BufId,
+    pub(crate) buffers: u32,
+    pub(crate) token_base: u64,
+    pub(crate) heartbeat_ns: u64,
 }
 
 pub struct Worker {
@@ -45,8 +40,13 @@ pub struct Worker {
 
 impl Worker {
     /// Build a worker and its lane over `s3`, which must not have been
-    /// started. Initialization: this allocates.
-    pub fn new<IO: Io>(io: &mut IO, s3: S3, layout: Layout) -> (Worker, Arc<Lane>) {
+    /// started. Initialization: this allocates. Refused if `io` cannot be
+    /// woken from another thread.
+    pub fn new<IO: Io>(
+        io: &mut IO,
+        s3: S3,
+        layout: Layout,
+    ) -> Result<(Worker, Arc<Lane>), NoWaker> {
         Self::with_waiters(
             io,
             s3,
@@ -60,26 +60,27 @@ impl Worker {
         s3: S3,
         layout: Layout,
         waiters_prealloc: usize,
-    ) -> (Worker, Arc<Lane>) {
+    ) -> Result<(Worker, Arc<Lane>), NoWaker> {
         assert!(layout.operations >= 1 && layout.buffers >= 1 && waiters_prealloc >= 1);
         let first = io.buf(layout.first_buffer);
         let (base, buf_size) = (first.as_mut_ptr(), first.len());
         if layout.buffers > 1 {
-            let next = io.buf(BufId(layout.first_buffer.0 + 1)).as_mut_ptr();
+            let next = io
+                .buf(BufId::new(layout.first_buffer.get() + 1))
+                .as_mut_ptr();
             assert_eq!(
                 next as usize - base as usize,
                 buf_size,
                 "lent buffers must be contiguous and of one size"
             );
         }
-        let config = Config {
-            capacity: layout.operations as usize,
-            slots: layout.operations,
+        let config = Config::new(
+            layout.operations as usize,
+            layout.operations,
             waiters_prealloc,
-            wake_token: Token(layout.token_base),
-        };
-        let (sender, rx) = longshore_mailbox::mailbox(io, config)
-            .expect("the I/O backend has no way to be woken from another thread");
+            Token::new(layout.token_base),
+        );
+        let (sender, rx) = longshore_mailbox::mailbox(io, config)?;
         let lane = Arc::new(Lane {
             sender,
             bufs: Pool::new(layout.buffers, waiters_prealloc),
@@ -99,21 +100,29 @@ impl Worker {
             running: vec![false; layout.operations as usize].into_boxed_slice(),
             stopping: false,
         };
-        (worker, lane)
+        Ok((worker, lane))
     }
 
     /// Start the store and the worker's own timer and wake-up. Call once.
     pub fn start<IO: Io>(&mut self, io: &mut IO) {
         self.s3.start(io);
+        #[expect(
+            clippy::expect_used,
+            reason = "the worker keeps two operations in flight, which Limits::ops_max must leave it"
+        )]
         self.rx
             .arm(io)
             .expect("Limits::ops_max must leave two operations for the worker");
         self.arm_timer(io);
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the worker keeps two operations in flight, which Limits::ops_max must leave it"
+    )]
     fn arm_timer<IO: Io>(&self, io: &mut IO) {
         io.submit(
-            Token(self.layout.token_base + 1),
+            Token::new(self.layout.token_base + 1),
             Op::Timeout {
                 nanos: self.layout.heartbeat_ns,
             },
@@ -124,14 +133,18 @@ impl Worker {
     /// Feed a completion. Returns false if it belongs to neither the worker
     /// nor its store.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
-        if self
+        #[expect(
+            clippy::expect_used,
+            reason = "the worker keeps two operations in flight, which Limits::ops_max must leave it"
+        )]
+        let woken = self
             .rx
             .on_completion(io, c)
-            .expect("Limits::ops_max must leave two operations for the worker")
-        {
+            .expect("Limits::ops_max must leave two operations for the worker");
+        if woken {
             return true;
         }
-        if c.token == Token(self.layout.token_base + 1) {
+        if c.token() == Token::new(self.layout.token_base + 1) {
             self.s3.tick(io);
             self.arm_timer(io);
             return true;
@@ -144,7 +157,7 @@ impl Worker {
     pub fn turn<IO: Io>(&mut self, io: &mut IO) {
         loop {
             match self.rx.try_recv() {
-                TryRecv::Message(r) => self.begin(io, r),
+                TryRecv::Message(r) => self.begin(io, &r),
                 TryRecv::Stop => self.stopping = true,
                 TryRecv::Empty => break,
                 // Every handle is gone: nothing more can be asked for.
@@ -157,36 +170,34 @@ impl Worker {
         self.report();
     }
 
-    fn answer(&mut self, op: u32, finished: Finished) {
-        self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
-        if let Some(buf) = self.rx.answer(op, finished) {
+    fn answer(&mut self, op: u32, finished: &Finished) {
+        let _: u32 = self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+        if let Some(buf) = self.rx.answer(op, *finished) {
             self.lane.give_buffer(buf);
         }
     }
 
     fn report(&mut self) {
-        for (shown, count) in self
-            .lane
-            .reloads
-            .iter()
-            .zip([self.s3.credential_rotations, self.s3.credential_failures])
-        {
+        for (shown, count) in self.lane.reloads.iter().zip([
+            self.s3.credential_rotations(),
+            self.s3.credential_failures(),
+        ]) {
             shown.store(count, Ordering::Relaxed);
         }
         while let Some(d) = self.s3.poll() {
             self.running[d.token as usize] = false;
-            self.answer(d.token as u32, Finished::Outcome(d.outcome));
+            self.answer(d.token as u32, &Finished::Outcome(d.outcome));
         }
     }
 
-    fn begin<IO: Io>(&mut self, io: &mut IO, r: Request) {
+    fn begin<IO: Io>(&mut self, io: &mut IO, r: &Request) {
         if self.stopping {
-            self.answer(r.op, Finished::Closed);
+            self.answer(r.op, &Finished::Closed);
             return;
         }
         let key = core::str::from_utf8(&r.key[..r.key_len as usize]).unwrap_or("");
-        let buf = BufId(self.layout.first_buffer.0 + r.buf);
-        let token = r.op as u64;
+        let buf = BufId::new(self.layout.first_buffer.get() + r.buf);
+        let token = u64::from(r.op);
         let sent = match r.kind {
             Kind::Store {
                 no_clobber: false,
@@ -232,7 +243,7 @@ impl Worker {
         };
         match sent {
             Ok(()) => self.running[r.op as usize] = true,
-            Err(e) => self.answer(r.op, Finished::Rejected(e)),
+            Err(e) => self.answer(r.op, &Finished::Rejected(e)),
         }
     }
 
@@ -248,7 +259,7 @@ impl Worker {
         let stopping = &mut self.stopping;
         self.rx.begin_close(|item| match item {
             Recv::Message(r) => {
-                lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                let _: u32 = lane.in_flight.fetch_sub(1, Ordering::Relaxed);
                 if let Some(buf) =
                     lane.sender
                         .cells()
@@ -284,7 +295,7 @@ impl Worker {
                     Some(report) => Finished::Outcome(crate::s3::Outcome::Report(report)),
                     None => Finished::Closed,
                 };
-                self.answer(op as u32, finished);
+                self.answer(op as u32, &finished);
             }
         }
         let lane = &self.lane;
@@ -303,5 +314,58 @@ impl Worker {
     /// The store this worker runs, for its counters.
     pub fn store(&self) -> &S3 {
         &self.s3
+    }
+}
+
+impl Layout {
+    /// `operations` in progress at most, the `buffers` large buffers from
+    /// `first_buffer` lent to callers, the tokens `token_base` and
+    /// `token_base + 1`, and the store's timers every `heartbeat_ns`.
+    #[inline]
+    pub const fn new(
+        operations: u32,
+        first_buffer: BufId,
+        buffers: u32,
+        token_base: u64,
+        heartbeat_ns: u64,
+    ) -> Layout {
+        Layout {
+            operations,
+            first_buffer,
+            buffers,
+            token_base,
+            heartbeat_ns,
+        }
+    }
+
+    /// Operations in progress at most. The store must allow as many.
+    #[inline]
+    pub const fn operations(self) -> u32 {
+        self.operations
+    }
+
+    /// The first buffer lent to callers. They must be large buffers of the
+    /// `Io`, used by nothing else.
+    #[inline]
+    pub const fn first_buffer(self) -> BufId {
+        self.first_buffer
+    }
+
+    /// How many buffers follow [`Layout::first_buffer`].
+    #[inline]
+    pub const fn buffers(self) -> u32 {
+        self.buffers
+    }
+
+    /// Tokens used are `token_base` and `token_base + 1`.
+    #[inline]
+    pub const fn token_base(self) -> u64 {
+        self.token_base
+    }
+
+    /// How often the store's own timers run.
+    #[inline]
+    pub const fn heartbeat_ns(self) -> u64 {
+        self.heartbeat_ns
     }
 }

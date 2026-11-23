@@ -25,13 +25,13 @@ pub(super) struct Asked {
     /// The `versionId` the target carried; zero for none.
     version: u32,
     /// `x-amz-server-side-encryption: AES256` was sent.
-    pub encrypt: bool,
+    encrypt: bool,
     /// The `x-amz-checksum-sha256` sent with the request.
-    pub sha256: Option<[u8; SHA256_LEN]>,
+    sha256: Option<[u8; SHA256_LEN]>,
     /// The object whose identity goes on the response, and the range of it
     /// the response carries.
-    pub reply: Option<u32>,
-    pub reply_range: Option<(u32, u32)>,
+    reply: Option<u32>,
+    reply_range: Option<(u32, u32)>,
 }
 
 impl Asked {
@@ -69,6 +69,18 @@ impl Asked {
             .and_then(|v| v.strip_prefix("sim-v")?.parse().ok())
             .unwrap_or(u32::MAX);
         (asked, at)
+    }
+
+    /// Put the identity of object `slot` on the response.
+    #[inline]
+    pub(super) const fn set_reply(&mut self, slot: u32) {
+        self.reply = Some(slot);
+    }
+
+    /// The response carries bytes `first..=last` of the object.
+    #[inline]
+    pub(super) const fn set_reply_range(&mut self, first: u32, last: u32) {
+        self.reply_range = Some((first, last));
     }
 }
 
@@ -162,37 +174,37 @@ impl Server {
             let (d, at) = decimal(o.kept.version);
             put(b"sim-v");
             put(&d[at..]);
-            w.header("x-amz-version-id", &digits[..n]);
+            let _: &mut HeadWriter<'_> = w.header("x-amz-version-id", &digits[..n]);
         }
         if o.kept.encrypted {
-            w.header("x-amz-server-side-encryption", b"AES256");
+            let _: &mut HeadWriter<'_> = w.header("x-amz-server-side-encryption", b"AES256");
         }
         if let Some(sum) = o.kept.sha256 {
-            w.header("x-amz-checksum-sha256", &sum);
+            let _: &mut HeadWriter<'_> = w.header("x-amz-checksum-sha256", &sum);
         }
         if let Some((first, last)) = range {
             let mut value = [0u8; 48];
-            let mut n = 0;
+            let mut len = 0;
             for part in [
                 (b"bytes ".as_slice(), None),
                 (b"", Some(first)),
                 (b"-", Some(last)),
                 (b"/", Some(o.len)),
             ] {
-                value[n..n + part.0.len()].copy_from_slice(part.0);
-                n += part.0.len();
+                value[len..len + part.0.len()].copy_from_slice(part.0);
+                len += part.0.len();
                 if let Some(v) = part.1 {
                     let (d, at) = decimal(v);
-                    value[n..n + d.len() - at].copy_from_slice(&d[at..]);
-                    n += d.len() - at;
+                    value[len..len + d.len() - at].copy_from_slice(&d[at..]);
+                    len += d.len() - at;
                 }
             }
-            w.header("Content-Range", &value[..n]);
+            let _: &mut HeadWriter<'_> = w.header("Content-Range", &value[..len]);
         }
         let (d, at) = decimal(self.requests as u32);
         let mut id = *b"sim-request-0000000000";
         let start = id.len() - (d.len() - at);
         id[start..].copy_from_slice(&d[at..]);
-        w.header("x-amz-request-id", &id);
+        let _: &mut HeadWriter<'_> = w.header("x-amz-request-id", &id);
     }
 }

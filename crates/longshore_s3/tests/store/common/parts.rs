@@ -23,9 +23,21 @@ impl World {
         self.s3
             .multipart_begin(&mut self.io, token, key, checksums)
             .unwrap();
-        match self.last().outcome {
+        match self.last().outcome() {
             Outcome::Begun { upload } => upload,
-            other => panic!("expected an upload, got {other:?}"),
+            other @ (Outcome::Stored
+            | Outcome::AlreadyExists { .. }
+            | Outcome::Fetched { .. }
+            | Outcome::Listed { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Stat(_)
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)
+            | Outcome::Fatal(_)) => panic!("expected an upload, got {other:?}"),
         }
     }
 
@@ -52,18 +64,14 @@ impl World {
         match self
             .done
             .iter()
-            .find(|d| d.token == token)
-            .map(|d| d.outcome)
+            .find(|d| d.token() == token)
+            .map(|d| d.outcome())
         {
             Some(Outcome::PartStored { tag, checksum }) => {
                 // Every part here is sent with a computed CRC-64/NVME.
                 let crc = longshore_crc::crc64_nvme(&part_bytes(number));
                 assert_eq!(checksum, Some(crc));
-                Part {
-                    number,
-                    tag,
-                    checksum: checksum.map(longshore_crc::crc64_header_value),
-                }
+                Part::new(number, tag, checksum.map(longshore_crc::crc64_header_value))
             }
             other => panic!("expected a stored part for token {token}, got {other:?}"),
         }
@@ -74,7 +82,7 @@ impl World {
     pub fn three_parts(&mut self, key: &str, upload: &UploadId) -> (u32, Vec<u8>) {
         // Part 2 first, then 1 and 3 at the same time from two buffers.
         self.send_part(12, key, upload, 2, TX);
-        self.last();
+        let _: longshore_s3::s3::Done = self.last();
         self.send_part(11, key, upload, 1, TX);
         self.send_part(13, key, upload, 3, RX);
         self.run_until_done(self.done.len() + 2);

@@ -40,7 +40,7 @@ fn every_length(
         let mut want64 = reference::crc64_update(s64, &data[..min]);
         let mut want32 = reference::crc32c_update(s32, &data[..min]);
         for len in min..=max {
-            let name = kernel.name;
+            let name = kernel.name();
             assert_eq!(
                 kernel.crc64_update(s64, &data[..len]),
                 want64,
@@ -66,15 +66,15 @@ fn the_selected_kernel_is_supported() {
         .map(|k| {
             format!(
                 "{}{}",
-                k.name,
+                k.name(),
                 if k.supported() { "" } else { " (not run)" }
             )
         })
         .collect();
     println!("kernels: {}", names.join(", "));
-    println!("selected: {}", kernels::selected().name);
+    println!("selected: {}", kernels::selected().name());
     assert!(kernels::selected().supported());
-    assert!(kernels::all().iter().any(|k| k.name == "table"));
+    assert!(kernels::all().iter().any(|k| k.name() == "table"));
 }
 
 #[test]
@@ -144,15 +144,15 @@ fn split_anywhere() {
 fn megabytes_match_the_table_kernel() {
     let table = kernels::all()
         .iter()
-        .find(|k| k.name == "table")
+        .find(|k| k.name() == "table")
         .expect("the table kernel is in every build");
     let data = bytes((16 << 20) + 5, 0xbb67_ae85_84ca_a73b);
     for len in [(3 << 19) + 3, (16 << 20) + 5] {
         let d = &data[..len];
         let (want64, want32) = (table.crc64_update(!0, d), table.crc32c_update(!0, d));
-        for k in supported().filter(|k| k.name != "table") {
-            assert_eq!(k.crc64_update(!0, d), want64, "{} {len}", k.name);
-            assert_eq!(k.crc32c_update(!0, d), want32, "{} {len}", k.name);
+        for k in supported().filter(|k| k.name() != "table") {
+            assert_eq!(k.crc64_update(!0, d), want64, "{} {len}", k.name());
+            assert_eq!(k.crc32c_update(!0, d), want32, "{} {len}", k.name());
         }
     }
 }
@@ -166,8 +166,8 @@ fn large_buffers() {
         let d = &data[..len];
         let (want64, want32) = (reference::crc64_nvme(d), reference::crc32c(d));
         for k in supported() {
-            assert_eq!(!k.crc64_update(!0, d), want64, "{} {len}", k.name);
-            assert_eq!(!k.crc32c_update(!0, d), want32, "{} {len}", k.name);
+            assert_eq!(!k.crc64_update(!0, d), want64, "{} {len}", k.name());
+            assert_eq!(!k.crc32c_update(!0, d), want32, "{} {len}", k.name());
         }
     }
 }

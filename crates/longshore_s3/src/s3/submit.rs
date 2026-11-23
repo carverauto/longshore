@@ -27,7 +27,10 @@ pub(super) enum ListFrom<'a> {
 
 impl S3 {
     /// Take a slot and fill it in, without sending anything yet.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "fills a request slot from the parts every request method passes through; each argument is one of those parts"
+    )]
     pub(super) fn prepare<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -78,7 +81,7 @@ impl S3 {
             (Checksum::Compute, Some((buf, len))) if kind.stores_bytes() => {
                 Some(match self.cfg.vendor {
                     Vendor::S3 => longshore_crc::crc64_nvme(&io.buf(buf)[..len as usize]),
-                    Vendor::Gcs => longshore_crc::crc32c(&io.buf(buf)[..len as usize]) as u64,
+                    Vendor::Gcs => u64::from(longshore_crc::crc32c(&io.buf(buf)[..len as usize])),
                 })
             }
             _ => None,
@@ -86,7 +89,10 @@ impl S3 {
         Ok(i)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "`prepare` followed by the first attempt, so it takes exactly `prepare`'s arguments"
+    )]
     pub(super) fn submit<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -193,7 +199,10 @@ impl S3 {
         self.list_in_slot(io, i, token, prefix, from, max_keys, None, into)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "builds the listing query that the list methods share; each argument is one part of that query or the slot it goes in"
+    )]
     pub(super) fn list_in_slot<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -234,7 +243,7 @@ impl S3 {
                 put(&mut s.path, &enc[..len])?;
                 put(&mut s.path, b"&")?;
             }
-            if let Some(delimiter) = delimiter.filter(|d| !d.is_empty()) {
+            if let Some(delimiter) = delimiter.filter(|text| !text.is_empty()) {
                 put(&mut s.path, b"delimiter=")?;
                 let mut enc = [0u8; 64];
                 let len = uri_encode(delimiter.as_bytes(), true, &mut enc)?;
@@ -249,7 +258,7 @@ impl S3 {
                     "&start-after=",
                     match from {
                         ListFrom::After(key) => Some(key),
-                        _ => None,
+                        ListFrom::Start | ListFrom::Token(_) => None,
                     },
                 ),
             ] {

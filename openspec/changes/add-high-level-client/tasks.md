@@ -6,7 +6,7 @@
 - [x] 1.5 More than one I/O thread: thread count and CPU pinning in the builder, placement of operations and lent buffers, shutdown of every thread
 - [ ] 1.6 A client driven by the caller's event loop: readable descriptor, non-blocking `turn`, tests under the simulator and on a real kernel with a caller that only polls
 - [x] 1.7 Bucket in the path as a store setting (`Config::bucket_in_path`), run against Linode Object Storage in both forms
-- [ ] 1.8 Run path addressing against a self-hosted store that requires it, MinIO or Ceph
+- [x] 1.8 Run path addressing against a self-hosted store that requires it, MinIO or Ceph (`bench/results/m27-self-hosted-stores.md`: Ceph 20.2.5 and RustFS 1.0.6, each serving only path-style requests)
 - [x] 1.9 Builder settings for a credentials file that is reread, the bucket in the path, and checksums on or off; real-kernel check of each
 
 ## 2. Operations
@@ -20,11 +20,11 @@
 - [ ] 3.1 Cancellation tests: futures dropped at every stage never free a buffer the kernel still holds
 - [ ] 3.2 Tests under at least two async executors and from plain threads
 - [x] 3.3 Overhead benchmark against the low-level API, recorded in `bench/results/` (`m22-client-and-soak.md`: Amazon S3)
-- [ ] 3.4 Runs against Amazon S3 and Google Cloud Storage
+- [ ] 3.4 Runs against Amazon S3 and Google Cloud Storage. Amazon S3 done (`m22-client-and-soak.md`, `m23-client-eight-hours.md`); Google Cloud Storage through the client waits for `update-gcs-xml-coverage` 5.1
 - [x] 3.5 Throughput by thread count for HTTPS upload, download and HTTPS download, recorded in `bench/results/` (`m22-client-and-soak.md`)
 
 ## 4. Packaging
 - [x] ~~4.1 Compile on non-Linux targets with an unsupported error at build of a client~~ *(superseded by `add-portable-io-backend`: macOS now builds and runs the client on the portable `kqueue` backend; other non-Linux targets still return `BuildError::Unsupported`)*
 - [ ] 4.2 Crate documentation with runnable examples, and an `examples/` directory
 - [ ] 4.3 Stated minimum Rust version, ~~a feature that turns TLS off~~ *(superseded by `add-server-networking`: default-on `tls` feature across `longshore`, `longshore_s3`, `longshore_http_client`, and `longshore_stream`)*, and a note on the C toolchain AWS-LC needs
-- [ ] 4.4 README: quick start with the high-level client
+- [x] 4.4 README: quick start with the high-level client (`README.md`, "Using it")

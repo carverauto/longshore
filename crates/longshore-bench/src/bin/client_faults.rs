@@ -24,6 +24,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 #[path = "client_faults/linux.rs"]
 mod linux;
 

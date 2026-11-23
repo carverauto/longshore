@@ -30,7 +30,7 @@ fn sha256_known_answers() {
     );
     let mut h = Sha256::new();
     for _ in 0..1000 {
-        h.update(&[b'a'; 1000]);
+        let _: &mut Sha256 = h.update(&[b'a'; 1000]);
     }
     assert_eq!(
         hex_string(&h.finish()),
@@ -44,7 +44,7 @@ fn incremental_equals_one_shot() {
     let data: Vec<u8> = (0..1000u32).map(|i| (i * 7) as u8).collect();
     for split in [0, 1, 55, 56, 63, 64, 65, 500, 1000] {
         let mut h = Sha256::new();
-        h.update(&data[..split]).update(&data[split..]);
+        let _: &mut Sha256 = h.update(&data[..split]).update(&data[split..]);
         assert_eq!(h.finish(), sha256(&data), "split at {split}");
     }
 }

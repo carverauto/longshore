@@ -6,8 +6,12 @@
 //! HTTP client against the in-tree server on one simulated `Io`, with heap
 //! allocation forbidden while requests run.
 
+#[cfg(test)]
 mod common;
+use common::raw::raw_reply_with;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
 /// One GET against a hand-driven peer that answers the request with `reply`
 /// and then waits for the client to close.
@@ -15,114 +19,14 @@ fn raw_reply(reply: &'static [u8]) -> Result<Response, Error> {
     raw_reply_with(client_cfg(), reply)
 }
 
-fn raw_reply_with(cfg: client::Config, reply: &'static [u8]) -> Result<Response, Error> {
-    const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 82)), 80);
-    const LISTEN: Sock = Sock(1 + CONNS * 2);
-    const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
-    const ACCEPT: u64 = 3 << 40;
-    const RECV: u64 = ACCEPT + 1;
-    const SEND: u64 = ACCEPT + 2;
-    const OUT_OFF: u32 = 4096;
-    let mut w = world_with(12, Faults::default(), cfg);
-    w.io.listen(LISTEN, PEER).unwrap();
-    w.io.submit(
-        Token(ACCEPT),
-        Op::Accept {
-            listener: LISTEN,
-            sock: PEER_SOCK,
-        },
-    )
-    .unwrap();
-    w.io.buf(TX)[OUT_OFF as usize..OUT_OFF as usize + reply.len()].copy_from_slice(reply);
-    let req = Request {
-        method: "GET",
-        target: "/raw",
-        host: "raw.test",
-        host_id: 2,
-        addr: PEER,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
-    w.client.start(&mut w.io, 9, &req).unwrap();
-    let (mut sent, mut result) = (false, None);
-    let World {
-        io,
-        client,
-        server,
-        out,
-        ..
-    } = &mut w;
-    sealed(|| {
-        while result.is_none() {
-            io.tick(true, out).expect("simulation deadlock");
-            while let Some(c) = out.pop() {
-                match c.token.0 {
-                    HEARTBEAT => {
-                        client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
-                            .unwrap();
-                    }
-                    ACCEPT => io
-                        .submit(
-                            Token(RECV),
-                            Op::Recv {
-                                sock: PEER_SOCK,
-                                buf: TX,
-                                off: 0,
-                                len: 1024,
-                            },
-                        )
-                        .unwrap(),
-                    RECV if c.result > 0 => {
-                        if !sent {
-                            io.submit(
-                                Token(SEND),
-                                Op::Send {
-                                    sock: PEER_SOCK,
-                                    buf: TX,
-                                    off: OUT_OFF,
-                                    len: reply.len() as u32,
-                                    zero_copy: false,
-                                },
-                            )
-                            .unwrap();
-                            sent = true;
-                        }
-                        io.submit(
-                            Token(RECV),
-                            Op::Recv {
-                                sock: PEER_SOCK,
-                                buf: TX,
-                                off: 0,
-                                len: 1024,
-                            },
-                        )
-                        .unwrap();
-                    }
-                    RECV | SEND => {}
-                    _ => match client.on_completion(io, c) {
-                        Handled::Done(d) => result = Some(d.result),
-                        Handled::Pending => {}
-                        Handled::NotMine => {
-                            assert!(server.on_completion(io, c), "unrouted completion {c:?}")
-                        }
-                    },
-                }
-            }
-        }
-    });
-    result.unwrap()
-}
-
 #[test]
 fn a_bodyless_interim_response_is_skipped() {
     let r = raw_reply(b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-    assert_eq!(r.map(|r| (r.status, r.body_len)), Ok((200, 0)));
-    let r = raw_reply(
+    assert_eq!(r.map(|r| (r.status(), r.body_len())), Ok((200, 0)));
+    let no_content = raw_reply(
         b"HTTP/1.1 100 Continue\r\nContent-Length: 0\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n",
     );
-    assert_eq!(r.map(|r| r.status), Ok(204));
+    assert_eq!(no_content.map(|reply| reply.status()), Ok(204));
 }
 
 #[test]
@@ -150,65 +54,40 @@ fn an_interim_response_that_declares_a_body_or_close_is_rejected() {
 fn an_unexpected_response_body_is_discarded_and_the_connection_survives() {
     let mut w = world(
         11,
-        Faults {
-            short_send: 300_000,
-            partial_recv: 300_000,
-            ..Faults::default()
-        },
+        Faults::NONE
+            .with_short_send(300_000)
+            .with_partial_recv(300_000),
     );
     w.fill_tx(100, 0);
     for body in [1u32, 300, 5000, 20_000] {
         w.server.script(Behavior::StatusWithBody(412, body));
-        let req = Request {
-            method: "PUT",
-            target: "/k",
-            host: "objects.test",
-            host_id: 0,
-            addr: ADDR,
-            headers: &[],
-            body: Some((TX, 100)),
-            response_buf: None,
-        };
-        w.client.start(&mut w.io, 500 + body as u64, &req).unwrap();
+        let req = Request::new("PUT", "/k", "objects.test", 0, ADDR).with_body(Some((TX, 100)));
+        w.client
+            .start(&mut w.io, 500 + u64::from(body), &req)
+            .unwrap();
         w.run_until_done(w.done.len() + 1);
         assert_eq!(
-            w.done.last().unwrap().result,
-            Ok(Response {
-                status: 412,
-                body_len: body,
-                conn: 0
-            }),
+            w.done.last().unwrap().result().map(parts),
+            Ok((412, body, 0)),
             "body of {body} bytes"
         );
     }
     ok(200, 0)(w.request("PUT", "/k", Some(100)));
     assert_eq!(
-        w.client.connects, 1,
+        w.client.connects(),
+        1,
         "discarding error bodies must not cost the connection"
     );
 
     // A body as large as a whole buffer is still discarded: the limit is
     // 256 KiB. `framing_edges.rs` has the refusal just past it.
     w.server.script(Behavior::StatusWithBody(500, BUF));
-    let req = Request {
-        method: "PUT",
-        target: "/k",
-        host: "objects.test",
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: Some((TX, 100)),
-        response_buf: None,
-    };
+    let req = Request::new("PUT", "/k", "objects.test", 0, ADDR).with_body(Some((TX, 100)));
     w.client.start(&mut w.io, 900, &req).unwrap();
     w.run_until_done(w.done.len() + 1);
     assert_eq!(
-        w.done.last().unwrap().result,
-        Ok(Response {
-            status: 500,
-            body_len: BUF,
-            conn: 0
-        }),
+        w.done.last().unwrap().result().map(parts),
+        Ok((500, BUF, 0)),
         "32 KiB is within the discard limit"
     );
 }
@@ -217,12 +96,10 @@ fn an_unexpected_response_body_is_discarded_and_the_connection_survives() {
 /// size and however the network splits chunk headers and data.
 #[test]
 fn chunked_responses_decode_to_the_stored_bytes() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 400_000,
-        delay: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(400_000)
+        .with_delay(100_000);
     for seed in 0..12u64 {
         let mut w = world(seed, faults);
         // Leave room in the server's buffer for the chunk framing.
@@ -243,7 +120,8 @@ fn chunked_responses_decode_to_the_stored_bytes() {
             );
         }
         assert_eq!(
-            w.client.connects, 1,
+            w.client.connects(),
+            1,
             "chunked responses keep the connection usable"
         );
     }
@@ -260,43 +138,25 @@ fn chunked_edge_cases() {
     ok(200, 0)(w.request("PUT", "/small", Some(300)));
     let sent = w.io.buf(TX)[..300].to_vec();
     w.server.script(Behavior::ChunkedBody(64));
-    let req = Request {
-        method: "GET",
-        target: "/small",
-        host: "objects.test",
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: None,
-    };
-    w.client.start(&mut w.io, 700, &req).unwrap();
+    let small_get = Request::new("GET", "/small", "objects.test", 0, ADDR);
+    w.client.start(&mut w.io, 700, &small_get).unwrap();
     w.run_until_done(w.done.len() + 1);
     let r = w
         .done
         .last()
         .unwrap()
-        .result
+        .result()
         .expect("chunked body without a buffer");
-    assert_eq!((r.status, r.body_len), (200, 300));
-    assert_eq!(w.client.discarded_body(&mut w.io, r.conn), &sent[..]);
+    assert_eq!((r.status(), r.body_len()), (200, 300));
+    assert_eq!(w.client.discarded_body(&mut w.io, r.conn()), &sent[..]);
     // One that does not fit beside the head is refused.
     w.fill_tx(8_000, 1);
     ok(200, 0)(w.request("PUT", "/big", Some(8_000)));
     w.server.script(Behavior::ChunkedBody(1_000));
-    let req = Request {
-        method: "GET",
-        target: "/big",
-        host: "objects.test",
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: None,
-    };
-    w.client.start(&mut w.io, 701, &req).unwrap();
+    let big_get = Request::new("GET", "/big", "objects.test", 0, ADDR);
+    w.client.start(&mut w.io, 701, &big_get).unwrap();
     w.run_until_done(w.done.len() + 1);
-    assert_eq!(w.done.last().unwrap().result, Err(Error::BodyTooLarge));
+    assert_eq!(w.done.last().unwrap().result(), Err(Error::BodyTooLarge));
     w.settle(30);
     assert_eq!(w.client.in_flight(), 0);
 }
@@ -305,13 +165,7 @@ fn chunked_edge_cases() {
 /// be: bodyless and not ending the connection.
 #[test]
 fn interim_responses_are_skipped_only_when_bodyless() {
-    let mut w = world(
-        50,
-        Faults {
-            partial_recv: 300_000,
-            ..Faults::default()
-        },
-    );
+    let mut w = world(50, Faults::NONE.with_partial_recv(300_000));
     w.server.script(Behavior::Raw(
         b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
     ));
@@ -354,10 +208,7 @@ fn switching_protocols_is_not_skipped_as_an_interim_response() {
 #[test]
 fn a_chunked_body_that_exactly_fills_the_buffer_is_accepted() {
     const CAP: u32 = 8192;
-    let cfg = client::Config {
-        buffer_size: CAP,
-        ..client_cfg()
-    };
+    let cfg = client_builder_with(CONNS, CAP).build().unwrap();
     let chunked = |len: usize| -> &'static [u8] {
         let mut reply = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
         let half = len / 2;
@@ -395,24 +246,21 @@ fn bytes_after_a_response_in_a_later_read_are_not_taken_for_the_next_response() 
     ok(200, body_len as u32)(w.request("GET", "/k", None));
     // The next request must get its own answer, from a new connection.
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!((w.client.idle_dirty, w.client.connects), (1, 2));
+    assert_eq!((w.client.idle_dirty(), w.client.connects()), (1, 2));
 
     // Without the check the next request does not get its own answer. On a
     // real network it would be handed the leftover bytes as its response;
     // the simulator fails the send instead, because the scripted server has
     // closed. Either way it is not the 404 the request should have had.
-    let mut w = world_with(
+    let mut unchecked = world_with(
         32,
         Faults::default(),
-        client::Config {
-            check_idle: false,
-            ..client_cfg()
-        },
+        client_builder().check_idle(false).build().unwrap(),
     );
-    w.server.script(Behavior::Raw(reply));
-    ok(200, body_len as u32)(w.request("GET", "/k", None));
+    unchecked.server.script(Behavior::Raw(reply));
+    ok(200, body_len as u32)(unchecked.request("GET", "/k", None));
     assert_eq!(
-        w.request("GET", "/missing", None),
+        unchecked.request("GET", "/missing", None),
         Err(Error::Io(longshore_common::io::EPIPE))
     );
 }

@@ -1,0 +1,52 @@
+== commit: b078ce1
+== kernel: Linux 7.2.12-orbstack-00394-gbecdd6130068 aarch64
+== store: ceph version 20.2.5 (ed27c686770872022f4c1de04f6b0ac5d5384ded) tentacle (stable)
+== s3_uring selftest
+store_no_clobber (new)     -> Stored (attempts 1)
+store_no_clobber (again)   -> AlreadyExists { after_retry: false } (attempts 1)
+fetch                      -> Fetched { len: 8388608, verified: false } (attempts 1)
+fetch range 1000-1999      -> Fetched { len: 1000, verified: false } (attempts 1)
+erase                      -> Erased (attempts 1)
+fetch after erase          -> NotFound (attempts 1)
+bytes_match=true range_match=true connections=1 elapsed_ms=2868 enters=150 allocation_sealed=true
+selftest ok
+== s3_uring objects
+store with options     -> ok   Stored (attempts 1)
+stat                   -> ok   Stat(Stat { size: 8388608, modified: Some(1795417587), checksum: None, tag: Some("\"4b2a09e359b1980d0d754869013d54fe\""), head_len: 429 }) (attempts 1)
+copy                   -> ok   Copied (attempts 1)
+stat of the copy       -> ok   Stat(Stat { size: 8388608, modified: Some(1795417587), checksum: None, tag: Some("\"4b2a09e359b1980d0d754869013d54fe\""), head_len: 429 }) (attempts 1)
+list with delimiter, then paged by token -> ok   Listed { len: 634 } (attempts 1)
+erase many             -> ok   ErasedMany { len: 115 } (attempts 1)
+erase (second key)     -> ok   skipped
+stat after erase       -> ok   NotFound (attempts 1)
+presigned_url_bytes=337 (set S3_PRINT_PRESIGNED=1 to print it)
+elapsed_ms=560 allocation_sealed=true
+objects ok
+== s3_uring multipart
+parts=3 part_bytes=8388608 part_checksums=true part_attempts=3
+complete                   -> Stored (attempts 1)
+erase                      -> Erased
+abort                      -> Aborted
+bytes_match=true connections=3 elapsed_ms=2086 allocation_sealed=true
+multipart ok
+== s3_uring badcrc
+store with a wrong checksum -> Stored (attempts 1)
+fetch afterwards            -> Fetched { len: 8388608, verified: false }
+checksum_enforced=false
+== exact_s3
+put encrypted-sha256: status 400 etag - version - encryption None sha256 - crc64 - length Some(246) range None body 0 request-id present malformed false sent 1 unanswered 0
+put sha256: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption None sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+put encrypted-crc64: status 400 etag - version - encryption None sha256 - crc64 - length Some(246) range None body 0 request-id present malformed false sent 1 unanswered 0
+put crc64: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption None sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+reading back longshore-exact/1795417591356401747-1/sha256
+put again, must be refused: status 412 etag - version - encryption None sha256 - crc64 - length Some(249) range None body 0 request-id present malformed false sent 1 unanswered 0
+head: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption None sha256 - crc64 - length Some(300000) range None body 0 request-id present malformed false sent 1 unanswered 0
+head, another etag: status 412 etag - version - encryption None sha256 - crc64 - length Some(249) range None body 0 request-id present malformed false sent 1 unanswered 0
+get: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption None sha256 - crc64 - length Some(300000) range None body 300000 request-id present malformed false sent 1 unanswered 0
+get bytes 1000-1999: status 206 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption None sha256 - crc64 - length Some(1000) range Some((1000, 1999, Some(300000))) body 1000 request-id present malformed false sent 1 unanswered 0
+bytes read back: whole true, part true
+get, another etag: status 412 etag - version - encryption None sha256 - crc64 - length Some(249) range None body 249 request-id present malformed false sent 1 unanswered 0
+put with a SHA-256 of other bytes: status 200 etag "7e2fa309ec9289b783911e8b15df8bc7" version - encryption None sha256 - crc64 - length Some(0) range None body 0 request-id present malformed false sent 1 unanswered 0
+put after its deadline: not sent, Deadline
+erased 3 keys under longshore-exact/1795417591356401747-1
+ok exact_s3

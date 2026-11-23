@@ -7,6 +7,7 @@
 //! CRC-32C in `x-goog-hash`, and `x-goog-if-generation-match: 0`.
 //! Allocation is forbidden while operations run.
 
+#[cfg(test)]
 mod gcs_world;
 use gcs_world::*;
 
@@ -19,21 +20,14 @@ fn store_fetch_list_and_erase_with_a_bearer_token_and_crc32c() {
     w.fill_tx(5000, 1);
     w.s3.store(&mut w.io, 1, "dir/key one.bin", TX, 5000, Checksum::Compute)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Stored,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Stored, 1));
     let sent = w.io.buf(TX)[..5000].to_vec();
     assert_eq!(w.server.object("/dir/key%20one.bin"), Some(&sent[..]));
 
     w.s3.fetch(&mut w.io, 2, "dir/key one.bin", None, RX)
         .unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: 5000,
             verified: true
@@ -44,7 +38,7 @@ fn store_fetch_list_and_erase_with_a_bearer_token_and_crc32c() {
     w.s3.fetch(&mut w.io, 3, "dir/key one.bin", Some((10, 19)), RX)
         .unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: 10,
             verified: false
@@ -52,17 +46,17 @@ fn store_fetch_list_and_erase_with_a_bearer_token_and_crc32c() {
     );
 
     w.s3.list(&mut w.io, 4, "dir/", None, 10, RX).unwrap();
-    let Outcome::Listed { len } = w.last().outcome else {
+    let Outcome::Listed { len } = w.last().outcome() else {
         panic!("listing failed: {:?}", w.done.last())
     };
     let listing = longshore_s3::list::Listing::parse(&w.io.buf(RX)[..len as usize]).unwrap();
     assert_eq!(listing.entries().count(), 1);
 
     w.s3.erase(&mut w.io, 5, "dir/key one.bin").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Erased);
+    assert_eq!(w.last().outcome(), Outcome::Erased);
     w.s3.fetch(&mut w.io, 6, "dir/key one.bin", None, RX)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::NotFound);
+    assert_eq!(w.last().outcome(), Outcome::NotFound);
 }
 
 /// Google answers DELETE of an absent object with 404 NoSuchKey
@@ -72,30 +66,16 @@ fn store_fetch_list_and_erase_with_a_bearer_token_and_crc32c() {
 fn an_erase_of_an_absent_object_succeeds_and_other_404s_do_not() {
     let mut w = world(4, Faults::default(), 3);
     w.s3.erase(&mut w.io, 1, "never-stored").unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Erased,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(1, Outcome::Erased, 1));
 
     // The delete is applied and its response lost: the retry finds nothing.
     w.fill_tx(100, 1);
     w.s3.store(&mut w.io, 2, "k", TX, 100, Checksum::Compute)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     w.server.script(Behavior::ApplyThenClose);
     w.s3.erase(&mut w.io, 3, "k").unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 3,
-            outcome: Outcome::Erased,
-            attempts: 2
-        }
-    );
+    assert_eq!(w.last(), Done::new(3, Outcome::Erased, 2));
     assert_eq!(w.server.object("/k"), None);
 
     // A 404 that does not name the key (a missing bucket, say) stays fatal.
@@ -103,11 +83,7 @@ fn an_erase_of_an_absent_object_succeeds_and_other_404s_do_not() {
     w.s3.erase(&mut w.io, 4, "k").unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 4,
-            outcome: Outcome::Fatal(Fatal::Status(404)),
-            attempts: 1
-        }
+        Done::new(4, Outcome::Fatal(Fatal::Status(404)), 1)
     );
 }
 
@@ -117,18 +93,14 @@ fn conditional_store_uses_the_generation_precondition() {
     w.fill_tx(1000, 1);
     w.s3.store_no_clobber(&mut w.io, 1, "k", TX, 1000, Checksum::Compute)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     let first = w.io.buf(TX)[..1000].to_vec();
     w.fill_tx(1000, 2);
     w.s3.store_no_clobber(&mut w.io, 2, "k", TX, 1000, Checksum::Compute)
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::AlreadyExists { after_retry: false },
-            attempts: 1
-        }
+        Done::new(2, Outcome::AlreadyExists { after_retry: false }, 1)
     );
     assert_eq!(
         w.server.object("/k"),
@@ -142,14 +114,7 @@ fn conditional_store_uses_the_generation_precondition() {
     w.server.script(Behavior::ApplyThenClose);
     w.s3.store_no_clobber(&mut w.io, 3, "other", TX, 1000, Checksum::Compute)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 3,
-            outcome: Outcome::Stored,
-            attempts: 3
-        }
-    );
+    assert_eq!(w.last(), Done::new(3, Outcome::Stored, 3));
 }
 
 #[test]
@@ -162,27 +127,16 @@ fn a_refused_token_is_fatal_and_a_new_token_is_rotated_in() {
         .unwrap();
     assert_eq!(
         w.last(),
-        Done {
-            token: 1,
-            outcome: Outcome::Fatal(Fatal::Status(403)),
-            attempts: 1
-        }
+        Done::new(1, Outcome::Fatal(Fatal::Status(403)), 1)
     );
 
     // The token helper writes a new token; it is validated and adopted.
     w.io.set_file(w.token_file, Some(format!("{TOKEN_B}\n").as_bytes()));
     w.settle(REREAD_MS + 50);
-    assert_eq!(w.s3.credential_rotations, 1);
+    assert_eq!(w.s3.credential_rotations(), 1);
     w.s3.store(&mut w.io, 2, "k", TX, 100, Checksum::Compute)
         .unwrap();
-    assert_eq!(
-        w.last(),
-        Done {
-            token: 2,
-            outcome: Outcome::Stored,
-            attempts: 1
-        }
-    );
+    assert_eq!(w.last(), Done::new(2, Outcome::Stored, 1));
 }
 
 /// Bits flipped in transit: a damaged upload is refused by the server's
@@ -190,10 +144,7 @@ fn a_refused_token_is_fatal_and_a_new_token_is_rotated_in() {
 /// fetched again. Nothing wrong is ever stored or returned.
 #[test]
 fn corruption_in_transit_never_reaches_the_store_or_the_caller() {
-    let faults = Faults {
-        bit_flip: 150_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE.with_bit_flip(150_000);
     let (mut stored, mut fetched) = (0, 0);
     for seed in 0..40 {
         let mut w = world(seed, faults, 6);
@@ -204,10 +155,10 @@ fn corruption_in_transit_never_reaches_the_store_or_the_caller() {
         let d = w.last();
         // Anything but a success is a reported failure, never another success.
         assert!(
-            matches!(d.outcome, Outcome::Stored | Outcome::Fatal(_)),
+            matches!(d.outcome(), Outcome::Stored | Outcome::Fatal(_)),
             "seed {seed}: {d:?}"
         );
-        if d.outcome == Outcome::Stored {
+        if d.outcome() == Outcome::Stored {
             stored += 1;
             assert_eq!(
                 w.server.object("/k"),
@@ -215,12 +166,12 @@ fn corruption_in_transit_never_reaches_the_store_or_the_caller() {
                 "seed {seed}: a damaged body was stored"
             );
             w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
-            let d = w.last();
+            let fetch = w.last();
             assert!(
-                matches!(d.outcome, Outcome::Fetched { .. } | Outcome::Fatal(_)),
-                "seed {seed}: {d:?}"
+                matches!(fetch.outcome(), Outcome::Fetched { .. } | Outcome::Fatal(_)),
+                "seed {seed}: {fetch:?}"
             );
-            if let Outcome::Fetched { len, verified } = d.outcome {
+            if let Outcome::Fetched { len, verified } = fetch.outcome() {
                 fetched += 1;
                 assert!(
                     verified && len == 8000 && w.io.buf(RX)[..8000] == sent[..],
@@ -243,7 +194,7 @@ fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
     // Asking for whole-object checksums changes nothing here: this store
     // takes a CRC-32C with each part without being asked.
     w.s3.multipart_begin(&mut w.io, 1, "big", true).unwrap();
-    let Outcome::Begun { upload } = w.last().outcome else {
+    let Outcome::Begun { upload } = w.last().outcome() else {
         panic!("expected an upload")
     };
     let mut parts = Vec::new();
@@ -253,7 +204,7 @@ fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
         object.extend_from_slice(&w.io.buf(TX)[..3000]);
         w.s3.multipart_store_part(
             &mut w.io,
-            10 + number as u64,
+            10 + u64::from(number),
             "big",
             &upload,
             number,
@@ -262,24 +213,20 @@ fn a_multipart_upload_uses_the_same_forms_with_a_bearer_token() {
             Checksum::Compute,
         )
         .unwrap();
-        let Outcome::PartStored { tag, checksum } = w.last().outcome else {
+        let Outcome::PartStored { tag, checksum } = w.last().outcome() else {
             panic!("expected a stored part")
         };
         // The part went with a CRC-32C, which completion does not list.
         assert_eq!(checksum, None);
-        parts.push(Part {
-            number,
-            tag,
-            checksum: None,
-        });
+        parts.push(Part::new(number, tag, None));
     }
     let len = write_manifest(w.io.buf(TX), &parts).unwrap() as u32;
     w.s3.multipart_complete(&mut w.io, 20, "big", &upload, TX, len, None)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
     w.s3.fetch(&mut w.io, 21, "big", None, RX).unwrap();
     assert_eq!(
-        w.last().outcome,
+        w.last().outcome(),
         Outcome::Fetched {
             len: 6000,
             verified: true
@@ -301,18 +248,18 @@ fn stat_options_and_copy_use_this_stores_header_names() {
         .unwrap();
     w.s3.store_with(&mut w.io, 1, "doc", TX, 3000, Checksum::Compute, &options)
         .unwrap();
-    assert_eq!(w.last().outcome, Outcome::Stored);
+    assert_eq!(w.last().outcome(), Outcome::Stored);
 
     w.s3.copy(&mut w.io, 2, "doc", "copy").unwrap();
-    assert_eq!(w.last().outcome, Outcome::Copied);
+    assert_eq!(w.last().outcome(), Outcome::Copied);
     w.s3.stat(&mut w.io, 3, "copy", Some(RX)).unwrap();
-    let Outcome::Stat(stat) = w.last().outcome else {
+    let Outcome::Stat(stat) = w.last().outcome() else {
         panic!("expected a stat")
     };
-    assert_eq!(stat.size, 3000);
+    assert_eq!(stat.size(), 3000);
     // Eight base64 characters of CRC-32C, padded with zeros.
-    assert_eq!(stat.checksum, Some(crc32c_form(&sent)));
-    let head = &w.io.buf(RX)[..stat.head_len as usize];
+    assert_eq!(stat.checksum(), Some(crc32c_form(&sent)));
+    let head = &w.io.buf(RX)[..stat.head_len() as usize];
     assert_eq!(header_in(head, "x-goog-meta-owner"), Some(&b"team a"[..]));
     assert_eq!(header_in(head, "x-amz-meta-owner"), None);
     assert_eq!(

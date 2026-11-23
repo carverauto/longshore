@@ -36,7 +36,7 @@ pub(super) fn name_memlock_limit(e: io::Error, pool_bytes: usize) -> io::Error {
 }
 
 fn check_nofile_limit(limits: &Limits) -> io::Result<u64> {
-    let table_len = limits.sockets_max as u64 + limits.files_max as u64;
+    let table_len = u64::from(limits.sockets_max) + u64::from(limits.files_max);
     let mut nofile = rlimit::default();
     if unsafe { getrlimit(RLIMIT_NOFILE, &mut nofile) } == 0 && table_len > nofile.rlim_cur {
         return Err(io::Error::new(
@@ -110,8 +110,8 @@ pub(super) fn cq_size(
     ring_bufs: u32,
     accept_slots: u32,
 ) -> io::Result<u32> {
-    let need = (ops_max as u64) * 2 + ring_bufs as u64 + accept_slots as u64;
-    let min = need.max(sq_entries as u64);
+    let need = u64::from(ops_max) * 2 + u64::from(ring_bufs) + u64::from(accept_slots);
+    let min = need.max(u64::from(sq_entries));
     u32::try_from(min)
         .ok()
         .and_then(|n| n.checked_next_power_of_two())
@@ -133,6 +133,31 @@ pub(super) fn check_features(features: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// An operation slot that holds nothing.
+fn idle_slot() -> Slot {
+    Slot {
+        cancel_requested: false,
+        token: 0,
+        state: State::Free,
+        result: 0,
+        sock: 0,
+        is_stream: false,
+        file_slot: FileSlot(0),
+        file_direct: false,
+        op_sock: None,
+        sock_closed: false,
+        fd: -1,
+        file_addr: 0,
+        file_len: 0,
+        phase: 0,
+        addr: sockaddr_any::default(),
+        addr_len: 0,
+        probe_fd: -1,
+        ts: timespec::default(),
+        wake_count: 0,
+    }
+}
+
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
     pub fn new(limits: Limits) -> io::Result<UringIo> {
@@ -151,7 +176,7 @@ impl UringIo {
             cq_entries,
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_SUBMIT_ALL,
         )?;
-        check_features(ring.params.features)?;
+        check_features(ring.params().features)?;
         let mut bufs = vec![0u8; limits.pool_bytes()].into_boxed_slice();
         let pool_base = limits.pool_base(bufs.as_ptr() as usize);
         let buf_range = register_pool_ranges(&mut ring, &limits, &mut bufs, pool_base)?;
@@ -170,27 +195,7 @@ impl UringIo {
             None
         };
         let ring_in_ring = vec![true; limits.ring_buffers as usize].into_boxed_slice();
-        let slot = Slot {
-            cancel_requested: false,
-            token: 0,
-            state: State::Free,
-            result: 0,
-            sock: 0,
-            is_stream: false,
-            file_slot: FileSlot(0),
-            file_direct: false,
-            op_sock: None,
-            sock_closed: false,
-            fd: -1,
-            file_addr: 0,
-            file_len: 0,
-            phase: 0,
-            addr: sockaddr_any::default(),
-            addr_len: 0,
-            probe_fd: -1,
-            ts: timespec::default(),
-            wake_count: 0,
-        };
+        let slot = idle_slot();
         Ok(UringIo {
             ring: ManuallyDrop::new(ring),
             limits,

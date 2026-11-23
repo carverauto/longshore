@@ -51,10 +51,10 @@ impl Resolver {
     /// [`Resolver::segment_floor`] does.
     pub fn connected(&mut self, host: usize, ip: IpAddr, segment: Segment) -> u32 {
         let h = &mut self.hosts[host];
-        h.path_limit = h.path_limit.max(segment.path_limit);
+        h.path_limit = h.path_limit.max(segment.path_limit());
         let set = &mut h.sets[usize::from(ip.is_ipv6())];
         if let Some(k) = set.addrs[..set.len].iter().position(|a| *a == ip) {
-            set.sizes[k] = segment.size;
+            set.sizes[k] = segment.size();
         }
         self.segment_floor(host)
     }

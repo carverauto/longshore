@@ -16,7 +16,8 @@
 //!
 //! All candidates must produce byte-identical records before any is timed.
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::measurement::WallTime;
+use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use std::hint::black_box;
 
 const RECORD: usize = 16384; // largest TLS 1.3 plaintext fragment
@@ -31,6 +32,13 @@ fn nonce(seq: u64) -> [u8; 12] {
     n
 }
 
+/// A candidate that cannot seal has nothing to measure: say which, and stop.
+#[cold]
+fn failed(what: &str) -> ! {
+    eprintln!("aead: {what} failed");
+    std::process::exit(1)
+}
+
 /// One record: `src` (RECORD bytes) -> `dst` (RECORD + 1 + TAG bytes).
 trait Sealer {
     fn seal(&self, seq: u64, src: &[u8], dst: &mut [u8]);
@@ -43,14 +51,13 @@ impl Sealer for RingCopy {
         let (body, tag) = dst.split_at_mut(RECORD + 1);
         body[..RECORD].copy_from_slice(src);
         body[RECORD] = CONTENT_TYPE[0];
-        let t = self
-            .0
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(nonce(seq)),
-                Aad::from(AAD),
-                body,
-            )
-            .unwrap();
+        let Ok(t) = self.0.seal_in_place_separate_tag(
+            Nonce::assume_unique_for_key(nonce(seq)),
+            Aad::from(AAD),
+            body,
+        ) else {
+            failed("ring sealing a record")
+        };
         tag.copy_from_slice(t.as_ref());
     }
 }
@@ -62,32 +69,34 @@ impl Sealer for AwsLcCopy {
         let (body, tag) = dst.split_at_mut(RECORD + 1);
         body[..RECORD].copy_from_slice(src);
         body[RECORD] = CONTENT_TYPE[0];
-        let t = self
-            .0
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(nonce(seq)),
-                Aad::from(AAD),
-                body,
-            )
-            .unwrap();
+        let Ok(t) = self.0.seal_in_place_separate_tag(
+            Nonce::assume_unique_for_key(nonce(seq)),
+            Aad::from(AAD),
+            body,
+        ) else {
+            failed("aws-lc-rs sealing a record")
+        };
         tag.copy_from_slice(t.as_ref());
     }
 }
 
 struct RustCryptoCopy(aes_gcm::Aes128Gcm);
 impl Sealer for RustCryptoCopy {
-    // The in-place trait is deprecated in favour of an in/out one; in-place is
-    // what this candidate is here to measure.
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "the in-place trait is deprecated in favour of an in/out one; in-place is what this candidate is here to measure"
+    )]
     fn seal(&self, seq: u64, src: &[u8], dst: &mut [u8]) {
         use aes_gcm::aead::AeadInPlace;
         let (body, tag) = dst.split_at_mut(RECORD + 1);
         body[..RECORD].copy_from_slice(src);
         body[RECORD] = CONTENT_TYPE[0];
-        let t = self
+        let Ok(t) = self
             .0
             .encrypt_in_place_detached(&nonce(seq).into(), &AAD, body)
-            .unwrap();
+        else {
+            failed("aes-gcm sealing a record")
+        };
         tag.copy_from_slice(&t);
     }
 }
@@ -142,13 +151,15 @@ fn candidates() -> Vec<(&'static str, Box<dyn Sealer>)> {
         (
             "ring, copy + in-place",
             Box::new(RingCopy(ring::aead::LessSafeKey::new(
-                ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &KEY).unwrap(),
+                ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &KEY)
+                    .unwrap_or_else(|_| failed("ring key setup")),
             ))),
         ),
         (
             "aws-lc-rs, copy + in-place",
             Box::new(AwsLcCopy(aws_lc_rs::aead::LessSafeKey::new(
-                aws_lc_rs::aead::UnboundKey::new(&aws_lc_rs::aead::AES_128_GCM, &KEY).unwrap(),
+                aws_lc_rs::aead::UnboundKey::new(&aws_lc_rs::aead::AES_128_GCM, &KEY)
+                    .unwrap_or_else(|_| failed("aws-lc-rs key setup")),
             ))),
         ),
         ("aws-lc scatter, no copy", Box::new(AwsLcScatter(scatter))),
@@ -186,16 +197,17 @@ fn bench(c: &mut Criterion) {
     );
 
     let mut g = c.benchmark_group("aes128gcm_tls13_record_seal/8MiB");
-    g.throughput(Throughput::Bytes((RECORD * RECORDS) as u64));
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.throughput(Throughput::Bytes((RECORD * RECORDS) as u64));
     for (name, sealer) in &all {
         // One destination record reused, as a registered send buffer would be.
         let mut dst = vec![0u8; RECORD + 1 + TAG];
-        g.bench_function(*name, |b| {
+        let _: &mut BenchmarkGroup<'_, WallTime> = g.bench_function(*name, |b| {
             b.iter(|| {
                 for (seq, rec) in src.as_chunks::<RECORD>().0.iter().enumerate() {
                     sealer.seal(seq as u64, black_box(rec), &mut dst);
                 }
-                black_box(&dst);
+                let _: &Vec<u8> = black_box(&dst);
             })
         });
     }

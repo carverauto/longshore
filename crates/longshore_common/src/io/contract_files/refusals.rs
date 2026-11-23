@@ -5,9 +5,14 @@
 
 //! Shared-check refusal tests for [`super`].
 
-use super::{base_limits, close_file, drive_many, drive_one, open_file, write_path};
+use super::{
+    base_limits, close_file, drive_many, drive_one, open_file, open_op, read_op, write_op,
+    write_path,
+};
+use crate::io::must::{must, Must};
 use crate::io::{
-    BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, EBADF, EBUSY, EINVAL,
+    BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, EBADF, EBUSY,
+    EINVAL,
 };
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
@@ -22,12 +27,10 @@ fn slot_busy_and_free_refusals<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
     let mut out = Completions::new(8);
     let p1 = format!("{root}busy1.dat");
     let p2 = format!("{root}busy2.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p1, rw),
         0
@@ -41,28 +44,8 @@ fn slot_busy_and_free_refusals<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
     // Concurrent FileOpen into an Opening slot -> -EBUSY.
     let l1 = write_path(&mut io, BufId(0), 0, &p1);
     let l2 = write_path(&mut io, BufId(1), 0, &p2);
-    io.submit(
-        Token(4),
-        Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: l1,
-            flags: rw,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(5),
-        Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf: BufId(1),
-            path_off: 0,
-            path_len: l2,
-            flags: rw,
-        },
-    )
-    .unwrap();
+    io.must_submit(Token(4), open_op(FileSlot(0), BufId(0), l1, rw));
+    io.must_submit(Token(5), open_op(FileSlot(0), BufId(1), l2, rw));
     let cs = drive_many(&mut io, &mut out, [Token(4), Token(5)]);
     assert_eq!(cs[0].result, 0);
     assert_eq!(cs[1].result, -EBUSY);
@@ -83,13 +66,7 @@ fn slot_busy_and_free_refusals<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
             &mut io,
             &mut out,
             Token(8),
-            Op::FileRead {
-                slot: FileSlot(4),
-                buf: BufId(0),
-                off: 0,
-                len: 8,
-                file_off: 0,
-            },
+            read_op(FileSlot(4), BufId(0), 8, 0),
         ),
         -EBADF
     );
@@ -99,12 +76,10 @@ fn invalid_paths_and_status_buf<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
     let limits = base_limits();
     let mut io = make(limits);
     let mut out = Completions::new(8);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     // Missing trailing NUL.
     io.buf(BufId(0))[..4].copy_from_slice(b"abcd");
     assert_eq!(
@@ -112,13 +87,7 @@ fn invalid_paths_and_status_buf<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
             &mut io,
             &mut out,
             Token(1),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
-                path_off: 0,
-                path_len: 4,
-                flags: rw,
-            },
+            open_op(FileSlot(0), BufId(0), 4, rw),
         ),
         -EINVAL
     );
@@ -129,13 +98,7 @@ fn invalid_paths_and_status_buf<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
             &mut io,
             &mut out,
             Token(2),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
-                path_off: 0,
-                path_len: 5,
-                flags: rw,
-            },
+            open_op(FileSlot(0), BufId(0), 5, rw),
         ),
         -EINVAL
     );
@@ -146,13 +109,7 @@ fn invalid_paths_and_status_buf<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
             &mut io,
             &mut out,
             Token(3),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: small,
-                path_off: 0,
-                path_len: limits.small_buffer_size + 1,
-                flags: rw,
-            },
+            open_op(FileSlot(0), small, limits.small_buffer_size + 1, rw),
         ),
         -EINVAL
     );
@@ -182,114 +139,74 @@ fn direct_alignment_and_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
     let mut out = Completions::new(8);
     let p = format!("{root}direct_bad.dat");
     let plen = write_path(&mut io, BufId(0), 0, &p);
-    let df = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        direct: true,
-        ..Default::default()
-    };
+    let df = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
+        .with_direct(true);
     // Misaligned write behind an Opening direct FileOpen -> -EINVAL.
-    io.submit(
-        Token(1),
-        Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: plen,
-            flags: df,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(2),
-        Op::FileWrite {
-            slot: FileSlot(0),
-            buf: BufId(1),
-            off: 0,
-            len: 512,
-            file_off: 0,
-        },
-    )
-    .unwrap();
+    io.must_submit(Token(1), open_op(FileSlot(0), BufId(0), plen, df));
+    io.must_submit(Token(2), write_op(FileSlot(0), BufId(1), 512, 0));
     let cs = drive_many(&mut io, &mut out, [Token(1), Token(2)]);
     assert_eq!(cs[1].result, -EINVAL);
     if cs[0].result == 0 {
-        let a = limits.aligned(0);
-        assert_eq!(
-            drive_one(
-                &mut io,
-                &mut out,
-                Token(3),
-                Op::FileRead {
-                    slot: FileSlot(0),
-                    buf: a,
-                    off: 512,
-                    len: 4096,
-                    file_off: 0,
-                },
-            ),
-            -EINVAL
-        );
-        assert_eq!(
-            drive_one(
-                &mut io,
-                &mut out,
-                Token(4),
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: a,
-                    off: 0,
-                    len: 4096,
-                    file_off: 512,
-                },
-            ),
-            -EINVAL
-        );
-        assert_eq!(
-            drive_one(
-                &mut io,
-                &mut out,
-                Token(5),
-                Op::FilePunch {
-                    slot: FileSlot(0),
-                    file_off: 512,
-                    len: 4096,
-                },
-            ),
-            -EINVAL
-        );
+        misaligned_direct_ops_refused(&mut io, &mut out, limits.aligned(0));
         assert_eq!(close_file(&mut io, &mut out, 6, FileSlot(0)), 0);
     }
+}
+
+/// Tokens 3-5: on an open direct file, a read into a misaligned buffer offset,
+/// a write at a misaligned file offset, and a misaligned punch are refused.
+fn misaligned_direct_ops_refused(io: &mut impl Io, out: &mut Completions, a: BufId) {
+    assert_eq!(
+        drive_one(
+            io,
+            out,
+            Token(3),
+            Op::FileRead {
+                slot: FileSlot(0),
+                buf: a,
+                off: 512,
+                len: 4096,
+                file_off: 0,
+            },
+        ),
+        -EINVAL
+    );
+    assert_eq!(
+        drive_one(io, out, Token(4), write_op(FileSlot(0), a, 4096, 512)),
+        -EINVAL
+    );
+    assert_eq!(
+        drive_one(
+            io,
+            out,
+            Token(5),
+            Op::FilePunch {
+                slot: FileSlot(0),
+                file_off: 512,
+                len: 4096,
+            },
+        ),
+        -EINVAL
+    );
 }
 
 fn ready_list_drains_behind_timer<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     let mut io = make(base_limits());
     let mut out = Completions::new(8);
-    io.submit(
+    io.must_submit(
         Token(1),
         Op::Timeout {
             nanos: 5_000_000_000,
         },
-    )
-    .unwrap();
-    io.submit(
-        Token(2),
-        Op::FileRead {
-            slot: FileSlot(0),
-            buf: BufId(0),
-            off: 0,
-            len: 16,
-            file_off: 0,
-        },
-    )
-    .unwrap();
+    );
+    io.must_submit(Token(2), read_op(FileSlot(0), BufId(0), 16, 0));
     let t0 = std::time::Instant::now();
-    io.tick(true, &mut out).expect("tick");
+    io.must_tick(true, &mut out);
     assert!(t0.elapsed() < std::time::Duration::from_secs(1));
-    let c = out.pop().expect("ready completion");
+    let c = must(out.pop(), "ready completion");
     assert_eq!((c.token, c.result), (Token(2), -EBADF));
-    io.submit(Token(3), Op::Cancel { target: Token(1) })
-        .unwrap();
-    let _ = drive_many(&mut io, &mut out, [Token(1)]);
+    io.must_submit(Token(3), Op::Cancel { target: Token(1) });
+    let _: [Completion; 1] = drive_many(&mut io, &mut out, [Token(1)]);
 }

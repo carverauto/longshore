@@ -112,74 +112,17 @@ impl SimDisk {
                 parent,
                 child,
                 name_len,
-            } => {
-                let base = &self.dir_name_arena[base_off..base_off + name_len as usize];
-                let Some(full_len) = build_durable_path(
-                    &self.durable_names,
-                    &self.durable_name_bytes,
-                    self.max_name_len,
-                    parent,
-                    base,
-                    &mut self.durable_scratch_a,
-                ) else {
-                    return ApplyReclaim::NONE;
-                };
-                if let Some(old_ni) = self.find_durable_name(&self.durable_scratch_a[..full_len]) {
-                    let old_ii = self.durable_names[old_ni].inode as usize;
-                    if old_ii == child as usize {
-                        return ApplyReclaim::NONE;
-                    }
-                    let scan_all = if self.inodes[old_ii].is_dir {
-                        self.clear_durable_descendants_a(old_ni, full_len)
-                    } else {
-                        false
-                    };
-                    self.inodes[old_ii].durable_links =
-                        self.inodes[old_ii].durable_links.saturating_sub(1);
-                    self.durable_names[old_ni].inode = child;
-                    self.inodes[child as usize].durable_links += 1;
-                    return ApplyReclaim {
-                        overwritten: Some(old_ii),
-                        scan_all,
-                    };
-                }
-                let Some(ni) = self.durable_names.iter().position(|n| !n.used) else {
-                    return ApplyReclaim::NONE;
-                };
-                let dst = ni * self.max_name_len;
-                self.durable_name_bytes[dst..dst + full_len]
-                    .copy_from_slice(&self.durable_scratch_a[..full_len]);
-                self.durable_names[ni] = SimName {
-                    used: true,
-                    len: full_len as u16,
-                    inode: child,
-                };
-                self.inodes[child as usize].durable_links += 1;
-                ApplyReclaim::NONE
-            }
+            } => match self.durable_path(parent, base_off, name_len, false) {
+                Some(full_len) => self.apply_durable_create(child, full_len),
+                None => ApplyReclaim::NONE,
+            },
             DirChangeKind::Unlink {
                 parent,
                 child,
                 name_len,
             } => {
-                let base = &self.dir_name_arena[base_off..base_off + name_len as usize];
-                let Some(full_len) = build_durable_path(
-                    &self.durable_names,
-                    &self.durable_name_bytes,
-                    self.max_name_len,
-                    parent,
-                    base,
-                    &mut self.durable_scratch_a,
-                ) else {
-                    return ApplyReclaim::NONE;
-                };
-                let Some(ni) = self.find_durable_name(&self.durable_scratch_a[..full_len]) else {
-                    return ApplyReclaim::NONE;
-                };
-                if self.durable_names[ni].inode == child {
-                    self.durable_names[ni].used = false;
-                    self.inodes[child as usize].durable_links =
-                        self.inodes[child as usize].durable_links.saturating_sub(1);
+                if let Some(full_len) = self.durable_path(parent, base_off, name_len, false) {
+                    self.apply_durable_unlink(child, full_len);
                 }
                 ApplyReclaim::NONE
             }
@@ -191,31 +134,84 @@ impl SimDisk {
                 new_len,
                 ..
             } => {
-                let old_base = &self.dir_name_arena[base_off..base_off + old_len as usize];
                 let new_off = base_off + self.max_name_len;
-                let new_base = &self.dir_name_arena[new_off..new_off + new_len as usize];
-                let Some(old_full_len) = build_durable_path(
-                    &self.durable_names,
-                    &self.durable_name_bytes,
-                    self.max_name_len,
-                    old_parent,
-                    old_base,
-                    &mut self.durable_scratch_a,
-                ) else {
+                let Some(old_full_len) = self.durable_path(old_parent, base_off, old_len, false)
+                else {
                     return ApplyReclaim::NONE;
                 };
-                let Some(new_full_len) = build_durable_path(
-                    &self.durable_names,
-                    &self.durable_name_bytes,
-                    self.max_name_len,
-                    new_parent,
-                    new_base,
-                    &mut self.durable_scratch_b,
-                ) else {
+                let Some(new_full_len) = self.durable_path(new_parent, new_off, new_len, true)
+                else {
                     return ApplyReclaim::NONE;
                 };
                 self.apply_durable_rename(moved, old_full_len, new_full_len)
             }
+        }
+    }
+
+    /// Builds the durable full path of the arena name at `off..off + len`
+    /// under directory inode `parent`, into scratch B if `into_b`, else A.
+    fn durable_path(&mut self, parent: u32, off: usize, len: u16, into_b: bool) -> Option<usize> {
+        let base = &self.dir_name_arena[off..off + len as usize];
+        let dst = if into_b {
+            &mut self.durable_scratch_b
+        } else {
+            &mut self.durable_scratch_a
+        };
+        build_durable_path(
+            &self.durable_names,
+            &self.durable_name_bytes,
+            self.max_name_len,
+            parent,
+            base,
+            dst,
+        )
+    }
+
+    /// Links `child` durably at the path in scratch A, replacing whatever
+    /// the path named before.
+    fn apply_durable_create(&mut self, child: u32, full_len: usize) -> ApplyReclaim {
+        if let Some(old_ni) = self.find_durable_name(&self.durable_scratch_a[..full_len]) {
+            let old_ii = self.durable_names[old_ni].inode as usize;
+            if old_ii == child as usize {
+                return ApplyReclaim::NONE;
+            }
+            let scan_all = if self.inodes[old_ii].is_dir {
+                self.clear_durable_descendants_a(old_ni, full_len)
+            } else {
+                false
+            };
+            self.inodes[old_ii].durable_links = self.inodes[old_ii].durable_links.saturating_sub(1);
+            self.durable_names[old_ni].inode = child;
+            self.inodes[child as usize].durable_links += 1;
+            return ApplyReclaim {
+                overwritten: Some(old_ii),
+                scan_all,
+            };
+        }
+        let Some(ni) = self.durable_names.iter().position(|n| !n.used) else {
+            return ApplyReclaim::NONE;
+        };
+        let dst = ni * self.max_name_len;
+        self.durable_name_bytes[dst..dst + full_len]
+            .copy_from_slice(&self.durable_scratch_a[..full_len]);
+        self.durable_names[ni] = SimName {
+            used: true,
+            len: full_len as u16,
+            inode: child,
+        };
+        self.inodes[child as usize].durable_links += 1;
+        ApplyReclaim::NONE
+    }
+
+    /// Removes the durable name in scratch A if it still names `child`.
+    fn apply_durable_unlink(&mut self, child: u32, full_len: usize) {
+        let Some(ni) = self.find_durable_name(&self.durable_scratch_a[..full_len]) else {
+            return;
+        };
+        if self.durable_names[ni].inode == child {
+            self.durable_names[ni].used = false;
+            self.inodes[child as usize].durable_links =
+                self.inodes[child as usize].durable_links.saturating_sub(1);
         }
     }
 

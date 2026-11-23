@@ -6,8 +6,10 @@
 //! HTTP client against the in-tree server on one simulated `Io`, with heap
 //! allocation forbidden while requests run.
 
+#[cfg(test)]
 mod common;
 use common::*;
+use longshore_http_client::server::Behavior;
 
 #[test]
 fn one_connection_is_reused_across_requests() {
@@ -17,7 +19,7 @@ fn one_connection_is_reused_across_requests() {
         ok(200, 0)(w.request("PUT", "/k", Some(100)));
         ok(200, 100)(w.request("GET", "/k", None));
         assert_eq!(
-            (w.client.connects, w.server.accepted),
+            (w.client.connects(), w.server.accepted()),
             (1, 1),
             "round {i} opened another connection"
         );
@@ -31,17 +33,14 @@ fn connections_are_replaced_after_max_requests_even_with_free_slots() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_requests: 2,
-            ..client_cfg()
-        },
+        client_builder().max_requests(2).build().unwrap(),
     );
     w.fill_tx(10, 0);
     for round in 1..=3u64 {
         ok(200, 0)(w.request("PUT", "/k", Some(10)));
         ok(200, 0)(w.request("PUT", "/k", Some(10)));
         w.settle(20);
-        assert_eq!(w.client.connects, round, "two requests per connection");
+        assert_eq!(w.client.connects(), round, "two requests per connection");
         assert_eq!((w.client.open_connections(), w.server.open_connections()), (1, 1), "round {round}: the used-up connection must have been closed, not left beside a new one");
     }
 }
@@ -51,27 +50,27 @@ fn connections_are_replaced_after_max_requests_or_max_age() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_requests: 2,
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder()
+            .max_requests(2)
+            .max_age_ns(500 * MS)
+            .build()
+            .unwrap(),
     );
     w.fill_tx(10, 0);
     for _ in 0..4 {
         ok(200, 0)(w.request("PUT", "/k", Some(10)));
     }
     w.settle(50);
-    assert_eq!(w.client.connects, 2, "two requests per connection");
+    assert_eq!(w.client.connects(), 2, "two requests per connection");
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (2, 1),
         "the used-up connection was closed, not left beside a new one"
     );
     ok(200, 10)(w.request("GET", "/k", None));
     w.settle(50);
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (3, 2),
         "a used-up connection is replaced before a free slot is opened"
     );
@@ -85,10 +84,7 @@ fn an_aged_connection_is_replaced_before_a_free_slot_is_used() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder().max_age_ns(500 * MS).build().unwrap(),
     );
     w.fill_tx(10, 0);
     ok(200, 0)(w.request("PUT", "/k", Some(10)));
@@ -97,14 +93,14 @@ fn an_aged_connection_is_replaced_before_a_free_slot_is_used() {
     while w.io.now_ns() < until {
         w.io.tick(true, &mut w.out).unwrap();
         while let Some(c) = w.out.pop() {
-            if c.token.0 == HEARTBEAT {
-                w.io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+            if c.token().get() == HEARTBEAT {
+                w.io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                     .unwrap();
             } else if !matches!(
                 w.client.on_completion(&mut w.io, c),
                 Handled::Pending | Handled::Done(_)
             ) {
-                w.server.on_completion(&mut w.io, c);
+                let _: bool = w.server.on_completion(&mut w.io, c);
             }
         }
     }
@@ -115,7 +111,7 @@ fn an_aged_connection_is_replaced_before_a_free_slot_is_used() {
     );
     ok(200, 10)(w.request("GET", "/k", None));
     w.settle(20);
-    assert_eq!(w.client.connects, 2);
+    assert_eq!(w.client.connects(), 2);
     assert_eq!(
         (w.client.open_connections(), w.server.open_connections()),
         (1, 1),
@@ -128,10 +124,7 @@ fn idle_connections_are_closed_once_they_pass_their_maximum_age() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder().max_age_ns(500 * MS).build().unwrap(),
     );
     w.fill_tx(10, 0);
     ok(200, 0)(w.request("PUT", "/k", Some(10)));
@@ -149,7 +142,8 @@ fn idle_connections_are_closed_once_they_pass_their_maximum_age() {
     );
     ok(200, 10)(w.request("GET", "/k", None));
     assert_eq!(
-        w.client.connects, 2,
+        w.client.connects(),
+        2,
         "the next request opens a new connection"
     );
 }
@@ -159,27 +153,25 @@ fn idle_connections_past_max_age_are_closed_without_a_request() {
     let mut w = world_with(
         11,
         Faults::default(),
-        client::Config {
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder().max_age_ns(500 * MS).build().unwrap(),
     );
     ok(404, 0)(w.request("GET", "/k", None));
     w.settle(100);
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (1, 0),
         "a young idle connection stays open"
     );
     w.settle(500);
     assert_eq!(
-        (w.server.accepted, w.server.closed),
+        (w.server.accepted(), w.server.closed()),
         (1, 1),
         "the aged idle connection was closed by tick"
     );
     ok(404, 0)(w.request("GET", "/k", None));
     assert_eq!(
-        w.client.connects, 2,
+        w.client.connects(),
+        2,
         "the slot was freed and a new connection opened"
     );
 }
@@ -190,12 +182,12 @@ fn busy_when_every_connection_is_in_use() {
     for _ in 0..CONNS {
         w.server.script(Behavior::Stall);
     }
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(t, "GET", "/k", None).unwrap();
     }
     assert_eq!(w.start(99, "GET", "/k", None), Err(Error::Busy));
     w.run_until_done(CONNS as usize);
-    assert!(w.done.iter().all(|d| d.result == Err(Error::Timeout)));
+    assert!(w.done.iter().all(|d| d.result() == Err(Error::Timeout)));
     w.settle(50);
     assert_eq!(
         w.start(100, "GET", "/k", None),
@@ -210,7 +202,7 @@ fn concurrent_requests_use_separate_connections() {
     w.fill_tx(5000, 3);
     ok(200, 0)(w.request("PUT", "/k", Some(5000)));
     // HEAD has no response body, so three can run at once without sharing a buffer.
-    for t in 0..CONNS as u64 {
+    for t in 0..u64::from(CONNS) {
         w.start(200 + t, "HEAD", "/k", None).unwrap();
     }
     let before = w.done.len();
@@ -219,9 +211,9 @@ fn concurrent_requests_use_separate_connections() {
     let mut seen: Vec<(u64, u32)> = w.done[before..]
         .iter()
         .map(|d| {
-            let r = d.result.expect("a response");
-            assert_eq!((r.status, r.body_len), (200, 0));
-            (d.token, r.conn)
+            let r = d.result().expect("a response");
+            assert_eq!((r.status(), r.body_len()), (200, 0));
+            (d.token(), r.conn())
         })
         .collect();
     seen.sort();
@@ -232,7 +224,7 @@ fn concurrent_requests_use_separate_connections() {
     let mut conns: Vec<u32> = seen.iter().map(|s| s.1).collect();
     conns.sort();
     assert_eq!(conns, [0, 1, 2]);
-    assert_eq!(w.client.connects, CONNS as u64);
+    assert_eq!(w.client.connects(), u64::from(CONNS));
 }
 
 /// A server may close a connection while it sits idle. With the idle check
@@ -250,23 +242,24 @@ fn a_connection_closed_while_idle_is_replaced_before_it_is_used() {
     w.settle(20);
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        (w.client.idle_closed, w.client.idle_dirty, w.client.connects),
+        (
+            w.client.idle_closed(),
+            w.client.idle_dirty(),
+            w.client.connects()
+        ),
         (1, 0, 2)
     );
 
-    let mut w = world_with(
+    let mut unchecked = world_with(
         31,
         Faults::default(),
-        client::Config {
-            check_idle: false,
-            ..client_cfg()
-        },
+        client_builder().check_idle(false).build().unwrap(),
     );
-    w.server.script(Behavior::Raw(REPLY));
-    ok(200, 2)(w.request("GET", "/k", None));
-    w.settle(20);
+    unchecked.server.script(Behavior::Raw(REPLY));
+    ok(200, 2)(unchecked.request("GET", "/k", None));
+    unchecked.settle(20);
     assert_eq!(
-        w.request("GET", "/missing", None),
+        unchecked.request("GET", "/missing", None),
         Err(Error::Io(longshore_common::io::EPIPE)),
         "without the check the request goes into the closed connection"
     );
@@ -289,20 +282,12 @@ fn a_replacement_for_a_dead_idle_connection_uses_the_requests_address() {
     ok(200, 2)(w.request("GET", "/k", None));
     w.settle(20);
 
-    let req = Request {
-        method: "GET",
-        target: "/missing",
-        host: "objects.test",
-        host_id: 0,
-        addr: SECOND,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req =
+        Request::new("GET", "/missing", "objects.test", 0, SECOND).with_response_buf(Some(RX));
     w.client.start(&mut w.io, 500, &req).unwrap();
     w.run_until_done(2);
-    ok(404, 0)(w.done[1].result);
-    assert_eq!((w.client.idle_closed, w.client.connects), (1, 2));
+    ok(404, 0)(w.done[1].result());
+    assert_eq!((w.client.idle_closed(), w.client.connects()), (1, 2));
     assert_eq!(
         w.io.route_connects(SECOND),
         1,
@@ -316,36 +301,37 @@ fn a_connection_measured_below_the_floor_is_replaced_not_reused() {
     // Connections to the server's address report a small segment size.
     w.io.route(ADDR, ADDR, 1432);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connected.take(), Some((ADDR, seg(1432))));
+    assert_eq!(w.client.take_connected(), Some((ADDR, seg(1432))));
     assert_eq!(w.client.retire_below(0, 1000), 0, "above the floor");
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 1, "still reused");
+    assert_eq!(w.client.connects(), 1, "still reused");
 
     assert_eq!(w.client.retire_below(0, 4000), 1);
     assert_eq!(w.client.retire_below(0, 4000), 0, "retired once");
     // The path now gives large segments.
     w.io.route(ADDR, ADDR, 8228);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 2, "the retired connection was replaced");
-    assert_eq!(w.client.connected.take(), Some((ADDR, seg(8228))));
+    assert_eq!(
+        w.client.connects(),
+        2,
+        "the retired connection was replaced"
+    );
+    assert_eq!(w.client.take_connected(), Some((ADDR, seg(8228))));
     assert_eq!(w.client.retire_below(0, 4000), 0);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 2, "and its replacement is reused");
+    assert_eq!(w.client.connects(), 2, "and its replacement is reused");
 }
 
 #[test]
 fn connections_that_were_not_measured_are_never_retired() {
     let mut w = world(13, Faults::default());
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connected, None);
+    assert_eq!(w.client.connected(), None);
     assert_eq!(w.client.retire_below(0, u32::MAX), 0);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 1);
+    assert_eq!(w.client.connects(), 1);
 }
 
 fn seg(size: u32) -> longshore_common::io::Segment {
-    longshore_common::io::Segment {
-        size,
-        path_limit: 0,
-    }
+    longshore_common::io::Segment::new(size, 0)
 }

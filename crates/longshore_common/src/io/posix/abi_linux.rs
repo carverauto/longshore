@@ -6,7 +6,6 @@
 //! Hand-declared Linux system calls, structs, and constants for `io::posix`.
 
 #![cfg(target_os = "linux")]
-#![allow(non_camel_case_types, dead_code)]
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::mem::{align_of, offset_of, size_of};

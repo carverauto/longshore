@@ -7,8 +7,8 @@
 
 use crate::io::engine::{Attempt, Engine, World};
 use crate::io::{
-    BufId, FileId, Limits, Op, Sock, Wake, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET, ENAMETOOLONG,
-    ENFILE, ENOBUFS, ENOENT, EPIPE,
+    count_result, BufId, FileId, Limits, Op, Sock, Wake, EAGAIN, EBADF, ECONNREFUSED, ECONNRESET,
+    ENAMETOOLONG, ENFILE, ENOBUFS, ENOENT, EPIPE,
 };
 use crate::sim::prng::Prng;
 use std::io;
@@ -17,29 +17,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 mod disk;
+mod faults;
 pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
 mod ops;
 mod ops_armed;
+mod ops_net;
 mod world;
 
 /// Fault probabilities, in parts per million, evaluated per attempt.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Faults {
-    /// A connect is refused.
-    pub connect_refused: u32,
-    /// A send or receive resets the connection.
-    pub reset: u32,
-    /// A send accepts fewer bytes than asked.
-    pub short_send: u32,
-    /// A receive returns fewer bytes than are available.
-    pub partial_recv: u32,
-    /// One bit of a sent chunk is flipped in transit.
-    pub bit_flip: u32,
-    /// A ready operation is held back for this tick (delays and reorders).
-    pub delay: u32,
-    /// A UDP datagram is lost. Corrupted datagrams are also lost, as the UDP
-    /// checksum would discard them.
-    pub udp_drop: u32,
+    pub(crate) connect_refused: u32,
+    pub(crate) reset: u32,
+    pub(crate) short_send: u32,
+    pub(crate) partial_recv: u32,
+    pub(crate) bit_flip: u32,
+    pub(crate) delay: u32,
+    pub(crate) udp_drop: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]

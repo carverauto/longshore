@@ -59,29 +59,21 @@ impl Io for StubNoWakerIo {
 fn build_fails_when_io_has_no_waker() {
     let mut io = StubNoWakerIo;
     assert!(matches!(
-        queue::<u32, _>(&mut io, 4, Token(1)),
+        queue::<u32, _>(&mut io, 4, Token::new(1)),
         Err(NoWaker)
     ));
-    let cfg = longshore_mailbox::Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token(1),
-    };
+    let cfg = longshore_mailbox::Config::new(4, 2, 4, Token::new(1));
     assert!(matches!(mailbox::<u32, u32, _>(&mut io, cfg), Err(NoWaker)));
 }
 
 fn test_limits() -> Limits {
-    Limits {
-        ops_max: 4,
-        ..Limits::BASE
-    }
+    Limits::BASE.with_ops_max(4)
 }
 
 #[test]
 fn sim_io_wakes_and_drains_without_any_timer() {
     let mut io = SimIo::new(test_limits(), 42, Faults::default());
-    let (tx, mut rx) = queue::<u32, _>(&mut io, 4, Token(99)).unwrap();
+    let (tx, mut rx) = queue::<u32, _>(&mut io, 4, Token::new(99)).unwrap();
     rx.arm(&mut io).unwrap();
 
     // Signal arrives while no timer is submitted.
@@ -92,14 +84,14 @@ fn sim_io_wakes_and_drains_without_any_timer() {
     let mut out = Completions::new(16);
     io.tick(true, &mut out).unwrap();
     let c = out.pop().expect("AwaitWake completion");
-    assert_eq!(c.token, Token(99));
-    assert_eq!(c.result, 0);
+    assert_eq!(c.token(), Token::new(99));
+    assert_eq!(c.result(), 0);
     assert!(rx.on_completion(&mut io, c).unwrap());
 
     let mut got = Vec::new();
     let closed = rx.drain(|item| match item {
         Recv::Message(v) => got.push(v),
-        other => panic!("unexpected {other:?}"),
+        other @ (Recv::Stop | Recv::Closed) => panic!("unexpected {other:?}"),
     });
     assert!(!closed);
     assert_eq!(got, vec![10, 20, 30]);
@@ -108,7 +100,7 @@ fn sim_io_wakes_and_drains_without_any_timer() {
 #[test]
 fn posix_io_wakes_from_another_thread_without_any_timer() {
     let mut io = PosixIo::new(test_limits()).unwrap();
-    let (tx, mut rx) = queue::<u64, _>(&mut io, 4, Token(7)).unwrap();
+    let (tx, mut rx) = queue::<u64, _>(&mut io, 4, Token::new(7)).unwrap();
     rx.arm(&mut io).unwrap();
 
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -130,7 +122,7 @@ fn posix_io_wakes_from_another_thread_without_any_timer() {
         while let Some(c) = out.pop() {
             assert!(rx.on_completion(&mut io, c).unwrap());
         }
-        rx.drain(|item| match item {
+        let _: bool = rx.drain(|item| match item {
             Recv::Message(v) => got.push(v),
             Recv::Stop => stopped = true,
             Recv::Closed => panic!("unexpected Closed before Stop"),
@@ -159,38 +151,44 @@ fn full_queue_returns_message_and_accepts_in_band_stop() {
 
 #[test]
 fn recv_parked_and_wait_stop_without_io() {
-    let (tx, mut rx) = queue_parked::<u32>(2);
-    let tx2 = tx.clone();
-    let h = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(15));
-        tx2.try_send(5).unwrap();
-        std::thread::sleep(Duration::from_millis(15));
-        tx2.stop();
-    });
+    {
+        let (tx, mut rx) = queue_parked::<u32>(2);
+        let tx2 = tx.clone();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            tx2.try_send(5).unwrap();
+            std::thread::sleep(Duration::from_millis(15));
+            tx2.stop();
+        });
 
-    assert_eq!(rx.recv_parked(), Recv::Message(5));
-    assert_eq!(rx.recv_parked(), Recv::Stop);
-    h.join().unwrap();
+        assert_eq!(rx.recv_parked(), Recv::Message(5));
+        assert_eq!(rx.recv_parked(), Recv::Stop);
+        h.join().unwrap();
+    }
 
     // Closing before stop() still lets wait_stop() wake when stop() arrives.
-    let (tx, mut rx) = queue_parked::<u32>(2);
-    rx.close(|_| {});
-    let h = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(15));
-        tx.stop();
-    });
-    rx.wait_stop();
-    h.join().unwrap();
+    {
+        let (tx, mut rx) = queue_parked::<u32>(2);
+        rx.close(|_| {});
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            tx.stop();
+        });
+        rx.wait_stop();
+        h.join().unwrap();
+    }
 
     // Dropping all senders wakes wait_stop() too.
-    let (tx, mut rx) = queue_parked::<u32>(2);
-    rx.close(|_| {});
-    let h = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(15));
-        drop(tx);
-    });
-    rx.wait_stop();
-    h.join().unwrap();
+    {
+        let (tx, mut rx) = queue_parked::<u32>(2);
+        rx.close(|_| {});
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            drop(tx);
+        });
+        rx.wait_stop();
+        h.join().unwrap();
+    }
 }
 
 #[test]
@@ -276,8 +274,8 @@ fn recv_parked_panics_on_queue_with_wake() {
         fn wake(&self) {}
     }
 
-    let (_tx, mut rx) = queue_with_wake::<u32>(std::sync::Arc::new(NoopWake), 2, Token(1));
-    let _ = rx.recv_parked();
+    let (_tx, mut rx) = queue_with_wake::<u32>(std::sync::Arc::new(NoopWake), 2, Token::new(1));
+    let _: Recv<u32> = rx.recv_parked();
 }
 
 #[path = "queue/adversarial.rs"]
