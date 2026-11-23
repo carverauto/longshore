@@ -169,6 +169,10 @@ impl Ring {
     /// later `enter` is refused by the kernel. The ring itself lives on
     /// through its mappings, with whatever it had in flight.
     #[cfg(feature = "fault-injection")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test-only fault injection; /dev/null is there on every Linux host"
+    )]
     pub fn lose(&mut self) {
         use std::os::fd::AsRawFd;
         let null = std::fs::File::open("/dev/null").expect("open /dev/null");

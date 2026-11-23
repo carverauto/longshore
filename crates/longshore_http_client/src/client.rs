@@ -373,6 +373,10 @@ impl Client {
         Token(self.cfg.token_base + i as u64 * 8 + kind)
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "a client keeps at most ops_in_flight_max operations, which Limits::ops_max must cover"
+    )]
     fn submit<IO: Io>(&self, io: &mut IO, i: usize, kind: u64, op: Op) {
         io.submit(self.token(i, kind), op)
             .expect("Limits::ops_max must cover Client::ops_in_flight_max");

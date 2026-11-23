@@ -249,6 +249,10 @@ impl UringIo {
                 len,
             } => {
                 let addr = self.buf_ptr(buf, off, len);
+                #[expect(
+                    clippy::expect_used,
+                    reason = "a FileId comes from register_file; an unknown one is a caller bug, as on the other backends"
+                )]
                 let path = self
                     .files
                     .get(file.0 as usize)

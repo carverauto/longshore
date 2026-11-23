@@ -5,7 +5,7 @@
 
 //! Shared [`Io`] contract checks executable against any backend (`SimIo`, `PosixIo`, `UringIo`).
 
-use crate::io::must::fail;
+use crate::io::must::{fail, Must};
 use crate::io::scenario::echo;
 use crate::io::{BufId, Busy, Completions, Io, Limits, Op, Sock, Token, EAGAIN, ECANCELED};
 use std::net::SocketAddr;
@@ -17,7 +17,7 @@ const SERVER: Sock = Sock(2);
 fn drain_n<IO: Io>(io: &mut IO, out: &mut Completions, expected: usize) -> Vec<(u64, i32)> {
     let mut got = Vec::with_capacity(expected);
     while got.len() < expected {
-        io.tick(true, out).expect("tick");
+        io.must_tick(true, out);
         while let Some(c) = out.pop() {
             got.push((c.token.0, c.result));
         }
@@ -26,7 +26,7 @@ fn drain_n<IO: Io>(io: &mut IO, out: &mut Completions, expected: usize) -> Vec<(
 }
 
 fn connect_pair<IO: Io>(io: &mut IO, out: &mut Completions, addr: SocketAddr) -> SocketAddr {
-    let bound = io.listen(LISTENER, addr).expect("listen");
+    let bound = io.must_listen(LISTENER, addr);
     io.submit(Token(1), accept_op(LISTENER, SERVER)).unwrap();
     io.submit(
         Token(2),
@@ -224,7 +224,7 @@ pub fn close_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        let _: SocketAddr = io.listen(LISTENER, addr).expect("listen");
+        let _: SocketAddr = io.must_listen(LISTENER, addr);
         io.submit(Token(20), accept_op(LISTENER, SERVER)).unwrap();
         io.tick(false, &mut out).unwrap();
         io.submit(Token(21), Op::Close { sock: LISTENER }).unwrap();
@@ -273,7 +273,7 @@ pub fn timers<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
 pub fn wake_ready<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     let mut io = make(small_limits());
     let mut out = Completions::new(8);
-    let waker = io.waker().expect("waker");
+    let waker = io.must_waker();
     waker.wake();
     io.submit(Token(1), Op::AwaitWake).unwrap();
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(1, 0)]);

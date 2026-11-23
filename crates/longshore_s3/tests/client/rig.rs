@@ -62,7 +62,8 @@ pub fn rig_with(lanes: usize, operations: u32) -> Rig {
                 token_base: 7 << 40,
                 heartbeat_ns: 10 * MS,
             };
-            let (mut worker, lane) = Worker::new(&mut io, S3::new(s3_config(3, false)), layout);
+            let (mut worker, lane) = Worker::new(&mut io, S3::new(s3_config(3, false)), layout)
+                .expect("the simulator can be woken");
             worker.start(&mut io);
             handles.push(lane);
             LaneRig {

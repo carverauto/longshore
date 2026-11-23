@@ -18,6 +18,10 @@ use super::*;
 
 impl S3 {
     /// `name=` followed by the encoded upload id, after `prefix`.
+    #[expect(
+        clippy::expect_used,
+        reason = "QUERY_MAX is sized for UPLOAD_ID_MAX bytes encoded, the most an UploadId holds"
+    )]
     fn upload_query(prefix: &[u8], upload: &UploadId, out: &mut [u8; QUERY_MAX]) -> usize {
         let mut n = prefix.len();
         out[..n].copy_from_slice(prefix);

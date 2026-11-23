@@ -241,6 +241,10 @@ impl Server {
                     }
                 }
                 self.uploads[entry] = 0;
+                #[expect(
+                    clippy::expect_used,
+                    reason = "the object's parts were just freed, so a slot is free"
+                )]
                 let slot = self
                     .objects
                     .iter()

@@ -207,6 +207,10 @@ impl Stream {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "a stream keeps one send and one receive in flight, which Limits::ops_max must cover"
+    )]
     pub(super) fn submit<IO: Io>(io: &mut IO, token: Token, op: Op) {
         io.submit(token, op)
             .expect("Limits::ops_max must cover one send and one receive per connection");

@@ -6,6 +6,7 @@
 //! Shared socket-options and Unix-domain stream socket contract checks.
 
 use super::{close_socks, drain_one, drain_until, echo_armed, net_limits};
+use crate::io::must::Must;
 use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use std::net::SocketAddr;
 
@@ -19,7 +20,7 @@ fn socket_options_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Socket
     io.no_delay(true);
     io.keep_alive(true);
     let mut out = Completions::new(8);
-    let bound = io.listen(Sock(0), addr).expect("listen");
+    let bound = io.must_listen(Sock(0), addr);
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
     io.submit(
@@ -141,7 +142,7 @@ fn unix_no_listener_and_bad_paths_leave_slot_free<IO: Io>(
     assert!(drain_one(&mut io, &mut out, 4).result < 0);
 
     // Now reuse Sock(1) for a valid TCP connect.
-    let bound = io.listen(Sock(0), addr).expect("listen");
+    let bound = io.must_listen(Sock(0), addr);
     io.submit(
         Token(5),
         Op::Accept {
@@ -177,7 +178,7 @@ fn unix_stream_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, unix_path: &str
     io.no_delay(true);
     io.keep_alive(true);
     let mut out = Completions::new(8);
-    io.listen_unix(Sock(0), unix_path).expect("listen_unix");
+    io.must_listen_unix(Sock(0), unix_path);
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
 

@@ -5,7 +5,7 @@
 
 //! Generic `IO: Io` contract suite for all 11 file operations and shared refusals.
 
-use crate::io::must::fail;
+use crate::io::must::{fail, Must};
 use crate::io::{
     file_size, BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ENOENT,
 };
@@ -38,9 +38,9 @@ pub(crate) fn write_path(io: &mut impl Io, buf: BufId, off: u32, path: &str) -> 
 }
 
 pub(crate) fn drive_one(io: &mut impl Io, out: &mut Completions, token: Token, op: Op) -> i32 {
-    io.submit(token, op).expect("submit");
+    io.must_submit(token, op);
     for _ in 0..10_000 {
-        io.tick(true, out).expect("tick");
+        io.must_tick(true, out);
         while let Some(c) = out.pop() {
             if c.token == token {
                 return c.result;
@@ -57,7 +57,7 @@ pub(crate) fn drive_many<const N: usize>(
 ) -> [Completion; N] {
     let mut found: [Option<Completion>; N] = [None; N];
     for _ in 0..10_000 {
-        io.tick(true, out).expect("tick");
+        io.must_tick(true, out);
         while let Some(c) = out.pop() {
             if let Some(pos) = tokens.iter().position(|&t| t == c.token) {
                 found[pos] = Some(c);

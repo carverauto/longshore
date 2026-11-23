@@ -40,14 +40,20 @@ impl DiskConfig {
         );
         let total_inodes = (self.max_files as usize)
             .checked_add(self.max_dirs as usize)
-            .and_then(|n| n.checked_add(1))
-            .expect("DiskConfig inode count overflow");
-        let _: usize = (self.max_files as usize)
-            .checked_mul(self.max_bytes_per_file)
-            .expect("DiskConfig file_data size overflow");
-        let _: usize = total_inodes
-            .checked_mul(self.max_name_len)
-            .expect("DiskConfig name_bytes size overflow");
+            .and_then(|n| n.checked_add(1));
+        assert!(total_inodes.is_some(), "DiskConfig inode count overflow");
+        assert!(
+            (self.max_files as usize)
+                .checked_mul(self.max_bytes_per_file)
+                .is_some(),
+            "DiskConfig file_data size overflow"
+        );
+        assert!(
+            total_inodes
+                .and_then(|n| n.checked_mul(self.max_name_len))
+                .is_some(),
+            "DiskConfig name_bytes size overflow"
+        );
     }
 }
 

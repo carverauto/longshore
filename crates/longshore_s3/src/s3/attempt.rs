@@ -38,9 +38,9 @@ impl S3 {
         };
 
         let s = self.slots[i];
-        let path = core::str::from_utf8(&s.path[..s.path_len]).expect("encoded keys are ASCII");
+        let path = crate::text::written(&s.path[..s.path_len]);
         let date = amz_date(io.unix_secs());
-        let date_str = core::str::from_utf8(&date).expect("timestamps are ASCII");
+        let date_str = crate::text::written(&date);
         let (method, payload) = match s.kind {
             Kind::Store { .. } if s.comparing => ("HEAD", EMPTY_SHA256),
             Kind::Store { .. } => ("PUT", UNSIGNED_PAYLOAD),
@@ -71,23 +71,23 @@ impl S3 {
         };
         let mut names = [0u8; OPTIONS_MAX * NAME_MAX];
         let mut name_ends = [0usize; OPTIONS_MAX];
+        let mut values = [""; OPTIONS_MAX];
         let mut option_count = 0;
         if matches!(s.kind, Kind::Store { .. } | Kind::Begin { .. }) && !s.comparing {
             let mut at = 0;
-            for (prefix, name, _) in s.options.headers(vendor_prefix) {
+            for (prefix, name, value) in s.options.headers(vendor_prefix) {
                 for part in [prefix, name] {
                     names[at..at + part.len()].copy_from_slice(part.as_bytes());
                     at += part.len();
                 }
                 name_ends[option_count] = at;
+                values[option_count] = value;
                 option_count += 1;
             }
         }
         let option = |k: usize| -> (&str, &str) {
             let start = if k == 0 { 0 } else { name_ends[k - 1] };
-            let name = core::str::from_utf8(&names[start..name_ends[k]]).expect("ASCII");
-            let value = s.options.headers(vendor_prefix).nth(k).expect("counted").2;
-            (name, value)
+            (crate::text::written(&names[start..name_ends[k]]), values[k])
         };
         let target = match multipart_query {
             Some(q) => {
@@ -95,7 +95,7 @@ impl S3 {
                 target_buf[..path.len()].copy_from_slice(path.as_bytes());
                 target_buf[path.len()] = b'?';
                 target_buf[path.len() + 1..n].copy_from_slice(q.as_bytes());
-                core::str::from_utf8(&target_buf[..n]).expect("ASCII")
+                crate::text::written(&target_buf[..n])
             }
             None => path,
         };
@@ -130,7 +130,7 @@ impl S3 {
             let b_start = digits(b, &mut d);
             put(&d[b_start..]);
         }
-        let range = core::str::from_utf8(&range_buf[..range_len]).expect("ASCII");
+        let range = crate::text::written(&range_buf[..range_len]);
 
         // Sent with the credentials in use now. A request already sent keeps
         // what it carries; only later attempts see a rotation.
@@ -144,19 +144,17 @@ impl S3 {
         let goog_hash;
         // S3: headers that are both sent and signed.
         let crc_value = s.crc.map(longshore_crc::crc64_header_value);
-        let crc_str = crc_value
-            .as_ref()
-            .map(|v| core::str::from_utf8(v).expect("base64 is ASCII"));
+        let crc_str = crc_value.as_ref().map(|v| crate::text::written(v));
         let mut sha_value = [0u8; 44];
         let sha_str = s.sha256.map(|digest| {
             let _: usize = longshore_crc::base64(&digest, &mut sha_value);
-            core::str::from_utf8(&sha_value).expect("base64 is ASCII")
+            crate::text::written(&sha_value)
         });
         let asked = s.exact.unwrap_or_default();
         let if_match = asked
             .if_match
             .as_ref()
-            .map(|tag| core::str::from_utf8(tag.as_bytes()).expect("checked when asked for"));
+            .map(|tag| crate::text::written(tag.as_bytes()));
         let mut signed: [(&str, &str); sigv4::HEADERS_MAX] = [("", ""); sigv4::HEADERS_MAX];
         signed[0] = ("host", &self.cfg.host);
         signed[1] = ("x-amz-content-sha256", payload);
@@ -275,6 +273,10 @@ impl S3 {
                 headers: &signed[..m],
                 payload_hash: payload,
             };
+            #[expect(
+                clippy::expect_used,
+                reason = "sixteen headers at most are signed, and the Authorization buffer fits them all"
+            )]
             let auth_len = authorization(&sreq, &scope, &mut auth)
                 .expect("at most sixteen headers, and the Authorization buffer always fits");
             if let Some(exact) = &mut self.slots[i].exact {

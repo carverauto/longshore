@@ -25,6 +25,10 @@ impl Client {
     }
 
     pub(super) fn recv_body<IO: Io>(&mut self, io: &mut IO, i: usize, have: u32) -> Handled {
+        #[expect(
+            clippy::expect_used,
+            reason = "only a request with a response buffer moves to RecvBody"
+        )]
         let buf = self.conns[i]
             .response_buf
             .expect("recv_body is only reached with a response buffer");

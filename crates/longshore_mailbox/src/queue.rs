@@ -7,7 +7,7 @@
 //! atomic close.
 
 use crate::sync::{
-    AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Mutex, Ordering, Thread, UnsafeCell,
+    unpoisoned, AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Mutex, Ordering, Thread, UnsafeCell,
 };
 use core::fmt;
 use core::marker::PhantomData;
@@ -231,7 +231,7 @@ pub fn queue_parked<M: Copy>(capacity: usize) -> (QueueSender<M>, QueueReceiver<
 impl<M: Copy> QueueSender<M> {
     fn unpark_if_parked(&self) {
         if self.shared.notify.swap(NOTIFY_SIGNALED, Ordering::AcqRel) == NOTIFY_PARKED {
-            let guard = self.shared.parker.lock().expect("parker lock");
+            let guard = unpoisoned(self.shared.parker.lock());
             if let Some(t) = &*guard {
                 t.unpark();
             }

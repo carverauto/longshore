@@ -123,6 +123,10 @@ impl SimDisk {
         if self.dir_log_len >= self.dir_log.len() {
             self.evict_one_dir_change();
         }
+        #[expect(
+            clippy::expect_used,
+            reason = "the arena has one slot per log entry and the log was just given room"
+        )]
         let slot = self
             .dir_arena_used
             .iter()

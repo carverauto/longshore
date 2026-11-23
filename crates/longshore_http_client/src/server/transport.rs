@@ -15,14 +15,14 @@ impl Server {
         if let Some(i) = self.conns.iter().position(|c| c.state == State::Free) {
             self.conns[i].state = State::Accepting;
             self.accepting = true;
-            io.submit(
+            Self::submit_as(
+                io,
                 Token(self.accept_token()),
                 Op::Accept {
                     listener: self.cfg.listener,
                     sock: self.sock(i),
                 },
-            )
-            .expect("Limits::ops_max must cover Server::ops_in_flight_max");
+            );
         }
     }
 
@@ -125,6 +125,10 @@ impl Server {
             let _: &mut HeadWriter<'_> = w.header("ETag", &tag);
         }
         self.identify(&mut w, i);
+        #[expect(
+            clippy::expect_used,
+            reason = "a reply head is fields the server wrote or already parsed as valid, far below head_max"
+        )]
         let n = w.finish().expect("server heads are small and well-formed");
         self.respond(io, i, n, body_len, close);
     }

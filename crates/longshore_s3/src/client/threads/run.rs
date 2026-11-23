@@ -188,7 +188,14 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
         token_base: 7 << 40,
         heartbeat_ns: 50 * MS,
     };
-    let (mut worker, lane) = Worker::with_waiters(&mut io, s3, layout, b.waiters as usize);
+    let (mut worker, lane) = match Worker::with_waiters(&mut io, s3, layout, b.waiters as usize) {
+        Ok(built) => built,
+        Err(e) => {
+            // The builder may have stopped waiting; this thread ends either way.
+            let _: Option<()> = ready.send(Err(std::io::Error::other(e))).ok();
+            return;
+        }
+    };
     worker.start(&mut io);
     #[cfg(all(feature = "fault-injection", target_os = "linux"))]
     let asked = lane.clone();

@@ -28,11 +28,11 @@ impl Wake for Parker {
 }
 
 #[cfg(not(longshore_model))]
-fn with_parker(f: &mut dyn FnMut(&Waker)) {
+fn with_parker<R>(f: impl FnOnce(&Waker) -> R) -> R {
     thread_local! {
         static PARKER: Waker = Waker::from(Arc::new(Parker(current())));
     }
-    PARKER.with(f);
+    PARKER.with(f)
 }
 
 /// Drive `f` to completion on the calling thread, parking between polls.
@@ -53,11 +53,7 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
     #[cfg(not(longshore_model))]
     {
         let mut f = pin!(f);
-        let mut out = None;
-        with_parker(&mut |waker| {
-            out = Some(drive(f.as_mut(), waker));
-        });
-        out.expect("with_parker invokes closure once")
+        with_parker(|waker| drive(f.as_mut(), waker))
     }
     // The model checker's threads do not outlive one run of the model.
     #[cfg(longshore_model)]
@@ -65,7 +61,7 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
 }
 
 enum Stage<A, F> {
-    Slot { build: Option<F>, closed: Option<A> },
+    Slot { build: F, closed: A },
     Sent(u32),
     Done,
 }
@@ -82,10 +78,7 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
         Self {
             sender,
             waiter: SlotWaiter::new(),
-            stage: Stage::Slot {
-                build: Some(build),
-                closed: Some(closed),
-            },
+            stage: Stage::Slot { build, closed },
         }
     }
 
@@ -98,17 +91,13 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
             .poll_one(self.sender.pool(), || !self.sender.is_closed(), cx)
         {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => {
-                let closed = match &mut self.stage {
-                    Stage::Slot { closed, .. } => closed.take().expect("closed once"),
-                    Stage::Sent(_) | Stage::Done => unreachable!(),
-                };
-                self.stage = Stage::Done;
-                Poll::Ready(Some(closed))
-            }
+            Poll::Ready(None) => match core::mem::replace(&mut self.stage, Stage::Done) {
+                Stage::Slot { closed, .. } => Poll::Ready(Some(closed)),
+                Stage::Sent(_) | Stage::Done => unreachable!(),
+            },
             Poll::Ready(Some(slot)) => {
-                let build = match &mut self.stage {
-                    Stage::Slot { build, .. } => build.take().expect("build once"),
+                let (build, closed) = match core::mem::replace(&mut self.stage, Stage::Done) {
+                    Stage::Slot { build, closed } => (build, closed),
                     Stage::Sent(_) | Stage::Done => unreachable!(),
                 };
                 let msg = build(slot);
@@ -119,11 +108,6 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
                     }
                     Err(TrySendError::Closed(_)) => {
                         self.sender.pool().give(slot);
-                        let closed = match &mut self.stage {
-                            Stage::Slot { closed, .. } => closed.take().expect("closed once"),
-                            Stage::Sent(_) | Stage::Done => unreachable!(),
-                        };
-                        self.stage = Stage::Done;
                         Poll::Ready(Some(closed))
                     }
                     #[expect(

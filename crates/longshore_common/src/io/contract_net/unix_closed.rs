@@ -6,6 +6,7 @@
 //! Shared Unix-domain closed-peer-before-accept regression checks.
 
 use super::{close_socks, drain_one, drain_until, echo_armed, net_limits};
+use crate::io::must::Must;
 use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ECANCELED};
 
 fn put_bytes(io: &mut impl Io, buf: BufId, bytes: &[u8]) -> u32 {
@@ -86,7 +87,7 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
     let _: Option<()> = std::fs::remove_file(unix_path).ok();
     let mut io = make(net_limits());
     let mut out = Completions::new(8);
-    io.listen_unix(Sock(0), unix_path).expect("listen_unix");
+    io.must_listen_unix(Sock(0), unix_path);
     let mut with_nul = unix_path.as_bytes().to_vec();
     with_nul.push(0);
 

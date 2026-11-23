@@ -9,7 +9,7 @@ use super::{
     Entry, QueueReceiver, Recv, TryRecv, CLOSED, COUNT_MASK, NOTIFY_IDLE, NOTIFY_PARKED, PARK_NONE,
     PARK_RECV, PARK_STOP, STOPPED,
 };
-use crate::sync::{self, Ordering};
+use crate::sync::{self, unpoisoned, Ordering};
 use longshore_common::io::{Busy, Completion, Io, Op};
 
 impl<M: Copy> QueueReceiver<M> {
@@ -103,7 +103,7 @@ impl<M: Copy> QueueReceiver<M> {
     /// after I/O shutdown.
     pub fn recv_parked(&mut self) -> Recv<M> {
         {
-            let mut g = self.shared.parker.lock().expect("parker lock");
+            let mut g = unpoisoned(self.shared.parker.lock());
             *g = Some(sync::current());
         }
         assert_eq!(
@@ -143,7 +143,7 @@ impl<M: Copy> QueueReceiver<M> {
             return;
         }
         {
-            let mut g = self.shared.parker.lock().expect("parker lock");
+            let mut g = unpoisoned(self.shared.parker.lock());
             *g = Some(sync::current());
         }
         if self.shared.park_mode.load(Ordering::Acquire) == PARK_NONE {

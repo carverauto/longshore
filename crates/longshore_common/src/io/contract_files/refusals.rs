@@ -6,6 +6,7 @@
 //! Shared-check refusal tests for [`super`].
 
 use super::{base_limits, close_file, drive_many, drive_one, open_file, write_path};
+use crate::io::must::{must, Must};
 use crate::io::{
     BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, EBADF, EBUSY,
     EINVAL,
@@ -286,9 +287,9 @@ fn ready_list_drains_behind_timer<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     )
     .unwrap();
     let t0 = std::time::Instant::now();
-    io.tick(true, &mut out).expect("tick");
+    io.must_tick(true, &mut out);
     assert!(t0.elapsed() < std::time::Duration::from_secs(1));
-    let c = out.pop().expect("ready completion");
+    let c = must(out.pop(), "ready completion");
     assert_eq!((c.token, c.result), (Token(2), -EBADF));
     io.submit(Token(3), Op::Cancel { target: Token(1) })
         .unwrap();

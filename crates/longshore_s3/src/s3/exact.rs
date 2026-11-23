@@ -35,6 +35,10 @@ pub(super) struct Exact {
 }
 
 /// The evidence of a request as it was signed.
+#[expect(
+    clippy::expect_used,
+    reason = "called only for a request that was just signed, so it is within every signing limit"
+)]
 pub(super) fn describe(method: &'static str, date: &[u8; 16], req: &sigv4::Request) -> Signed {
     let mut names = [0u8; crate::report::SIGNED_HEADERS_MAX];
     let n = sigv4::signed_headers(req, &mut names)
@@ -194,9 +198,13 @@ impl S3 {
         if let Some(version) = version {
             let name = b"versionId=";
             query[..name.len()].copy_from_slice(name);
-            query_len = name.len()
-                + uri_encode(version.as_bytes(), true, &mut query[name.len()..])
-                    .expect("QUERY_MAX holds any version id encoded");
+            #[expect(
+                clippy::expect_used,
+                reason = "QUERY_MAX is sized for VERSION_ID_MAX bytes encoded, the most a VersionId holds"
+            )]
+            let encoded = uri_encode(version.as_bytes(), true, &mut query[name.len()..])
+                .expect("QUERY_MAX holds any version id encoded");
+            query_len = name.len() + encoded;
         }
         let query = &query[..query_len];
         let i = self.prepare(io, token, key, kind, body, response_buf, checksum, query)?;
@@ -236,6 +244,7 @@ impl S3 {
 
     /// End slot `i` with no answer to its last attempt.
     pub(super) fn end_unanswered(&mut self, i: usize, cause: Cause) {
+        #[expect(clippy::expect_used, reason = "only exact operations end unanswered")]
         let exact = self.slots[i].exact.expect("only such operations end so");
         self.finish(i, &Outcome::Report(exact.report(cause)));
     }
@@ -293,6 +302,10 @@ impl S3 {
         sent: bool,
     ) {
         let s = self.slots[i];
+        #[expect(
+            clippy::expect_used,
+            reason = "on_done calls this only when exact is set"
+        )]
         let mut exact = s.exact.expect("called for such operations only");
         if sent {
             exact.sent += 1;

@@ -32,6 +32,10 @@ impl<R> Output for Result<R, Error> {
 
 impl<R> Output for (Result<R, Error>, Buffer) {
     type Value = R;
+    #[expect(
+        clippy::expect_used,
+        reason = "only operations that lend a buffer have this output, and they always hand it back"
+    )]
     fn build(result: Result<R, Error>, buffer: Option<Buffer>) -> Self {
         (
             result,
@@ -142,6 +146,10 @@ impl<T: Output> Pending<T> {
     /// Hand the request to the I/O thread under slot `op`. False, with the
     /// slot given back, if its thread is closed.
     fn send(&mut self, op: u32) -> bool {
+        #[expect(
+            clippy::expect_used,
+            reason = "the request is put back whenever a send fails, so it is here on every try"
+        )]
         let mut r = self.request.take().expect("sent once");
         r.op = op;
         let _: u32 = self.lane.in_flight.fetch_add(1, Ordering::Relaxed);

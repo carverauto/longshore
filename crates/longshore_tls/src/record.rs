@@ -347,9 +347,8 @@ impl Direction {
             return Err(RecordError::SequenceExhausted);
         }
         let nonce = self.nonce();
-        let header: [u8; HEADER_LEN] = record[..HEADER_LEN]
-            .try_into()
-            .expect("checked by record_len");
+        let mut header = [0u8; HEADER_LEN];
+        header.copy_from_slice(&record[..HEADER_LEN]);
         let ct_len = record.len() - HEADER_LEN - TAG_LEN;
         if ct_len > INNER_MAX {
             return Err(RecordError::BadLength);

@@ -376,6 +376,10 @@ impl UringIo {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the submission queue has room for ops_max entries and a slot is held for each"
+    )]
     fn push(&mut self, sqe: io_uring_sqe) {
         self.ring
             .push(sqe)

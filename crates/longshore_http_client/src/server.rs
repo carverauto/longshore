@@ -447,7 +447,15 @@ impl Server {
     }
 
     fn submit<IO: Io>(&self, io: &mut IO, i: usize, kind: u64, op: Op) {
-        io.submit(Token(self.cfg.token_base + i as u64 * 8 + kind), op)
+        Self::submit_as(io, Token(self.cfg.token_base + i as u64 * 8 + kind), op);
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "a server keeps at most ops_in_flight_max operations, which Limits::ops_max must cover"
+    )]
+    fn submit_as<IO: Io>(io: &mut IO, token: Token, op: Op) {
+        io.submit(token, op)
             .expect("Limits::ops_max must cover Server::ops_in_flight_max");
     }
 }

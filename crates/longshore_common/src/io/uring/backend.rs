@@ -191,6 +191,7 @@ impl Io for UringIo {
         let pool = &self.bufs[self.pool_base..];
         if let Err((bad_idx, errno)) = self.files_table.check_chain(ops, pool, &self.limits) {
             for (idx, &(token, _)) in ops.iter().enumerate() {
+                #[expect(clippy::expect_used, reason = "free.len() >= ops.len(), checked above")]
                 let i = self.free.pop().expect("checked free.len()");
                 self.slots[i as usize].state = State::Free;
                 self.ready.push(
@@ -202,6 +203,7 @@ impl Io for UringIo {
         }
         let last = ops.len() - 1;
         for (idx, &(token, op)) in ops.iter().enumerate() {
+            #[expect(clippy::expect_used, reason = "free.len() >= ops.len(), checked above")]
             let i = self.free.pop().expect("checked free.len()");
             self.init_slot(i, token);
             if let Some(mut sqe) = self.prepare_sqe(i, op, token) {

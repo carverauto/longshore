@@ -89,23 +89,24 @@ impl Chunked {
             let b = buf[at];
             self.state = match self.state {
                 State::Done => break,
-                State::Size { value, digits } => match b {
-                    b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {
+                State::Size { value, digits } => match (b as char).to_digit(16) {
+                    Some(digit) => {
                         // 16 hex digits is the whole u64; more cannot be a real size.
                         if digits == 16 {
                             return Err(HttpError::BadFraming);
                         }
                         State::Size {
-                            value: value << 4
-                                | u64::from((b as char).to_digit(16).expect("matched a hex digit")),
+                            value: value << 4 | u64::from(digit),
                             digits: digits + 1,
                         }
                     }
-                    _ if digits == 0 => return Err(HttpError::BadFraming),
-                    b'\r' => State::SizeLf { value },
-                    b';' => State::Extension { value },
-                    b' ' | b'\t' => State::SizeSpace { value },
-                    _ => return Err(HttpError::BadFraming),
+                    None if digits == 0 => return Err(HttpError::BadFraming),
+                    None => match b {
+                        b'\r' => State::SizeLf { value },
+                        b';' => State::Extension { value },
+                        b' ' | b'\t' => State::SizeSpace { value },
+                        _ => return Err(HttpError::BadFraming),
+                    },
                 },
                 // "5 ;ext" is tolerated; "5 5" and "5 garbage" are not a size.
                 State::SizeSpace { value } => match b {

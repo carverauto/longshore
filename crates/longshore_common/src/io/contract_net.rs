@@ -5,7 +5,7 @@
 
 //! Shared networking contract suite for armed accept/recv, buffer ring, socket options, and Unix sockets.
 
-use crate::io::must::fail;
+use crate::io::must::{fail, Must};
 use crate::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token};
 use std::net::SocketAddr;
 
@@ -35,7 +35,7 @@ pub(crate) fn drain_until<IO: Io>(
     mut done: impl FnMut(&mut IO, Completion) -> bool,
 ) {
     for _ in 0..50_000 {
-        io.tick(true, out).expect("tick");
+        io.must_tick(true, out);
         while let Some(c) = out.pop() {
             if done(io, c) {
                 return;
@@ -182,7 +182,7 @@ pub(crate) fn connect_one<IO: Io>(
     listener: Sock,
     client: Sock,
 ) -> Sock {
-    let bound = io.listen(listener, addr).expect("listen");
+    let bound = io.must_listen(listener, addr);
     io.submit(Token(1), Op::ArmedAccept { listener }).unwrap();
     io.submit(
         Token(2),

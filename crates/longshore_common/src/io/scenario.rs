@@ -14,7 +14,7 @@ pub enum EchoError {
     Io(u64, i32),
     /// Echoed byte at this stream offset differed from what was sent.
     Mismatch(u64),
-    /// `Io::tick` or `Io::listen` itself failed.
+    /// `Io::tick`, `Io::listen` or `Io::submit` itself failed.
     Driver,
 }
 
@@ -57,10 +57,9 @@ pub fn echo<IO: Io>(
     out: &mut Completions,
 ) -> Result<EchoStats, EchoError> {
     let addr = io.listen(LISTENER, addr).map_err(|_| EchoError::Driver)?;
+    // Echo keeps at most 4 operations in flight; an `Io` with fewer is refused.
     let sub = |driver: &mut IO, t: u64, op: Op| {
-        driver
-            .submit(Token(t), op)
-            .expect("echo uses at most 4 operations")
+        driver.submit(Token(t), op).map_err(|_| EchoError::Driver)
     };
     sub(
         io,
@@ -69,8 +68,8 @@ pub fn echo<IO: Io>(
             listener: LISTENER,
             sock: SERVER,
         },
-    );
-    sub(io, T_CONNECT, Op::Connect { sock: CLIENT, addr });
+    )?;
+    sub(io, T_CONNECT, Op::Connect { sock: CLIENT, addr })?;
 
     let mut stats = EchoStats {
         sends: 0,
@@ -101,7 +100,7 @@ pub fn echo<IO: Io>(
                         off: 0,
                         len: chunk,
                     },
-                ),
+                )?,
                 T_CONNECT => {
                     sub(
                         io,
@@ -112,7 +111,7 @@ pub fn echo<IO: Io>(
                             off: 0,
                             len: chunk,
                         },
-                    );
+                    )?;
                     c_len = fill(io, sent, total, chunk);
                     c_off = 0;
                     sub(
@@ -125,7 +124,7 @@ pub fn echo<IO: Io>(
                             len: c_len,
                             zero_copy,
                         },
-                    );
+                    )?;
                 }
                 T_CSEND => {
                     stats.sends += 1;
@@ -146,7 +145,7 @@ pub fn echo<IO: Io>(
                                 len: c_len - c_off,
                                 zero_copy,
                             },
-                        );
+                        )?;
                     }
                 }
                 T_CRECV => {
@@ -170,10 +169,10 @@ pub fn echo<IO: Io>(
                                 off: 0,
                                 len: chunk,
                             },
-                        );
+                        )?;
                     } else if !closing {
                         closing = true;
-                        sub(io, T_CLOSE, Op::Close { sock: CLIENT });
+                        sub(io, T_CLOSE, Op::Close { sock: CLIENT })?;
                     }
                 }
                 T_SRECV => {
@@ -189,7 +188,7 @@ pub fn echo<IO: Io>(
                                 len: n,
                                 zero_copy,
                             },
-                        );
+                        )?;
                     }
                 }
                 T_SSEND => {
@@ -205,7 +204,7 @@ pub fn echo<IO: Io>(
                                 len: s_len - s_off,
                                 zero_copy,
                             },
-                        );
+                        )?;
                     } else {
                         sub(
                             io,
@@ -216,7 +215,7 @@ pub fn echo<IO: Io>(
                                 off: 0,
                                 len: chunk,
                             },
-                        );
+                        )?;
                     }
                 }
                 T_CLOSE => {

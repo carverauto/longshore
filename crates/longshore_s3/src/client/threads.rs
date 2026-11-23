@@ -12,7 +12,7 @@ use crate::creds::Credentials;
 use crate::s3::{KeyPrefix, Validate};
 use longshore_dns::Family;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 /// Why a client could not be built.
@@ -283,16 +283,13 @@ impl Builder {
 /// operation are gone, since each of those keeps it alive.
 pub(super) struct Threads {
     lanes: Vec<Arc<Lane>>,
-    joins: Mutex<Vec<JoinHandle<()>>>,
+    joins: Vec<JoinHandle<()>>,
 }
 
 impl Threads {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn new(lanes: Vec<Arc<Lane>>, joins: Vec<JoinHandle<()>>) -> Threads {
-        Threads {
-            lanes,
-            joins: Mutex::new(joins),
-        }
+        Threads { lanes, joins }
     }
 }
 
@@ -301,7 +298,7 @@ impl Drop for Threads {
         for lane in &self.lanes {
             lane.sender.stop();
         }
-        for j in self.joins.lock().expect("joins lock").drain(..) {
+        for j in self.joins.drain(..) {
             // A panicked I/O thread has already reported it; Drop must not panic again.
             let _: Option<()> = j.join().ok();
         }

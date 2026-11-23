@@ -6,6 +6,7 @@
 //! Shared armed-receive cancellation, close-with-armed, idle-connection, and small-buffer checks.
 
 use super::{close_socks, connect_one, drain_one, drain_until, net_limits};
+use crate::io::must::Must;
 use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ECANCELED};
 use std::net::SocketAddr;
 
@@ -89,7 +90,7 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
     };
     let mut io = make(limits);
     let mut out = Completions::new(1);
-    let bound = io.listen(Sock(0), addr).expect("listen");
+    let bound = io.must_listen(Sock(0), addr);
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
     for k in 0..N {

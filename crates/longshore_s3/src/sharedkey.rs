@@ -100,7 +100,7 @@ pub fn string_to_sign(req: &Request, out: &mut [u8]) -> Result<usize, SignError>
         length[at] = b'0' + (v % 10) as u8;
         v /= 10;
     }
-    let length = core::str::from_utf8(&length[at..]).expect("digits");
+    let length = crate::text::written(&length[at..]);
 
     let mut o = Out {
         buf: out,

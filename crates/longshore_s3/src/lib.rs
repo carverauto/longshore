@@ -44,4 +44,5 @@ pub mod s3;
 pub mod sharedkey;
 pub mod sigv4;
 pub mod stat;
+mod text;
 pub mod time;

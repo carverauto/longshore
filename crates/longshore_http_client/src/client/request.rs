@@ -155,6 +155,10 @@ impl Client {
         );
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "only a request with a body moves to SendBody"
+    )]
     pub(super) fn send_body<IO: Io>(&mut self, io: &mut IO, i: usize, off: u32) {
         let (buf, len) = self.conns[i]
             .body

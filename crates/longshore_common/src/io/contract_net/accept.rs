@@ -6,7 +6,7 @@
 //! Shared armed-accept contract checks.
 
 use super::{close_socks, drain_one, drain_until, net_limits, send_all};
-use crate::io::must::fail;
+use crate::io::must::{fail, Must};
 use crate::io::{
     BufId, Completion, Completions, Io, Limits, Op, Sock, Token, ECANCELED, EMFILE, ENFILE,
 };
@@ -23,7 +23,7 @@ fn several_accepts_on_one_armed_accept<IO: Io>(
         ..net_limits()
     });
     let mut out = Completions::new(8);
-    let bound = io.listen(Sock(0), addr).expect("listen");
+    let bound = io.must_listen(Sock(0), addr);
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
     for k in 0..3u32 {
@@ -103,7 +103,7 @@ fn accept_range_full_and_armed_again<IO: Io>(
         ..net_limits()
     });
     let mut out = Completions::new(8);
-    let bound = io.listen(Sock(0), addr).expect("listen");
+    let bound = io.must_listen(Sock(0), addr);
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
     for k in 0..2u32 {
@@ -217,7 +217,7 @@ fn accept_range_len_zero_returns_enfile<IO: Io>(
         ..net_limits()
     });
     let mut out = Completions::new(8);
-    let bound = io.listen(Sock(0), addr).expect("listen");
+    let bound = io.must_listen(Sock(0), addr);
 
     // With no incoming client, ArmedAccept with accept_range_len == 0
     // completes immediately with -ENFILE on tick(false) without blocking.

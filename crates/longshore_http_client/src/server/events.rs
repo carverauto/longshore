@@ -156,6 +156,10 @@ impl Server {
         };
         if c.token.0 == self.accept_token() {
             self.accepting = false;
+            #[expect(
+                clippy::expect_used,
+                reason = "an accept completes only for the slot accept() put in Accepting"
+            )]
             let i = self
                 .conns
                 .iter()

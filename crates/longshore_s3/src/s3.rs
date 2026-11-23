@@ -397,6 +397,10 @@ impl S3 {
             if now >= at {
                 self.provider = Provider::Reading;
                 let len = self.credentials_read_len();
+                #[expect(
+                    clippy::expect_used,
+                    reason = "Limits::ops_max leaves the credentials read a slot, and only one is in flight"
+                )]
                 io.submit(
                     Token(f.token),
                     Op::ReadFile {

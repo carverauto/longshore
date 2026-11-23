@@ -5,7 +5,7 @@
 
 //! Sealing outgoing bytes into records and opening received records into the destination.
 
-use crate::stream::{Step, Tls};
+use crate::stream::{Step, Stream, Tls};
 use crate::TlsError;
 use longshore_common::io::{count_result, Io, Op, Sock, Token};
 use longshore_tls::record::{
@@ -41,7 +41,8 @@ impl Tls {
             self.sealed += n as u32;
         }
         (self.cipher_len, self.cipher_sent) = (out as u32, 0);
-        io.submit(
+        Stream::submit(
+            io,
             token,
             Op::Send {
                 sock,
@@ -50,8 +51,7 @@ impl Tls {
                 len: out as u32,
                 zero_copy: out as u32 >= self.zero_copy_min,
             },
-        )
-        .expect("Limits::ops_max must cover one send per connection");
+        );
     }
 
     /// Make space at the end of the receive buffer for more ciphertext.
@@ -166,7 +166,8 @@ impl Tls {
         if let Err(e) = self.make_room(io) {
             return Step::Tls(e);
         }
-        io.submit(
+        Stream::submit(
+            io,
             token,
             Op::Recv {
                 sock,
@@ -174,8 +175,7 @@ impl Tls {
                 off: self.rx_end,
                 len: self.cap - self.rx_end,
             },
-        )
-        .expect("Limits::ops_max must cover one receive per connection");
+        );
         Step::Pending
     }
 }

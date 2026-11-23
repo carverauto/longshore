@@ -123,7 +123,8 @@ impl Tls {
         if self.make_room(io).is_err() {
             return IdleCheck::Closed;
         }
-        io.submit(
+        Stream::submit(
+            io,
             token,
             Op::RecvNow {
                 sock,
@@ -131,8 +132,7 @@ impl Tls {
                 off: self.rx_end,
                 len: self.cap - self.rx_end,
             },
-        )
-        .expect("Limits::ops_max must cover one receive per connection");
+        );
         IdleCheck::Pending
     }
 }

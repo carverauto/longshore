@@ -189,6 +189,10 @@ impl Resolver {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the resolver keeps at most OPS_IN_FLIGHT_MAX operations, which Limits::ops_max must leave it"
+    )]
     fn submit<IO: Io>(io: &mut IO, token: u64, op: Op) {
         io.submit(Token(token), op)
             .expect("Limits::ops_max must leave OPS_IN_FLIGHT_MAX slots for the resolver");
@@ -228,13 +232,17 @@ impl Resolver {
         self.rng ^= self.rng << 17;
         self.id = (self.rng >> 24) as u16;
         let record = self.cfg.family.records()[q];
+        #[expect(
+            clippy::expect_used,
+            reason = "new() validated every hostname and start() checked tx_buf holds its query"
+        )]
         let len = encode_query_for(
             &self.hosts[host].name,
             self.id,
             record,
             io.buf(self.cfg.tx_buf),
         )
-        .expect("hostnames were validated in new()");
+        .expect("hostnames and tx_buf were checked before the first query");
         self.send_in_flight = true;
         self.queries += 1;
         Self::submit(

@@ -23,6 +23,10 @@ impl S3 {
         // A completion's response was lost and the retry found the upload
         // gone. The object at the key decides: ours if its checksum is.
         if s.kind == Kind::Complete && s.comparing {
+            #[expect(
+                clippy::expect_used,
+                reason = "a completion compares only when it was sent with a checksum"
+            )]
             let ours =
                 self.checksum_value(s.crc.expect("only completions with a checksum compare"));
             let class = classify(&result);
@@ -75,6 +79,10 @@ impl S3 {
                 (Kind::Stat | Kind::Copy, 404) => return finish(self, Outcome::NotFound),
                 // The comparison's answer: the object at the key, and its checksum.
                 (Kind::Store { .. }, 200) if s.comparing => {
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "a store compares only when it was sent with a checksum"
+                    )]
                     let ours =
                         self.checksum_value(s.crc.expect("only stores with a checksum compare"));
                     return match self.stored_checksum(io, r.conn) {
@@ -160,6 +168,10 @@ impl S3 {
             // A whole-object fetch: check the bytes against the store's checksum.
             (Ok(r), Kind::Fetch { range: None }) if class == Class::Success => {
                 if let Some(expected) = self.stored_checksum(io, r.conn) {
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "a fetch is always given a response buffer"
+                    )]
                     let buf = s.response_buf.expect("fetches have a response buffer");
                     let body = &io.buf(buf)[..r.body_len as usize];
                     let actual = self.checksum_value(match self.cfg.vendor {

@@ -341,7 +341,7 @@ impl S3 {
         }
         let target = presign::Target {
             scheme: if self.secure { "https" } else { "http" },
-            host: core::str::from_utf8(&authority[..n]).expect("a host and digits"),
+            host: crate::text::written(&authority[..n]),
             root: &self.root,
             region: &self.cfg.region,
             credentials: &self.creds[self.active],

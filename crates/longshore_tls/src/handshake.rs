@@ -108,6 +108,10 @@ impl ClientSetup {
         Ok(Self::build(roots, false))
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "crypto() gives AWS-LC's provider, which supports TLS 1.3"
+    )]
     fn build(roots: RootCertStore, aes128_only: bool) -> ClientSetup {
         let mut config = ClientConfig::builder_with_provider(crypto(aes128_only))
             .with_protocol_versions(&[&rustls::version::TLS13])
@@ -134,7 +138,7 @@ impl ServerSetup {
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()));
         let mut config = ServerConfig::builder_with_provider(crypto(false))
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .expect("TLS 1.3 is supported by the provider")
+            .map_err(|_| TlsError::Setup)?
             .with_no_client_auth()
             .with_single_cert(chain, key)
             .map_err(|_| TlsError::Setup)?;
@@ -195,8 +199,22 @@ impl Handshake {
         })
     }
 
+    // The connection is taken out only by `finish`, which consumes the
+    // handshake, and by `drop`: every other method finds it there.
+    #[expect(
+        clippy::expect_used,
+        reason = "only finish and drop take the connection, and both end the handshake"
+    )]
     fn conn(&self) -> &Conn {
         self.0.as_ref().expect("present until finish or drop")
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "only finish and drop take the connection, and both end the handshake"
+    )]
+    fn conn_mut(&mut self) -> &mut Conn {
+        self.0.as_mut().expect("present until finish or drop")
     }
 
     fn is_handshaking(&self) -> bool {
@@ -237,7 +255,7 @@ impl Handshake {
                 // silently lost and both sides wait for each other.
                 while !rec.is_empty() {
                     let before = rec.len();
-                    let r = match self.0.as_mut().expect("present until finish or drop") {
+                    let r = match self.conn_mut() {
                         Conn::Client(c) => c
                             .read_tls(&mut rec)
                             .map_err(|_| TlsError::Handshake)
@@ -265,7 +283,7 @@ impl Handshake {
         allow_alloc(|| {
             let mut cursor = std::io::Cursor::new(out);
             while self.wants_write() && (cursor.position() as usize) < cursor.get_ref().len() {
-                let n = match self.0.as_mut().expect("present until finish or drop") {
+                let n = match self.conn_mut() {
                     Conn::Client(c) => c.write_tls(&mut cursor),
                     Conn::Server(c) => c.write_tls(&mut cursor),
                 };
@@ -284,7 +302,7 @@ impl Handshake {
             return Err(TlsError::NotDone);
         }
         allow_alloc(|| {
-            let secrets = match self.0.take().expect("present until finish or drop") {
+            let secrets = match self.0.take().ok_or(TlsError::Handshake)? {
                 Conn::Client(c) => c.dangerous_extract_secrets(),
                 Conn::Server(c) => c.dangerous_extract_secrets(),
             }

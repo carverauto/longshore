@@ -6,7 +6,7 @@
 //! Generic `IO: Io` contract suite for [`Io::submit_chain`].
 
 use crate::io::contract_files::{base_limits, close_file, drive_one, open_file, write_path};
-use crate::io::must::fail;
+use crate::io::must::{fail, Must};
 use crate::io::{
     BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ECANCELED, ENOENT,
 };
@@ -18,10 +18,10 @@ pub(super) fn collect_chain<const N: usize>(
     out: &mut Completions,
     ops: [(Token, Op); N],
 ) -> Vec<Completion> {
-    io.submit_chain(&ops).expect("submit_chain");
+    io.must_submit_chain(&ops);
     let mut got = Vec::with_capacity(N);
     for _ in 0..10_000 {
-        io.tick(true, out).expect("tick");
+        io.must_tick(true, out);
         while let Some(c) = out.pop() {
             if ops.iter().any(|(t, _)| *t == c.token) {
                 got.push(c);

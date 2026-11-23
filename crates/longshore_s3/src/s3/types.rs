@@ -141,7 +141,7 @@ impl KeyPrefix {
     }
 
     pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).expect("built from a str")
+        crate::text::written(&self.bytes[..self.len as usize])
     }
 }
 

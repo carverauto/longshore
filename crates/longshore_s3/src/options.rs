@@ -182,7 +182,7 @@ impl Options {
         vendor_prefix: &'static str,
     ) -> impl Iterator<Item = (&'static str, &'a str, &'a str)> {
         self.entries[..self.count as usize].iter().map(move |e| {
-            let text = |range| core::str::from_utf8(self.slice(range)).expect("checked when added");
+            let text = |range| crate::text::written(self.slice(range));
             let prefix = match e.naming {
                 Naming::Plain => "",
                 Naming::Vendor => vendor_prefix,

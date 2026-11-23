@@ -12,7 +12,7 @@ use super::lane::{Finished, Kind, Lane, Request};
 use super::sync::{AtomicBool, AtomicU32, AtomicU64};
 use crate::s3::S3;
 use longshore_common::io::{BufId, Completion, Io, Op, Token};
-use longshore_mailbox::{Config, Pool, Receiver, Recv, TryRecv};
+use longshore_mailbox::{Config, NoWaker, Pool, Receiver, Recv, TryRecv};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -45,8 +45,13 @@ pub struct Worker {
 
 impl Worker {
     /// Build a worker and its lane over `s3`, which must not have been
-    /// started. Initialization: this allocates.
-    pub fn new<IO: Io>(io: &mut IO, s3: S3, layout: Layout) -> (Worker, Arc<Lane>) {
+    /// started. Initialization: this allocates. Refused if `io` cannot be
+    /// woken from another thread.
+    pub fn new<IO: Io>(
+        io: &mut IO,
+        s3: S3,
+        layout: Layout,
+    ) -> Result<(Worker, Arc<Lane>), NoWaker> {
         Self::with_waiters(
             io,
             s3,
@@ -60,7 +65,7 @@ impl Worker {
         s3: S3,
         layout: Layout,
         waiters_prealloc: usize,
-    ) -> (Worker, Arc<Lane>) {
+    ) -> Result<(Worker, Arc<Lane>), NoWaker> {
         assert!(layout.operations >= 1 && layout.buffers >= 1 && waiters_prealloc >= 1);
         let first = io.buf(layout.first_buffer);
         let (base, buf_size) = (first.as_mut_ptr(), first.len());
@@ -78,8 +83,7 @@ impl Worker {
             waiters_prealloc,
             wake_token: Token(layout.token_base),
         };
-        let (sender, rx) = longshore_mailbox::mailbox(io, config)
-            .expect("the I/O backend has no way to be woken from another thread");
+        let (sender, rx) = longshore_mailbox::mailbox(io, config)?;
         let lane = Arc::new(Lane {
             sender,
             bufs: Pool::new(layout.buffers, waiters_prealloc),
@@ -99,18 +103,26 @@ impl Worker {
             running: vec![false; layout.operations as usize].into_boxed_slice(),
             stopping: false,
         };
-        (worker, lane)
+        Ok((worker, lane))
     }
 
     /// Start the store and the worker's own timer and wake-up. Call once.
     pub fn start<IO: Io>(&mut self, io: &mut IO) {
         self.s3.start(io);
+        #[expect(
+            clippy::expect_used,
+            reason = "the worker keeps two operations in flight, which Limits::ops_max must leave it"
+        )]
         self.rx
             .arm(io)
             .expect("Limits::ops_max must leave two operations for the worker");
         self.arm_timer(io);
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the worker keeps two operations in flight, which Limits::ops_max must leave it"
+    )]
     fn arm_timer<IO: Io>(&self, io: &mut IO) {
         io.submit(
             Token(self.layout.token_base + 1),
@@ -124,11 +136,15 @@ impl Worker {
     /// Feed a completion. Returns false if it belongs to neither the worker
     /// nor its store.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
-        if self
+        #[expect(
+            clippy::expect_used,
+            reason = "the worker keeps two operations in flight, which Limits::ops_max must leave it"
+        )]
+        let woken = self
             .rx
             .on_completion(io, c)
-            .expect("Limits::ops_max must leave two operations for the worker")
-        {
+            .expect("Limits::ops_max must leave two operations for the worker");
+        if woken {
             return true;
         }
         if c.token == Token(self.layout.token_base + 1) {

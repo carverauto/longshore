@@ -371,9 +371,19 @@ fn least_busy(lanes: &[Arc<Lane>]) -> usize {
     if lanes.len() == 1 {
         return 0;
     }
-    (0..lanes.len())
-        .min_by_key(|&n| (!open(&lanes[n]), lanes[n].in_flight()))
-        .expect("at least one lane")
+    // The first of the least busy, as `min_by_key` would pick, starting
+    // from lane 0 since a client always has one.
+    let busy = |n: usize| (!open(&lanes[n]), lanes[n].in_flight());
+    let first = (0, busy(0));
+    let (best, _) = (1..lanes.len()).fold(first, |(best, least), n| {
+        let b = busy(n);
+        if b < least {
+            (n, b)
+        } else {
+            (best, least)
+        }
+    });
+    best
 }
 
 /// Whether the lane still takes requests.

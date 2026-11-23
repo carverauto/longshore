@@ -80,7 +80,7 @@ impl Credentials {
 
     /// Empty unless the keys are temporary.
     pub fn session_token(&self) -> &str {
-        core::str::from_utf8(&self.session[..self.session_len]).expect("validated as ASCII")
+        crate::text::written(&self.session[..self.session_len])
     }
 
     /// A bearer token, sent as it is instead of a signature. `None` if it is
@@ -112,11 +112,11 @@ impl Credentials {
 
     /// Empty for a bearer token.
     pub fn access_key(&self) -> &str {
-        core::str::from_utf8(&self.access[..self.access_len]).expect("validated as ASCII")
+        crate::text::written(&self.access[..self.access_len])
     }
 
     pub fn secret_key(&self) -> &str {
-        core::str::from_utf8(&self.secret[..self.secret_len]).expect("validated as ASCII")
+        crate::text::written(&self.secret[..self.secret_len])
     }
 
     /// Parse a credentials file. Keys are read from the `[default]` section,

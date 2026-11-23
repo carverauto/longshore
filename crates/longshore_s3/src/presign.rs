@@ -74,7 +74,7 @@ pub fn presign(
         return Err(PresignError::NotSigningCredentials);
     }
     let date = amz_date(unix_secs);
-    let date_str = core::str::from_utf8(&date).expect("timestamps are ASCII");
+    let date_str = crate::text::written(&date);
 
     // Pieces that are signed and also appear in the URL, each encoded once.
     let mut path = [0u8; 64 + 1 + 3 * 1024];
@@ -86,7 +86,7 @@ pub fn presign(
     let path_len = at
         + 1
         + uri_encode(key.as_bytes(), false, &mut path[at + 1..]).ok_or(PresignError::BadKey)?;
-    let path = core::str::from_utf8(&path[..path_len]).expect("encoded keys are ASCII");
+    let path = crate::text::written(&path[..path_len]);
 
     let mut credential = [0u8; 256];
     let mut credential_len = 0;
@@ -104,7 +104,7 @@ pub fn presign(
             .copy_from_slice(piece);
         credential_len += piece.len();
     }
-    let credential = core::str::from_utf8(&credential[..credential_len]).expect("ASCII");
+    let credential = crate::text::written(&credential[..credential_len]);
 
     let mut expires = [0u8; 10];
     let mut d = expires.len();
@@ -114,12 +114,13 @@ pub fn presign(
         expires[d] = b'0' + (v % 10) as u8;
         v /= 10;
     }
-    let expires = core::str::from_utf8(&expires[d..]).expect("digits");
+    let expires = crate::text::written(&expires[d..]);
 
     let mut token = [0u8; 3 * crate::creds::SESSION_MAX];
+    // Three times the longest token: always room, so `None` cannot happen.
     let token_len = uri_encode(creds.session_token().as_bytes(), true, &mut token)
-        .expect("an encoded session token fits three times its length");
-    let token = core::str::from_utf8(&token[..token_len]).expect("ASCII");
+        .ok_or(PresignError::OutputTooSmall)?;
+    let token = crate::text::written(&token[..token_len]);
 
     let mut query = [
         ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),

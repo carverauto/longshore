@@ -221,7 +221,7 @@ pub fn parse_response(buf: &[u8], limit: usize) -> Result<Option<ResponseHead>, 
     let line_end = buf[..end]
         .windows(2)
         .position(|w| w == b"\r\n")
-        .expect("head ends with CRLF CRLF");
+        .ok_or(HttpError::BadStartLine)?;
     let line = &buf[..line_end];
     // "HTTP/1.x SSS" then end of line or a space and the reason phrase.
     if line.len() < 12
@@ -254,7 +254,7 @@ pub fn parse_request(buf: &[u8], limit: usize) -> Result<Option<RequestHead>, Ht
     let line_end = buf[..end]
         .windows(2)
         .position(|w| w == b"\r\n")
-        .expect("head ends with CRLF CRLF");
+        .ok_or(HttpError::BadStartLine)?;
     let line = &buf[..line_end];
     let sp1 = line
         .iter()

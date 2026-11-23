@@ -32,7 +32,9 @@ pub const STATX_SIZE: usize = 256;
 /// Read `stx_size` from a `FileStatus` output buffer in Linux `struct statx` layout.
 pub fn file_size(buf: &[u8]) -> u64 {
     assert!(buf.len() >= STATX_SIZE, "statx buffer must be >= 256 bytes");
-    u64::from_le_bytes(buf[40..48].try_into().expect("8 bytes at 40..48"))
+    let mut size = [0u8; 8];
+    size.copy_from_slice(&buf[40..48]);
+    u64::from_le_bytes(size)
 }
 
 impl Op {
