@@ -83,6 +83,10 @@ shadow_unrelated = "deny"
 cast_lossless = "deny"
 cast_sign_loss = "deny"
 cast_possible_wrap = "deny"
+# Unwrap, expect and panic are allowed in tests. The overwrite settings are in clippy.toml
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 
 [profile.release]
 opt-level = 3
