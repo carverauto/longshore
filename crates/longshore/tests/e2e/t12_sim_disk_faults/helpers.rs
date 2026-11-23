@@ -34,12 +34,9 @@ pub fn fault_sim_limits() -> Limits {
 
 pub fn wal_config() -> WalConfig {
     let lim = fault_sim_limits();
-    let mut cfg = WalConfig::new("", 4096);
-    cfg.write_buf = lim.aligned(0);
-    cfg.read_buf = lim.aligned(1);
-    cfg.path_buf = lim.small(0);
-    cfg.scratch_buf = lim.small(1);
-    cfg
+    WalConfig::new("", 4096)
+        .with_io_bufs(lim.aligned(0), lim.aligned(1))
+        .with_path_bufs(lim.small(0), lim.small(1))
 }
 
 pub fn make_fault_sim(seed: u64) -> SimIo {

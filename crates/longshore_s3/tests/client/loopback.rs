@@ -22,7 +22,7 @@ const WAKE_TOKEN: Token = Token(9 << 40);
 
 /// A server running on its own thread until [`ServerThread::stop`].
 pub struct ServerThread {
-    pub addr: SocketAddr,
+    addr: SocketAddr,
     stop: Arc<AtomicBool>,
     wake: Arc<dyn Wake>,
     thread: JoinHandle<()>,

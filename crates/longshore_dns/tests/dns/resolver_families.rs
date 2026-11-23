@@ -28,7 +28,7 @@ fn an_ipv6_only_resolver_caches_aaaa_records_and_asks_for_nothing_else() {
     assert!(seen.iter().all(IpAddr::is_ipv6));
     assert_eq!(&seen[..2], &seen[2..], "rotation repeats");
     assert_eq!(
-        s.queries,
+        s.queries(),
         ZONE.len() as u64 * r.cycles(),
         "one query per host"
     );
@@ -39,7 +39,11 @@ fn an_ipv6_only_resolver_caches_aaaa_records_and_asks_for_nothing_else() {
 fn both_families_are_asked_for_and_the_preferred_one_is_handed_out() {
     for (family, want_v6) in [(Family::PreferV6, true), (Family::PreferV4, false)] {
         let (_io, mut r, s, _out) = resolved(family);
-        assert_eq!(s.queries, 2 * ZONE.len() as u64 * r.cycles(), "{family:?}");
+        assert_eq!(
+            s.queries(),
+            2 * ZONE.len() as u64 * r.cycles(),
+            "{family:?}"
+        );
         let want = if want_v6 {
             zone_addrs_v6(0)
         } else {
@@ -55,7 +59,7 @@ fn both_families_are_asked_for_and_the_preferred_one_is_handed_out() {
 fn a_name_without_the_preferred_family_resolves_to_the_other_without_a_failure() {
     let (mut io, mut r, mut s, mut out) =
         world_for(2, Faults::default(), &[NS1], NS1, SEC, Family::PreferV6);
-    s.v6 = false;
+    s.set_v6(false);
     pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC);
     assert!(r.ready());
     assert_eq!(r.addrs(0), &zone_addrs(0)[..]);
@@ -70,12 +74,12 @@ fn a_name_without_the_preferred_family_resolves_to_the_other_without_a_failure()
 fn a_family_that_disappears_from_the_zone_is_dropped_at_the_next_refresh() {
     let (mut io, mut r, mut s, mut out) = resolved(Family::PreferV6);
     assert!(r.lookup(0).unwrap().is_ipv6());
-    s.v6 = false;
+    s.set_v6(false);
     pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC);
     assert_eq!(r.addrs(0), &zone_addrs(0)[..]);
     assert!(r.lookup(0).unwrap().is_ipv4());
     assert_eq!(r.failures(), 0);
-    s.v6 = true;
+    s.set_v6(true);
     pump(&mut io, &mut r, &mut s, &mut out, 6 * SEC);
     assert_eq!(r.addrs(0), &zone_addrs_v6(0)[..], "and comes back with it");
 }
@@ -84,11 +88,12 @@ fn a_family_that_disappears_from_the_zone_is_dropped_at_the_next_refresh() {
 fn a_host_that_moves_from_ipv6_to_ipv4_is_handed_out_by_ipv4() {
     let (mut io, mut r, mut s, mut out) =
         world_for(3, Faults::default(), &[NS1], NS1, SEC, Family::PreferV6);
-    s.v4 = false;
+    s.set_v4(false);
     pump(&mut io, &mut r, &mut s, &mut out, 100 * MS);
     assert_eq!(r.addrs(0), &zone_addrs_v6(0)[..]);
     // The empty AAAA answer comes before the A answer that makes it final.
-    (s.v4, s.v6) = (true, false);
+    s.set_v4(true);
+    s.set_v6(false);
     pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC / 2);
     assert_eq!(r.addrs(0), &zone_addrs(0)[..]);
     assert!(r.lookup(0).unwrap().is_ipv4());
@@ -99,7 +104,8 @@ fn a_host_that_moves_from_ipv6_to_ipv4_is_handed_out_by_ipv4() {
 fn a_zone_that_loses_every_address_keeps_the_last_known_ones() {
     let (mut io, mut r, mut s, mut out) = resolved(Family::PreferV4);
     let cycles = r.cycles();
-    (s.v4, s.v6) = (false, false);
+    s.set_v4(false);
+    s.set_v6(false);
     pump(&mut io, &mut r, &mut s, &mut out, 5 * SEC / 2);
     assert!(r.cycles() > cycles);
     assert_eq!(

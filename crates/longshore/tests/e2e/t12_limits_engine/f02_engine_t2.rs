@@ -55,8 +55,7 @@ fn t2_f02_2_completions_capacity_one_spills_without_loss() {
 
 #[test]
 fn t2_f02_3_claimed_op_calls_release_on_cancel() {
-    let mut world = TestWorld::new();
-    world.claimed_socks = vec![Sock(0)];
+    let world = TestWorld::new().with_claimed_socks(vec![Sock(0)]);
     let mut engine = Engine::with_world(base_limits(), world);
     let mut out = Completions::new(8);
     let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();

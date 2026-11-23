@@ -19,8 +19,8 @@ pub(super) struct StackWal {
     read_buf: BufId,
     path_buf: BufId,
     scratch_buf: BufId,
-    pub cursor: u64,
-    pub next_seq: u64,
+    cursor: u64,
+    next_seq: u64,
     next_tok: u64,
 }
 
@@ -36,6 +36,21 @@ impl StackWal {
             next_seq: 1,
             next_tok: 0x5741_0000,
         }
+    }
+
+    /// File offset the next record is appended at.
+    pub(super) fn cursor(&self) -> u64 {
+        self.cursor
+    }
+
+    /// Sequence number of the next record.
+    pub(super) fn next_seq(&self) -> u64 {
+        self.next_seq
+    }
+
+    /// Append the next record at file offset `cursor`.
+    pub(super) fn set_cursor(&mut self, cursor: u64) {
+        self.cursor = cursor;
     }
 
     fn tok(&mut self) -> Token {

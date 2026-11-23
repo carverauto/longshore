@@ -32,9 +32,9 @@ use machine::*;
 fn two_blocking_callers_share_one_operation_slot() {
     model(|| {
         let w = World::new(&[Fate::Serve], 1, 1);
-        let other = w.client.clone();
+        let other = w.client().clone();
         let t = spawn(move || assert_eq!(other.erase("a").wait(), Ok(())));
-        assert_eq!(w.client.erase("b").wait(), Ok(()));
+        assert_eq!(w.client().erase("b").wait(), Ok(()));
         t.join().unwrap();
         w.end();
     });
@@ -44,9 +44,9 @@ fn two_blocking_callers_share_one_operation_slot() {
 fn a_future_and_a_blocking_caller_share_one_operation_slot() {
     model(|| {
         let w = World::new(&[Fate::Serve], 1, 1);
-        let other = w.client.clone();
+        let other = w.client().clone();
         let t = spawn(move || assert_eq!(block_on(other.erase("a")), Ok(())));
-        assert_eq!(w.client.erase("b").wait(), Ok(()));
+        assert_eq!(w.client().erase("b").wait(), Ok(()));
         t.join().unwrap();
         w.end();
     });
@@ -56,14 +56,14 @@ fn a_future_and_a_blocking_caller_share_one_operation_slot() {
 fn two_callers_share_one_buffer() {
     model(|| {
         let w = World::new(&[Fate::Serve], 2, 1);
-        let other = w.client.clone();
+        let other = w.client().clone();
         let t = spawn(move || {
             let body = block_on(other.buffer());
             let (stored, _body) = block_on(other.store("a", body, 100));
             assert_eq!(stored, Ok(()));
         });
-        let body = w.client.buffer_blocking();
-        let (stored, body) = w.client.store("b", body, 100).wait();
+        let body = w.client().buffer_blocking();
+        let (stored, body) = w.client().store("b", body, 100).wait();
         assert_eq!(stored, Ok(()));
         drop(body);
         t.join().unwrap();
@@ -75,17 +75,17 @@ fn two_callers_share_one_buffer() {
 fn an_operation_dropped_unfinished_gives_its_slot_to_the_next_caller() {
     model(|| {
         let w = World::new(&[Fate::Serve], 1, 1);
-        let other = w.client.clone();
+        let other = w.client().clone();
         let t = spawn(move || assert_eq!(other.erase("b").wait(), Ok(())));
         // Sent if the slot was free, queued for it if not, then let go.
-        let mut dropped = Box::pin(w.client.erase("a"));
+        let mut dropped = Box::pin(w.client().erase("a"));
         // Pending or answered: either way the caller walks away from it.
         match poll_once(dropped.as_mut()) {
             Poll::Ready(_) | Poll::Pending => {}
         }
         drop(dropped);
         t.join().unwrap();
-        assert_eq!(w.client.erase("c").wait(), Ok(()));
+        assert_eq!(w.client().erase("c").wait(), Ok(()));
         w.end();
     });
 }
@@ -94,7 +94,7 @@ fn an_operation_dropped_unfinished_gives_its_slot_to_the_next_caller() {
 fn a_waiter_that_gives_up_passes_its_turn_on() {
     model_within(1, || {
         let w = World::new(&[Fate::Serve], 1, 1);
-        let (second, third) = (w.client.clone(), w.client.clone());
+        let (second, third) = (w.client().clone(), w.client().clone());
         let gives_up = spawn(move || {
             let mut waiting = Box::pin(second.erase("b"));
             // Pending or answered: either way the caller walks away from it.
@@ -103,7 +103,7 @@ fn a_waiter_that_gives_up_passes_its_turn_on() {
             }
         });
         let waits = spawn(move || assert_eq!(third.erase("c").wait(), Ok(())));
-        assert_eq!(w.client.erase("a").wait(), Ok(()));
+        assert_eq!(w.client().erase("a").wait(), Ok(()));
         gives_up.join().unwrap();
         waits.join().unwrap();
         w.end();
@@ -124,9 +124,9 @@ fn callers_of_a_lane_that_fails_all_get_an_answer() {
                 after_turns,
             };
             let w = World::new(&[fate], 1, 1);
-            let other = w.client.clone();
+            let other = w.client().clone();
             let t = spawn(move || ended(other.erase("a").wait()));
-            ended(block_on(w.client.erase("b")));
+            ended(block_on(w.client().erase("b")));
             t.join().unwrap();
             w.end();
         });
@@ -142,7 +142,7 @@ fn callers_holding_buffers_of_a_lane_that_cannot_be_stopped_all_get_an_answer() 
                 after_turns,
             };
             let w = World::new(&[fate], 2, 1);
-            let other = w.client.clone();
+            let other = w.client().clone();
             let store = |client: longshore_s3::client::Client, key: &str| {
                 let body = client.buffer_blocking();
                 let void = body.is_empty();
@@ -154,7 +154,7 @@ fn callers_holding_buffers_of_a_lane_that_cannot_be_stopped_all_get_an_answer() 
                 }
             };
             let t = spawn(move || store(other, "a"));
-            store(w.client.clone(), "b");
+            store(w.client().clone(), "b");
             t.join().unwrap();
             w.end();
         });
@@ -172,12 +172,12 @@ fn a_caller_waiting_for_a_slot_when_its_lane_fails_stops_waiting() {
             let w = World::new(&[fate], 1, 1);
             // Takes the lane's one slot if the lane is still open, and is
             // then left alone: its caller does not come back for the result.
-            let mut held = Box::pin(w.client.erase("a"));
+            let mut held = Box::pin(w.client().erase("a"));
             // Pending or answered: either way the caller walks away from it.
             match poll_once(held.as_mut()) {
                 Poll::Ready(_) | Poll::Pending => {}
             }
-            let other = w.client.clone();
+            let other = w.client().clone();
             // The slot will not come back, so this ends only because the
             // lane closing wakes it.
             let t = spawn(move || assert_eq!(other.erase("b").wait(), Err(Error::Closed)));
@@ -198,8 +198,8 @@ fn a_caller_waiting_for_a_buffer_when_the_last_lane_fails_stops_waiting() {
             };
             let w = World::new(&[fate], 1, 1);
             // The lane's one buffer, unless the lane has failed already.
-            let held = w.client.buffer_blocking();
-            let other = w.client.clone();
+            let held = w.client().buffer_blocking();
+            let other = w.client().clone();
             // No buffer will come back, so this ends only because the lane
             // closing wakes it, and then with a void buffer.
             let t = spawn(move || {
@@ -221,12 +221,12 @@ fn with_one_lane_failing_an_erase_ends_and_the_next_runs_on_the_other() {
             after_turns: 0,
         };
         let w = World::new(&[failing, Fate::Serve], 1, 1);
-        let other = w.client.clone();
+        let other = w.client().clone();
         let t = spawn(move || ended(other.erase("a").wait()));
-        ended(w.client.erase("b").wait());
+        ended(w.client().erase("b").wait());
         t.join().unwrap();
         w.failed(0);
-        assert_eq!(w.client.erase("c").wait(), Ok(()));
+        assert_eq!(w.client().erase("c").wait(), Ok(()));
         w.end();
     });
 }

@@ -178,7 +178,7 @@ fn t1_f17_3_wal_detects_short_and_torn_reported_tail_continues() {
         assert_eq!(stats.last_seq, 3);
 
         // Resume appending cleanly at offset 3 * 4096.
-        wal.cursor = 3 * 4096;
+        wal.set_cursor(3 * 4096);
         assert_eq!(
             wal.open_segment(&mut sim, &mut out, 1, false, false)
                 .unwrap(),

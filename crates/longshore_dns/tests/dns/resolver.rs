@@ -37,9 +37,9 @@ fn resolves_every_host_at_startup_and_rotates_addresses() {
 fn refresh_runs_on_the_configured_interval_whatever_the_ttl() {
     let cycles = |ttl: u32| {
         let (mut io, mut r, mut s, mut out) = world(2, Faults::default(), &[NS1], NS1, SEC);
-        s.ttl = ttl;
+        s.set_ttl(ttl);
         pump(&mut io, &mut r, &mut s, &mut out, 10 * SEC + 500 * MS);
-        (r.cycles(), s.queries)
+        (r.cycles(), s.queries())
     };
     let short = cycles(1);
     assert_eq!(
@@ -64,7 +64,7 @@ fn a_failed_refresh_keeps_the_previous_answer() {
     let (mut io, mut r, mut s, mut out) = world(3, Faults::default(), &[NS1], NS1, SEC);
     pump(&mut io, &mut r, &mut s, &mut out, 100 * MS);
     assert!(r.ready());
-    s.answering = false;
+    s.set_answering(false);
     pump(&mut io, &mut r, &mut s, &mut out, 5 * SEC);
     assert!(
         r.failures() >= 4,
@@ -76,7 +76,7 @@ fn a_failed_refresh_keeps_the_previous_answer() {
         (&zone_addrs(0)[..], &zone_addrs(1)[..])
     );
     assert!(r.lookup(0).is_some());
-    s.answering = true;
+    s.set_answering(true);
     let before = r.cycles();
     pump(&mut io, &mut r, &mut s, &mut out, 8 * SEC);
     assert!(
@@ -98,7 +98,7 @@ fn falls_back_to_the_second_nameserver() {
     // Exactly one: having moved to the server that answers, the resolver
     // stays with it for the next host instead of asking the dead one again.
     assert_eq!(
-        (r.failures(), r.queries(), s.queries, r.cycles()),
+        (r.failures(), r.queries(), s.queries(), r.cycles()),
         (1, 3, 2, 1)
     );
     assert_eq!(

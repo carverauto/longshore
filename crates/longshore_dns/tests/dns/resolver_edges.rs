@@ -60,7 +60,7 @@ fn a_query_waits_for_the_previous_send_to_complete_then_goes_out() {
         (&zone_addrs(0)[..], &zone_addrs(1)[..])
     );
     assert_eq!(
-        (s.queries, r.queries(), r.cycles(), r.failures()),
+        (s.queries(), r.queries(), r.cycles(), r.failures()),
         (2, 2, 1, 0)
     );
 }
@@ -74,7 +74,7 @@ fn with_both_nameservers_dead_each_is_tried_once_per_host() {
     pump(&mut io, &mut r, &mut s, &mut out, 400 * MS);
     assert!(!r.ready() && r.lookup(0).is_none() && r.lookup(1).is_none());
     assert_eq!(
-        (r.queries(), r.failures(), r.cycles(), s.queries),
+        (r.queries(), r.failures(), r.cycles(), s.queries()),
         (4, 4, 1, 0),
         "two hosts, two servers, one timeout each"
     );

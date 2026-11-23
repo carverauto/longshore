@@ -16,15 +16,15 @@ const HEADER_LEN: usize = 24;
 
 #[derive(Clone, Copy, Debug)]
 pub struct WalConfig {
-    pub file_slot: FileSlot,
-    pub dir_slot: FileSlot,
-    pub write_buf: BufId,
-    pub read_buf: BufId,
-    pub path_buf: BufId,
-    pub scratch_buf: BufId,
-    pub block_size: u32,
-    pub segment_bytes: u64,
-    pub direct: bool,
+    file_slot: FileSlot,
+    dir_slot: FileSlot,
+    write_buf: BufId,
+    read_buf: BufId,
+    path_buf: BufId,
+    scratch_buf: BufId,
+    block_size: u32,
+    segment_bytes: u64,
+    direct: bool,
     base_dir: [u8; 128],
     base_dir_len: usize,
 }
@@ -49,6 +49,24 @@ impl WalConfig {
             base_dir_len: raw.len(),
         }
     }
+
+    /// The buffers records are written from and read into.
+    pub fn with_io_bufs(self, write_buf: BufId, read_buf: BufId) -> Self {
+        Self {
+            write_buf,
+            read_buf,
+            ..self
+        }
+    }
+
+    /// The buffers paths are built in.
+    pub fn with_path_bufs(self, path_buf: BufId, scratch_buf: BufId) -> Self {
+        Self {
+            path_buf,
+            scratch_buf,
+            ..self
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,8 +88,8 @@ pub struct WalStats {
 
 pub struct WalEngine {
     cfg: WalConfig,
-    pub cursor: u64,
-    pub next_seq: u64,
+    cursor: u64,
+    next_seq: u64,
     next_token: u64,
 }
 
@@ -86,6 +104,10 @@ impl WalEngine {
     }
     pub fn reset_after_power_loss(&mut self) {
         self.cursor = 0;
+    }
+    /// Append the next record at file offset `cursor`.
+    pub fn set_cursor(&mut self, cursor: u64) {
+        self.cursor = cursor;
     }
     fn tok(&mut self) -> Token {
         let t = Token(self.next_token);

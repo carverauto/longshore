@@ -275,11 +275,9 @@ fn t1_f02_4_engine_respects_world_readiness_filter() {
 
 #[test]
 fn t1_f02_5_engine_clock_and_arrival_order() {
-    let mut world = TestWorld::new();
-    world.now = 5_000_000;
-    world.step_ns = 1_000_000;
-    world.unix_epoch = 1_700_000_000;
-    world.first_index = 1;
+    let world = TestWorld::new()
+        .with_clock(5_000_000, 1_000_000, 1_700_000_000)
+        .with_first_index(1);
     let mut engine = Engine::with_world(base_limits(), world);
     assert_eq!(engine.now_ns(), 5_000_000);
     assert_eq!(engine.unix_secs(), 1_700_000_000);

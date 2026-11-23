@@ -317,10 +317,7 @@ fn sim_with_open_wal_segment(limits: Limits) -> (SimIo, Completions) {
         sector_size: 512,
     });
     let mut out = Completions::new(8);
-    let mut wal_cfg = WalConfig::new("", 4096);
-    wal_cfg.write_buf = limits.aligned(0);
-    wal_cfg.read_buf = limits.aligned(1);
-    wal_cfg.direct = true;
+    let wal_cfg = WalConfig::new("", 4096).with_io_bufs(limits.aligned(0), limits.aligned(1));
     let mut wal = WalEngine::new(wal_cfg);
     assert_eq!(
         wal.open_segment(&mut sim, &mut out, 1, true, true).unwrap(),

@@ -22,7 +22,7 @@ const NOT_OURS: [Forge; 4] = [
 
 fn forging(forge: Forge, then_true: bool) -> (SimIo, Resolver, Server, Completions) {
     let (io, r, mut s, out) = world(1, Faults::default(), &[NS1], NS1, SEC);
-    (s.forge, s.then_true) = (forge, then_true);
+    s.set_forge(forge, then_true);
     (io, r, s, out)
 }
 
@@ -39,7 +39,7 @@ fn a_response_that_is_not_the_answer_is_ignored_and_the_wait_goes_on() {
         pump(&mut io, &mut r, &mut s, &mut out, 30 * MS);
         assert!(io.now_ns() < 45 * MS, "stopped before the answer timeout");
         assert_eq!(
-            (s.queries, r.queries(), r.cycles(), r.failures()),
+            (s.queries(), r.queries(), r.cycles(), r.failures()),
             (1, 1, 0, 0),
             "{forge:?}: still waiting for the first answer"
         );
@@ -49,7 +49,7 @@ fn a_response_that_is_not_the_answer_is_ignored_and_the_wait_goes_on() {
         // Each host's query then times out, once.
         pump(&mut io, &mut r, &mut s, &mut out, 300 * MS);
         assert_eq!(
-            (s.queries, r.queries(), r.cycles(), r.failures()),
+            (s.queries(), r.queries(), r.cycles(), r.failures()),
             (2, 2, 1, 2),
             "{forge:?}: one timeout per host"
         );
@@ -72,7 +72,7 @@ fn the_true_answer_after_a_forged_one_is_taken() {
             "{forge:?}"
         );
         assert_eq!(
-            (s.queries, r.queries(), r.cycles(), r.failures()),
+            (s.queries(), r.queries(), r.cycles(), r.failures()),
             (2, 2, 1, 0),
             "{forge:?}: no retry and no failure"
         );
@@ -86,7 +86,7 @@ fn a_first_answer_marked_truncated_is_a_failure_at_once() {
     let (mut io, mut r, mut s, mut out) = forging(Forge::TcBit, false);
     pump(&mut io, &mut r, &mut s, &mut out, 40 * MS);
     assert_eq!(
-        (s.queries, r.queries(), r.cycles(), r.failures()),
+        (s.queries(), r.queries(), r.cycles(), r.failures()),
         (2, 2, 1, 2)
     );
     assert!(!r.ready() && r.addrs(0).is_empty());
@@ -98,7 +98,7 @@ fn an_answer_marked_truncated_keeps_the_previous_addresses() {
     pump(&mut io, &mut r, &mut s, &mut out, 100 * MS);
     assert!(r.ready());
     assert_eq!((r.cycles(), r.failures()), (1, 0));
-    s.forge = Forge::TcBit;
+    s.set_forge(Forge::TcBit, false);
     // The refresh interval is a second: one more cycle by 1.5 s.
     pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC / 2);
     assert_eq!(
@@ -112,7 +112,7 @@ fn an_answer_marked_truncated_keeps_the_previous_addresses() {
     );
     assert!(r.ready() && r.lookup(0).is_some());
     // And a good answer afterwards is taken as usual.
-    s.forge = Forge::Nothing;
+    s.set_forge(Forge::Nothing, false);
     pump(&mut io, &mut r, &mut s, &mut out, 5 * SEC / 2);
     assert_eq!((r.cycles(), r.failures()), (3, 2));
 }

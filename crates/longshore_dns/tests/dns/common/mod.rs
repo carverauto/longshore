@@ -46,17 +46,17 @@ pub const ZONE: [Entry; 2] = [
 
 /// Simulated nameserver on socket 3 / buffer 3. Answers in place, no allocation.
 pub struct Server {
-    pub answering: bool,
+    answering: bool,
     /// Whether the zone has records of each family. Without them a query
     /// for that family gets an empty answer.
-    pub v4: bool,
-    pub v6: bool,
-    pub ttl: u32,
-    pub queries: u64,
+    v4: bool,
+    v6: bool,
+    ttl: u32,
+    queries: u64,
     /// What is wrong with each response, if anything.
-    pub forge: Forge,
+    forge: Forge,
     /// After a forged response, send the true one for the same query.
-    pub then_true: bool,
+    then_true: bool,
     /// The length of the true response still to send.
     resend: Option<u32>,
 }
@@ -115,6 +115,37 @@ impl Server {
             then_true: false,
             resend: None,
         }
+    }
+
+    /// Queries received.
+    pub fn queries(&self) -> u64 {
+        self.queries
+    }
+
+    /// Whether queries are answered at all.
+    pub fn set_answering(&mut self, answering: bool) {
+        self.answering = answering;
+    }
+
+    /// Whether the zone has A records.
+    pub fn set_v4(&mut self, v4: bool) {
+        self.v4 = v4;
+    }
+
+    /// Whether the zone has AAAA records.
+    pub fn set_v6(&mut self, v6: bool) {
+        self.v6 = v6;
+    }
+
+    pub fn set_ttl(&mut self, ttl: u32) {
+        self.ttl = ttl;
+    }
+
+    /// What is wrong with each response, and whether the true one follows a
+    /// forged one.
+    pub fn set_forge(&mut self, forge: Forge, then_true: bool) {
+        self.forge = forge;
+        self.then_true = then_true;
     }
 
     pub fn on(&mut self, io: &mut SimIo, token: u64, result: i32) {

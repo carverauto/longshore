@@ -96,16 +96,16 @@ type AttemptHandler = Box<dyn FnMut(&Op, &mut [u8], &Limits) -> Option<i32>>;
 /// Configurable mock [`World`] implementation recording exact hook call order.
 pub struct TestWorld {
     calls: RefCell<Vec<HookCall>>,
-    pub now: u64,
-    pub step_ns: u64,
-    pub unix_epoch: u64,
-    pub first_index: usize,
-    pub hold_next: bool,
-    pub ready_socks: Option<Vec<Sock>>,
-    pub claimed_socks: Vec<Sock>,
-    pub claim_connects: bool,
-    pub stall_on_wait: bool,
-    pub wait_limit: Option<usize>,
+    now: u64,
+    step_ns: u64,
+    unix_epoch: u64,
+    first_index: usize,
+    hold_next: bool,
+    ready_socks: Option<Vec<Sock>>,
+    claimed_socks: Vec<Sock>,
+    claim_connects: bool,
+    stall_on_wait: bool,
+    wait_limit: Option<usize>,
     wait_count: usize,
     attempt_handler: Option<AttemptHandler>,
 }
@@ -134,6 +134,25 @@ impl TestWorld {
             wait_count: 0,
             attempt_handler: None,
         }
+    }
+
+    /// Starts the clock at `now` and advances it by `step_ns` per reading,
+    /// with the Unix time `unix_epoch` at the start.
+    pub fn with_clock(mut self, now: u64, step_ns: u64, unix_epoch: u64) -> Self {
+        (self.now, self.step_ns, self.unix_epoch) = (now, step_ns, unix_epoch);
+        self
+    }
+
+    /// The index the world reports first.
+    pub fn with_first_index(mut self, first_index: usize) -> Self {
+        self.first_index = first_index;
+        self
+    }
+
+    /// Claims operations on the specified socket slots.
+    pub fn with_claimed_socks(mut self, socks: Vec<Sock>) -> Self {
+        self.claimed_socks = socks;
+        self
     }
 
     /// Restricts `is_ready` reporting to the specified socket slots.

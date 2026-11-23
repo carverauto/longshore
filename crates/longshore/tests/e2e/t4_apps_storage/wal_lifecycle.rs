@@ -125,7 +125,7 @@ impl Session<'_> {
     ) {
         for step in steps {
             let plen = fill_payload(self.payload, self.seed, step + 1);
-            let seq = self.wal.next_seq;
+            let seq = self.wal.next_seq();
             let (w, s) = self
                 .wal
                 .append_chained(self.sim, self.out, &self.payload[..plen]);
@@ -133,7 +133,7 @@ impl Session<'_> {
                 committed.seqs[committed.count] = seq;
                 committed.count += 1;
             }
-            if seg_limit.is_some_and(|limit| self.wal.cursor >= limit) {
+            if seg_limit.is_some_and(|limit| self.wal.cursor() >= limit) {
                 break;
             }
         }
@@ -149,7 +149,7 @@ impl Session<'_> {
     /// recovery stopped on a fault or a silent write fault occurred.
     fn crash_keeps_committed(&mut self, committed: &Committed) {
         self.sim.power_loss();
-        self.wal.cursor = 0;
+        self.wal.set_cursor(0);
 
         let mut recovered = [0u64; 64];
         let mut rec_n = 0usize;
@@ -176,10 +176,10 @@ impl Session<'_> {
     fn clean_tail_recovers(&mut self) -> (u32, u64) {
         self.sim.set_disk_faults(DiskFaults::default());
         self.sim.power_loss();
-        self.wal.cursor = 0;
+        self.wal.set_cursor(0);
         assert!(self.wal.open_seg(self.sim, self.out, 3, true, true) >= 0);
         let tail_len = fill_payload(self.payload, self.seed, 99);
-        let tail_seq = self.wal.next_seq;
+        let tail_seq = self.wal.next_seq();
         let (w, s) = self
             .wal
             .append_chained(self.sim, self.out, &self.payload[..tail_len]);
@@ -235,7 +235,7 @@ fn run_wal_lifecycle_for_seed(seed: u64) -> (u64, u32, u64) {
 
         let _: i32 = session.wal.rename_seg(session.sim, session.out, 1, 2);
         let seg2_dir_synced = session.open_seg1_synced();
-        session.wal.cursor = 0;
+        session.wal.set_cursor(0);
         session.append_steps(8..12, seg2_dir_synced, None, &mut committed);
 
         session.crash_keeps_committed(&committed);

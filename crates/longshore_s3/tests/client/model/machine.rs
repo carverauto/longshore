@@ -199,7 +199,7 @@ impl Machine {
 }
 
 pub struct World {
-    pub client: Client,
+    client: Client,
     threads: Vec<loom::thread::JoinHandle<Machine>>,
     signals: Vec<Arc<Signal>>,
     stop: Arc<AtomicBool>,
@@ -268,6 +268,11 @@ impl World {
             stop,
             failed,
         }
+    }
+
+    /// The client the model's callers share.
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Wait until lane `n`'s I/O has failed.
