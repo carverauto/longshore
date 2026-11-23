@@ -135,7 +135,19 @@ fn success_means_durable_under_faults() {
                 );
             }
             Outcome::Fatal(Fatal::RetriesExhausted) => gave_up += 1,
-            o => panic!("seed {seed}: unexpected outcome {o:?}"),
+            o @ (Outcome::AlreadyExists { .. }
+            | Outcome::Fetched { .. }
+            | Outcome::Listed { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::Begun { .. }
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Stat(_)
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)
+            | Outcome::Fatal(_)) => panic!("seed {seed}: unexpected outcome {o:?}"),
         }
         assert_eq!(w.s3.in_progress(), 0);
     }

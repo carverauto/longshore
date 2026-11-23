@@ -73,7 +73,9 @@ fn t1_f25_2_future_caller_woken_and_yields_answer_via_block_on() {
 
     let slot = match rx.try_recv() {
         TryRecv::Message(s) => s,
-        other => panic!("expected message, got {other:?}"),
+        other @ (TryRecv::Stop | TryRecv::Empty | TryRecv::Closed) => {
+            panic!("expected message, got {other:?}")
+        }
     };
     assert!(rx.answer(slot, "pong").is_none());
     assert!(wakes.0.load(Ordering::Relaxed) >= 1);
@@ -192,7 +194,9 @@ fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
 
     let slot = match rx.try_recv() {
         TryRecv::Message(s) => s,
-        other => panic!("expected slot, got {other:?}"),
+        other @ (TryRecv::Stop | TryRecv::Empty | TryRecv::Closed) => {
+            panic!("expected slot, got {other:?}")
+        }
     };
     let returned_tag = rx.answer(slot, 9999);
     assert_eq!(returned_tag, Some(42), "detached tag 42 must come back");
@@ -202,7 +206,9 @@ fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
     assert!(matches!(next.as_mut().poll(&mut cx), Poll::Pending));
     let slot2 = match rx.try_recv() {
         TryRecv::Message(s) => s,
-        other => panic!("expected slot2, got {other:?}"),
+        other @ (TryRecv::Stop | TryRecv::Empty | TryRecv::Closed) => {
+            panic!("expected slot2, got {other:?}")
+        }
     };
     assert!(rx.answer(slot2, 555).is_none());
     assert_eq!(block_on(next), 555);

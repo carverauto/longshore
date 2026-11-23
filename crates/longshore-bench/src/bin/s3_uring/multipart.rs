@@ -22,7 +22,19 @@ fn begin(io: &mut UringIo, s3: &mut S3, out: &mut Completions, key: &str, sums: 
     s3.multipart_begin(io, 0, key, sums).unwrap();
     match wait(io, s3, out).outcome {
         Outcome::Begun { upload } => upload,
-        other => die(&format!("multipart begin -> {other:?}")),
+        other @ (Outcome::Stored
+        | Outcome::AlreadyExists { .. }
+        | Outcome::Fetched { .. }
+        | Outcome::Listed { .. }
+        | Outcome::NotFound
+        | Outcome::Erased
+        | Outcome::PartStored { .. }
+        | Outcome::Aborted
+        | Outcome::Stat(_)
+        | Outcome::Copied
+        | Outcome::ErasedMany { .. }
+        | Outcome::Report(_)
+        | Outcome::Fatal(_)) => die(&format!("multipart begin -> {other:?}")),
     }
 }
 
@@ -82,7 +94,19 @@ pub(super) fn multipart(size: u32) {
                         checksum: checksum.map(longshore::checksum::crc64_header_value),
                     })
                 }
-                other => die(&format!("part {} -> {other:?}", d.token)),
+                other @ (Outcome::Stored
+                | Outcome::AlreadyExists { .. }
+                | Outcome::Fetched { .. }
+                | Outcome::Listed { .. }
+                | Outcome::NotFound
+                | Outcome::Erased
+                | Outcome::Begun { .. }
+                | Outcome::Aborted
+                | Outcome::Stat(_)
+                | Outcome::Copied
+                | Outcome::ErasedMany { .. }
+                | Outcome::Report(_)
+                | Outcome::Fatal(_)) => die(&format!("part {} -> {other:?}", d.token)),
             }
         }
         let parts = parts.map(Option::unwrap);

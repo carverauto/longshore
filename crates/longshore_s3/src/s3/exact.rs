@@ -249,7 +249,13 @@ impl S3 {
             i,
             match fatal {
                 Fatal::Transport(e) => Cause::Transport(e),
-                _ => Cause::NoAddress,
+                Fatal::Status(_)
+                | Fatal::RetriesExhausted
+                | Fatal::ChecksumMismatch
+                | Fatal::NoAddress
+                | Fatal::RangeIgnored
+                | Fatal::BadResponse
+                | Fatal::ErrorDocument => Cause::NoAddress,
             },
         );
     }
@@ -313,7 +319,7 @@ impl S3 {
                 self.slots[i].delays += 1;
                 return self.wait(io, i, delay);
             }
-            _ => {}
+            Class::Success | Class::Retry | Class::RetryDelayed | Class::Fatal => {}
         }
         let cause = match result {
             // A request stopped for the deadline ends as a timeout.

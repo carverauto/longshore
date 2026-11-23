@@ -113,7 +113,18 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
                 assert_eq!(w.s3.in_progress(), 0);
                 continue;
             }
-            o => panic!("seed {seed}: unexpected store outcome {o:?}"),
+            o @ (Outcome::AlreadyExists { .. }
+            | Outcome::Fetched { .. }
+            | Outcome::Listed { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::Begun { .. }
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Stat(_)
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)) => panic!("seed {seed}: unexpected store outcome {o:?}"),
         }
         w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
         let d = w.last();
@@ -134,7 +145,18 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
                 refused += 1;
                 assert_refusal_of_damage(seed, f);
             }
-            o => panic!("seed {seed}: unexpected fetch outcome {o:?}"),
+            o @ (Outcome::Stored
+            | Outcome::AlreadyExists { .. }
+            | Outcome::Listed { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::Begun { .. }
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Stat(_)
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)) => panic!("seed {seed}: unexpected fetch outcome {o:?}"),
         }
         assert_eq!(w.s3.in_progress(), 0);
     }

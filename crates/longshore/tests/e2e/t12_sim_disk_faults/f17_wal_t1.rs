@@ -137,7 +137,13 @@ fn t1_f17_3_wal_detects_short_and_torn_reported_tail_continues() {
                 short_write: 1_000_000,
                 ..Default::default()
             },
-            _ => DiskFaults {
+            PlacedFault::Fail
+            | PlacedFault::FailAfter
+            | PlacedFault::TornReported
+            | PlacedFault::TornSilent
+            | PlacedFault::LostReported
+            | PlacedFault::LostSilent
+            | PlacedFault::MisdirectedWrite => DiskFaults {
                 torn_reported: 1_000_000,
                 ..Default::default()
             },
@@ -148,7 +154,13 @@ fn t1_f17_3_wal_detects_short_and_torn_reported_tail_continues() {
         assert_eq!(s4, -ECANCELED);
         match mode {
             PlacedFault::ShortWrite => assert!(w4 > 0 && w4 < 4096),
-            _ => assert_eq!(w4, -LINUX_EIO),
+            PlacedFault::Fail
+            | PlacedFault::FailAfter
+            | PlacedFault::TornReported
+            | PlacedFault::TornSilent
+            | PlacedFault::LostReported
+            | PlacedFault::LostSilent
+            | PlacedFault::MisdirectedWrite => assert_eq!(w4, -LINUX_EIO),
         }
         sim.set_disk_faults(DiskFaults::default());
 

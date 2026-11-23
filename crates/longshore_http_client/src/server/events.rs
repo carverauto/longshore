@@ -194,7 +194,7 @@ impl Server {
             match self.streams[i].on_handshake(io, kind == K_SEND, c.result) {
                 Step::Pending => {}
                 Step::Done(0) => self.recv_head(io, i, 0),
-                _ => self.close(io, i),
+                Step::Done(_) | Step::Tls(_) => self.close(io, i),
             }
             return true;
         }

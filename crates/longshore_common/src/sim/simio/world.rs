@@ -125,7 +125,29 @@ impl World for Virtual {
         match *op {
             Op::ArmedAccept { listener } => self.attempt_accept_armed(listener),
             Op::ArmedRecv { sock } => self.attempt_recv_armed(sock, pool, limits),
-            _ => self.attempt_op(op, pool, limits, tag).map(Attempt::single),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => self.attempt_op(op, pool, limits, tag).map(Attempt::single),
         }
     }
 

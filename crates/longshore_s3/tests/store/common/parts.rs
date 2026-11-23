@@ -25,7 +25,19 @@ impl World {
             .unwrap();
         match self.last().outcome {
             Outcome::Begun { upload } => upload,
-            other => panic!("expected an upload, got {other:?}"),
+            other @ (Outcome::Stored
+            | Outcome::AlreadyExists { .. }
+            | Outcome::Fetched { .. }
+            | Outcome::Listed { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Stat(_)
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)
+            | Outcome::Fatal(_)) => panic!("expected an upload, got {other:?}"),
         }
     }
 

@@ -71,7 +71,21 @@ impl<W: World> Engine<W> {
                 .world
                 .attempt_connect_unix(sock, &p.unix_path[..p.unix_len as usize])
                 .map(Attempt::single),
-            _ => self.world.attempt_completion(
+            Op::Connect { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::ReadFile { .. }
+            | Op::FileOpen { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => self.world.attempt_completion(
                 &p.op,
                 &mut self.bufs[self.pool_base..],
                 &self.limits,
@@ -174,7 +188,22 @@ impl<W: World> Engine<W> {
                         | Op::Recv { sock: s, .. }
                         | Op::RecvNow { sock: s, .. }
                         | Op::ArmedRecv { sock: s } => s == sock,
-                        _ => false,
+                        Op::Close { .. }
+                        | Op::AwaitWake
+                        | Op::ReadFile { .. }
+                        | Op::Timeout { .. }
+                        | Op::Cancel { .. }
+                        | Op::FileOpen { .. }
+                        | Op::FileClose { .. }
+                        | Op::FileRead { .. }
+                        | Op::FileWrite { .. }
+                        | Op::FileSync { .. }
+                        | Op::FileReserve { .. }
+                        | Op::FilePunch { .. }
+                        | Op::FileStatus { .. }
+                        | Op::FileRename { .. }
+                        | Op::FileUnlink { .. }
+                        | Op::FileMkdir { .. } => false,
                     };
                     if on_sock {
                         if q.attached {
@@ -193,14 +222,58 @@ impl<W: World> Engine<W> {
                 self.files.on_open_done(slot, result >= 0, flags.direct)
             }
             Op::FileClose { slot } => self.files.on_close_done(slot, result != -ECANCELED),
-            _ => {}
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {}
         }
         if p.chain_id != 0 {
             let short_rw = match p.op {
                 Op::FileRead { len, .. } | Op::FileWrite { len, .. } => {
                     result >= 0 && (result as u32) < len
                 }
-                _ => false,
+                Op::Connect { .. }
+                | Op::ConnectUnix { .. }
+                | Op::ConnectUdp { .. }
+                | Op::Accept { .. }
+                | Op::ArmedAccept { .. }
+                | Op::ArmedRecv { .. }
+                | Op::Send { .. }
+                | Op::Recv { .. }
+                | Op::RecvNow { .. }
+                | Op::Close { .. }
+                | Op::AwaitWake
+                | Op::ReadFile { .. }
+                | Op::Timeout { .. }
+                | Op::Cancel { .. }
+                | Op::FileOpen { .. }
+                | Op::FileClose { .. }
+                | Op::FileSync { .. }
+                | Op::FileReserve { .. }
+                | Op::FilePunch { .. }
+                | Op::FileStatus { .. }
+                | Op::FileRename { .. }
+                | Op::FileUnlink { .. }
+                | Op::FileMkdir { .. } => false,
             };
             let abort_tail = result < 0 || short_rw;
             for q in self.pending.iter_mut() {

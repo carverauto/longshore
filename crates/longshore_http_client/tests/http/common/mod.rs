@@ -156,7 +156,7 @@ impl World {
                             server.on_completion(io, c);
                             Handled::Pending
                         }
-                        h => h,
+                        h @ (Handled::Pending | Handled::Done(_)) => h,
                     } {
                         done.push(d);
                     }

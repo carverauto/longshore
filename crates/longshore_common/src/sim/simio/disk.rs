@@ -318,7 +318,20 @@ impl SimDisk {
                 let r = limits.range(path_buf, path_off, path_len);
                 self.attempt_meta(placed, ctx, |d| d.mkdir(&pool[r]))
             }
-            _ => -EINVAL,
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. } => -EINVAL,
         }
     }
 

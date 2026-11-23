@@ -101,7 +101,7 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
             Poll::Ready(None) => {
                 let closed = match &mut self.stage {
                     Stage::Slot { closed, .. } => closed.take().expect("closed once"),
-                    _ => unreachable!(),
+                    Stage::Sent(_) | Stage::Done => unreachable!(),
                 };
                 self.stage = Stage::Done;
                 Poll::Ready(Some(closed))
@@ -109,7 +109,7 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
             Poll::Ready(Some(slot)) => {
                 let build = match &mut self.stage {
                     Stage::Slot { build, .. } => build.take().expect("build once"),
-                    _ => unreachable!(),
+                    Stage::Sent(_) | Stage::Done => unreachable!(),
                 };
                 let msg = build(slot);
                 match self.sender.send_slot(slot, None, msg) {
@@ -121,7 +121,7 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
                         self.sender.pool().give(slot);
                         let closed = match &mut self.stage {
                             Stage::Slot { closed, .. } => closed.take().expect("closed once"),
-                            _ => unreachable!(),
+                            Stage::Sent(_) | Stage::Done => unreachable!(),
                         };
                         self.stage = Stage::Done;
                         Poll::Ready(Some(closed))

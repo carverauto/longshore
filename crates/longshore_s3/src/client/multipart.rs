@@ -41,7 +41,9 @@ impl Client {
         };
         self.unbuffered(key, kind, |f, _| match f {
             Finished::Outcome(Outcome::Begun { upload }) => Ok(*upload),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
     }
 
@@ -76,7 +78,9 @@ impl Client {
                     tag: *tag,
                     checksum: checksum.map(longshore_crc::crc64_header_value),
                 }),
-                other => Err(error_of(other)),
+                other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                    Err(error_of(other))
+                }
             },
         )
         .of_upload(upload, number)
@@ -115,7 +119,9 @@ impl Client {
             early,
             |f, _| match f {
                 Finished::Outcome(Outcome::Stored) => Ok(()),
-                other => Err(error_of(other)),
+                other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                    Err(error_of(other))
+                }
             },
         )
         .of_upload(upload, 0)
@@ -126,7 +132,9 @@ impl Client {
     pub fn upload_abort(&self, key: &str, upload: &UploadId) -> Pending<Result<(), Error>> {
         self.unbuffered(key, Kind::Abort, |f, _| match f {
             Finished::Outcome(Outcome::Aborted) => Ok(()),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
         .of_upload(upload, 0)
     }

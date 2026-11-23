@@ -207,7 +207,13 @@ impl SimDisk {
                     ctx.counters.placed_fail_after += 1;
                     -EIO
                 }
-                _ => {
+                PlacedFault::Fail
+                | PlacedFault::ShortWrite
+                | PlacedFault::TornReported
+                | PlacedFault::TornSilent
+                | PlacedFault::LostReported
+                | PlacedFault::LostSilent
+                | PlacedFault::MisdirectedWrite => {
                     ctx.counters.placed_fail += 1;
                     -EIO
                 }

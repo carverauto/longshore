@@ -86,7 +86,7 @@ impl DirChangeKind {
         match self {
             Self::Mkdir { child, .. } => Some(child),
             Self::Rename { moved, .. } if inodes[moved as usize].is_dir => Some(moved),
-            _ => None,
+            Self::Empty | Self::Create { .. } | Self::Unlink { .. } | Self::Rename { .. } => None,
         }
     }
 }
@@ -273,7 +273,10 @@ impl SimDisk {
                         entry.new_dir_synced = true;
                     }
                 }
-                _ => {}
+                DirChangeKind::Empty
+                | DirChangeKind::Create { .. }
+                | DirChangeKind::Mkdir { .. }
+                | DirChangeKind::Unlink { .. } => {}
             }
         }
         let mut i = 0;
@@ -318,7 +321,11 @@ impl SimDisk {
                 {
                     entry.poisoned = true;
                 }
-                _ => {}
+                DirChangeKind::Empty
+                | DirChangeKind::Create { .. }
+                | DirChangeKind::Mkdir { .. }
+                | DirChangeKind::Unlink { .. }
+                | DirChangeKind::Rename { .. } => {}
             }
         }
     }

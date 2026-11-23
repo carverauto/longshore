@@ -312,7 +312,17 @@ impl Virtual {
                 self.socks[s].addr = None;
                 Some(0)
             }
-            _ if op.is_file_op() => match self.disk.as_mut() {
+            Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => match self.disk.as_mut() {
                 Some(disk) => {
                     let mut ctx = disk::DiskFaultCtx {
                         faults: &self.disk_faults,
@@ -324,7 +334,9 @@ impl Virtual {
                 }
                 None => Some(-ENOENT),
             },
-            _ => unreachable!("handled above"),
+            Op::ConnectUnix { .. } | Op::ArmedAccept { .. } | Op::ArmedRecv { .. } => {
+                unreachable!("handled above")
+            }
         }
     }
 }

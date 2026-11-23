@@ -108,7 +108,20 @@ pub(super) fn check_non_lifecycle(
             path_len,
         } => check_path(pool, limits, path_buf, path_off, path_len),
         Op::FileOpen { .. } | Op::FileClose { .. } => unreachable!(),
-        _ => Err(-EINVAL),
+        Op::Connect { .. }
+        | Op::ConnectUnix { .. }
+        | Op::ConnectUdp { .. }
+        | Op::Accept { .. }
+        | Op::ArmedAccept { .. }
+        | Op::ArmedRecv { .. }
+        | Op::Send { .. }
+        | Op::Recv { .. }
+        | Op::RecvNow { .. }
+        | Op::Close { .. }
+        | Op::AwaitWake
+        | Op::ReadFile { .. }
+        | Op::Timeout { .. }
+        | Op::Cancel { .. } => Err(-EINVAL),
     }
 }
 
@@ -121,7 +134,24 @@ pub(super) fn slot_of(op: &Op) -> Option<FileSlot> {
         | Op::FileSync { slot, .. }
         | Op::FileReserve { slot, .. }
         | Op::FilePunch { slot, .. } => Some(slot),
-        _ => None,
+        Op::Connect { .. }
+        | Op::ConnectUnix { .. }
+        | Op::ConnectUdp { .. }
+        | Op::Accept { .. }
+        | Op::ArmedAccept { .. }
+        | Op::ArmedRecv { .. }
+        | Op::Send { .. }
+        | Op::Recv { .. }
+        | Op::RecvNow { .. }
+        | Op::Close { .. }
+        | Op::AwaitWake
+        | Op::ReadFile { .. }
+        | Op::Timeout { .. }
+        | Op::Cancel { .. }
+        | Op::FileStatus { .. }
+        | Op::FileRename { .. }
+        | Op::FileUnlink { .. }
+        | Op::FileMkdir { .. } => None,
     }
 }
 

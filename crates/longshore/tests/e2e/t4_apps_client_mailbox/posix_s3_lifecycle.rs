@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 fn answered_status(rep: &Report) -> Option<u16> {
     match rep.end {
         End::Answered(a) => Some(a.status),
-        _ => None,
+        End::NotSent(_) | End::Unknown(_) => None,
     }
 }
 

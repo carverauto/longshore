@@ -63,8 +63,20 @@ impl Posix {
                 off,
                 len,
             } => self.attempt_read_file(file.0 as usize, pool, limits.range(buf, off, len)),
-            _ if op.is_file_op() => self.attempt_file_op(op, pool, limits),
-            _ => unreachable!("handled above"),
+            Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => self.attempt_file_op(op, pool, limits),
+            Op::ConnectUnix { .. } | Op::ArmedAccept { .. } | Op::ArmedRecv { .. } => {
+                unreachable!("handled above")
+            }
         }
     }
 

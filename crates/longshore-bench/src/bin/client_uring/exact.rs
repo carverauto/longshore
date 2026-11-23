@@ -27,7 +27,9 @@ pub fn sha256_header(body: &[u8]) -> [u8; 44] {
 fn answered(report: &Result<Report, longshore::client::Error>, status: u16) -> Answer {
     match report.expect("a request was sent").end {
         End::Answered(answer) if answer.status == status => answer,
-        other => panic!("expected an answer of {status}: {other:?}"),
+        other @ (End::NotSent(_) | End::Answered(_) | End::Unknown(_)) => {
+            panic!("expected an answer of {status}: {other:?}")
+        }
     }
 }
 

@@ -342,7 +342,21 @@ pub(super) fn dispatch_cqe(state: State, flags: u32) -> CqeDispatch {
             more: flags & IORING_CQE_F_MORE != 0,
             read_buf: true,
         },
-        _ => CqeDispatch::Single,
+        State::Free
+        | State::InFlight
+        | State::Connecting
+        | State::ConnectStep
+        | State::ConnectRelease
+        | State::Accept
+        | State::Timer
+        | State::Wake
+        | State::FileOpen
+        | State::FileRead
+        | State::FileClose
+        | State::FileSlotOp
+        | State::FileSlotOpen
+        | State::FileSlotClose
+        | State::Close => CqeDispatch::Single,
     }
 }
 

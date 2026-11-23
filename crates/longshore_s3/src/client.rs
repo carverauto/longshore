@@ -214,7 +214,9 @@ impl Client {
     ) -> Pending<(Result<(), Error>, Buffer)> {
         self.store_as(key, body, len, false, |f, _| match f {
             Finished::Outcome(Outcome::Stored) => Ok(()),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
     }
 
@@ -229,7 +231,9 @@ impl Client {
         self.store_as(key, body, len, true, |f, _| match f {
             Finished::Outcome(Outcome::Stored) => Ok(true),
             Finished::Outcome(Outcome::AlreadyExists { .. }) => Ok(false),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
     }
 
@@ -293,7 +297,9 @@ impl Client {
             |f, _| match f {
                 Finished::Outcome(Outcome::Fetched { len, .. }) => Ok(Some(*len as usize)),
                 Finished::Outcome(Outcome::NotFound) => Ok(None),
-                other => Err(error_of(other)),
+                other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                    Err(error_of(other))
+                }
             },
         )
     }
@@ -302,7 +308,9 @@ impl Client {
     pub fn erase(&self, key: &str) -> Pending<Result<(), Error>> {
         self.unbuffered(key, Kind::Erase, |f, _| match f {
             Finished::Outcome(Outcome::Erased | Outcome::NotFound) => Ok(()),
-            other => Err(error_of(other)),
+            other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+                Err(error_of(other))
+            }
         })
     }
 

@@ -40,14 +40,26 @@ fn strict_world(seed: u64) -> World {
 fn report(w: &mut World) -> Report {
     match w.last().outcome {
         Outcome::Report(report) => report,
-        other => panic!("not a report: {other:?}"),
+        other @ (Outcome::Stored
+        | Outcome::AlreadyExists { .. }
+        | Outcome::Fetched { .. }
+        | Outcome::Listed { .. }
+        | Outcome::NotFound
+        | Outcome::Erased
+        | Outcome::Begun { .. }
+        | Outcome::PartStored { .. }
+        | Outcome::Aborted
+        | Outcome::Stat(_)
+        | Outcome::Copied
+        | Outcome::ErasedMany { .. }
+        | Outcome::Fatal(_)) => panic!("not a report: {other:?}"),
     }
 }
 
 fn answer(w: &mut World) -> Answer {
     match report(w).end {
         End::Answered(answer) => answer,
-        other => panic!("not answered: {other:?}"),
+        other @ (End::NotSent(_) | End::Unknown(_)) => panic!("not answered: {other:?}"),
     }
 }
 

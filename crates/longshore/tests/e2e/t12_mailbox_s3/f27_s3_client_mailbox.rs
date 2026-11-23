@@ -42,7 +42,7 @@ fn test_builder(srv: &HttpStoreServer, threads: u32, ops: u32, bufs: u32, waiter
 fn report_status(rep: &Report) -> Option<u16> {
     match rep.end {
         End::Answered(ans) => Some(ans.status),
-        _ => None,
+        End::NotSent(_) | End::Unknown(_) => None,
     }
 }
 

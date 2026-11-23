@@ -212,7 +212,13 @@ impl S3 {
                     Ok(Outcome::Fatal(Fatal::ErrorDocument))
                 })
             }
-            _ => None,
+            Kind::Store { .. }
+            | Kind::Fetch { .. }
+            | Kind::Erase
+            | Kind::List
+            | Kind::Abort
+            | Kind::Stat
+            | Kind::EraseMany => None,
         }
     }
 }

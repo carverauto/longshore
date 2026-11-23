@@ -258,7 +258,7 @@ impl S3 {
                     "&start-after=",
                     match from {
                         ListFrom::After(key) => Some(key),
-                        _ => None,
+                        ListFrom::Start | ListFrom::Token(_) => None,
                     },
                 ),
             ] {

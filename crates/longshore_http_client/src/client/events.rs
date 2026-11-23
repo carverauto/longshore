@@ -135,7 +135,7 @@ impl Client {
                     self.conns[i].state = State::TlsHandshake;
                     match self.streams[i].start_handshake(io, handshake) {
                         Step::Tls(e) => self.fail(io, i, Error::Tls(e)),
-                        _ => Handled::Pending,
+                        Step::Pending | Step::Done(_) => Handled::Pending,
                     }
                 }
             }

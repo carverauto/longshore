@@ -176,7 +176,31 @@ impl FileTable {
                 self.slots[slot.0 as usize].closes += 1;
                 Ok(())
             }
-            _ => validate::check_non_lifecycle(&self.slots, op, pool, limits, false),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {
+                validate::check_non_lifecycle(&self.slots, op, pool, limits, false)
+            }
         }
     }
 
@@ -233,7 +257,29 @@ impl FileTable {
                         Ok(())
                     }
                 }
-                _ => {
+                Op::Connect { .. }
+                | Op::ConnectUnix { .. }
+                | Op::ConnectUdp { .. }
+                | Op::Accept { .. }
+                | Op::ArmedAccept { .. }
+                | Op::ArmedRecv { .. }
+                | Op::Send { .. }
+                | Op::Recv { .. }
+                | Op::RecvNow { .. }
+                | Op::Close { .. }
+                | Op::AwaitWake
+                | Op::ReadFile { .. }
+                | Op::Timeout { .. }
+                | Op::Cancel { .. }
+                | Op::FileRead { .. }
+                | Op::FileWrite { .. }
+                | Op::FileSync { .. }
+                | Op::FileReserve { .. }
+                | Op::FilePunch { .. }
+                | Op::FileStatus { .. }
+                | Op::FileRename { .. }
+                | Op::FileUnlink { .. }
+                | Op::FileMkdir { .. } => {
                     if let Some(slot) = validate::slot_of(op) {
                         self.sync_sim(slot, g).map_err(|e| (idx, e))?;
                     }
@@ -257,7 +303,29 @@ impl FileTable {
                 Op::FileClose { slot } => {
                     self.slots[slot.0 as usize].closes += 1;
                 }
-                _ => {}
+                Op::Connect { .. }
+                | Op::ConnectUnix { .. }
+                | Op::ConnectUdp { .. }
+                | Op::Accept { .. }
+                | Op::ArmedAccept { .. }
+                | Op::ArmedRecv { .. }
+                | Op::Send { .. }
+                | Op::Recv { .. }
+                | Op::RecvNow { .. }
+                | Op::Close { .. }
+                | Op::AwaitWake
+                | Op::ReadFile { .. }
+                | Op::Timeout { .. }
+                | Op::Cancel { .. }
+                | Op::FileRead { .. }
+                | Op::FileWrite { .. }
+                | Op::FileSync { .. }
+                | Op::FileReserve { .. }
+                | Op::FilePunch { .. }
+                | Op::FileStatus { .. }
+                | Op::FileRename { .. }
+                | Op::FileUnlink { .. }
+                | Op::FileMkdir { .. } => {}
             }
         }
         Ok(())

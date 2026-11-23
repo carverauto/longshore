@@ -153,7 +153,20 @@ impl Posix {
                 let r = limits.range(path_buf, path_off, path_len);
                 Some(Self::file_mkdir(pool[r].as_ptr().cast()))
             }
-            _ => unreachable!("non-file op"),
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. } => unreachable!("non-file op"),
         }
     }
 

@@ -292,7 +292,17 @@ impl UringIo {
                     ..Default::default()
                 }
             }
-            _ => self.prepare_file_sqe(i, op),
+            Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => self.prepare_file_sqe(i, op),
         };
         Some(sqe)
     }

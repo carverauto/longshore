@@ -387,7 +387,7 @@ impl Resolver {
                         self.early_refreshes += 1;
                         self.query(io, 0, 0, 0)
                     }
-                    _ => {}
+                    Phase::Connecting { .. } | Phase::Querying { .. } | Phase::Idle { .. } => {}
                 }
                 Self::submit(
                     io,

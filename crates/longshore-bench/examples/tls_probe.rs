@@ -21,6 +21,10 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "ConnectionTrafficSecrets is foreign and non_exhaustive: only AES-GCM suites are offered"
+)]
 fn keys(s: &ConnectionTrafficSecrets) -> (Suite, Vec<u8>, [u8; 12]) {
     match s {
         ConnectionTrafficSecrets::Aes128Gcm { key, iv } => (

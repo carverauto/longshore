@@ -46,6 +46,10 @@ pub enum TlsError {
     Record(RecordError),
 }
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "rustls::Error is foreign and non_exhaustive: every other error is a failed handshake"
+)]
 fn map(e: &rustls::Error) -> TlsError {
     match e {
         rustls::Error::InvalidCertificate(_) | rustls::Error::NoCertificatesPresented => {
@@ -57,6 +61,10 @@ fn map(e: &rustls::Error) -> TlsError {
 
 /// TLS 1.3 with the two AES-GCM suites and nothing else, AES-128 first.
 /// With `aes128_only`, just the suite every TLS 1.3 peer must implement.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "rustls::CipherSuite is foreign and non_exhaustive: every other suite is dropped"
+)]
 fn crypto(aes128_only: bool) -> Arc<rustls::crypto::CryptoProvider> {
     let mut p = provider::default_provider();
     p.cipher_suites.retain(|s| match s.suite() {
@@ -282,6 +290,10 @@ impl Handshake {
             }
             .map_err(|_| TlsError::Handshake)?;
             for (dir, (seq, secret)) in [(tx, secrets.tx), (rx, secrets.rx)] {
+                #[expect(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "ConnectionTrafficSecrets is foreign and non_exhaustive: any suite but AES-GCM is unsupported"
+                )]
                 match &secret {
                     ConnectionTrafficSecrets::Aes128Gcm { key, iv } => dir.set_keys(
                         Suite::Aes128Gcm,

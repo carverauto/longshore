@@ -99,7 +99,7 @@ fn sim_io_wakes_and_drains_without_any_timer() {
     let mut got = Vec::new();
     let closed = rx.drain(|item| match item {
         Recv::Message(v) => got.push(v),
-        other => panic!("unexpected {other:?}"),
+        other @ (Recv::Stop | Recv::Closed) => panic!("unexpected {other:?}"),
     });
     assert!(!closed);
     assert_eq!(got, vec![10, 20, 30]);

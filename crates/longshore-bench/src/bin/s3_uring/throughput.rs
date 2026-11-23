@@ -116,7 +116,18 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
                         attempts += d.attempts as u64;
                         start_one(&mut s3, &mut io, d.token as u32);
                     }
-                    _ => std::process::exit(3),
+                    Outcome::AlreadyExists { .. }
+                    | Outcome::Listed { .. }
+                    | Outcome::NotFound
+                    | Outcome::Erased
+                    | Outcome::Begun { .. }
+                    | Outcome::PartStored { .. }
+                    | Outcome::Aborted
+                    | Outcome::Stat(_)
+                    | Outcome::Copied
+                    | Outcome::ErasedMany { .. }
+                    | Outcome::Report(_)
+                    | Outcome::Fatal(_) => std::process::exit(3),
                 }
             }
         }

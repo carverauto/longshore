@@ -60,7 +60,19 @@ pub(super) fn objects(size: u32) {
                     && header_in(head, "content-type") == Some(b"application/x-longshore-check")
                     && header_in(head, meta_name) == Some(b"longshore check")
             }
-            _ => false,
+            Outcome::Stored
+            | Outcome::AlreadyExists { .. }
+            | Outcome::Fetched { .. }
+            | Outcome::Listed { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::Begun { .. }
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)
+            | Outcome::Fatal(_) => false,
         };
         step(1, ok, d);
 
@@ -75,7 +87,19 @@ pub(super) fn objects(size: u32) {
                 let head = &io.buf(rx)[..stat.head_len as usize];
                 stat.size == size as u64 && header_in(head, meta_name) == Some(b"longshore check")
             }
-            _ => false,
+            Outcome::Stored
+            | Outcome::AlreadyExists { .. }
+            | Outcome::Fetched { .. }
+            | Outcome::Listed { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::Begun { .. }
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)
+            | Outcome::Fatal(_) => false,
         };
         step(3, ok, d);
 
@@ -94,7 +118,19 @@ pub(super) fn objects(size: u32) {
                     key_ok && prefix_ok && keys.next().is_none() && prefixes.next().is_none()
                 })
             }
-            _ => false,
+            Outcome::Stored
+            | Outcome::AlreadyExists { .. }
+            | Outcome::Fetched { .. }
+            | Outcome::NotFound
+            | Outcome::Erased
+            | Outcome::Begun { .. }
+            | Outcome::PartStored { .. }
+            | Outcome::Aborted
+            | Outcome::Stat(_)
+            | Outcome::Copied
+            | Outcome::ErasedMany { .. }
+            | Outcome::Report(_)
+            | Outcome::Fatal(_) => false,
         };
         // The same level one entry at a time: the first page is cut short
         // and returns a token, and the token brings the rest without
@@ -115,7 +151,7 @@ pub(super) fn objects(size: u32) {
                     listing.is_truncated && one_key && listing.common_prefixes().next().is_none()
                 })
             }
-            _ => false,
+            Outcome::Stored | Outcome::AlreadyExists { .. } | Outcome::Fetched { .. } | Outcome::NotFound | Outcome::Erased | Outcome::Begun { .. } | Outcome::PartStored { .. } | Outcome::Aborted | Outcome::Stat(_) | Outcome::Copied | Outcome::ErasedMany { .. } | Outcome::Report(_) | Outcome::Fatal(_) => false,
         };
         let paged_ok = first_ok
             && core::str::from_utf8(&continuation[..continuation_len]).is_ok_and(|t| {
@@ -136,7 +172,19 @@ pub(super) fn objects(size: u32) {
                             && !listing.is_truncated
                     })
                 }
-                _ => false,
+                Outcome::Stored
+                | Outcome::AlreadyExists { .. }
+                | Outcome::Fetched { .. }
+                | Outcome::NotFound
+                | Outcome::Erased
+                | Outcome::Begun { .. }
+                | Outcome::PartStored { .. }
+                | Outcome::Aborted
+                | Outcome::Stat(_)
+                | Outcome::Copied
+                | Outcome::ErasedMany { .. }
+                | Outcome::Report(_)
+                | Outcome::Fatal(_) => false,
             };
         step(4, ok && paged_ok, d);
 
@@ -155,7 +203,19 @@ pub(super) fn objects(size: u32) {
             let ok = match d.outcome {
                 Outcome::ErasedMany { len } => Failures::parse(&io.buf(rx)[..len as usize])
                     .is_ok_and(|mut failures| failures.next().is_none()),
-                _ => false,
+                Outcome::Stored
+                | Outcome::AlreadyExists { .. }
+                | Outcome::Fetched { .. }
+                | Outcome::Listed { .. }
+                | Outcome::NotFound
+                | Outcome::Erased
+                | Outcome::Begun { .. }
+                | Outcome::PartStored { .. }
+                | Outcome::Aborted
+                | Outcome::Stat(_)
+                | Outcome::Copied
+                | Outcome::Report(_)
+                | Outcome::Fatal(_) => false,
             };
             step(5, ok, d);
         }

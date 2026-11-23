@@ -64,7 +64,9 @@ impl Budget {
 fn report_of(finished: &Finished, _: u32) -> Result<Report, Error> {
     match finished {
         Finished::Outcome(Outcome::Report(report)) => Ok(*report),
-        other => Err(error_of(other)),
+        other @ (Finished::Outcome(_) | Finished::Rejected(_) | Finished::Closed) => {
+            Err(error_of(other))
+        }
     }
 }
 

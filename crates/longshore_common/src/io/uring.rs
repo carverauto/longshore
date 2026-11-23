@@ -260,7 +260,19 @@ impl UringIo {
                     | State::ConnectRelease
                     | State::AwaitNotif => continue,
                     State::Timer => IORING_OP_TIMEOUT_REMOVE,
-                    _ => IORING_OP_ASYNC_CANCEL,
+                    State::InFlight
+                    | State::Connecting
+                    | State::ConnectStep
+                    | State::Accept
+                    | State::ArmedAccept
+                    | State::ArmedRecv
+                    | State::SendZc
+                    | State::Wake
+                    | State::AwaitResult
+                    | State::FileOpen
+                    | State::FileRead
+                    | State::FileSlotOp
+                    | State::FileSlotOpen => IORING_OP_ASYNC_CANCEL,
                 };
                 let cancel = io_uring_sqe {
                     opcode,
