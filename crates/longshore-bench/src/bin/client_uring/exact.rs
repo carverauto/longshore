@@ -7,6 +7,7 @@
 //! the identity the store gave it, and a deadline that stops a request the
 //! kernel is still working on.
 
+use crate::die::OrDie;
 use longshore::client::{Budget, Builder, Client};
 use longshore::crypto::sha256;
 use longshore::store::creds::Credentials;
@@ -25,7 +26,7 @@ pub fn sha256_header(body: &[u8]) -> [u8; 44] {
 }
 
 fn answered(report: &Result<Report, longshore::client::Error>, status: u16) -> Answer {
-    match report.expect("a request was sent").end {
+    match report.or_die("a request was sent").end {
         End::Answered(answer) if answer.status == status => answer,
         other @ (End::NotSent(_) | End::Answered(_) | End::Unknown(_)) => {
             crate::die::die(format_args!("expected an answer of {status}: {other:?}"))
@@ -49,7 +50,7 @@ pub fn round_trip(client: &Client, len: usize) {
         checksum: Checksum::Sha256(sha256(&sent)),
     };
     let (put, body) = client.put(key, body, len, &options, once()).wait();
-    let report = put.expect("a request was sent");
+    let report = put.or_die("a request was sent");
     assert_eq!((report.sent, report.unanswered), (1, 0));
     assert_eq!(report.request.map(|signed| signed.method), Some("PUT"));
     let stored = answered(&Ok(report), 200);
@@ -96,7 +97,7 @@ pub fn round_trip(client: &Client, len: usize) {
     // A deadline that has passed sends nothing.
     let past = Budget::once(Instant::now() - Duration::from_millis(1));
     let (late, body) = client.put("exact-late", body, len, &options, past).wait();
-    let late = late.expect("a report");
+    let late = late.or_die("a report");
     assert_eq!((late.end, late.sent), (End::NotSent(Cause::Deadline), 0));
     assert!(late.request.is_none());
     let into = body;
@@ -118,7 +119,7 @@ pub fn deadline_stops_a_connect() {
     (b.port, b.address) = (nowhere.port(), Some(nowhere));
     (b.connections, b.buffers, b.operations) = (1, 1, 1);
     b.buffer_size = 64 * 1024;
-    let client = b.build().expect("client");
+    let client = b.build().or_die("client");
     let body = client.buffer_blocking();
     let started = Instant::now();
     let budget = Budget {
@@ -127,7 +128,7 @@ pub fn deadline_stops_a_connect() {
     };
     let (put, _body) = client.put("k", body, 1024, &Put::default(), budget).wait();
     let took = started.elapsed();
-    let report = put.expect("a report");
+    let report = put.or_die("a report");
     // Nothing was sent either way. A host with no route at all refuses the
     // connect at once, and the attempts that follow are refused too until
     // the deadline ends them.

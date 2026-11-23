@@ -6,6 +6,7 @@
 //! Build a client and drop it with work in flight, many times over.
 
 use super::{builder, descriptors, io_threads, serve, settles, SIZE};
+use crate::die::OrDie;
 use longshore::client::{Client, Error};
 use longshore::io::uring::Fault;
 use std::time::Duration;
@@ -78,7 +79,7 @@ pub fn run(rounds: u32, bounded_memory: bool) {
     let mut settled_kib = 0;
     for round in 0..rounds {
         let way = [Way::Finish, Way::Detach, Way::Outlive, Way::Fail][round as usize % 4];
-        let client = builder(addr, THREADS).build().expect("build");
+        let client = builder(addr, THREADS).build().or_die("build");
         let callers: Vec<_> = (0..CALLERS)
             .map(|n| {
                 let c = client.clone();
@@ -95,7 +96,7 @@ pub fn run(rounds: u32, bounded_memory: bool) {
         }
         drop(client);
         for c in callers {
-            c.join().expect("a caller failed");
+            c.join().or_die("a caller failed");
         }
         // The last handle went on whichever thread dropped it last, and
         // that drop joined the I/O threads.

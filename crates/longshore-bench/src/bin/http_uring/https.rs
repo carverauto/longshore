@@ -6,6 +6,7 @@
 //! One HTTPS GET through the full stack to a real server.
 
 use super::*;
+use crate::die::OrDie;
 
 /// Buffers: client head 0, TLS records 1 and 2, response 3.
 pub(super) fn https(host: &str, ip: &str, path: &str) {
@@ -22,7 +23,7 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
         ops_max: 8,
         ..Limits::BASE
     })
-    .unwrap_or_else(|e| die(&e.to_string()));
+    .unwrap_or_else(|e| die(e));
     let mut cfg = client_cfg(1, SIZE, 0);
     cfg.request_timeout_ns = 10_000 * MS;
     let mut client = Client::with_tls(
@@ -43,7 +44,7 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
     };
     client
         .start(&mut io, 1, &req)
-        .unwrap_or_else(|e| die(&format!("start: {e:?}")));
+        .unwrap_or_else(|e| die(format_args!("start: {e:?}")));
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
         .unwrap();
     let t0 = io.now_ns();
@@ -51,7 +52,7 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
     // Read before sealing: looking up an environment variable allocates.
     let trace = std::env::var_os("LONGSHORE_TRACE").is_some();
     let result = sealed(|| loop {
-        io.tick(true, &mut out).expect("tick");
+        io.tick(true, &mut out).or_die("tick");
         while let Some(c) = out.pop() {
             if c.token.0 == HEARTBEAT {
                 client.tick(&mut io);

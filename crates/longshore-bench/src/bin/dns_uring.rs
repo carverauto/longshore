@@ -17,6 +17,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 #[path = "../die.rs"]
 mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -36,7 +38,7 @@ fn main() {
         eprintln!("usage: dns_uring HOST [HOST...]");
         std::process::exit(2);
     }
-    let conf = std::fs::read_to_string("/etc/resolv.conf").expect("read /etc/resolv.conf");
+    let conf = std::fs::read_to_string("/etc/resolv.conf").or_die("read /etc/resolv.conf");
     let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
         .into_iter()
         .take(2)
@@ -85,7 +87,7 @@ fn main() {
     sealed(|| {
         // One full pass over the hosts, or 5 seconds.
         while r.cycles == 0 && io.now_ns() - t0 < 5_000_000_000 {
-            io.tick(true, &mut out).expect("tick");
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 let _: bool = r.on_completion(&mut io, c);
             }

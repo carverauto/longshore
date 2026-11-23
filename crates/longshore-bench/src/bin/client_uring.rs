@@ -22,6 +22,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 #[path = "../die.rs"]
 mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
 
 #[cfg(target_os = "linux")]
 #[path = "client_uring/exact.rs"]
@@ -61,7 +63,7 @@ fn main() {
                 threads = args
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .expect("--threads N")
+                    .or_die("--threads N")
             }
             _ => die::die(format_args!("unknown flag {k}")),
         }
@@ -84,7 +86,7 @@ fn main() {
             ops_max: server_conns * 3 + 2,
             ..Limits::BASE
         })
-        .expect("server ring");
+        .or_die("server ring");
         let mut server = Server::new(server::Config {
             listener: Sock(0),
             connections_max: server_conns,
@@ -110,17 +112,17 @@ fn main() {
         }
         let addr = server
             .start(&mut io, SocketAddr::new(loopback, 0))
-            .expect("server start");
+            .or_die("server start");
         bound.send(addr).unwrap();
         let mut out = Completions::new(64);
         loop {
-            io.tick(true, &mut out).expect("server tick");
+            io.tick(true, &mut out).or_die("server tick");
             while let Some(c) = out.pop() {
                 let _: bool = server.on_completion(&mut io, c);
             }
         }
     });
-    let addr = listening.recv().expect("the server did not start");
+    let addr = listening.recv().or_die("the server did not start");
 
     let threads_before = thread_count();
     let mut b = Builder::new(
@@ -148,7 +150,7 @@ fn main() {
             &credentials_path,
             "[default]\naws_access_key_id = AKIDSECOND\naws_secret_access_key = second-secret\n",
         )
-        .expect("write the credentials file");
+        .or_die("write the credentials file");
         b.credentials_file = Some(credentials_path.clone());
         b.credentials_reread_secs = 1;
     }
@@ -260,7 +262,7 @@ fn main() {
         })
         .collect();
     for c in callers {
-        c.join().expect("a caller thread failed");
+        c.join().or_die("a caller thread failed");
     }
 
     multipart::round_trip(&client, SIZE as usize / 4);
@@ -290,7 +292,7 @@ fn main() {
         use longshore::io::{Op, Token};
         const SOCKS: u32 = 100;
         const REPEATS: u32 = 50;
-        let listener = std::net::TcpListener::bind((loopback, 0)).expect("listener");
+        let listener = std::net::TcpListener::bind((loopback, 0)).or_die("listener");
         let peer = listener.local_addr().unwrap();
         let (accepted, round_accepted) = channel();
         let (finished, round_finished) = channel::<()>();
@@ -313,8 +315,8 @@ fn main() {
                 ops_max: 2 * SOCKS + 2,
                 ..Limits::BASE
             };
-            let mut io = UringIo::new(limits).expect("ring");
-            let _wake = io.waker().expect("waker");
+            let mut io = UringIo::new(limits).or_die("ring");
+            let _wake = io.waker().or_die("waker");
             let mut out = Completions::new(SOCKS as usize);
             for n in 0..SOCKS {
                 let to = Op::Connect {
@@ -325,7 +327,7 @@ fn main() {
             }
             let mut connected = 0;
             while connected < SOCKS {
-                io.tick(true, &mut out).expect("connect");
+                io.tick(true, &mut out).or_die("connect");
                 while let Some(c) = out.pop() {
                     assert!(c.result >= 0, "connect failed: {}", c.result);
                     connected += 1;
@@ -357,7 +359,7 @@ fn main() {
             )
             .unwrap();
             io.submit(Token(9999), Op::AwaitWake).unwrap();
-            io.tick(false, &mut out).expect("submit");
+            io.tick(false, &mut out).or_die("submit");
             // A host with no route at all refuses the connect at once.
             while let Some(c) = out.pop() {
                 assert_eq!(
@@ -379,7 +381,7 @@ fn main() {
             drop(io);
             finished.send(()).unwrap();
         }
-        acceptor.join().expect("acceptor");
+        acceptor.join().or_die("acceptor");
     }
     println!(
         "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, a multipart upload of three parts, a write read back under its identity, threads stopped on drop, over 200 operations quiesced 50 times",

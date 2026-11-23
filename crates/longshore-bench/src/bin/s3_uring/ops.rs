@@ -54,7 +54,7 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
                 seed_len,
                 Checksum::None,
             )
-            .unwrap_or_else(|e| die(&format!("seed: {e:?}")));
+            .unwrap_or_else(|e| die(format_args!("seed: {e:?}")));
         }
         for _ in 0..batch {
             if wait(&mut io, &mut s3, &mut out).outcome != Outcome::Stored {

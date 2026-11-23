@@ -6,6 +6,7 @@
 //! 1,000-idle-connection buffer-ring check for `server_uring`.
 
 use super::checks::close_batch;
+use crate::die::OrDie;
 use longshore::io::alloc_guard::sealed;
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use std::net::SocketAddr;
@@ -40,7 +41,7 @@ pub(super) fn thousand_idle_connections<IO: Io>(
     let mut srv_out = Completions::new(128);
     let mut c_out = Completions::new(128);
 
-    let bound = srv.listen(Sock(0), addr).expect("listen");
+    let bound = srv.listen(Sock(0), addr).or_die("listen");
     let mut accepted = Vec::with_capacity(TOTAL);
     let mut client_socks = Vec::with_capacity(TOTAL);
     for k in 0..HALF {

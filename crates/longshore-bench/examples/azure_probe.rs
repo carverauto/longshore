@@ -55,7 +55,7 @@ fn call(
     body: &[u8],
 ) -> Result<Reply> {
     let mut key = [0u8; KEY_MAX];
-    let k = decode_key(KEY, &mut key).expect("development key");
+    let k = decode_key(KEY, &mut key).ok_or("development key")?;
     let date = http_date(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -82,7 +82,7 @@ fn call(
         query,
     };
     let mut auth = [0u8; 160];
-    let n = authorization(&req, &key[..k], &mut auth).expect("signable");
+    let n = authorization(&req, &key[..k], &mut auth).map_err(|e| format!("signable: {e:?}"))?;
 
     let mut target = path.to_string();
     for (i, (name, value)) in query.iter().enumerate() {
@@ -110,13 +110,13 @@ fn call(
     let split = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .expect("a response head");
+        .ok_or("a response head")?;
     let head = String::from_utf8_lossy(&raw[..split]).into_owned();
     let status = head
         .split(' ')
         .nth(1)
         .and_then(|v| v.parse().ok())
-        .expect("a status");
+        .ok_or("a status")?;
     Ok(Reply {
         status,
         head,

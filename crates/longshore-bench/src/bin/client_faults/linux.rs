@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::die::die;
+use crate::die::{die, OrDie};
 use longshore::client::{Builder, Client, Error};
 use longshore::http::server::{self, Server};
 use longshore::io::uring::{Fault, UringIo};
@@ -26,7 +26,7 @@ pub fn main() {
     let number = |flag: &str, default: u32| {
         args.iter()
             .position(|a| a == flag)
-            .map(|i| args[i + 1].parse().expect("a number"))
+            .map(|i| args[i + 1].parse().or_die("a number"))
             .unwrap_or(default)
     };
     // A caller that never gets an answer is the failure these runs look
@@ -66,7 +66,7 @@ pub fn serve(connections: u32) -> SocketAddr {
             ops_max: connections * 3 + 2,
             ..Limits::BASE
         })
-        .expect("server ring");
+        .or_die("server ring");
         let mut server = Server::new(server::Config {
             listener: Sock(0),
             connections_max: connections,
@@ -80,17 +80,17 @@ pub fn serve(connections: u32) -> SocketAddr {
         });
         let addr = server
             .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .expect("server start");
+            .or_die("server start");
         bound.send(addr).unwrap();
         let mut out = Completions::new(64);
         loop {
-            io.tick(true, &mut out).expect("server tick");
+            io.tick(true, &mut out).or_die("server tick");
             while let Some(c) = out.pop() {
                 let _: bool = server.on_completion(&mut io, c);
             }
         }
     });
-    listening.recv().expect("the server did not start")
+    listening.recv().or_die("the server did not start")
 }
 
 pub fn builder(addr: SocketAddr, threads: u32) -> Builder {
@@ -203,7 +203,7 @@ fn break_threads(fault: Fault, threads: u32) {
     );
     let addr = serve(threads * CONNS);
     let (threads_before, fds_before) = (io_threads(), descriptors());
-    let client = builder(addr, threads).build().expect("build");
+    let client = builder(addr, threads).build().or_die("build");
     let stop = Arc::new(AtomicBool::new(false));
     let seen = Arc::new(Seen::default());
     let callers: Vec<_> = (0..CALLERS)
@@ -293,7 +293,7 @@ fn break_threads(fault: Fault, threads: u32) {
     }
     stop.store(true, Ordering::Release);
     for c in callers {
-        c.join().expect("a caller failed");
+        c.join().or_die("a caller failed");
     }
     // The failed threads are still there, refusing work, until the last
     // handle goes.

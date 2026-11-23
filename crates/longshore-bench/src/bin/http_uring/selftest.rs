@@ -6,6 +6,7 @@
 //! The self-test: client and in-tree server on one ring.
 
 use super::*;
+use crate::die::OrDie;
 
 /// Client and server on one ring. Large buffers: server head 0, server
 /// body 1, user tx 2, user rx 3. Small buffers: the client head.
@@ -20,7 +21,7 @@ pub(super) fn selftest() {
         ops_max: 8,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).unwrap_or_else(|e| die(&e.to_string()));
+    let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
     let mut server = Server::new(server::Config {
         listener: Sock(0),
         connections_max: 1,
@@ -34,7 +35,7 @@ pub(super) fn selftest() {
     });
     let addr = server
         .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .unwrap_or_else(|e| die(&e.to_string()));
+        .unwrap_or_else(|e| die(e));
     let mut client = Client::new(client::Config {
         first_buf: limits.small(0).0,
         ..client_cfg(1, SIZE, 1)
@@ -72,7 +73,7 @@ pub(super) fn selftest() {
                 continue;
             }
             'wait: loop {
-                io.tick(true, &mut out).expect("tick");
+                io.tick(true, &mut out).or_die("tick");
                 while let Some(c) = out.pop() {
                     match client.on_completion(&mut io, c) {
                         Handled::Done(d) => {

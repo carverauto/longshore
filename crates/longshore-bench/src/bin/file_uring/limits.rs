@@ -5,6 +5,7 @@
 
 //! `getrlimit` (`RLIMIT_NOFILE` and `RLIMIT_MEMLOCK`) checks for `file_uring`.
 
+use crate::die::OrDie;
 use longshore::io::sys::{getrlimit, rlimit, RLIMIT_MEMLOCK, RLIMIT_NOFILE};
 use longshore::io::uring::UringIo;
 use longshore::io::Limits;
@@ -49,11 +50,11 @@ pub(super) fn check_rlimit_nofile() {
 }
 
 pub(super) fn check_memlock_in_child() {
-    let exe = std::env::current_exe().expect("current_exe");
+    let exe = std::env::current_exe().or_die("current_exe");
     let out = std::process::Command::new(exe)
         .arg("--memlock-child")
         .output()
-        .expect("spawn memlock child");
+        .or_die("spawn memlock child");
     assert!(
         out.status.success(),
         "memlock child failed:\nstdout={}\nstderr={}",
@@ -98,7 +99,7 @@ pub(super) fn run_memlock_child() {
             break;
         }
     }
-    let cap = chosen.expect("found RLIMIT_MEMLOCK high enough for ring setup");
+    let cap = chosen.or_die("found RLIMIT_MEMLOCK high enough for ring setup");
     let pool_target = (cap as u32).saturating_add(1 << 20);
     let limits = Limits {
         sockets_max: 2,

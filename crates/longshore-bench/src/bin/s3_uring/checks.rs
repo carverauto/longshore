@@ -23,16 +23,16 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
     let mut after: Option<String> = None;
     loop {
         s3.list(&mut io, 0, prefix, after.as_deref(), 1000, page)
-            .unwrap_or_else(|e| die(&format!("list: {e:?}")));
+            .unwrap_or_else(|e| die(format_args!("list: {e:?}")));
         let Outcome::Listed { len } = wait(&mut io, &mut s3, &mut out).outcome else {
             die("list failed")
         };
         let xml = io.buf(page)[..len as usize].to_vec();
-        let listing = Listing::parse(&xml).unwrap_or_else(|e| die(&format!("listing: {e:?}")));
+        let listing = Listing::parse(&xml).unwrap_or_else(|e| die(format_args!("listing: {e:?}")));
         let keys: Vec<(String, u64)> = listing
             .entries()
             .map(|e| {
-                let e = e.unwrap_or_else(|e| die(&format!("listing entry: {e:?}")));
+                let e = e.unwrap_or_else(|e| die(format_args!("listing entry: {e:?}")));
                 let mut k = vec![0u8; e.key_raw.len()];
                 let n = unescape(e.key_raw, &mut k).unwrap_or_else(|| die("bad key escape"));
                 (String::from_utf8_lossy(&k[..n]).into_owned(), e.size)
@@ -47,7 +47,7 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
                 bytes += size;
                 if erase {
                     s3.erase(&mut io, i as u64, key)
-                        .unwrap_or_else(|e| die(&format!("erase: {e:?}")));
+                        .unwrap_or_else(|e| die(format_args!("erase: {e:?}")));
                 } else {
                     println!("{size:>12}  {key}");
                 }

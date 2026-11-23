@@ -45,7 +45,7 @@ fn keys(s: &ConnectionTrafficSecrets) -> Result<(Suite, Vec<u8>, [u8; 12])> {
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
-    let host = args.next().expect("usage: tls_probe HOST [PATH]");
+    let host = args.next().ok_or("usage: tls_probe HOST [PATH]")?;
     let path = args.next().unwrap_or_else(|| "/".into());
 
     // TLS 1.3 only, AES-GCM suites only.
@@ -66,11 +66,13 @@ fn main() -> Result<()> {
         .with_no_client_auth();
     config.enable_secret_extraction = true;
 
-    let mut sock = TcpStream::connect((host.as_str(), 443)).expect("connect");
-    let mut conn =
-        ClientConnection::new(Arc::new(config), host.clone().try_into().unwrap()).expect("client");
+    let mut sock = TcpStream::connect((host.as_str(), 443)).map_err(|e| format!("connect: {e}"))?;
+    let mut conn = ClientConnection::new(Arc::new(config), host.clone().try_into().unwrap())
+        .map_err(|e| format!("client: {e}"))?;
     while conn.is_handshaking() {
-        let _: (usize, usize) = conn.complete_io(&mut sock).expect("handshake");
+        let _: (usize, usize) = conn
+            .complete_io(&mut sock)
+            .map_err(|e| format!("handshake: {e}"))?;
     }
     let suite = conn.negotiated_cipher_suite().unwrap().suite();
     println!(
@@ -80,7 +82,9 @@ fn main() -> Result<()> {
     );
 
     // From here on rustls is out of the picture.
-    let secrets = conn.dangerous_extract_secrets().expect("extract secrets");
+    let secrets = conn
+        .dangerous_extract_secrets()
+        .map_err(|e| format!("extract secrets: {e}"))?;
     let ((tx_seq, tx_secret), (rx_seq, rx_secret)) = (secrets.tx, secrets.rx);
     let (mut tx, mut rx) = (Direction::new(), Direction::new());
     let (tx_suite, tx_key, tx_iv) = keys(&tx_secret)?;
@@ -94,19 +98,20 @@ fn main() -> Result<()> {
     let n = tx
         .seal(CONTENT_APPLICATION_DATA, request.as_bytes(), &mut record)
         .unwrap();
-    sock.write_all(&record[..n]).expect("send");
+    sock.write_all(&record[..n])
+        .map_err(|e| format!("send: {e}"))?;
 
     let (mut inbox, mut plain, mut out) = (Vec::new(), Vec::new(), vec![0u8; 17000]);
     let mut counts = [0usize; 3];
     let mut chunk = [0u8; 16384];
     'read: loop {
-        while let Some(len) = record_len(&inbox).expect("record header") {
+        while let Some(len) = record_len(&inbox).map_err(|e| format!("record header: {e:?}"))? {
             if inbox.len() < len {
                 break;
             }
             let (ctype, opened) = rx
                 .open(&inbox[..len], &mut out[..len - HEADER_LEN - TAG_LEN])
-                .expect("record must authenticate");
+                .map_err(|e| format!("record must authenticate: {e:?}"))?;
             let _: std::vec::Drain<'_, u8> = inbox.drain(..len);
             match ctype {
                 CONTENT_APPLICATION_DATA => {

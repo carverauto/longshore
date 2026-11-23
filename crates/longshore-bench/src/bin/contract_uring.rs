@@ -17,6 +17,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 #[path = "../die.rs"]
 mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -51,14 +53,14 @@ fn run_backend<IO: longshore::io::Io>(
         };
         let mut io = make(limits);
         let mut out = Completions::new(4);
-        let waker = io.waker().expect("waker");
+        let waker = io.waker().or_die("waker");
         io.submit(Token(1), Op::AwaitWake).unwrap();
         let h = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(15));
             waker.wake();
         });
-        io.tick(true, &mut out).expect("tick");
-        let c = out.pop().expect("wake completion");
+        io.tick(true, &mut out).or_die("tick");
+        let c = out.pop().or_die("wake completion");
         assert_eq!((c.token.0, c.result), (1, 0));
         h.join().unwrap();
     }

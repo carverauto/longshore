@@ -34,7 +34,7 @@ fn begin(io: &mut UringIo, s3: &mut S3, out: &mut Completions, key: &str, sums: 
         | Outcome::Copied
         | Outcome::ErasedMany { .. }
         | Outcome::Report(_)
-        | Outcome::Fatal(_)) => die(&format!("multipart begin -> {other:?}")),
+        | Outcome::Fatal(_)) => die(format_args!("multipart begin -> {other:?}")),
     }
 }
 
@@ -106,7 +106,7 @@ pub(super) fn multipart(size: u32) {
                 | Outcome::Copied
                 | Outcome::ErasedMany { .. }
                 | Outcome::Report(_)
-                | Outcome::Fatal(_)) => die(&format!("part {} -> {other:?}", d.token)),
+                | Outcome::Fatal(_)) => die(format_args!("part {} -> {other:?}", d.token)),
             }
         }
         let parts = parts.map(Option::unwrap);
@@ -153,7 +153,7 @@ pub(super) fn multipart(size: u32) {
             .unwrap();
         let part = wait(&mut io, &mut s3, &mut out);
         if !matches!(part.outcome, Outcome::PartStored { .. }) {
-            die(&format!("part before abort -> {:?}", part.outcome));
+            die(format_args!("part before abort -> {:?}", part.outcome));
         }
         s3.multipart_abort(&mut io, 40, &key, &abandoned).unwrap();
         let aborted = wait(&mut io, &mut s3, &mut out);

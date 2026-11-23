@@ -17,6 +17,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 #[path = "../die.rs"]
 mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -126,7 +128,7 @@ fn main() {
         return;
     }
 
-    let base = dir_arg.unwrap_or_else(|| std::env::current_dir().expect("cwd"));
+    let base = dir_arg.unwrap_or_else(|| std::env::current_dir().or_die("cwd"));
     let work = match WorkDir::create(&base) {
         Ok(w) => w,
         Err(e) => {

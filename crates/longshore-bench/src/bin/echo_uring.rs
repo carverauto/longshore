@@ -21,6 +21,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 #[path = "../die.rs"]
 mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -47,13 +49,13 @@ fn main() {
                 total = it
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .expect("--total BYTES")
+                    .or_die("--total BYTES")
             }
             "--chunk" => {
                 chunk = it
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .expect("--chunk BYTES")
+                    .or_die("--chunk BYTES")
             }
             _ => die::die(format_args!("unknown flag {k}")),
         }

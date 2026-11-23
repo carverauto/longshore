@@ -6,6 +6,7 @@
 //! Direct I/O sequential throughput: one thread keeps `depth` block-sized
 //! writes, then reads, in flight over a preallocated file.
 
+use crate::die::OrDie;
 use longshore::io::uring::UringIo;
 use longshore::io::{Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
 use std::path::Path;
@@ -104,7 +105,7 @@ pub(super) fn run(dir: &Path, shape: Shape) {
         ops_max: shape.depth + 2,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).expect("UringIo::new");
+    let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(shape.depth as usize + 2);
     let path = format!("{}/bench_throughput.bin\0", dir.display());
     io.buf(longshore::io::BufId(0))[..path.len()].copy_from_slice(path.as_bytes());

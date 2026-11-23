@@ -6,13 +6,14 @@
 //! Throughput benchmarks: PUT and GET against the sink.
 
 use super::*;
+use crate::die::OrDie;
 
 pub(super) fn bench(a: &Args, put: bool) {
     if let Some(cpu) = a.cpu {
         let mut mask = [0u64; 16];
         mask[cpu / 64] |= 1 << (cpu % 64);
         if unsafe { sched_setaffinity(0, core::mem::size_of_val(&mask), mask.as_ptr()) } != 0 {
-            die(&format!("cannot pin to cpu {cpu}"));
+            die(format_args!("cannot pin to cpu {cpu}"));
         }
     }
     // Several addresses, separated by commas, spread the connections over
@@ -38,7 +39,7 @@ pub(super) fn bench(a: &Args, put: bool) {
         ops_max: n * 3 + 1,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).unwrap_or_else(|e| die(&e.to_string()));
+    let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
     let mut cfg = client_cfg(n, limits.buffer_size, 0);
     cfg.first_buf = limits.small(0).0;
     cfg.tls_batch = a.batch;
@@ -50,11 +51,11 @@ pub(super) fn bench(a: &Args, put: bool) {
     let mut client = match &a.trust_file {
         None => Client::new(cfg),
         Some(path) => {
-            let der = std::fs::read(path).unwrap_or_else(|e| die(&format!("{path}: {e}")));
+            let der = std::fs::read(path).unwrap_or_else(|e| die(format_args!("{path}: {e}")));
             Client::with_tls(
                 cfg,
                 longshore::tls::handshake::ClientSetup::with_roots(&[&der])
-                    .unwrap_or_else(|e| die(&format!("certificate: {e:?}"))),
+                    .unwrap_or_else(|e| die(format_args!("certificate: {e:?}"))),
                 n,
             )
         }
@@ -104,7 +105,7 @@ pub(super) fn bench(a: &Args, put: bool) {
         http.start(ring, u64::from(i), &req)
     };
     for i in 0..n {
-        start_one(&mut client, &mut io, i).unwrap_or_else(|e| die(&format!("start: {e:?}")));
+        start_one(&mut client, &mut io, i).unwrap_or_else(|e| die(format_args!("start: {e:?}")));
     }
     // A peer that closes after a response leaves its slot Closing until the
     // close completes, so a restart can see Busy; retry it after the next tick.
@@ -131,7 +132,7 @@ pub(super) fn bench(a: &Args, put: bool) {
                 Err(_) => std::process::exit(3),
             };
         while io.now_ns() < deadline {
-            io.tick(true, &mut out).expect("tick");
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 if c.token.0 == HEARTBEAT {
                     client.tick(&mut io);

@@ -14,6 +14,12 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+#[cfg(target_os = "linux")]
+use die::OrDie;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
@@ -49,7 +55,7 @@ fn check_connect_ring_lost() {
         )
         .unwrap();
         io.tick(false, &mut out).unwrap();
-        out.pop().expect("connect failure completion")
+        out.pop().or_die("connect failure completion")
     });
     assert_eq!(c.token, Token(1));
     assert!(!c.more && c.buf.is_none());
@@ -83,7 +89,7 @@ fn check_armed_accept_empty_range() {
         io.submit(Token(2), Op::ArmedAccept { listener: Sock(0) })
             .unwrap();
         io.tick(false, &mut out).unwrap();
-        out.pop().expect("armed accept failure completion")
+        out.pop().or_die("armed accept failure completion")
     });
     assert_eq!(c, Completion::new(Token(2), -ENFILE));
 }

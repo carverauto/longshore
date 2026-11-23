@@ -48,7 +48,10 @@ pub fn run(client: &Client, size: usize, parts: u32, objects: u32) {
             stored.push(part.unwrap_or_else(|e| fail("store a part", e)));
             scratch = Some(buffer);
         }
-        let scratch = scratch.expect("at least one part");
+        let Some(scratch) = scratch else {
+            eprintln!("client_s3: multipart needs at least one part");
+            std::process::exit(2);
+        };
         let (completed, mut into) = client.upload_complete(&key, &id, &stored, scratch).wait();
         completed.unwrap_or_else(|e| fail("complete", e));
         for part in 1..=parts {

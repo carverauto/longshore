@@ -5,6 +5,7 @@
 
 //! A multipart upload through the shareable client on real I/O threads.
 
+use crate::die::OrDie;
 use longshore::client::{Client, Error};
 
 fn pattern(part: u32, i: usize) -> u8 {
@@ -17,7 +18,7 @@ fn pattern(part: u32, i: usize) -> u8 {
 /// which is as much as the test server assembles.
 pub fn round_trip(client: &Client, part_len: usize) {
     let key = "multipart-object";
-    let id = client.upload_begin(key).wait().expect("begin an upload");
+    let id = client.upload_begin(key).wait().or_die("begin an upload");
     let filled = |part: u32| {
         let mut body = client.buffer_blocking();
         for (i, b) in body.as_mut_slice()[..part_len].iter_mut().enumerate() {
@@ -30,7 +31,7 @@ pub fn round_trip(client: &Client, part_len: usize) {
     let (one, _) = one.wait();
     let (two, _) = two.wait();
     let (three, scratch) = client.upload_part(key, &id, 3, filled(3), part_len).wait();
-    let parts = [one, two, three].map(|p| p.expect("store a part"));
+    let parts = [one, two, three].map(|p| p.or_die("store a part"));
     let (completed, into) = client.upload_complete(key, &id, &parts, scratch).wait();
     assert_eq!(completed, Ok(()), "complete the upload");
 
@@ -52,11 +53,11 @@ pub fn round_trip(client: &Client, part_len: usize) {
     let aborted = client
         .upload_begin("multipart-aborted")
         .wait()
-        .expect("begin");
+        .or_die("begin");
     let (part, buffer) = client
         .upload_part("multipart-aborted", &aborted, 1, filled(1), part_len)
         .wait();
-    let part = part.expect("store a part");
+    let part = part.or_die("store a part");
     assert_eq!(
         client.upload_abort("multipart-aborted", &aborted).wait(),
         Ok(())

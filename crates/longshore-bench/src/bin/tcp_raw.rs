@@ -22,6 +22,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 fn main() {
     linux::main()
 }
@@ -48,7 +52,7 @@ mod linux {
         let mut mask = [0u64; 16];
         mask[cpu / 64] |= 1 << (cpu % 64);
         if unsafe { sched_setaffinity(0, core::mem::size_of_val(&mask), mask.as_ptr()) } != 0 {
-            die(&format!(
+            die(format_args!(
                 "cannot pin to cpu {cpu}: {}",
                 std::io::Error::last_os_error()
             ));
@@ -79,10 +83,7 @@ mod linux {
         (total - idle, total)
     }
 
-    fn die(msg: &str) -> ! {
-        eprintln!("tcp_raw: {msg}");
-        std::process::exit(1)
-    }
+    use crate::die::{die, OrDie};
 
     struct Args {
         cmd: String,
@@ -111,10 +112,10 @@ mod linux {
         while let Some(k) = it.next() {
             let v = it
                 .next()
-                .unwrap_or_else(|| die(&format!("missing value for {k}")));
+                .unwrap_or_else(|| die(format_args!("missing value for {k}")));
             let num = || {
                 v.parse::<usize>()
-                    .unwrap_or_else(|_| die(&format!("bad number for {k}: {v}")))
+                    .unwrap_or_else(|_| die(format_args!("bad number for {k}: {v}")))
             };
             match k.as_str() {
                 "--addr" => a.addr = v,
@@ -124,7 +125,7 @@ mod linux {
                 "--chunk" => a.chunk = num(),
                 "--secs" => a.secs = num() as u64,
                 "--cpu" => a.cpu = Some(num()),
-                _ => die(&format!("unknown flag {k}")),
+                _ => die(format_args!("unknown flag {k}")),
             }
         }
         a
@@ -137,7 +138,7 @@ mod linux {
             "source" => peer(a.port, true),
             "send" => run(&a, true),
             "recv" => run(&a, false),
-            other => die(&format!("unknown command {other}")),
+            other => die(format_args!("unknown command {other}")),
         }
     }
 
@@ -145,7 +146,7 @@ mod linux {
     /// kernel-to-user copy so the sink stays ahead of a zero-copy sender.
     fn peer(port: u16, source: bool) {
         let l = TcpListener::bind(("0.0.0.0", port))
-            .unwrap_or_else(|e| die(&format!("bind {port}: {e}")));
+            .unwrap_or_else(|e| die(format_args!("bind {port}: {e}")));
         eprintln!(
             "tcp_raw: {} listening on {port}",
             if source { "source" } else { "sink" }
@@ -173,13 +174,13 @@ mod linux {
         let fixed_buf = a.mode == "zc-fixed";
         match (sending, a.mode.as_str()) {
             (_, "unbatched" | "batched") | (true, "zc" | "zc-fixed") => {}
-            _ => die(&format!("mode {} is not valid for {}", a.mode, a.cmd)),
+            _ => die(format_args!("mode {} is not valid for {}", a.mode, a.cmd)),
         }
 
         let socks: Vec<TcpStream> = (0..a.conns)
             .map(|_| {
                 TcpStream::connect(&a.addr)
-                    .unwrap_or_else(|e| die(&format!("connect {}: {e}", a.addr)))
+                    .unwrap_or_else(|e| die(format_args!("connect {}: {e}", a.addr)))
             })
             .collect();
         let fds: Vec<i32> = socks.iter().map(|s| s.as_raw_fd()).collect();
@@ -192,10 +193,9 @@ mod linux {
         } else {
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN
         };
-        let mut ring = Ring::new(256, flags).unwrap_or_else(|e| die(&e.to_string()));
+        let mut ring = Ring::new(256, flags).unwrap_or_else(|e| die(e));
         if !unbatched {
-            ring.register_files(&fds)
-                .unwrap_or_else(|e| die(&e.to_string()));
+            ring.register_files(&fds).unwrap_or_else(|e| die(e));
         }
         if fixed_buf {
             let iov: Vec<iovec> = bufs
@@ -205,8 +205,7 @@ mod linux {
                     iov_len: b.len(),
                 })
                 .collect();
-            ring.register_buffers(&iov)
-                .unwrap_or_else(|e| die(&e.to_string()));
+            ring.register_buffers(&iov).unwrap_or_else(|e| die(e));
         }
 
         let make = |i: usize, buffers: &mut [Vec<u8>]| -> io_uring_sqe {
@@ -219,7 +218,7 @@ mod linux {
             if unbatched {
                 s.fd = fds[i];
             } else {
-                s.fd = fixed_fd(u32::try_from(i).expect("connection index"));
+                s.fd = fixed_fd(u32::try_from(i).or_die("connection index"));
                 s.flags = IOSQE_FIXED_FILE;
             }
             if sending {
@@ -244,9 +243,9 @@ mod linux {
 
         for i in 0..a.conns {
             ring.push(make(i, &mut bufs))
-                .expect("sq sized for all connections");
+                .or_die("sq sized for all connections");
             if unbatched {
-                let _: u32 = ring.enter(0).unwrap_or_else(|e| die(&e.to_string()));
+                let _: u32 = ring.enter(0).unwrap_or_else(|e| die(e));
             }
         }
 
@@ -258,7 +257,7 @@ mod linux {
         while Instant::now() < deadline {
             let _: u32 = ring
                 .enter(1)
-                .unwrap_or_else(|e| die(&format!("io_uring_enter: {e}")));
+                .unwrap_or_else(|e| die(format_args!("io_uring_enter: {e}")));
             while let Some(c) = ring.pop() {
                 if c.flags & IORING_CQE_F_NOTIF != 0 {
                     // Second completion of a zero-copy send: buffer released.
@@ -269,7 +268,7 @@ mod linux {
                     continue;
                 }
                 if c.res <= 0 {
-                    die(&format!(
+                    die(format_args!(
                         "{} on connection {} failed: {}",
                         a.cmd,
                         c.user_data,
@@ -283,7 +282,7 @@ mod linux {
                 bytes += u64::from(c.res.unsigned_abs());
                 ops += 1;
                 ring.push(make(c.user_data as usize, &mut bufs))
-                    .expect("one op in flight per connection");
+                    .or_die("one op in flight per connection");
                 if unbatched {
                     // One completion per syscall: the next `enter(1)` submits this
                     // single SQE and waits again.

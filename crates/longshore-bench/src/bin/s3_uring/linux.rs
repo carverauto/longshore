@@ -33,13 +33,10 @@ fn checksum_of(bytes: &[u8]) -> u64 {
     longshore::checksum::crc64_nvme(bytes)
 }
 
-fn die(msg: &str) -> ! {
-    eprintln!("s3_uring: {msg}");
-    std::process::exit(1)
-}
+use crate::die::{die, OrDie};
 
 fn env(name: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| die(&format!("{name} is not set")))
+    std::env::var(name).unwrap_or_else(|_| die(format_args!("{name} is not set")))
 }
 
 extern "C" {
@@ -67,7 +64,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         None => format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT")),
     };
     let conf = std::fs::read_to_string("/etc/resolv.conf")
-        .unwrap_or_else(|e| die(&format!("/etc/resolv.conf: {e}")));
+        .unwrap_or_else(|e| die(format_args!("/etc/resolv.conf: {e}")));
     let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
         .into_iter()
         .take(2)
@@ -82,7 +79,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         Ok("6") => Family::V6,
         Ok("prefer6") => Family::PreferV6,
         Ok("prefer4") => Family::PreferV4,
-        Ok(other) => die(&format!(
+        Ok(other) => die(format_args!(
             "S3_FAMILY={other}: expected 4, 6, prefer6 or prefer4"
         )),
     };
@@ -102,7 +99,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         ops_max: conns * 3 + 4 + 1,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).unwrap_or_else(|e| die(&e.to_string()));
+    let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
     // S3_PREFER_LARGE_SEGMENTS=N: measure each connection's segment size and
     // keep connections on the addresses with large segments, using at least
     // N addresses. Unset or 0 turns it off.
@@ -199,7 +196,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
 
 /// One loop turn: wait for completions, route them, run the periodic tick.
 fn turn(io: &mut UringIo, s3: &mut S3, out: &mut Completions) {
-    io.tick(true, out).expect("tick");
+    io.tick(true, out).or_die("tick");
     while let Some(c) = out.pop() {
         if c.token.0 == HEARTBEAT {
             s3.tick(io);
@@ -238,7 +235,7 @@ pub fn main() {
         let v: u64 = args
             .next()
             .and_then(|v| v.parse().ok())
-            .unwrap_or_else(|| die(&format!("bad value for {k}")));
+            .unwrap_or_else(|| die(format_args!("bad value for {k}")));
         match k.as_str() {
             "--conns" => conns = v as u32,
             "--size" => size = v as u32,
@@ -246,7 +243,7 @@ pub fn main() {
             "--cpu" => cpu = Some(v as usize),
             "--threads" => threads = (v as u32).max(1),
             "--cpu-step" => cpu_step = v as usize,
-            _ => die(&format!("unknown flag {k}")),
+            _ => die(format_args!("unknown flag {k}")),
         }
     }
     let place = Placement {
@@ -263,6 +260,6 @@ pub fn main() {
         "put-crc" => bench(true, conns, size, secs, place, Checksum::Compute),
         "get" => bench(false, conns, size, secs, place, Checksum::None),
         "put-new" | "get-range" | "erase" | "list-keys" => ops(&cmd, conns, size, secs, cpu),
-        other => die(&format!("unknown command {other}")),
+        other => die(format_args!("unknown command {other}")),
     }
 }

@@ -5,6 +5,7 @@
 
 //! Kernel checks for `file_uring`: contracts, `O_DIRECT`, `SUBMIT_ALL`, `>16384` bufs, `getrlimit`.
 
+use crate::die::OrDie;
 use longshore::io::alloc_guard::sealed;
 use longshore::io::posix::PosixIo;
 use longshore::io::uring::UringIo;
@@ -23,14 +24,14 @@ pub(super) fn run_memlock_child() {
 
 pub(super) fn run_all(dir: &Path, posix: bool) {
     let prefix = format!("{}/", dir.display());
-    contract_files::run_all(&mut |l| UringIo::new(l).expect("UringIo::new"), &prefix);
-    contract_chains::run_all(&mut |l| UringIo::new(l).expect("UringIo::new"), &prefix);
+    contract_files::run_all(&mut |l| UringIo::new(l).or_die("UringIo::new"), &prefix);
+    contract_chains::run_all(&mut |l| UringIo::new(l).or_die("UringIo::new"), &prefix);
     if posix {
         let p_dir = dir.join("posix");
-        std::fs::create_dir_all(&p_dir).expect("create posix dir");
+        std::fs::create_dir_all(&p_dir).or_die("create posix dir");
         let p_prefix = format!("{}/", p_dir.display());
-        contract_files::run_all(&mut |l| PosixIo::new(l).expect("PosixIo::new"), &p_prefix);
-        contract_chains::run_all(&mut |l| PosixIo::new(l).expect("PosixIo::new"), &p_prefix);
+        contract_files::run_all(&mut |l| PosixIo::new(l).or_die("PosixIo::new"), &p_prefix);
+        contract_chains::run_all(&mut |l| PosixIo::new(l).or_die("PosixIo::new"), &p_prefix);
     }
     check_sealed_o_direct(dir);
     check_submit_all_partial_refusal(dir);
@@ -51,7 +52,7 @@ fn check_sealed_o_direct(dir: &Path) {
         ops_max: 8,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).expect("UringIo::new");
+    let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(8);
     let path = format!("{}/sealed_direct.bin\0", dir.display());
     io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
@@ -158,7 +159,7 @@ fn check_submit_all_partial_refusal(dir: &Path) {
         ops_max: 4,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).expect("UringIo::new");
+    let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(8);
     let bad = format!("{}/no_such_dir_xyz/bad.bin\0", dir.display());
     let good = format!("{}/after_bad.bin\0", dir.display());
@@ -234,7 +235,7 @@ fn check_over_16384_buffers(dir: &Path) {
         ops_max: 4,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).expect("UringIo::new with 16401 buffers");
+    let mut io = UringIo::new(limits).or_die("UringIo::new with 16401 buffers");
     let mut out = Completions::new(8);
     let path = format!("{}/many_bufs.bin\0", dir.display());
     io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
