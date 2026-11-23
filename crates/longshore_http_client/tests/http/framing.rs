@@ -8,6 +8,7 @@
 
 #[cfg(test)]
 mod common;
+use common::raw::raw_reply_with;
 use common::*;
 use longshore_http_client::head::HttpError;
 use longshore_http_client::server::Behavior;
@@ -16,107 +17,6 @@ use longshore_http_client::server::Behavior;
 /// and then waits for the client to close.
 fn raw_reply(reply: &'static [u8]) -> Result<Response, Error> {
     raw_reply_with(client_cfg(), reply)
-}
-
-#[cfg(test)]
-fn raw_reply_with(cfg: client::Config, reply: &'static [u8]) -> Result<Response, Error> {
-    const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 82)), 80);
-    const LISTEN: Sock = Sock(1 + CONNS * 2);
-    const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
-    const ACCEPT: u64 = 3 << 40;
-    const RECV: u64 = ACCEPT + 1;
-    const SEND: u64 = ACCEPT + 2;
-    const OUT_OFF: u32 = 4096;
-    let mut w = world_with(12, Faults::default(), cfg);
-    let _: SocketAddr = w.io.listen(LISTEN, PEER).unwrap();
-    w.io.submit(
-        Token(ACCEPT),
-        Op::Accept {
-            listener: LISTEN,
-            sock: PEER_SOCK,
-        },
-    )
-    .unwrap();
-    w.io.buf(TX)[OUT_OFF as usize..OUT_OFF as usize + reply.len()].copy_from_slice(reply);
-    let req = Request {
-        method: "GET",
-        target: "/raw",
-        host: "raw.test",
-        host_id: 2,
-        addr: PEER,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
-    w.client.start(&mut w.io, 9, &req).unwrap();
-    let (mut sent, mut result) = (false, None);
-    let World {
-        io,
-        client,
-        server,
-        out,
-        ..
-    } = &mut w;
-    sealed(|| {
-        while result.is_none() {
-            io.tick(true, out).expect("simulation deadlock");
-            while let Some(c) = out.pop() {
-                match c.token.0 {
-                    HEARTBEAT => {
-                        client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
-                            .unwrap();
-                    }
-                    ACCEPT => io
-                        .submit(
-                            Token(RECV),
-                            Op::Recv {
-                                sock: PEER_SOCK,
-                                buf: TX,
-                                off: 0,
-                                len: 1024,
-                            },
-                        )
-                        .unwrap(),
-                    RECV if c.result > 0 => {
-                        if !sent {
-                            io.submit(
-                                Token(SEND),
-                                Op::Send {
-                                    sock: PEER_SOCK,
-                                    buf: TX,
-                                    off: OUT_OFF,
-                                    len: reply.len() as u32,
-                                    zero_copy: false,
-                                },
-                            )
-                            .unwrap();
-                            sent = true;
-                        }
-                        io.submit(
-                            Token(RECV),
-                            Op::Recv {
-                                sock: PEER_SOCK,
-                                buf: TX,
-                                off: 0,
-                                len: 1024,
-                            },
-                        )
-                        .unwrap();
-                    }
-                    RECV | SEND => {}
-                    _ => match client.on_completion(io, c) {
-                        Handled::Done(d) => result = Some(d.result),
-                        Handled::Pending => {}
-                        Handled::NotMine => {
-                            assert!(server.on_completion(io, c), "unrouted completion {c:?}")
-                        }
-                    },
-                }
-            }
-        }
-    });
-    result.unwrap()
 }
 
 #[test]

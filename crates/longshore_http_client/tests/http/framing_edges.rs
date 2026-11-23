@@ -9,6 +9,7 @@
 
 #[cfg(test)]
 mod common;
+use common::raw::raw_exchange;
 use common::*;
 use longshore_http_client::head::HttpError;
 use longshore_http_client::server::Behavior;

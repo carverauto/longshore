@@ -57,101 +57,24 @@ fn a_stalled_server_times_out_and_the_slot_is_freed() {
     assert_eq!(w.client.in_flight(), 0);
 }
 
+const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 81)), 80);
+const LISTEN: Sock = Sock(1 + CONNS * 2);
+const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
+const ACCEPT: u64 = 3 << 40;
+const RECV: u64 = ACCEPT + 1;
+const SEND: u64 = ACCEPT + 2;
+const PARTIAL: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhalf";
+const OUT_OFF: u32 = 4096;
+
 #[test]
 fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
     // The peer answers with a partial response exactly when the timeout
     // fires, then goes silent. Depending on the seed, the client's read
     // completes with that data before the cancel reaches it.
-    const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 81)), 80);
-    const LISTEN: Sock = Sock(1 + CONNS * 2);
-    const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
-    const ACCEPT: u64 = 3 << 40;
-    const RECV: u64 = ACCEPT + 1;
-    const SEND: u64 = ACCEPT + 2;
-    const PARTIAL: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhalf";
-    const OUT_OFF: u32 = 4096;
-    let timeout = client_cfg().request_timeout_ns;
     for seed in 0..64 {
         let mut w = world(seed, Faults::default());
-        let _: SocketAddr = w.io.listen(LISTEN, PEER).unwrap();
-        w.io.submit(
-            Token(ACCEPT),
-            Op::Accept {
-                listener: LISTEN,
-                sock: PEER_SOCK,
-            },
-        )
-        .unwrap();
-        w.io.buf(TX)[OUT_OFF as usize..OUT_OFF as usize + PARTIAL.len()].copy_from_slice(PARTIAL);
-        let req = Request {
-            method: "GET",
-            target: "/slow",
-            host: "slow.test",
-            host_id: 1,
-            addr: PEER,
-            headers: &[],
-            body: None,
-            response_buf: Some(RX),
-        };
-        let t0 = w.io.now_ns();
-        w.client.start(&mut w.io, 7, &req).unwrap();
-        let (mut sent, mut peer_eof, mut result) = (false, false, None);
-        let World {
-            io,
-            client,
-            server,
-            out,
-            ..
-        } = &mut w;
-        sealed(|| {
-            while io.now_ns() - t0 < 5 * timeout && !(peer_eof && result.is_some()) {
-                io.tick(true, out).expect("simulation deadlock");
-                while let Some(c) = out.pop() {
-                    match c.token.0 {
-                        HEARTBEAT => {
-                            if !sent && io.now_ns() - t0 >= timeout {
-                                io.submit(
-                                    Token(SEND),
-                                    Op::Send {
-                                        sock: PEER_SOCK,
-                                        buf: TX,
-                                        off: OUT_OFF,
-                                        len: PARTIAL.len() as u32,
-                                        zero_copy: false,
-                                    },
-                                )
-                                .unwrap();
-                                sent = true;
-                            }
-                            client.tick(io);
-                            io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
-                                .unwrap();
-                        }
-                        ACCEPT | RECV if c.result > 0 || c.token.0 == ACCEPT => {
-                            io.submit(
-                                Token(RECV),
-                                Op::Recv {
-                                    sock: PEER_SOCK,
-                                    buf: TX,
-                                    off: 0,
-                                    len: 1024,
-                                },
-                            )
-                            .unwrap();
-                        }
-                        RECV => peer_eof = true,
-                        SEND => {}
-                        _ => match client.on_completion(io, c) {
-                            Handled::Done(d) => result = Some(d),
-                            Handled::Pending => {}
-                            Handled::NotMine => {
-                                assert!(server.on_completion(io, c), "unrouted completion {c:?}")
-                            }
-                        },
-                    }
-                }
-            }
-        });
+        let t0 = start_slow_request(&mut w);
+        let (sent, peer_eof, result) = run_with_slow_peer(&mut w, t0);
         assert!(sent, "seed {seed}: the partial response was never sent");
         assert_eq!(
             result,
@@ -169,6 +92,101 @@ fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
         );
         assert_eq!(w.client.in_flight(), 0, "seed {seed}");
     }
+}
+
+/// Sets up the slow peer and starts request 7 to it. Returns when it started.
+#[cfg(test)]
+fn start_slow_request(w: &mut World) -> u64 {
+    let _: SocketAddr = w.io.listen(LISTEN, PEER).unwrap();
+    w.io.submit(
+        Token(ACCEPT),
+        Op::Accept {
+            listener: LISTEN,
+            sock: PEER_SOCK,
+        },
+    )
+    .unwrap();
+    w.io.buf(TX)[OUT_OFF as usize..OUT_OFF as usize + PARTIAL.len()].copy_from_slice(PARTIAL);
+    let req = Request {
+        method: "GET",
+        target: "/slow",
+        host: "slow.test",
+        host_id: 1,
+        addr: PEER,
+        headers: &[],
+        body: None,
+        response_buf: Some(RX),
+    };
+    let t0 = w.io.now_ns();
+    w.client.start(&mut w.io, 7, &req).unwrap();
+    t0
+}
+
+/// Runs until the peer sees end of stream and the request has ended, or
+/// five timeouts pass. The peer sends `PARTIAL` once the request timeout
+/// is due. Returns whether it sent, whether it saw end of stream, and how
+/// the request ended.
+#[cfg(test)]
+fn run_with_slow_peer(w: &mut World, t0: u64) -> (bool, bool, Option<Done>) {
+    let timeout = client_cfg().request_timeout_ns;
+    let (mut sent, mut peer_eof, mut result) = (false, false, None);
+    let World {
+        io,
+        client,
+        server,
+        out,
+        ..
+    } = w;
+    sealed(|| {
+        while io.now_ns() - t0 < 5 * timeout && !(peer_eof && result.is_some()) {
+            io.tick(true, out).expect("simulation deadlock");
+            while let Some(c) = out.pop() {
+                match c.token.0 {
+                    HEARTBEAT => {
+                        if !sent && io.now_ns() - t0 >= timeout {
+                            send_partial(io);
+                            sent = true;
+                        }
+                        client.tick(io);
+                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                            .unwrap();
+                    }
+                    ACCEPT | RECV if c.result > 0 || c.token.0 == ACCEPT => {
+                        let recv = Op::Recv {
+                            sock: PEER_SOCK,
+                            buf: TX,
+                            off: 0,
+                            len: 1024,
+                        };
+                        io.submit(Token(RECV), recv).unwrap();
+                    }
+                    RECV => peer_eof = true,
+                    SEND => {}
+                    _ => match client.on_completion(io, c) {
+                        Handled::Done(d) => result = Some(d),
+                        Handled::Pending => {}
+                        Handled::NotMine => {
+                            assert!(server.on_completion(io, c), "unrouted completion {c:?}")
+                        }
+                    },
+                }
+            }
+        }
+    });
+    (sent, peer_eof, result)
+}
+
+/// The peer sends the partial response it keeps at `OUT_OFF`.
+#[cfg(test)]
+fn send_partial(io: &mut SimIo) {
+    let send = Op::Send {
+        sock: PEER_SOCK,
+        buf: TX,
+        off: OUT_OFF,
+        len: PARTIAL.len() as u32,
+        zero_copy: false,
+    };
+    io.submit(Token(SEND), send).unwrap();
 }
 
 #[test]

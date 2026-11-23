@@ -11,13 +11,14 @@
 mod common;
 use common::*;
 
+const SOCK: Sock = Sock(1 + CONNS * 2);
+const CONNECT: u64 = 3 << 40;
+const SEND: u64 = CONNECT + 1;
+const RECV: u64 = CONNECT + 2;
+
 /// Send `request` on a new connection and return the head of the answer.
 #[cfg(test)]
 fn answer_to(request: &[u8]) -> String {
-    const SOCK: Sock = Sock(1 + CONNS * 2);
-    const CONNECT: u64 = 3 << 40;
-    const SEND: u64 = CONNECT + 1;
-    const RECV: u64 = CONNECT + 2;
     let mut w = world(50, Faults::default());
     w.io.buf(TX)[..request.len()].copy_from_slice(request);
     w.io.submit(
@@ -28,17 +29,25 @@ fn answer_to(request: &[u8]) -> String {
         },
     )
     .unwrap();
+    let got = read_answer_head(&mut w, request.len() as u32);
+    let head = &w.io.buf(RX)[..got as usize];
+    let end = head
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap();
+    String::from_utf8_lossy(&head[..end]).into_owned()
+}
+
+/// Once connected, sends the `request_len` bytes at the start of `TX` and
+/// reads into `RX` until the answer's head is complete. Returns the bytes read.
+#[cfg(test)]
+fn read_answer_head(w: &mut World, request_len: u32) -> u32 {
     let mut got = 0u32;
     let World {
         io, server, out, ..
-    } = &mut w;
-    let complete = |sim: &mut SimIo, len: u32| {
-        sim.buf(RX)[..len as usize]
-            .windows(4)
-            .any(|window| window == b"\r\n\r\n")
-    };
+    } = w;
     sealed(|| {
-        while !complete(io, got) {
+        while !head_complete(io, got) {
             io.tick(true, out).expect("simulation deadlock");
             while let Some(c) = out.pop() {
                 match c.token.0 {
@@ -47,43 +56,22 @@ fn answer_to(request: &[u8]) -> String {
                         .unwrap(),
                     CONNECT => {
                         assert_eq!(c.result, 0, "connect");
-                        io.submit(
-                            Token(SEND),
-                            Op::Send {
-                                sock: SOCK,
-                                buf: TX,
-                                off: 0,
-                                len: request.len() as u32,
-                                zero_copy: false,
-                            },
-                        )
-                        .unwrap();
-                        io.submit(
-                            Token(RECV),
-                            Op::Recv {
-                                sock: SOCK,
-                                buf: RX,
-                                off: 0,
-                                len: 1024,
-                            },
-                        )
-                        .unwrap();
+                        let send = Op::Send {
+                            sock: SOCK,
+                            buf: TX,
+                            off: 0,
+                            len: request_len,
+                            zero_copy: false,
+                        };
+                        io.submit(Token(SEND), send).unwrap();
+                        recv_answer(io, 0);
                     }
                     SEND => {}
                     RECV => {
                         assert!(c.result > 0, "closed before answering: {}", c.result);
                         got += u32::try_from(c.result).unwrap();
-                        if !complete(io, got) {
-                            io.submit(
-                                Token(RECV),
-                                Op::Recv {
-                                    sock: SOCK,
-                                    buf: RX,
-                                    off: got,
-                                    len: 1024,
-                                },
-                            )
-                            .unwrap();
+                        if !head_complete(io, got) {
+                            recv_answer(io, got);
                         }
                     }
                     _ => assert!(server.on_completion(io, c), "unrouted completion {c:?}"),
@@ -91,12 +79,26 @@ fn answer_to(request: &[u8]) -> String {
             }
         }
     });
-    let head = &w.io.buf(RX)[..got as usize];
-    let end = head
+    got
+}
+
+/// Whether the first `len` bytes of `RX` hold a whole head.
+fn head_complete(sim: &mut SimIo, len: u32) -> bool {
+    sim.buf(RX)[..len as usize]
         .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .unwrap();
-    String::from_utf8_lossy(&head[..end]).into_owned()
+        .any(|window| window == b"\r\n\r\n")
+}
+
+/// Reads more of the answer into `RX` at `off`.
+#[cfg(test)]
+fn recv_answer(io: &mut SimIo, off: u32) {
+    let recv = Op::Recv {
+        sock: SOCK,
+        buf: RX,
+        off,
+        len: 1024,
+    };
+    io.submit(Token(RECV), recv).unwrap();
 }
 
 fn status_of(request: &[u8]) -> String {
