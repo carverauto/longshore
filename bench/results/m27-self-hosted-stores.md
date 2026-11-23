@@ -12,7 +12,9 @@ run per store. Every line the programs printed is in
 
 - **Ceph 20.2.5** (`quay.io/ceph/ceph:v20.2.5`): one monitor, one manager,
   one BlueStore OSD on an 8 GiB file, and the S3 gateway (RGW, `beast`
-  frontend), with cephx. Pools have one replica.
+  frontend), with cephx. Pools have one replica. Ceph publishes its images
+  to quay.io. The `ceph/ceph` repository on Docker Hub stopped at v16.2.5
+  in July 2021 and is not the current one.
 - **RustFS 1.0.6** (`rustfs/rustfs:1.0.6`): one node, one volume.
 
 Neither store was given a DNS name (`rgw_dns_name` on Ceph,
@@ -72,6 +74,15 @@ Bytes read back, whole and ranged, equalled the bytes written on both.
 - **SSE-S3 is refused by both** with 400. Neither had a key service
   configured, which both need for SSE-S3. The refusal is reported, not
   hidden: the caller sees the status.
+
+## MinIO was not tested
+
+MinIO no longer issues releases. Its source repository
+(`github.com/minio/minio`) is archived, the last release is
+`RELEASE.2025-10-15T17-29-55Z`, and on 2026-11-23 its official images
+could no longer be pulled from Docker Hub or quay.io. A store with no
+releases is not one this project tests against. The only image found was
+a third party's rebuild of the 2025 source.
 
 ## What this does not tell us
 
