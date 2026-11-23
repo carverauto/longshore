@@ -12,8 +12,8 @@ impl Client {
     /// `token`. Nothing is retained from `req` except its buffers.
     pub fn start<IO: Io>(&mut self, io: &mut IO, token: u64, req: &Request) -> Result<(), Error> {
         let now = io.now_ns();
-        let pick = self.pick(now, req.host_id).ok_or(Error::Busy)?;
-        if req.host.len() > 253 {
+        let pick = self.pick(now, req.host_id()).ok_or(Error::Busy)?;
+        if req.host().len() > 253 {
             return Err(Error::BadRequest);
         }
         // The head buffer is about to be overwritten, so the previous
@@ -21,28 +21,28 @@ impl Client {
         self.conns[pick].fields = None;
         let head_len = self.write_head(io, pick, req)?;
         let reuse = self.conns[pick].state == State::Idle
-            && self.conns[pick].host_id == req.host_id
+            && self.conns[pick].host_id == req.host_id()
             && self.fresh(&self.conns[pick], now);
         let was_idle = self.conns[pick].state == State::Idle;
         let c = &mut self.conns[pick];
         c.token = token;
         c.started_at = now;
         c.head_len = head_len;
-        c.body = req.body;
-        c.response_buf = req.response_buf;
-        c.is_head = req.method == "HEAD";
+        c.body = req.body();
+        c.response_buf = req.response_buf();
+        c.is_head = req.method() == "HEAD";
         c.timed_out = false;
         c.sent = false;
         // The name the certificate must match is the host alone: a Host value
         // may carry a port, a server name may not.
         #[cfg(feature = "tls")]
         {
-            let name = req.host.split(':').next().unwrap_or(req.host);
+            let name = req.host().split(':').next().unwrap_or(req.host());
             c.name[..name.len()].copy_from_slice(name.as_bytes());
             c.name_len = name.len() as u8;
         }
         if reuse {
-            self.reuse(io, pick, req.addr);
+            self.reuse(io, pick, req.addr());
         } else {
             self.replace(io, pick, req, was_idle);
         }
@@ -77,13 +77,13 @@ impl Client {
     /// Write the request head into connection `pick`'s buffer; returns its length.
     fn write_head<IO: Io>(&self, io: &mut IO, pick: usize, req: &Request) -> Result<u32, Error> {
         let buf = &mut io.buf(self.head_buf(pick))[..self.cfg.head_max() as usize];
-        let mut w = HeadWriter::request(buf, req.method, req.target);
-        let _: &mut HeadWriter<'_> = w.header("Host", req.host.as_bytes());
-        if req.body.is_some() || matches!(req.method, "PUT" | "POST") {
+        let mut w = HeadWriter::request(buf, req.method(), req.target());
+        let _: &mut HeadWriter<'_> = w.header("Host", req.host().as_bytes());
+        if req.body().is_some() || matches!(req.method(), "PUT" | "POST") {
             let _: &mut HeadWriter<'_> =
-                w.header_u64("Content-Length", req.body.map_or(0, |b| u64::from(b.1)));
+                w.header_u64("Content-Length", req.body().map_or(0, |b| u64::from(b.1)));
         }
-        for (name, value) in req.headers {
+        for (name, value) in req.headers() {
             let _: &mut HeadWriter<'_> = w.header(name, value);
         }
         Ok(w.finish().map_err(|_| Error::BadRequest)? as u32)
@@ -113,8 +113,8 @@ impl Client {
     /// idle one there first.
     fn replace<IO: Io>(&mut self, io: &mut IO, pick: usize, req: &Request, was_idle: bool) {
         let c = &mut self.conns[pick];
-        c.host_id = req.host_id;
-        c.addr = req.addr;
+        c.host_id = req.host_id();
+        c.addr = req.addr();
         if was_idle {
             c.state = State::Closing { then_connect: true };
             self.streams[pick].reset();

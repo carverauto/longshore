@@ -26,13 +26,13 @@ impl S3 {
         match (result, s.kind) {
             // A whole-object fetch: check the bytes against the store's checksum.
             (Ok(r), Kind::Fetch { range: None }) if class == Class::Success => {
-                if let Some(expected) = self.stored_checksum(io, r.conn) {
+                if let Some(expected) = self.stored_checksum(io, r.conn()) {
                     #[expect(
                         clippy::expect_used,
                         reason = "a fetch is always given a response buffer"
                     )]
                     let buf = s.response_buf.expect("fetches have a response buffer");
-                    let body = &io.buf(buf)[..r.body_len as usize];
+                    let body = &io.buf(buf)[..r.body_len() as usize];
                     let actual = self.checksum_value(match self.cfg.vendor {
                         Vendor::S3 => longshore_crc::crc64_nvme(body),
                         Vendor::Gcs => u64::from(longshore_crc::crc32c(body)),
@@ -52,14 +52,14 @@ impl S3 {
             // The store rejected our checksum: the body was damaged on the way.
             (Ok(r), kind)
                 if (kind.stores_bytes() || kind == Kind::EraseMany)
-                    && r.status == 400
+                    && r.status() == 400
                     && s.crc.is_some()
                     && !s.comparing =>
             {
                 // A batch erase reads its response into the caller's buffer.
                 let doc = match s.response_buf.filter(|_| kind == Kind::EraseMany) {
-                    Some(buf) => &io.buf(buf)[..r.body_len as usize],
-                    None => self.client.discarded_body(io, r.conn),
+                    Some(buf) => &io.buf(buf)[..r.body_len() as usize],
+                    None => self.client.discarded_body(io, r.conn()),
                 };
                 // S3 names it BadDigest (assumed; no enforcing S3 store has been
                 // tried). Google Cloud Storage names it CrcMismatch (observed).

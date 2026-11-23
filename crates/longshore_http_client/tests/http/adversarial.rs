@@ -13,16 +13,7 @@ use common::*;
 fn cancel_in_closing_then_connect_and_host_len_over_253() {
     let mut w = world(99, Faults::default());
     let too_long_host = "a".repeat(254);
-    let bad_req = Request {
-        method: "GET",
-        target: "/k",
-        host: &too_long_host,
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: None,
-    };
+    let bad_req = Request::new("GET", "/k", &too_long_host, 0, ADDR);
     assert_eq!(
         w.client.start(&mut w.io, 1, &bad_req),
         Err(Error::BadRequest)
@@ -34,30 +25,20 @@ fn cancel_in_closing_then_connect_and_host_len_over_253() {
         client_builder_with(1, BUF).build().unwrap(),
     );
     ok(404, 0)(w1.request("GET", "/missing", None));
-    let req2 = Request {
-        method: "GET",
-        target: "/k",
-        host: "other.test",
-        host_id: 1,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req2 = Request::new("GET", "/k", "other.test", 1, ADDR).with_response_buf(Some(RX));
     w1.client.start(&mut w1.io, 777, &req2).unwrap();
-    let cancelled = w1.client.cancel(&mut w1.io, 777);
+    let Handled::Done(cancelled) = w1.client.cancel(&mut w1.io, 777) else {
+        panic!("a request that had not begun ends at once");
+    };
     assert_eq!(
-        cancelled,
-        Handled::Done(Done {
-            token: 777,
-            result: Err(Error::Timeout),
-            sent: false,
-        })
+        (cancelled.token(), cancelled.result(), cancelled.sent()),
+        (777, Err(Error::Timeout), false)
     );
     w1.settle(20);
     assert_eq!(w1.client.in_flight(), 0);
     assert_eq!(
-        w1.client.connects, 1,
+        w1.client.connects(),
+        1,
         "cancelled Closing{{then_connect:true}} must not dial host 1"
     );
 }
@@ -77,20 +58,11 @@ fn head_len_equals_head_max_skips_idle_check_on_reuse() {
     let base_len = b"GET / HTTP/1.1\r\nHost: objects.test\r\n\r\n".len();
     let pad = 128 - base_len;
     let target = format!("/{}", "x".repeat(pad));
-    let req = Request {
-        method: "GET",
-        target: &target,
-        host: "objects.test",
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req = Request::new("GET", &target, "objects.test", 0, ADDR).with_response_buf(Some(RX));
     w.client.start(&mut w.io, 888, &req).unwrap();
     w.run_until_done(2);
-    assert_eq!(w.done[1].result.unwrap().status, 404);
-    assert_eq!(w.client.connects, 1);
+    assert_eq!(w.done[1].result().unwrap().status(), 404);
+    assert_eq!(w.client.connects(), 1);
 }
 
 #[cfg(test)]
@@ -121,16 +93,7 @@ mod tls_cases {
     }
 
     fn get_k(host: &str) -> Request<'_> {
-        Request {
-            method: "GET",
-            target: "/k",
-            host,
-            host_id: 0,
-            addr: ADDR,
-            headers: &[],
-            body: None,
-            response_buf: Some(RX),
-        }
+        Request::new("GET", "/k", host, 0, ADDR).with_response_buf(Some(RX))
     }
 
     #[test]
@@ -192,7 +155,7 @@ mod tls_cases {
             io.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
                 match cli.on_completion(io, c) {
-                    Handled::Done(d) => res = Some(d.result),
+                    Handled::Done(d) => res = Some(d.result()),
                     Handled::Pending => {}
                     Handled::NotMine => {
                         let _: bool = srv.on_completion(io, c);

@@ -53,16 +53,9 @@ pub fn raw_exchange(
     .unwrap();
     assert!(reply.len() <= (BUF - IN_MAX) as usize);
     w.io.buf(TX)[IN_MAX as usize..IN_MAX as usize + reply.len()].copy_from_slice(reply);
-    let req = Request {
-        method,
-        target: "/raw",
-        host: "raw.test",
-        host_id: 2,
-        addr: RAW_PEER,
-        headers,
-        body: None,
-        response_buf,
-    };
+    let req = Request::new(method, "/raw", "raw.test", 2, RAW_PEER)
+        .with_headers(headers)
+        .with_response_buf(response_buf);
     w.client.start(&mut w.io, 9, &req).unwrap();
     let mut peer = RawPeer {
         sent: false,
@@ -99,7 +92,7 @@ fn run_until_answered(w: &mut World, peer: &mut RawPeer) -> Result<Response, Err
                     }
                     ACCEPT | RECV | SEND => peer.on(io, c),
                     _ => match client.on_completion(io, c) {
-                        Handled::Done(d) => result = Some(d.result),
+                        Handled::Done(d) => result = Some(d.result()),
                         Handled::Pending => {}
                         Handled::NotMine => {
                             assert!(server.on_completion(io, c), "unrouted completion {c:?}")
@@ -169,16 +162,7 @@ pub fn raw_reply_with(cfg: client::ClientConfig, reply: &'static [u8]) -> Result
     )
     .unwrap();
     w.io.buf(TX)[IN_MAX as usize..IN_MAX as usize + reply.len()].copy_from_slice(reply);
-    let req = Request {
-        method: "GET",
-        target: "/raw",
-        host: "raw.test",
-        host_id: 2,
-        addr: RAW_PEER,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req = Request::new("GET", "/raw", "raw.test", 2, RAW_PEER).with_response_buf(Some(RX));
     w.client.start(&mut w.io, 9, &req).unwrap();
     run_with_raw_peer(&mut w, reply.len() as u32)
 }
@@ -221,7 +205,7 @@ fn run_with_raw_peer(w: &mut World, reply_len: u32) -> Result<Response, Error> {
                     }
                     RECV | SEND => {}
                     _ => match client.on_completion(io, c) {
-                        Handled::Done(d) => result = Some(d.result),
+                        Handled::Done(d) => result = Some(d.result()),
                         Handled::Pending => {}
                         Handled::NotMine => {
                             assert!(server.on_completion(io, c), "unrouted completion {c:?}")

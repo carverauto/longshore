@@ -173,16 +173,10 @@ impl World {
         target: &str,
         body: Option<u32>,
     ) -> Result<(), Error> {
-        let req = Request {
-            method,
-            target,
-            host: "objects.test",
-            host_id: 0,
-            addr: ADDR,
-            headers: &[("x-test", b"1")],
-            body: body.map(|n| (TX, n)),
-            response_buf: Some(RX),
-        };
+        let req = Request::new(method, target, "objects.test", 0, ADDR)
+            .with_headers(&[("x-test", b"1")])
+            .with_body(body.map(|n| (TX, n)))
+            .with_response_buf(Some(RX));
         self.client.start(&mut self.io, token, &req)
     }
 
@@ -198,8 +192,8 @@ impl World {
             .expect("a connection should be free");
         self.run_until_done(self.done.len() + 1);
         let d = *self.done.last().unwrap();
-        assert_eq!(d.token, token);
-        d.result
+        assert_eq!(d.token(), token);
+        d.result()
     }
 
     pub fn fill_tx(&mut self, len: u32, pattern: u8) {
@@ -211,7 +205,12 @@ impl World {
 
 pub fn ok(status: u16, body_len: u32) -> impl Fn(Result<Response, Error>) {
     move |r| match r {
-        Ok(resp) => assert_eq!((resp.status, resp.body_len), (status, body_len)),
+        Ok(resp) => assert_eq!((resp.status(), resp.body_len()), (status, body_len)),
         Err(e) => panic!("expected {status}, got {e:?}"),
     }
+}
+
+/// A response's status, body length and connection, to compare at once.
+pub fn parts(r: Response) -> (u16, u32, u32) {
+    (r.status(), r.body_len(), r.conn())
 }

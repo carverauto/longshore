@@ -176,7 +176,7 @@ impl S3 {
     ) -> Option<Result<Outcome, Class>> {
         match kind {
             Kind::Begin { .. } => {
-                let doc = self.client.discarded_body(io, r.conn);
+                let doc = self.client.discarded_body(io, r.conn());
                 let upload = multipart::upload_id_in(doc).and_then(UploadId::new);
                 Some(Ok(upload
                     .map_or(Outcome::Fatal(Fatal::BadResponse), |upload| {
@@ -186,7 +186,7 @@ impl S3 {
             Kind::Part => {
                 let tag = self
                     .client
-                    .header(io, r.conn, "etag")
+                    .header(io, r.conn(), "etag")
                     .and_then(PartTag::new);
                 Some(Ok(tag.map_or(Outcome::Fatal(Fatal::BadResponse), |tag| {
                     Outcome::PartStored {
@@ -199,8 +199,8 @@ impl S3 {
             Kind::Complete | Kind::Copy => {
                 // The store may take long enough to assemble or copy the object
                 // that it has already sent 200 when it fails: the body says which.
-                let doc = self.client.discarded_body(io, r.conn);
-                if doc.is_empty() && r.body_len > 0 {
+                let doc = self.client.discarded_body(io, r.conn());
+                if doc.is_empty() && r.body_len() > 0 {
                     return Some(Ok(Outcome::Fatal(Fatal::BadResponse)));
                 }
                 let code = multipart::error_code_in(doc)?;

@@ -19,7 +19,7 @@ fn one_connection_is_reused_across_requests() {
         ok(200, 0)(w.request("PUT", "/k", Some(100)));
         ok(200, 100)(w.request("GET", "/k", None));
         assert_eq!(
-            (w.client.connects, w.server.accepted()),
+            (w.client.connects(), w.server.accepted()),
             (1, 1),
             "round {i} opened another connection"
         );
@@ -40,7 +40,7 @@ fn connections_are_replaced_after_max_requests_even_with_free_slots() {
         ok(200, 0)(w.request("PUT", "/k", Some(10)));
         ok(200, 0)(w.request("PUT", "/k", Some(10)));
         w.settle(20);
-        assert_eq!(w.client.connects, round, "two requests per connection");
+        assert_eq!(w.client.connects(), round, "two requests per connection");
         assert_eq!((w.client.open_connections(), w.server.open_connections()), (1, 1), "round {round}: the used-up connection must have been closed, not left beside a new one");
     }
 }
@@ -61,7 +61,7 @@ fn connections_are_replaced_after_max_requests_or_max_age() {
         ok(200, 0)(w.request("PUT", "/k", Some(10)));
     }
     w.settle(50);
-    assert_eq!(w.client.connects, 2, "two requests per connection");
+    assert_eq!(w.client.connects(), 2, "two requests per connection");
     assert_eq!(
         (w.server.accepted(), w.server.closed()),
         (2, 1),
@@ -111,7 +111,7 @@ fn an_aged_connection_is_replaced_before_a_free_slot_is_used() {
     );
     ok(200, 10)(w.request("GET", "/k", None));
     w.settle(20);
-    assert_eq!(w.client.connects, 2);
+    assert_eq!(w.client.connects(), 2);
     assert_eq!(
         (w.client.open_connections(), w.server.open_connections()),
         (1, 1),
@@ -142,7 +142,8 @@ fn idle_connections_are_closed_once_they_pass_their_maximum_age() {
     );
     ok(200, 10)(w.request("GET", "/k", None));
     assert_eq!(
-        w.client.connects, 2,
+        w.client.connects(),
+        2,
         "the next request opens a new connection"
     );
 }
@@ -169,7 +170,8 @@ fn idle_connections_past_max_age_are_closed_without_a_request() {
     );
     ok(404, 0)(w.request("GET", "/k", None));
     assert_eq!(
-        w.client.connects, 2,
+        w.client.connects(),
+        2,
         "the slot was freed and a new connection opened"
     );
 }
@@ -185,7 +187,7 @@ fn busy_when_every_connection_is_in_use() {
     }
     assert_eq!(w.start(99, "GET", "/k", None), Err(Error::Busy));
     w.run_until_done(CONNS as usize);
-    assert!(w.done.iter().all(|d| d.result == Err(Error::Timeout)));
+    assert!(w.done.iter().all(|d| d.result() == Err(Error::Timeout)));
     w.settle(50);
     assert_eq!(
         w.start(100, "GET", "/k", None),
@@ -209,9 +211,9 @@ fn concurrent_requests_use_separate_connections() {
     let mut seen: Vec<(u64, u32)> = w.done[before..]
         .iter()
         .map(|d| {
-            let r = d.result.expect("a response");
-            assert_eq!((r.status, r.body_len), (200, 0));
-            (d.token, r.conn)
+            let r = d.result().expect("a response");
+            assert_eq!((r.status(), r.body_len()), (200, 0));
+            (d.token(), r.conn())
         })
         .collect();
     seen.sort();
@@ -222,7 +224,7 @@ fn concurrent_requests_use_separate_connections() {
     let mut conns: Vec<u32> = seen.iter().map(|s| s.1).collect();
     conns.sort();
     assert_eq!(conns, [0, 1, 2]);
-    assert_eq!(w.client.connects, u64::from(CONNS));
+    assert_eq!(w.client.connects(), u64::from(CONNS));
 }
 
 /// A server may close a connection while it sits idle. With the idle check
@@ -240,7 +242,11 @@ fn a_connection_closed_while_idle_is_replaced_before_it_is_used() {
     w.settle(20);
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        (w.client.idle_closed, w.client.idle_dirty, w.client.connects),
+        (
+            w.client.idle_closed(),
+            w.client.idle_dirty(),
+            w.client.connects()
+        ),
         (1, 0, 2)
     );
 
@@ -276,20 +282,12 @@ fn a_replacement_for_a_dead_idle_connection_uses_the_requests_address() {
     ok(200, 2)(w.request("GET", "/k", None));
     w.settle(20);
 
-    let req = Request {
-        method: "GET",
-        target: "/missing",
-        host: "objects.test",
-        host_id: 0,
-        addr: SECOND,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req =
+        Request::new("GET", "/missing", "objects.test", 0, SECOND).with_response_buf(Some(RX));
     w.client.start(&mut w.io, 500, &req).unwrap();
     w.run_until_done(2);
-    ok(404, 0)(w.done[1].result);
-    assert_eq!((w.client.idle_closed, w.client.connects), (1, 2));
+    ok(404, 0)(w.done[1].result());
+    assert_eq!((w.client.idle_closed(), w.client.connects()), (1, 2));
     assert_eq!(
         w.io.route_connects(SECOND),
         1,
@@ -303,31 +301,35 @@ fn a_connection_measured_below_the_floor_is_replaced_not_reused() {
     // Connections to the server's address report a small segment size.
     w.io.route(ADDR, ADDR, 1432);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connected.take(), Some((ADDR, seg(1432))));
+    assert_eq!(w.client.take_connected(), Some((ADDR, seg(1432))));
     assert_eq!(w.client.retire_below(0, 1000), 0, "above the floor");
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 1, "still reused");
+    assert_eq!(w.client.connects(), 1, "still reused");
 
     assert_eq!(w.client.retire_below(0, 4000), 1);
     assert_eq!(w.client.retire_below(0, 4000), 0, "retired once");
     // The path now gives large segments.
     w.io.route(ADDR, ADDR, 8228);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 2, "the retired connection was replaced");
-    assert_eq!(w.client.connected.take(), Some((ADDR, seg(8228))));
+    assert_eq!(
+        w.client.connects(),
+        2,
+        "the retired connection was replaced"
+    );
+    assert_eq!(w.client.take_connected(), Some((ADDR, seg(8228))));
     assert_eq!(w.client.retire_below(0, 4000), 0);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 2, "and its replacement is reused");
+    assert_eq!(w.client.connects(), 2, "and its replacement is reused");
 }
 
 #[test]
 fn connections_that_were_not_measured_are_never_retired() {
     let mut w = world(13, Faults::default());
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connected, None);
+    assert_eq!(w.client.connected(), None);
     assert_eq!(w.client.retire_below(0, u32::MAX), 0);
     ok(404, 0)(w.request("GET", "/k", None));
-    assert_eq!(w.client.connects, 1);
+    assert_eq!(w.client.connects(), 1);
 }
 
 fn seg(size: u32) -> longshore_common::io::Segment {

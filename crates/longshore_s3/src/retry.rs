@@ -24,16 +24,7 @@ pub const STATUS_PRECONDITION_FAILED: u16 = 412;
 
 pub fn classify(result: &Result<Response, Error>) -> Class {
     match result {
-        Ok(r) => match r.status {
-            200..=299 => Class::Success,
-            // Throttling and overload: back off before retrying.
-            429 | 503 => Class::RetryDelayed,
-            // The request timed out at the server, or the server failed.
-            408 | 500 | 502 | 504 => Class::Retry,
-            // Everything else is a definite answer: bad request, forbidden,
-            // not found, precondition failed, redirects we do not follow.
-            _ => Class::Fatal,
-        },
+        Ok(r) => classify_status(r.status()),
         Err(e) => match e {
             // The network or the peer failed; the request may be repeated.
             Error::Io(_) | Error::Closed { .. } | Error::Timeout => Class::Retry,
@@ -56,6 +47,20 @@ pub fn classify(result: &Result<Response, Error>) -> Class {
             ) => Class::Fatal,
             Error::Tls(_) => Class::Retry,
         },
+    }
+}
+
+/// What a response with this status means for the attempt.
+pub const fn classify_status(status: u16) -> Class {
+    match status {
+        200..=299 => Class::Success,
+        // Throttling and overload: back off before retrying.
+        429 | 503 => Class::RetryDelayed,
+        // The request timed out at the server, or the server failed.
+        408 | 500 | 502 | 504 => Class::Retry,
+        // Everything else is a definite answer: bad request, forbidden,
+        // not found, precondition failed, redirects we do not follow.
+        _ => Class::Fatal,
     }
 }
 

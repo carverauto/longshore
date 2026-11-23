@@ -44,7 +44,8 @@ fn scripted_statuses_pass_through() {
     ok(503, 0)(w.request("GET", "/k", None));
     ok(403, 0)(w.request("GET", "/k", None));
     assert_eq!(
-        w.client.connects, 1,
+        w.client.connects(),
+        1,
         "an error status does not cost the connection"
     );
 }
@@ -62,7 +63,7 @@ fn invalid_requests_are_refused_before_any_io() {
     );
     let long = format!("/{}", "a".repeat(HEAD_MAX as usize));
     assert_eq!(w.start(1, "GET", &long, None), Err(Error::BadRequest));
-    assert_eq!((w.client.in_flight(), w.client.connects), (0, 0));
+    assert_eq!((w.client.in_flight(), w.client.connects()), (0, 0));
 }
 
 /// The limits to the byte: a request head that exactly fills the head
@@ -77,50 +78,35 @@ fn request_size_limits_are_exact() {
     let fits = "p".repeat(HEAD_MAX as usize - around);
     let over = format!("{fits}p");
     let start = |world: &mut World, token: u64, pad: &str| {
-        let req = Request {
-            method: "GET",
-            target: "/missing",
-            host: "objects.test",
-            host_id: 0,
-            addr: ADDR,
-            headers: &[("x-pad", pad.as_bytes())],
-            body: None,
-            response_buf: Some(RX),
-        };
+        let headers = [("x-pad", pad.as_bytes())];
+        let req = Request::new("GET", "/missing", "objects.test", 0, ADDR)
+            .with_headers(&headers)
+            .with_response_buf(Some(RX));
         world.client.start(&mut world.io, token, &req)
     };
     assert_eq!(start(&mut w, 1, &over), Err(Error::BadRequest));
-    assert_eq!((w.client.in_flight(), w.client.connects), (0, 0));
+    assert_eq!((w.client.in_flight(), w.client.connects()), (0, 0));
     assert_eq!(start(&mut w, 1, &fits), Ok(()));
     w.run_until_done(1);
-    ok(404, 0)(w.done[0].result);
+    ok(404, 0)(w.done[0].result());
     // On a reused connection a full head leaves the idle check no room, so
     // the request goes out unchecked, and still succeeds.
     assert_eq!(start(&mut w, 2, &fits), Ok(()));
     w.run_until_done(2);
-    ok(404, 0)(w.done[1].result);
+    ok(404, 0)(w.done[1].result());
     assert_eq!(start(&mut w, 3, &over), Err(Error::BadRequest));
-    assert_eq!((w.client.connects, w.client.in_flight()), (1, 0));
+    assert_eq!((w.client.connects(), w.client.in_flight()), (1, 0));
 
     let host = |len: usize| format!("{}.test", "h".repeat(len - 5));
     let start_host = |world: &mut World, name: &str| {
-        let req = Request {
-            method: "GET",
-            target: "/k",
-            host: name,
-            host_id: 3,
-            addr: ADDR,
-            headers: &[],
-            body: None,
-            response_buf: Some(RX),
-        };
+        let req = Request::new("GET", "/k", name, 3, ADDR).with_response_buf(Some(RX));
         world.client.start(&mut world.io, 7, &req)
     };
     assert_eq!(start_host(&mut w, &host(254)), Err(Error::BadRequest));
     assert_eq!(w.client.in_flight(), 0, "nothing was started");
     assert_eq!(start_host(&mut w, &host(253)), Ok(()));
     w.run_until_done(3);
-    ok(404, 0)(w.done[2].result);
+    ok(404, 0)(w.done[2].result());
 }
 
 #[test]

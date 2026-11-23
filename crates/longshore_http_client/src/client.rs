@@ -33,17 +33,17 @@ pub struct Client {
     #[cfg(feature = "tls")]
     tls: Option<ClientSetup>,
     /// Connections opened so far.
-    pub connects: u64,
+    connects: u64,
     /// Idle connections found closed by the peer and replaced before use.
-    pub idle_closed: u64,
+    idle_closed: u64,
     /// Idle connections found holding bytes nobody asked for, and replaced.
-    pub idle_dirty: u64,
+    idle_dirty: u64,
     /// The address of the last connection that failed or timed out before it
     /// opened. The owner takes it to learn that an address is unreachable.
-    pub connect_failure: Option<SocketAddr>,
+    connect_failure: Option<SocketAddr>,
     /// The address and segment sizes of the last connection opened, when
     /// the I/O backend measured them. The owner takes it.
-    pub connected: Option<(SocketAddr, Segment)>,
+    connected: Option<(SocketAddr, Segment)>,
 }
 
 mod chunked_body;
@@ -179,6 +179,56 @@ impl Client {
     fn submit<IO: Io>(&self, io: &mut IO, i: usize, kind: u64, op: Op) {
         io.submit(self.token(i, kind), op)
             .expect("Limits::ops_max must cover Client::ops_in_flight_max");
+    }
+
+    /// Connections opened so far.
+    #[inline]
+    #[must_use]
+    pub const fn connects(&self) -> u64 {
+        self.connects
+    }
+
+    /// Idle connections found closed by the peer and replaced before use.
+    #[inline]
+    #[must_use]
+    pub const fn idle_closed(&self) -> u64 {
+        self.idle_closed
+    }
+
+    /// Idle connections found holding bytes nobody asked for, and replaced.
+    #[inline]
+    #[must_use]
+    pub const fn idle_dirty(&self) -> u64 {
+        self.idle_dirty
+    }
+
+    /// The address of the last connection that failed or timed out before
+    /// it opened, if it has not been taken.
+    #[inline]
+    #[must_use]
+    pub const fn connect_failure(&self) -> Option<SocketAddr> {
+        self.connect_failure
+    }
+
+    /// Take the address of the last connection that failed or timed out
+    /// before it opened, to learn that an address is unreachable.
+    #[inline]
+    pub const fn take_connect_failure(&mut self) -> Option<SocketAddr> {
+        self.connect_failure.take()
+    }
+
+    /// The address and segment sizes of the last connection opened, when the
+    /// I/O backend measured them, if they have not been taken.
+    #[inline]
+    #[must_use]
+    pub const fn connected(&self) -> Option<(SocketAddr, Segment)> {
+        self.connected
+    }
+
+    /// Take the address and segment sizes of the last connection opened.
+    #[inline]
+    pub const fn take_connected(&mut self) -> Option<(SocketAddr, Segment)> {
+        self.connected.take()
     }
 
     /// Connections currently open or opening, idle ones included.

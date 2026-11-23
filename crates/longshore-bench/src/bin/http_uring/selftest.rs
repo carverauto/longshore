@@ -29,16 +29,9 @@ fn exchange(
     .into_iter()
     .enumerate()
     {
-        let req = Request {
-            method,
-            target: "/bucket/object",
-            host: "localhost",
-            host_id: 0,
-            addr,
-            headers: &[],
-            body,
-            response_buf: resp,
-        };
+        let req = Request::new(method, "/bucket/object", "localhost", 0, addr)
+            .with_body(body)
+            .with_response_buf(resp);
         if let Err(e) = client.start(io, step as u64, &req) {
             results[step] = Err(e);
             continue;
@@ -48,7 +41,7 @@ fn exchange(
             while let Some(c) = out.pop() {
                 match client.on_completion(io, c) {
                     Handled::Done(d) => {
-                        results[step] = d.result;
+                        results[step] = d.result();
                         break 'wait;
                     }
                     Handled::Pending => {}
@@ -103,7 +96,7 @@ pub(super) fn selftest() {
     let statuses: Vec<String> = results
         .iter()
         .map(|r| match r {
-            Ok(resp) => format!("{} ({} bytes)", resp.status, resp.body_len),
+            Ok(resp) => format!("{} ({} bytes)", resp.status(), resp.body_len()),
             Err(e) => format!("{e:?}"),
         })
         .collect();
@@ -112,14 +105,14 @@ pub(super) fn selftest() {
         statuses[0], statuses[1], statuses[2]
     );
     let same = io.buf(tx).to_vec() == io.buf(rx).to_vec();
-    let ok = matches!(results[0], Ok(r) if r.status == 200)
-        && matches!(results[1], Ok(r) if r.status == 200 && r.body_len == SIZE)
-        && matches!(results[2], Ok(r) if r.status == 200)
+    let ok = matches!(results[0], Ok(r) if r.status() == 200)
+        && matches!(results[1], Ok(r) if r.status() == 200 && r.body_len() == SIZE)
+        && matches!(results[2], Ok(r) if r.status() == 200)
         && same
-        && client.connects == 1;
+        && client.connects() == 1;
     println!(
         "bytes_match={same} connections={} enters={} allocation_sealed=true",
-        client.connects,
+        client.connects(),
         io.enters() - enters0
     );
     println!("{}", if ok { "selftest ok" } else { "selftest FAILED" });

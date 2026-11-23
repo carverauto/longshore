@@ -22,11 +22,11 @@ fn raw_reply(reply: &'static [u8]) -> Result<Response, Error> {
 #[test]
 fn a_bodyless_interim_response_is_skipped() {
     let r = raw_reply(b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-    assert_eq!(r.map(|r| (r.status, r.body_len)), Ok((200, 0)));
+    assert_eq!(r.map(|r| (r.status(), r.body_len())), Ok((200, 0)));
     let no_content = raw_reply(
         b"HTTP/1.1 100 Continue\r\nContent-Length: 0\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n",
     );
-    assert_eq!(no_content.map(|reply| reply.status), Ok(204));
+    assert_eq!(no_content.map(|reply| reply.status()), Ok(204));
 }
 
 #[test]
@@ -63,58 +63,33 @@ fn an_unexpected_response_body_is_discarded_and_the_connection_survives() {
     w.fill_tx(100, 0);
     for body in [1u32, 300, 5000, 20_000] {
         w.server.script(Behavior::StatusWithBody(412, body));
-        let req = Request {
-            method: "PUT",
-            target: "/k",
-            host: "objects.test",
-            host_id: 0,
-            addr: ADDR,
-            headers: &[],
-            body: Some((TX, 100)),
-            response_buf: None,
-        };
+        let req = Request::new("PUT", "/k", "objects.test", 0, ADDR).with_body(Some((TX, 100)));
         w.client
             .start(&mut w.io, 500 + u64::from(body), &req)
             .unwrap();
         w.run_until_done(w.done.len() + 1);
         assert_eq!(
-            w.done.last().unwrap().result,
-            Ok(Response {
-                status: 412,
-                body_len: body,
-                conn: 0
-            }),
+            w.done.last().unwrap().result().map(parts),
+            Ok((412, body, 0)),
             "body of {body} bytes"
         );
     }
     ok(200, 0)(w.request("PUT", "/k", Some(100)));
     assert_eq!(
-        w.client.connects, 1,
+        w.client.connects(),
+        1,
         "discarding error bodies must not cost the connection"
     );
 
     // A body as large as a whole buffer is still discarded: the limit is
     // 256 KiB. `framing_edges.rs` has the refusal just past it.
     w.server.script(Behavior::StatusWithBody(500, BUF));
-    let req = Request {
-        method: "PUT",
-        target: "/k",
-        host: "objects.test",
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: Some((TX, 100)),
-        response_buf: None,
-    };
+    let req = Request::new("PUT", "/k", "objects.test", 0, ADDR).with_body(Some((TX, 100)));
     w.client.start(&mut w.io, 900, &req).unwrap();
     w.run_until_done(w.done.len() + 1);
     assert_eq!(
-        w.done.last().unwrap().result,
-        Ok(Response {
-            status: 500,
-            body_len: BUF,
-            conn: 0
-        }),
+        w.done.last().unwrap().result().map(parts),
+        Ok((500, BUF, 0)),
         "32 KiB is within the discard limit"
     );
 }
@@ -149,7 +124,8 @@ fn chunked_responses_decode_to_the_stored_bytes() {
             );
         }
         assert_eq!(
-            w.client.connects, 1,
+            w.client.connects(),
+            1,
             "chunked responses keep the connection usable"
         );
     }
@@ -166,43 +142,25 @@ fn chunked_edge_cases() {
     ok(200, 0)(w.request("PUT", "/small", Some(300)));
     let sent = w.io.buf(TX)[..300].to_vec();
     w.server.script(Behavior::ChunkedBody(64));
-    let small_get = Request {
-        method: "GET",
-        target: "/small",
-        host: "objects.test",
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: None,
-    };
+    let small_get = Request::new("GET", "/small", "objects.test", 0, ADDR);
     w.client.start(&mut w.io, 700, &small_get).unwrap();
     w.run_until_done(w.done.len() + 1);
     let r = w
         .done
         .last()
         .unwrap()
-        .result
+        .result()
         .expect("chunked body without a buffer");
-    assert_eq!((r.status, r.body_len), (200, 300));
-    assert_eq!(w.client.discarded_body(&mut w.io, r.conn), &sent[..]);
+    assert_eq!((r.status(), r.body_len()), (200, 300));
+    assert_eq!(w.client.discarded_body(&mut w.io, r.conn()), &sent[..]);
     // One that does not fit beside the head is refused.
     w.fill_tx(8_000, 1);
     ok(200, 0)(w.request("PUT", "/big", Some(8_000)));
     w.server.script(Behavior::ChunkedBody(1_000));
-    let big_get = Request {
-        method: "GET",
-        target: "/big",
-        host: "objects.test",
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: None,
-    };
+    let big_get = Request::new("GET", "/big", "objects.test", 0, ADDR);
     w.client.start(&mut w.io, 701, &big_get).unwrap();
     w.run_until_done(w.done.len() + 1);
-    assert_eq!(w.done.last().unwrap().result, Err(Error::BodyTooLarge));
+    assert_eq!(w.done.last().unwrap().result(), Err(Error::BodyTooLarge));
     w.settle(30);
     assert_eq!(w.client.in_flight(), 0);
 }
@@ -298,7 +256,7 @@ fn bytes_after_a_response_in_a_later_read_are_not_taken_for_the_next_response() 
     ok(200, body_len as u32)(w.request("GET", "/k", None));
     // The next request must get its own answer, from a new connection.
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!((w.client.idle_dirty, w.client.connects), (1, 2));
+    assert_eq!((w.client.idle_dirty(), w.client.connects()), (1, 2));
 
     // Without the check the next request does not get its own answer. On a
     // real network it would be handed the leftover bytes as its response;

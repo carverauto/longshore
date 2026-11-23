@@ -218,24 +218,15 @@ fn a_discarded_body_is_kept_intact_when_it_fits_beside_the_head() {
     );
     for (i, body) in [1u32, 2, 300, 1500, 5000, 20_000].into_iter().enumerate() {
         w.server.script(Behavior::StatusWithBody(412, body));
-        let req = Request {
-            method: "GET",
-            target: "/k",
-            host: "objects.test",
-            host_id: 0,
-            addr: ADDR,
-            headers: &[],
-            body: None,
-            response_buf: None,
-        };
+        let req = Request::new("GET", "/k", "objects.test", 0, ADDR);
         w.client.start(&mut w.io, 500, &req).unwrap();
         w.run_until_done(i + 1);
-        let r = w.done[i].result.expect("an error status is a response");
-        assert_eq!((r.status, r.body_len), (412, body));
-        let head_len = w.client.copy_head(&mut w.io, r.conn, RX);
+        let r = w.done[i].result().expect("an error status is a response");
+        assert_eq!((r.status(), r.body_len()), (412, body));
+        let head_len = w.client.copy_head(&mut w.io, r.conn(), RX);
         assert!(w.io.buf(RX)[..head_len as usize].ends_with(b"\r\n\r\n"));
-        assert_eq!(w.client.content_length(r.conn), Some(u64::from(body)));
-        let kept = w.client.discarded_body(&mut w.io, r.conn).to_vec();
+        assert_eq!(w.client.content_length(r.conn()), Some(u64::from(body)));
+        let kept = w.client.discarded_body(&mut w.io, r.conn()).to_vec();
         if body <= HEAD_MAX - head_len {
             assert_eq!(kept.len(), body as usize, "body of {body}");
             assert!(
@@ -249,7 +240,7 @@ fn a_discarded_body_is_kept_intact_when_it_fits_beside_the_head() {
             );
         }
     }
-    assert_eq!(w.client.connects, 1, "discarding costs no connection");
+    assert_eq!(w.client.connects(), 1, "discarding costs no connection");
 }
 
 /// Chunks of one and of seven bytes put a chunk header in nearly every
@@ -278,7 +269,7 @@ fn tiny_chunks_decode_to_the_stored_bytes() {
                 "seed {seed}, chunk size {chunk}: decoded bytes differ"
             );
         }
-        assert_eq!(w.client.connects, 1);
+        assert_eq!(w.client.connects(), 1);
     }
 }
 

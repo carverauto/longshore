@@ -204,7 +204,7 @@ impl S3 {
 
     /// HTTP connections opened so far.
     pub fn connects(&self) -> u64 {
-        self.client.connects
+        self.client.connects()
     }
 
     /// Operations not yet collected.
@@ -259,14 +259,14 @@ impl S3 {
         let handled = self.client.on_completion(io, c);
         // An address that cannot be connected to: let the resolver move to
         // the other family if the name has one.
-        if let Some(addr) = self.client.connect_failure.take() {
+        if let Some(addr) = self.client.take_connect_failure() {
             if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
                 r.connect_failed(0, addr.ip());
             }
         }
         // A measured connection: tell the resolver its address's segment
         // size, and stop reusing connections it now ranks too small.
-        if let Some((addr, segment)) = self.client.connected.take() {
+        if let Some((addr, segment)) = self.client.take_connected() {
             if let Endpoint::Resolved(r) = &mut self.cfg.endpoint {
                 let floor = r.connected(0, addr.ip(), segment);
                 self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
@@ -276,7 +276,7 @@ impl S3 {
             Handled::NotMine => false,
             Handled::Pending => true,
             Handled::Done(d) => {
-                self.on_attempt_done(io, d.token as usize, d.result, d.sent);
+                self.on_attempt_done(io, d.token() as usize, d.result(), d.sent());
                 self.check_validation(io);
                 true
             }

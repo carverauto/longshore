@@ -66,11 +66,7 @@ impl Client {
         let (token, sent) = (c.token, c.sent);
         self.streams[i].reset();
         self.submit(io, i, K_CLOSE, Op::Close { sock: self.sock(i) });
-        Handled::Done(Done {
-            token,
-            result: Err(e),
-            sent,
-        })
+        Handled::Done(Done::new(token, Err(e), sent))
     }
 
     pub(super) fn succeed<IO: Io>(&mut self, io: &mut IO, i: usize) -> Handled {
@@ -81,15 +77,11 @@ impl Client {
         }
         let c = &mut self.conns[i];
         c.uses += 1;
-        let done = Done {
-            token: c.token,
-            result: Ok(Response {
-                status: c.status,
-                body_len: c.body_len,
-                conn: i as u32,
-            }),
-            sent: true,
-        };
+        let done = Done::new(
+            c.token,
+            Ok(Response::new(c.status, c.body_len, i as u32)),
+            true,
+        );
         // Close when the server asked to, and when the traffic keys have done
         // enough work: the next request gets a new connection and new keys.
         if c.fields.is_some_and(|f| f.close)

@@ -77,13 +77,9 @@ fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
         let (sent, peer_eof, result) = run_with_slow_peer(&mut w, t0);
         assert!(sent, "seed {seed}: the partial response was never sent");
         assert_eq!(
-            result,
-            Some(Done {
-                token: 7,
-                result: Err(Error::Timeout),
-                // The request went out whole before the response stalled.
-                sent: true,
-            }),
+            result.map(|d| (d.token(), d.result(), d.sent())),
+            // The request went out whole before the response stalled.
+            Some((7, Err(Error::Timeout), true)),
             "seed {seed}: the request did not end with a timeout"
         );
         assert!(
@@ -107,16 +103,7 @@ fn start_slow_request(w: &mut World) -> u64 {
     )
     .unwrap();
     w.io.buf(TX)[OUT_OFF as usize..OUT_OFF as usize + PARTIAL.len()].copy_from_slice(PARTIAL);
-    let req = Request {
-        method: "GET",
-        target: "/slow",
-        host: "slow.test",
-        host_id: 1,
-        addr: PEER,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req = Request::new("GET", "/slow", "slow.test", 1, PEER).with_response_buf(Some(RX));
     let t0 = w.io.now_ns();
     w.client.start(&mut w.io, 7, &req).unwrap();
     t0
@@ -258,9 +245,9 @@ fn resets_never_hang_a_request_or_leak_a_slot() {
             match r {
                 Ok(resp) => {
                     assert!(
-                        matches!(resp.status, 200 | 404),
+                        matches!(resp.status(), 200 | 404),
                         "seed {seed}: status {}",
-                        resp.status
+                        resp.status()
                     );
                     oks += 1;
                 }
@@ -324,7 +311,7 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
                 w.fill_tx(len, pattern);
                 match w.request("PUT", "/k", Some(len)) {
                     Ok(r) => {
-                        assert_eq!(r.status, 200, "seed {seed} step {step}");
+                        assert_eq!(r.status(), 200, "seed {seed} step {step}");
                         known = Some((len, pattern));
                         maybe.clear();
                         exists_for_sure = true;
@@ -337,22 +324,22 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
                 }
             }
             1 => match w.request("GET", "/k", None) {
-                Ok(r) if r.status == 200 => {
-                    let got = w.io.buf(RX)[..r.body_len as usize].to_vec();
+                Ok(r) if r.status() == 200 => {
+                    let got = w.io.buf(RX)[..r.body_len() as usize].to_vec();
                     let matches = |(put_len, put_pattern): (u32, u8)| {
                         w.fill_tx(put_len, put_pattern);
-                        put_len == r.body_len && w.io.buf(TX)[..put_len as usize] == got[..]
+                        put_len == r.body_len() && w.io.buf(TX)[..put_len as usize] == got[..]
                     };
                     let candidates: Vec<(u32, u8)> =
                         known.into_iter().chain(maybe.iter().copied()).collect();
                     assert!(
                         candidates.into_iter().any(matches),
                         "seed {seed} step {step}: GET returned {} bytes matching no PUT",
-                        r.body_len
+                        r.body_len()
                     );
                 }
                 Ok(r) => {
-                    assert_eq!(r.status, 404, "seed {seed} step {step}");
+                    assert_eq!(r.status(), 404, "seed {seed} step {step}");
                     assert!(
                         !exists_for_sure,
                         "seed {seed} step {step}: 404 for an object a PUT confirmed"

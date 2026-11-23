@@ -160,11 +160,7 @@ impl Client {
             self.conns[i].state = State::Closing {
                 then_connect: false,
             };
-            return Handled::Done(Done {
-                token,
-                result: Err(Error::Timeout),
-                sent: false,
-            });
+            return Handled::Done(Done::new(token, Err(Error::Timeout), false));
         }
         if !self.conns[i].timed_out {
             self.cancel_ops(io, i);

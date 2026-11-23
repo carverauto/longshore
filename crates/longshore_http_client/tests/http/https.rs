@@ -206,23 +206,17 @@ impl World {
         body: Option<u32>,
     ) -> Result<Response, Error> {
         let token = self.done.len() as u64 + 100;
-        let req = Request {
-            method,
-            target,
-            host: NAME,
-            host_id: 0,
-            addr: ADDR,
-            headers: &[("x-test", b"1")],
-            body: body.map(|n| (TX, n)),
-            response_buf: Some(RX),
-        };
+        let req = Request::new(method, target, NAME, 0, ADDR)
+            .with_headers(&[("x-test", b"1")])
+            .with_body(body.map(|n| (TX, n)))
+            .with_response_buf(Some(RX));
         self.client
             .start(&mut self.io, token, &req)
             .expect("a connection should be free");
         self.run_until_done(self.done.len() + 1);
         let d = *self.done.last().unwrap();
-        assert_eq!(d.token, token);
-        d.result
+        assert_eq!(d.token(), token);
+        d.result()
     }
 
     fn fill_tx(&mut self, len: u32, pattern: u8) {
@@ -235,7 +229,7 @@ impl World {
 #[cfg(test)]
 fn ok(status: u16, body_len: u32) -> impl Fn(Result<Response, Error>) {
     move |r| match r {
-        Ok(resp) => assert_eq!((resp.status, resp.body_len), (status, body_len)),
+        Ok(resp) => assert_eq!((resp.status(), resp.body_len()), (status, body_len)),
         Err(e) => panic!("expected {status}, got {e:?}"),
     }
 }
@@ -269,7 +263,7 @@ fn put_then_get_round_trips_over_tls_on_one_connection() {
     ok(200, 0)(w.request("HEAD", "/k", None));
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        (w.client.connects, w.server.accepted()),
+        (w.client.connects(), w.server.accepted()),
         (1, 1),
         "one handshake served every request"
     );
@@ -320,7 +314,7 @@ fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
         let sent = w.io.buf(TX)[..40_000].to_vec();
         match w.request("PUT", "/k", Some(40_000)) {
             Ok(r) => {
-                assert_eq!(r.status, 200, "seed {seed}");
+                assert_eq!(r.status(), 200, "seed {seed}");
                 assert_eq!(
                     w.server.object("/k"),
                     Some(&sent[..]),
@@ -340,7 +334,7 @@ fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
         }
         match w.request("GET", "/k", None) {
             Ok(r) => {
-                assert_eq!((r.status, r.body_len), (200, 40_000), "seed {seed}");
+                assert_eq!((r.status(), r.body_len()), (200, 40_000), "seed {seed}");
                 assert!(
                     w.io.buf(RX)[..40_000] == sent[..],
                     "seed {seed}: GET succeeded with damaged bytes"
@@ -447,7 +441,8 @@ fn timeouts_and_server_failures_work_the_same_over_tls() {
     ok(200, 1000)(w.request("GET", "/k", None));
     assert_eq!(w.client.in_flight(), 0);
     assert_eq!(
-        w.client.connects, 3,
+        w.client.connects(),
+        3,
         "a new handshake after each of the two failures"
     );
 }
@@ -470,7 +465,7 @@ fn chunked_responses_work_over_tls() {
         ok(200, 30_000)(w.request("GET", "/k", None));
         assert!(w.io.buf(RX)[..30_000] == sent[..], "chunk size {chunk}");
     }
-    assert_eq!(w.client.connects, 1);
+    assert_eq!(w.client.connects(), 1);
 }
 
 /// Traffic keys are never used past the configured number of records: a
@@ -500,11 +495,11 @@ fn a_connection_is_replaced_before_its_keys_wear_out() {
         );
     }
     assert!(
-        (4..=24).contains(&w.client.connects),
+        (4..=24).contains(&w.client.connects()),
         "24 requests of about 5 records against a limit of 12 need several connections, not {}",
-        w.client.connects
+        w.client.connects()
     );
-    assert_eq!(w.client.connects, w.server.accepted());
+    assert_eq!(w.client.connects(), w.server.accepted());
 
     // With the default limit the same work stays on one connection.
     let mut default_limit = world(21, Faults::default());
@@ -513,7 +508,7 @@ fn a_connection_is_replaced_before_its_keys_wear_out() {
         ok(200, 0)(default_limit.request("PUT", "/k", Some(60_000)));
         ok(200, 60_000)(default_limit.request("GET", "/k", None));
     }
-    assert_eq!(default_limit.client.connects, 1);
+    assert_eq!(default_limit.client.connects(), 1);
 }
 
 /// A server that sends bytes past the body it declared, inside the same
@@ -554,22 +549,13 @@ fn bytes_past_the_declared_body_are_rejected_over_tls() {
 fn the_server_name_is_the_host_without_its_port() {
     let mut w = world(41, Faults::default());
     let host = format!("{NAME}:8443");
-    let req = Request {
-        method: "GET",
-        target: "/missing",
-        host: &host,
-        host_id: 0,
-        addr: ADDR,
-        headers: &[],
-        body: None,
-        response_buf: Some(RX),
-    };
+    let req = Request::new("GET", "/missing", &host, 0, ADDR).with_response_buf(Some(RX));
     w.client
         .start(&mut w.io, 500, &req)
         .expect("a connection should be free");
     w.run_until_done(1);
     assert_eq!(
-        w.done[0].result.map(|r| r.status),
+        w.done[0].result().map(|r| r.status()),
         Ok(404),
         "the handshake must succeed and the request be answered"
     );
@@ -589,7 +575,7 @@ fn a_fatal_alert_is_reported_as_a_tls_error() {
     );
     // The connection is gone; the next request handshakes again and works.
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!(w.client.connects, 2);
+    assert_eq!(w.client.connects(), 2);
 }
 
 /// The same over TLS, with the extra bytes in a record of their own: the
@@ -609,7 +595,7 @@ fn a_record_after_a_complete_response_is_not_taken_for_the_next_response() {
     w.server.script(Behavior::Raw(reply));
     ok(200, body_len as u32)(w.request("GET", "/k", None));
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!((w.client.idle_dirty, w.client.connects), (1, 2));
+    assert_eq!((w.client.idle_dirty(), w.client.connects()), (1, 2));
 }
 
 /// A TLS peer that closed while the connection sat idle is found by the
@@ -623,7 +609,11 @@ fn a_tls_connection_closed_while_idle_is_replaced_before_it_is_used() {
     w.settle(20);
     ok(404, 0)(w.request("GET", "/missing", None));
     assert_eq!(
-        (w.client.idle_closed, w.client.idle_dirty, w.client.connects),
+        (
+            w.client.idle_closed(),
+            w.client.idle_dirty(),
+            w.client.connects()
+        ),
         (1, 0, 2)
     );
 }
@@ -641,7 +631,7 @@ fn close_notify_in_place_of_a_response_is_a_close_not_a_tls_error() {
         Err(Error::Closed { reused: true })
     );
     ok(404, 0)(w.request("GET", "/missing", None));
-    assert_eq!((w.client.connects, w.client.idle_closed), (2, 0));
+    assert_eq!((w.client.connects(), w.client.idle_closed()), (2, 0));
 }
 
 /// Session tickets arrive after the handshake as records that are not
@@ -653,7 +643,11 @@ fn an_idle_tls_connection_with_only_tickets_waiting_is_reused() {
         ok(404, 0)(w.request("GET", "/missing", None));
     }
     assert_eq!(
-        (w.client.connects, w.client.idle_dirty, w.client.idle_closed),
+        (
+            w.client.connects(),
+            w.client.idle_dirty(),
+            w.client.idle_closed()
+        ),
         (1, 0, 0)
     );
 }

@@ -45,17 +45,11 @@ impl S3 {
                 &mut headers,
             )
         };
-        let req = Request {
-            method: head.method,
-            target: head.target,
-            host: &self.cfg.host,
-            host_id: 0,
-            addr,
-            headers: &headers[..n],
-            body: s.body.filter(|_| !s.comparing),
+        let req = Request::new(head.method, head.target, &self.cfg.host, 0, addr)
+            .with_headers(&headers[..n])
+            .with_body(s.body.filter(|_| !s.comparing))
             // A stat's buffer is for a copy of the head, not for a body.
-            response_buf: s.response_buf.filter(|_| s.kind != Kind::Stat),
-        };
+            .with_response_buf(s.response_buf.filter(|_| s.kind != Kind::Stat));
 
         match self.client.start(io, i as u64, &req) {
             Ok(()) => {

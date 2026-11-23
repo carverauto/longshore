@@ -35,7 +35,7 @@ fn exchange(
                 });
             }
             if let Handled::Done(d) = client.on_completion(io, c) {
-                return d.result;
+                return d.result();
             }
         }
     });
@@ -68,16 +68,7 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
         1,
     );
     let mut out = Completions::new(16);
-    let req = Request {
-        method: "GET",
-        target: path,
-        host,
-        host_id: 0,
-        addr,
-        headers: &[],
-        body: None,
-        response_buf: Some(BufId(3)),
-    };
+    let req = Request::new("GET", path, host, 0, addr).with_response_buf(Some(BufId(3)));
     client
         .start(&mut io, 1, &req)
         .unwrap_or_else(|e| die(format_args!("start: {e:?}")));
@@ -90,9 +81,9 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
     let ms = (io.now_ns() - t0) / MS;
     match result {
         Ok(r) => {
-            let n = (r.body_len as usize).min(120);
+            let n = (r.body_len() as usize).min(120);
             let body = String::from_utf8_lossy(&io.buf(BufId(3))[..n]).replace(['\n', '\r'], " ");
-            println!("https://{host}{path} -> {} ({} bytes) in {ms} ms, {completions} completions: {body}", r.status, r.body_len);
+            println!("https://{host}{path} -> {} ({} bytes) in {ms} ms, {completions} completions: {body}", r.status(), r.body_len());
         }
         Err(e) => {
             println!(

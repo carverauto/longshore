@@ -94,27 +94,13 @@ impl Load<'_> {
             &[]
         };
         let req = if put {
-            Request {
-                method: "PUT",
-                target: "/bench/object",
-                host,
-                host_id,
-                addr,
-                headers,
-                body: Some((body, size)),
-                response_buf: None,
-            }
+            Request::new("PUT", "/bench/object", host, host_id, addr)
+                .with_headers(headers)
+                .with_body(Some((body, size)))
         } else {
-            Request {
-                method: "GET",
-                target: "/bench/object",
-                host,
-                host_id,
-                addr,
-                headers,
-                body: None,
-                response_buf: Some(body),
-            }
+            Request::new("GET", "/bench/object", host, host_id, addr)
+                .with_headers(headers)
+                .with_response_buf(Some(body))
         };
         http.start(ring, u64::from(i), &req)
     }
@@ -154,15 +140,15 @@ fn measure(
                     continue;
                 }
                 if let Handled::Done(d) = client.on_completion(io, c) {
-                    match d.result {
-                        Ok(r) if r.status == 200 => {
+                    match d.result() {
+                        Ok(r) if r.status() == 200 => {
                             bytes += if put {
                                 u64::from(size)
                             } else {
-                                u64::from(r.body_len)
+                                u64::from(r.body_len())
                             };
                             requests += 1;
-                            load.restart(client, io, d.token as u32, waiting);
+                            load.restart(client, io, d.token() as u32, waiting);
                         }
                         // Formatting would allocate; report by exit code.
                         _ => std::process::exit(3),
@@ -247,7 +233,7 @@ pub(super) fn bench(a: &Args, put: bool) {
     let gb = bytes as f64 / 1e9;
     println!(
         "{{\"cmd\":\"{}\",\"crc\":{crc},\"links\":{},\"tls\":{},\"batch\":{},\"arch\":\"{}\",\"conns\":{},\"size\":{},\"secs\":{:.2},\"requests\":{},\"gb_per_s\":{:.2},\"thread_cpu\":{:.2},\"core_util\":{:.2},\"gb_per_cpu_s\":{:.2},\"enters_per_request\":{:.1},\"connects\":{}}}",
-        a.cmd, addrs.len(), a.trust_file.is_some(), a.batch, std::env::consts::ARCH, n, size, wall, requests, gb / wall, cpu / wall, core, gb / cpu, (io.enters() - enters0) as f64 / requests.max(1) as f64, client.connects
+        a.cmd, addrs.len(), a.trust_file.is_some(), a.batch, std::env::consts::ARCH, n, size, wall, requests, gb / wall, cpu / wall, core, gb / cpu, (io.enters() - enters0) as f64 / requests.max(1) as f64, client.connects()
     );
     std::process::exit(0);
 }

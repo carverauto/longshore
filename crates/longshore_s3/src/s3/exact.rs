@@ -286,7 +286,7 @@ impl S3 {
                         ..exact
                     });
                     if let Handled::Done(d) = self.client.cancel(io, i as u64) {
-                        self.on_attempt_done(io, i, d.result, d.sent);
+                        self.on_attempt_done(io, i, d.result(), d.sent());
                     }
                 }
                 State::Free | State::Finished => {}
@@ -349,25 +349,26 @@ impl S3 {
         let mut malformed = false;
         // A header that is there but does not fit or parse is reported as
         // such, not as absent.
-        let etag = present(self.client.header(io, r.conn, "etag"), &mut malformed).map(Fixed::new);
+        let etag =
+            present(self.client.header(io, r.conn(), "etag"), &mut malformed).map(Fixed::new);
         let version = present(
-            self.client.header(io, r.conn, "x-amz-version-id"),
+            self.client.header(io, r.conn(), "x-amz-version-id"),
             &mut malformed,
         )
         .map(Fixed::new);
         let request_id = present(
-            self.client.header(io, r.conn, "x-amz-request-id"),
+            self.client.header(io, r.conn(), "x-amz-request-id"),
             &mut malformed,
         )
         .map(Fixed::new);
         let content_range = present(
-            self.client.header(io, r.conn, "content-range"),
+            self.client.header(io, r.conn(), "content-range"),
             &mut malformed,
         )
         .map(ContentRange::parse);
         let encryption = present(
             self.client
-                .header(io, r.conn, "x-amz-server-side-encryption"),
+                .header(io, r.conn(), "x-amz-server-side-encryption"),
             &mut malformed,
         )
         .map(|v| match v {
@@ -375,12 +376,12 @@ impl S3 {
             _ => ServerEncryption::Other,
         });
         let sha256 = present(
-            self.client.header(io, r.conn, "x-amz-checksum-sha256"),
+            self.client.header(io, r.conn(), "x-amz-checksum-sha256"),
             &mut malformed,
         )
         .map(base64_decode);
         let crc64 = present(
-            self.client.header(io, r.conn, CHECKSUM_HEADER),
+            self.client.header(io, r.conn(), CHECKSUM_HEADER),
             &mut malformed,
         )
         .map(|v| <[u8; 12]>::try_from(v).ok());
@@ -391,23 +392,23 @@ impl S3 {
             || sha256 == Some(None)
             || crc64 == Some(None);
         let mut answer = Answer {
-            status: r.status,
+            status: r.status(),
             etag: etag.flatten(),
             version: version.flatten(),
             request_id: request_id.flatten(),
-            content_length: self.client.content_length(r.conn),
+            content_length: self.client.content_length(r.conn()),
             content_range: content_range.flatten(),
             encryption,
             sha256: sha256.flatten(),
             crc64: crc64.flatten(),
-            body_len: s.response_buf.map_or(0, |_| r.body_len),
+            body_len: s.response_buf.map_or(0, |_| r.body_len()),
             verified: None,
             malformed,
         };
         if let (Kind::Fetch { range: None }, 200, Some(theirs), Some(buf)) =
-            (s.kind, r.status, answer.crc64, s.response_buf)
+            (s.kind, r.status(), answer.crc64, s.response_buf)
         {
-            let body = &io.buf(buf)[..r.body_len as usize];
+            let body = &io.buf(buf)[..r.body_len() as usize];
             let ours = longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body));
             answer.verified = Some(ours == theirs);
         }

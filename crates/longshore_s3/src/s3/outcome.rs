@@ -62,8 +62,8 @@ impl S3 {
             // completed is not known. A 404 would say it did not.
             return self.finish(i, &Outcome::Fatal(Fatal::RetriesExhausted));
         }
-        let same = matches!(result, Ok(r) if r.status == 200
-            && self.stored_checksum(io, r.conn) == Some(ours));
+        let same = matches!(result, Ok(r) if r.status() == 200
+            && self.stored_checksum(io, r.conn()) == Some(ours));
         let outcome = if same {
             Outcome::Stored
         } else {
@@ -83,7 +83,7 @@ impl S3 {
         r: client::Response,
     ) -> ControlFlow<(), Option<Class>> {
         let mut decided = None;
-        if r.status == 200 {
+        if r.status() == 200 {
             match self.multipart_outcome(io, s.kind, r, s.crc) {
                 Some(Ok(outcome)) => {
                     self.finish(i, &outcome);
@@ -93,7 +93,7 @@ impl S3 {
                 None => {}
             }
         }
-        let outcome = match (s.kind, r.status) {
+        let outcome = match (s.kind, r.status()) {
             // The upload is gone after an earlier attempt was sent: that
             // attempt may have completed it.
             (Kind::Complete, 404)
@@ -112,7 +112,7 @@ impl S3 {
             }
             // Nothing left to abort.
             (Kind::Abort, 404) => Outcome::Aborted,
-            (Kind::Stat, 200) => Outcome::Stat(self.stat_of(io, s.response_buf, r.conn)),
+            (Kind::Stat, 200) => Outcome::Stat(self.stat_of(io, s.response_buf, r.conn())),
             // A copy of something that is not there.
             (Kind::Stat | Kind::Copy, 404) | (Kind::Fetch { .. }, 404) => Outcome::NotFound,
             // A server may ignore Range and send the whole object. Those are
@@ -127,7 +127,7 @@ impl S3 {
             // The code is read as the document's code: a store may
             // repeat the key in the document, and a key can be called anything.
             (Kind::Erase, 404)
-                if multipart::error_code_in(self.client.discarded_body(io, r.conn))
+                if multipart::error_code_in(self.client.discarded_body(io, r.conn()))
                     == Some(b"NoSuchKey") =>
             {
                 Outcome::Erased
@@ -148,7 +148,7 @@ impl S3 {
         s: &Slot,
         r: client::Response,
     ) -> ControlFlow<()> {
-        let outcome = match (s.kind, r.status) {
+        let outcome = match (s.kind, r.status()) {
             // The comparison's answer: the object at the key, and its checksum.
             (Kind::Store { .. }, 200) if s.comparing => {
                 #[expect(
@@ -156,7 +156,7 @@ impl S3 {
                     reason = "a store compares only when it was sent with a checksum"
                 )]
                 let ours = self.checksum_value(s.crc.expect("only stores with a checksum compare"));
-                match self.stored_checksum(io, r.conn) {
+                match self.stored_checksum(io, r.conn()) {
                     Some(theirs) if theirs == ours => Outcome::Stored,
                     // Someone else's object, not ours.
                     Some(_) => Outcome::AlreadyExists { after_retry: false },
@@ -202,7 +202,7 @@ impl S3 {
         let Ok(r) = result else {
             return class;
         };
-        match (s.kind, r.status) {
+        match (s.kind, r.status()) {
             // Another conditional write to the key is in progress: possibly
             // our own earlier attempt, still being committed.
             (Kind::Store { no_clobber: true }, 409) if !s.comparing => Class::RetryDelayed,
@@ -212,7 +212,7 @@ impl S3 {
                     && !s.comparing
                     && self
                         .client
-                        .discarded_body(io, r.conn)
+                        .discarded_body(io, r.conn())
                         .windows(14)
                         .any(|w| w == b"RequestTimeout") =>
             {
@@ -251,7 +251,7 @@ impl S3 {
             Class::Fatal => self.finish(
                 i,
                 &Outcome::Fatal(match result {
-                    Ok(r) => Fatal::Status(r.status),
+                    Ok(r) => Fatal::Status(r.status()),
                     Err(e) => Fatal::Transport(e),
                 }),
             ),
@@ -283,17 +283,17 @@ fn succeeded(s: &Slot, result: Result<client::Response, Error>, verified: bool) 
         Kind::Abort => Outcome::Aborted,
         Kind::Copy => Outcome::Copied,
         Kind::EraseMany => Outcome::ErasedMany {
-            len: result.map_or(0, |r| r.body_len),
+            len: result.map_or(0, |r| r.body_len()),
         },
         // Their success is decided above, from a 200 response.
         Kind::Begin { .. } | Kind::Part | Kind::Stat => Outcome::Fatal(Fatal::BadResponse),
         Kind::Fetch { .. } => Outcome::Fetched {
-            len: result.map_or(0, |r| r.body_len),
+            len: result.map_or(0, |r| r.body_len()),
             verified,
         },
         Kind::Erase => Outcome::Erased,
         Kind::List => Outcome::Listed {
-            len: result.map_or(0, |r| r.body_len),
+            len: result.map_or(0, |r| r.body_len()),
         },
     }
 }
