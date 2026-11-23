@@ -29,30 +29,42 @@ use die::OrDie;
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
 #[cfg(target_os = "linux")]
-fn main() {
-    use longshore::io::alloc_guard::sealed;
-    use longshore::io::uring::UringIo;
-    use longshore::io::{Completions, Limits};
-    use longshore::sim::scenario::echo;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+#[path = "echo_uring/checks.rs"]
+mod checks;
 
-    let (mut total, mut chunk, mut zc) = (64u64 << 20, 1u32 << 20, false);
-    let mut v6 = false;
-    let mut measure = false;
+/// What the command line asked for.
+#[cfg(target_os = "linux")]
+struct Args {
+    total: u64,
+    chunk: u32,
+    zc: bool,
+    v6: bool,
+    measure: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn args() -> Args {
+    let mut a = Args {
+        total: 64u64 << 20,
+        chunk: 1u32 << 20,
+        zc: false,
+        v6: false,
+        measure: false,
+    };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         match k.as_str() {
-            "--zc" => zc = true,
-            "--v6" => v6 = true,
-            "--measure" => measure = true,
+            "--zc" => a.zc = true,
+            "--v6" => a.v6 = true,
+            "--measure" => a.measure = true,
             "--total" => {
-                total = it
+                a.total = it
                     .next()
                     .and_then(|v| v.parse().ok())
                     .or_die("--total BYTES")
             }
             "--chunk" => {
-                chunk = it
+                a.chunk = it
                     .next()
                     .and_then(|v| v.parse().ok())
                     .or_die("--chunk BYTES")
@@ -60,6 +72,24 @@ fn main() {
             _ => die::die(format_args!("unknown flag {k}")),
         }
     }
+    a
+}
+
+#[cfg(target_os = "linux")]
+fn main() {
+    use longshore::io::alloc_guard::sealed;
+    use longshore::io::uring::UringIo;
+    use longshore::io::{Completions, Limits};
+    use longshore::sim::scenario::echo;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    let Args {
+        total,
+        chunk,
+        zc,
+        v6,
+        measure,
+    } = args();
     let limits = Limits {
         sockets_max: 4,
         buffers: 3,
@@ -76,283 +106,16 @@ fn main() {
     };
     let mut out = Completions::new(8);
     // Timer and operation-limit self-checks before the echo.
-    {
-        use longshore::io::{Busy, Io, Op, Token};
-        let t0 = io.now_ns();
-        for t in 0..4 {
-            io.submit(
-                Token(t),
-                Op::Timeout {
-                    nanos: 20_000_000 * (4 - t),
-                },
-            )
-            .or_die("submit");
-        }
-        assert_eq!(
-            io.submit(Token(9), Op::Timeout { nanos: 1 }),
-            Err(Busy),
-            "fifth operation must be refused"
-        );
-        let mut order = [0u64; 4];
-        let mut n = 0;
-        while n < 4 {
-            io.tick(true, &mut out).or_die("tick");
-            while let Some(c) = out.pop() {
-                assert_eq!(c.result, 0, "timeout result");
-                order[n] = c.token.0;
-                n += 1;
-            }
-        }
-        let ms = (io.now_ns() - t0) / 1_000_000;
-        assert_eq!(order, [3, 2, 1, 0], "timers must fire shortest first");
-        assert!((80..200).contains(&ms), "80 ms timer took {ms} ms");
-        println!("ok timers order={order:?} elapsed_ms={ms}");
-    }
-    // File reads: open, read and close as one operation.
-    {
-        use longshore::io::{BufId, Io, Op, Token};
-        let path = format!("/tmp/longshore-echo-uring-{}.txt", std::process::id());
-        let missing = io
-            .register_file("/nonexistent/longshore-file")
-            .or_die("register_file");
-        let file = io.register_file(&path).or_die("register_file");
-        let mut read = |ring: &mut UringIo, f| {
-            ring.submit(
-                Token(1),
-                Op::ReadFile {
-                    file: f,
-                    buf: BufId(0),
-                    off: 0,
-                    len: 64,
-                },
-            )
-            .or_die("submit");
-            loop {
-                ring.tick(true, &mut out).or_die("tick");
-                if let Some(c) = out.pop() {
-                    return c.result;
-                }
-            }
-        };
-        assert_eq!(read(&mut io, missing), -2, "a missing file reports ENOENT");
-        for contents in ["first", "second, longer version"] {
-            std::fs::write(&path, contents).or_die("write");
-            assert_eq!(
-                read(&mut io, file),
-                i32::try_from(contents.len()).or_die("file length")
-            );
-            assert_eq!(
-                &io.buf(BufId(0))[..contents.len()],
-                contents.as_bytes(),
-                "file contents"
-            );
-        }
-        std::fs::remove_file(&path).or_die("remove_file");
-        println!("ok files: missing, read, reread after replacement");
-    }
-    // Cancelling an operation of several steps. A connect is a socket step
-    // then a connect step, and a file read is open, read, close. Submitted
-    // together with its cancel, the first step has finished by the time the
-    // kernel sees the cancel, so the cancel misses. The operation must stop
-    // anyway instead of starting a step nothing will cancel: a connect to an
-    // address that never answers would otherwise hang for minutes.
-    {
-        use longshore::io::{BufId, Io, Op, Sock, Token, ECANCELED};
-        let t0 = io.now_ns();
-        // TEST-NET-1 (RFC 5737): never routed, so a connect to it gets no answer.
-        io.submit(
-            Token(1),
-            Op::Connect {
-                sock: Sock(3),
-                addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9),
-            },
-        )
-        .or_die("submit");
-        io.submit(Token(2), Op::Cancel { target: Token(1) })
-            .or_die("submit");
-        io.submit(
-            Token(3),
-            Op::Timeout {
-                nanos: 3_000_000_000,
-            },
-        )
-        .or_die("submit");
-        let mut connect = None;
-        let mut done = 0u32;
-        while connect.is_none() {
-            io.tick(true, &mut out).or_die("tick");
-            while let Some(c) = out.pop() {
-                done |= 1 << c.token.0;
-                match c.token.0 {
-                    1 => connect = Some(c.result),
-                    3 => die::die("a cancelled connect was still running after 3 s"),
-                    _ => {}
-                }
-            }
-        }
-        // Unreachable networks fail the connect at once, which is also fine.
-        let r = connect.or_die("connect");
-        assert!(
-            r < 0,
-            "a cancelled connect to an unanswering address reported success"
-        );
-        let ms = (io.now_ns() - t0) / 1_000_000;
-        // Close the socket the first step created, and let the guard timer and
-        // the cancel finish, so the echo starts with every slot free.
-        io.submit(Token(4), Op::Close { sock: Sock(3) })
-            .or_die("submit");
-        io.submit(Token(5), Op::Cancel { target: Token(3) })
-            .or_die("submit");
-        let all = 0b11_1110;
-        while done != all {
-            io.tick(true, &mut out).or_die("tick");
-            while let Some(c) = out.pop() {
-                assert!(
-                    all & (1 << c.token.0) != 0 && done & (1 << c.token.0) == 0,
-                    "unexpected completion {:?}",
-                    c.token
-                );
-                done |= 1 << c.token.0;
-            }
-        }
-
-        // The same for a file read: cancelled as it starts, it must not read.
-        let path = format!(
-            "/tmp/longshore-echo-uring-cancel-{}.txt",
-            std::process::id()
-        );
-        std::fs::write(&path, "must not be read").or_die("write");
-        let file = io.register_file(&path).or_die("register_file");
-        io.buf(BufId(0))[..4].copy_from_slice(b"----");
-        io.submit(
-            Token(1),
-            Op::ReadFile {
-                file,
-                buf: BufId(0),
-                off: 0,
-                len: 64,
-            },
-        )
-        .or_die("submit");
-        io.submit(Token(2), Op::Cancel { target: Token(1) })
-            .or_die("submit");
-        let mut read = None;
-        let mut pending = 2;
-        while pending > 0 {
-            io.tick(true, &mut out).or_die("tick");
-            while let Some(c) = out.pop() {
-                if c.token.0 == 1 {
-                    read = Some(c.result);
-                }
-                pending -= 1;
-            }
-        }
-        std::fs::remove_file(&path).or_die("remove_file");
-        assert_eq!(
-            read,
-            Some(-ECANCELED),
-            "a file read cancelled as it started"
-        );
-        assert_eq!(
-            &io.buf(BufId(0))[..4],
-            b"----",
-            "the cancelled read still filled the buffer"
-        );
-        println!(
-            "ok cancel: connect ended with {r} after {ms} ms, file read cancelled before reading"
-        );
-    }
+    checks::timers(&mut io, &mut out);
+    checks::files(&mut io, &mut out);
+    checks::cancel(&mut io, &mut out);
     let loopback = if v6 {
         IpAddr::V6(Ipv6Addr::LOCALHOST)
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
-    // A connect that fails must leave its socket slot free: the socket the
-    // first step created is closed before the failure is reported. A second
-    // connect on the same slot then fails the same way, for the same reason,
-    // instead of tripping over the first one's socket.
-    {
-        use longshore::io::{Io, Op, Sock, Token};
-        let mut results = [0i32; 2];
-        for r in results.iter_mut() {
-            // Port 1 on loopback: nothing listens there.
-            io.submit(
-                Token(1),
-                Op::Connect {
-                    sock: Sock(3),
-                    addr: SocketAddr::new(loopback, 1),
-                },
-            )
-            .or_die("submit");
-            *r = loop {
-                io.tick(true, &mut out).or_die("tick");
-                if let Some(c) = out.pop() {
-                    break c.result;
-                }
-            };
-        }
-        assert_eq!(
-            results,
-            [-111, -111],
-            "two refused connects on one socket slot"
-        );
-        println!("ok failed connect releases its socket slot");
-    }
-    // With measuring on, a connect reports the connection's maximum segment
-    // size, and neither a connect that works nor one that is refused leaves
-    // the process holding a descriptor.
-    {
-        use longshore::io::{Io, Op, Sock, Token};
-        let open_fds = || {
-            std::fs::read_dir("/proc/self/fd")
-                .or_die("read_dir")
-                .count()
-        };
-        let mut run = |ring: &mut UringIo, op: Op| {
-            ring.submit(Token(1), op).or_die("submit");
-            loop {
-                ring.tick(true, &mut out).or_die("tick");
-                if let Some(c) = out.pop() {
-                    break c.result;
-                }
-            }
-        };
-        let before = open_fds();
-        io.measure_segment_sizes(true);
-        let listening = io
-            .listen(Sock(0), SocketAddr::new(loopback, 0))
-            .or_die("listen");
-        let size = run(
-            &mut io,
-            Op::Connect {
-                sock: Sock(3),
-                addr: listening,
-            },
-        );
-        let segment = longshore::io::Segment::decode(size)
-            .unwrap_or_else(|| die::die(format_args!("measured connect returned {size}")));
-        // Loopback's MTU is 65536, so its segments are far above Ethernet's.
-        assert!(
-            segment.size > 16_000 && segment.path_limit > 60_000,
-            "{segment:?}"
-        );
-        assert_eq!(run(&mut io, Op::Close { sock: Sock(3) }), 0);
-        let refused = run(
-            &mut io,
-            Op::Connect {
-                sock: Sock(3),
-                addr: SocketAddr::new(loopback, 1),
-            },
-        );
-        assert_eq!(refused, -111, "refused connect with measuring on");
-        assert_eq!(run(&mut io, Op::Close { sock: Sock(0) }), 0);
-        io.measure_segment_sizes(measure);
-        assert_eq!(open_fds(), before, "a measured connect leaked a descriptor");
-        println!(
-            "ok measured connect: segment size {}, path limit {}, no descriptor left open",
-            segment.size, segment.path_limit
-        );
-    }
+    checks::failed_connect(&mut io, &mut out, loopback);
+    checks::measured_connect(&mut io, &mut out, loopback, measure);
     let addr = SocketAddr::new(loopback, 0);
     let start = std::time::Instant::now();
     let r = sealed(|| echo(&mut io, addr, total, chunk, zc, &mut out));
