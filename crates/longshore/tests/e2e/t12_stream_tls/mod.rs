@@ -9,3 +9,4 @@
 mod f18_stream_t1;
 mod f18_stream_t2;
 mod f19_tls_feature;
+mod stream_rig;

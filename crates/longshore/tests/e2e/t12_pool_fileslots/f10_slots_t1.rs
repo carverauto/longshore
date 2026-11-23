@@ -8,7 +8,9 @@
 use super::super::harness::{
     drive_until_nonblocking, read_pool_bytes, submit_and_wait_one, write_nul_path, write_pool_bytes,
 };
-use super::helpers::{close_slot, file_limits, open_slot, run_on_backends, DynIo, LINUX_EINVAL};
+use super::helpers::{
+    close_slot, file_limits, open_slot, run_on_backends, run_op, rw_create, DynIo, LINUX_EINVAL,
+};
 use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -268,101 +270,85 @@ fn t1_f10_4_ready_list_drains_without_blocking() {
     });
 }
 
+/// Accepts `Sock(1)` from a `Sock(2)` loopback connect; both must succeed.
+fn connect_loopback_pair(io: &mut dyn Io, out: &mut Completions) {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    let bound = io.listen(Sock(0), addr).expect("listen");
+    io.submit(
+        Token(100),
+        Op::Accept {
+            listener: Sock(0),
+            sock: Sock(1),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token(101),
+        Op::Connect {
+            sock: Sock(2),
+            addr: bound,
+        },
+    )
+    .unwrap();
+    let mut seen = Vec::new();
+    while seen.len() < 2 {
+        io.tick(true, out).expect("tick");
+        while let Some(c) = out.pop() {
+            seen.push(c);
+        }
+    }
+    assert!(seen.iter().all(|c| c.result >= 0));
+}
+
+/// Writes and reads back seven bytes on `FileSlot(2)`.
+fn round_trip_slot_2(io: &mut dyn Io, out: &mut Completions) {
+    let mut dyn_io = DynIo(io);
+    write_pool_bytes(&mut dyn_io, BufId(0), 0, b"coexist");
+    let write = Op::FileWrite {
+        slot: FileSlot(2),
+        buf: BufId(0),
+        off: 0,
+        len: 7,
+        file_off: 0,
+    };
+    assert_eq!(run_op(&mut dyn_io, out, 200, write, "write"), 7);
+    let read = Op::FileRead {
+        slot: FileSlot(2),
+        buf: BufId(1),
+        off: 0,
+        len: 7,
+        file_off: 0,
+    };
+    assert_eq!(run_op(&mut dyn_io, out, 201, read, "read"), 7);
+    assert_eq!(read_pool_bytes(&mut dyn_io, BufId(1), 0, 7), b"coexist");
+}
+
 /// `T1-F10-5`: Open files in `0..files_max` simultaneously alongside sockets in `0..sockets_max`.
 #[test]
 fn t1_f10_5_concurrent_file_and_socket_slots_independent() {
     let limits = file_limits(3, 0, 0, 4096);
     run_on_backends(limits, |io, prefix| {
         let mut out = Completions::new(16);
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
         for s in 0..limits.files_max {
             let p = format!("{prefix}multi_{s}.dat");
+            let tok = 10 + u64::from(s);
             assert_eq!(
                 open_slot(
                     io,
                     &mut out,
-                    10 + u64::from(s),
+                    tok,
                     FileSlot(s),
                     BufId(0),
                     &p,
-                    rw
+                    rw_create(false)
                 ),
                 0
             );
         }
-
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        let bound = io.listen(Sock(0), addr).expect("listen");
-        io.submit(
-            Token(100),
-            Op::Accept {
-                listener: Sock(0),
-                sock: Sock(1),
-            },
-        )
-        .unwrap();
-        io.submit(
-            Token(101),
-            Op::Connect {
-                sock: Sock(2),
-                addr: bound,
-            },
-        )
-        .unwrap();
-        let mut seen = Vec::new();
-        while seen.len() < 2 {
-            io.tick(true, &mut out).expect("tick");
-            while let Some(c) = out.pop() {
-                seen.push(c);
-            }
-        }
-        assert!(seen.iter().all(|c| c.result >= 0));
+        connect_loopback_pair(io, &mut out);
 
         // Write & read on FileSlot(2) while sockets 0, 1, 2 remain open.
-        let mut dyn_io = DynIo(io);
-        write_pool_bytes(&mut dyn_io, BufId(0), 0, b"coexist");
-        assert_eq!(
-            submit_and_wait_one(
-                &mut dyn_io,
-                &mut out,
-                Token(200),
-                Op::FileWrite {
-                    slot: FileSlot(2),
-                    buf: BufId(0),
-                    off: 0,
-                    len: 7,
-                    file_off: 0,
-                },
-                10_000,
-            )
-            .expect("write")
-            .result,
-            7
-        );
-        assert_eq!(
-            submit_and_wait_one(
-                &mut dyn_io,
-                &mut out,
-                Token(201),
-                Op::FileRead {
-                    slot: FileSlot(2),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 7,
-                    file_off: 0,
-                },
-                10_000,
-            )
-            .expect("read")
-            .result,
-            7
-        );
-        assert_eq!(read_pool_bytes(&mut dyn_io, BufId(1), 0, 7), b"coexist");
+        round_trip_slot_2(io, &mut out);
 
         for s in 0..limits.files_max {
             assert_eq!(close_slot(io, &mut out, 300 + u64::from(s), FileSlot(s)), 0);

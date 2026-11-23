@@ -92,25 +92,20 @@ fn uring_close_and_cancel_connect_with_tcp_opts_and_segment_probe() {
     drop(listener);
 }
 
-#[test]
-fn uring_send_zc_close_cancel_and_quiesce_drop_mixed_slots() {
-    let tmp = TempDir::new("uring_quiesce_adv").unwrap();
-    let fpath = tmp.file_path("quiesce.dat");
-    let mut ring = UringIo::new(Limits {
-        sockets_max: 8,
-        accept_range_start: 4,
-        accept_range_len: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        ring_buffers: 4,
-        ring_buffer_size: 256,
-        files_max: 2,
-        ops_max: 16,
-        ..Limits::BASE
+/// Drives until both tokens have completed and returns everything collected.
+fn drive_both(ring: &mut UringIo, out: &mut Completions, a: u64, b: u64) -> Vec<Completion> {
+    drive_until(ring, out, 200, |v| {
+        v.iter().any(|c| c.token == Token(a)) && v.iter().any(|c| c.token == Token(b))
     })
-    .unwrap();
-    let mut out = Completions::new(16);
+    .unwrap()
+}
 
+fn found(cs: &[Completion], token: u64) -> &Completion {
+    cs.iter().find(|c| c.token == Token(token)).unwrap()
+}
+
+/// Accepts one loopback TCP connection from `Sock(1)` and returns the accepted slot.
+fn accept_tcp_pair(ring: &mut UringIo, out: &mut Completions) -> Sock {
     let addr = ring
         .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
         .unwrap();
@@ -124,38 +119,23 @@ fn uring_send_zc_close_cancel_and_quiesce_drop_mixed_slots() {
         },
     )
     .unwrap();
-    let cs = drive_until(&mut ring, &mut out, 200, |v| {
-        v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
-    })
-    .unwrap();
-    let srv = Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
+    let cs = drive_both(ring, out, 1, 2);
+    Sock(u32::try_from(found(&cs, 1).result).unwrap())
+}
 
-    // Arm Recv on srv, send zero-copy, then cancel/close and test quiesce on drop with mixed active ops.
-    ring.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
-    write_pool_bytes(&mut ring, BufId(0), 0, b"zc-payload");
-    ring.submit(
-        Token(4),
-        Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
-            off: 0,
-            len: 10,
-            zero_copy: true,
-        },
-    )
-    .unwrap();
-    let _: Vec<Completion> = drive_until(&mut ring, &mut out, 200, |v| {
-        v.iter().any(|c| c.token == Token(4)) && v.iter().any(|c| c.token == Token(3))
-    })
-    .unwrap();
-    while let Some(c) = out.pop() {
-        if let Some(id) = c.buf {
-            ring.give_back(id);
-        }
+fn send_op(buf: BufId, len: u32, zero_copy: bool) -> Op {
+    Op::Send {
+        sock: Sock(1),
+        buf,
+        off: 0,
+        len,
+        zero_copy,
     }
+}
 
-    // Leave Timer, ArmedAccept, ArmedRecv, FileSlotOpen, and SendZc in-flight and drop ring (exercises quiesce).
-    let plen = write_nul_path(&mut ring, BufId(1), 0, fpath.to_str().unwrap());
+/// Leaves a file open, a long timer, and a zero-copy send in flight next to the armed ops.
+fn leave_mixed_ops_in_flight(ring: &mut UringIo, fpath: &std::path::Path) {
+    let plen = write_nul_path(ring, BufId(1), 0, fpath.to_str().unwrap());
     ring.submit(
         Token(5),
         Op::FileOpen {
@@ -179,18 +159,85 @@ fn uring_send_zc_close_cancel_and_quiesce_drop_mixed_slots() {
         },
     )
     .unwrap();
-    ring.submit(
-        Token(7),
-        Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
-            off: 0,
-            len: 10,
-            zero_copy: true,
-        },
-    )
+    ring.submit(Token(7), send_op(BufId(0), 10, true)).unwrap();
+}
+
+#[test]
+fn uring_send_zc_close_cancel_and_quiesce_drop_mixed_slots() {
+    let tmp = TempDir::new("uring_quiesce_adv").unwrap();
+    let fpath = tmp.file_path("quiesce.dat");
+    let mut ring = UringIo::new(Limits {
+        sockets_max: 8,
+        accept_range_start: 4,
+        accept_range_len: 2,
+        buffers: 2,
+        buffer_size: 4096,
+        ring_buffers: 4,
+        ring_buffer_size: 256,
+        files_max: 2,
+        ops_max: 16,
+        ..Limits::BASE
+    })
     .unwrap();
+    let mut out = Completions::new(16);
+    let srv = accept_tcp_pair(&mut ring, &mut out);
+
+    // Arm Recv on srv, send zero-copy, then cancel/close and test quiesce on drop with mixed active ops.
+    ring.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
+    write_pool_bytes(&mut ring, BufId(0), 0, b"zc-payload");
+    ring.submit(Token(4), send_op(BufId(0), 10, true)).unwrap();
+    let _: Vec<Completion> = drive_both(&mut ring, &mut out, 4, 3);
+    while let Some(c) = out.pop() {
+        if let Some(id) = c.buf {
+            ring.give_back(id);
+        }
+    }
+
+    // Leave Timer, ArmedAccept, ArmedRecv, FileSlotOpen, and SendZc in-flight and drop ring (exercises quiesce).
+    leave_mixed_ops_in_flight(&mut ring, &fpath);
     drop(ring);
+}
+
+fn connect_unix(plen: u32) -> Op {
+    Op::ConnectUnix {
+        sock: Sock(1),
+        path_buf: BufId(0),
+        path_off: 0,
+        path_len: plen,
+    }
+}
+
+/// A Unix connect cancelled in flight ends cleanly or as `-ECANCELED`, and its slot closes.
+fn cancel_unix_connect(ring: &mut UringIo, out: &mut Completions, plen: u32) {
+    ring.submit(Token(1), connect_unix(plen)).unwrap();
+    ring.submit(Token(2), Op::Cancel { target: Token(1) })
+        .unwrap();
+    let cs = drive_both(ring, out, 1, 2);
+    let r1 = found(&cs, 1).result;
+    assert!(r1 == 0 || r1 == -ECANCELED);
+    let _: Completion =
+        submit_and_wait_one(ring, out, Token(3), Op::Close { sock: Sock(1) }, 200).unwrap();
+}
+
+/// Accepts a Unix connection, then receives one 8-byte message on it through a ring buffer.
+fn unix_accept_and_recv(ring: &mut UringIo, out: &mut Completions, plen: u32) -> Sock {
+    ring.submit(Token(10), Op::ArmedAccept { listener: Sock(0) })
+        .unwrap();
+    ring.submit(Token(11), connect_unix(plen)).unwrap();
+    let cs2 = drive_both(ring, out, 10, 11);
+    let srv = Sock(u32::try_from(found(&cs2, 10).result).unwrap());
+    assert_eq!(found(&cs2, 11).result, 0);
+
+    ring.submit(Token(12), Op::ArmedRecv { sock: srv }).unwrap();
+    write_pool_bytes(ring, BufId(1), 0, b"unix-msg");
+    ring.submit(Token(13), send_op(BufId(1), 8, false)).unwrap();
+    let cs3 = drive_both(ring, out, 12, 13);
+    let recv_c = found(&cs3, 12);
+    assert_eq!(recv_c.result, 8);
+    if let Some(id) = recv_c.buf {
+        ring.give_back(id);
+    }
+    srv
 }
 
 #[test]
@@ -216,76 +263,10 @@ fn uring_unix_armed_accept_recv_close_and_shutdown_eof() {
 
     // 1. ConnectUnix cancelled by Cancel and Close.
     let plen = write_nul_path(&mut ring, BufId(0), 0, path_str);
-    ring.submit(
-        Token(1),
-        Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: plen,
-        },
-    )
-    .unwrap();
-    ring.submit(Token(2), Op::Cancel { target: Token(1) })
-        .unwrap();
-    let cs = drive_until(&mut ring, &mut out, 200, |v| {
-        v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
-    })
-    .unwrap();
-    let r1 = cs.iter().find(|c| c.token == Token(1)).unwrap().result;
-    assert!(r1 == 0 || r1 == -ECANCELED);
-    let _: Completion = submit_and_wait_one(
-        &mut ring,
-        &mut out,
-        Token(3),
-        Op::Close { sock: Sock(1) },
-        200,
-    )
-    .unwrap();
+    cancel_unix_connect(&mut ring, &mut out, plen);
 
     // 2. ArmedAccept -> ConnectUnix -> ArmedRecv -> Send -> Close accepted Unix socket -> peer EOF.
-    ring.submit(Token(10), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
-    ring.submit(
-        Token(11),
-        Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: plen,
-        },
-    )
-    .unwrap();
-    let cs2 = drive_until(&mut ring, &mut out, 200, |v| {
-        v.iter().any(|c| c.token == Token(10)) && v.iter().any(|c| c.token == Token(11))
-    })
-    .unwrap();
-    let srv =
-        Sock(u32::try_from(cs2.iter().find(|c| c.token == Token(10)).unwrap().result).unwrap());
-    assert_eq!(cs2.iter().find(|c| c.token == Token(11)).unwrap().result, 0);
-
-    ring.submit(Token(12), Op::ArmedRecv { sock: srv }).unwrap();
-    write_pool_bytes(&mut ring, BufId(1), 0, b"unix-msg");
-    ring.submit(
-        Token(13),
-        Op::Send {
-            sock: Sock(1),
-            buf: BufId(1),
-            off: 0,
-            len: 8,
-            zero_copy: false,
-        },
-    )
-    .unwrap();
-    let cs3 = drive_until(&mut ring, &mut out, 200, |v| {
-        v.iter().any(|c| c.token == Token(12)) && v.iter().any(|c| c.token == Token(13))
-    })
-    .unwrap();
-    let recv_c = cs3.iter().find(|c| c.token == Token(12)).unwrap();
-    assert_eq!(recv_c.result, 8);
-    if let Some(id) = recv_c.buf {
-        ring.give_back(id);
-    }
+    let srv = unix_accept_and_recv(&mut ring, &mut out, plen);
 
     // Close accepted Unix socket (srv) -> peer Recv on Sock(1) must observe clean 0 EOF (shutdown-before-close).
     ring.submit(
@@ -299,11 +280,8 @@ fn uring_unix_armed_accept_recv_close_and_shutdown_eof() {
     )
     .unwrap();
     ring.submit(Token(15), Op::Close { sock: srv }).unwrap();
-    let cs4 = drive_until(&mut ring, &mut out, 200, |v| {
-        v.iter().any(|c| c.token == Token(14)) && v.iter().any(|c| c.token == Token(15))
-    })
-    .unwrap();
-    assert_eq!(cs4.iter().find(|c| c.token == Token(14)).unwrap().result, 0);
+    let cs4 = drive_both(&mut ring, &mut out, 14, 15);
+    assert_eq!(found(&cs4, 14).result, 0);
 }
 
 #[test]

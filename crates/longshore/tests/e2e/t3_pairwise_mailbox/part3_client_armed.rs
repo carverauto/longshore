@@ -8,7 +8,7 @@
 
 use super::PingMsg;
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
-use longshore::mailbox::{mailbox, Config, TryRecv};
+use longshore::mailbox::{mailbox, Config, Receiver, Sender, TryRecv};
 
 #[test]
 fn t3_26_s3_client_portable_waiter_saturation_and_drop_stop() {
@@ -59,33 +59,12 @@ fn t3_26_s3_client_portable_waiter_saturation_and_drop_stop() {
     assert!(server.request_count() >= 6);
 }
 
+/// Runs a backend core on its own thread that answers each ping with
+/// `seq ^ 0xA5A5` until stopped; returns its sender and the thread.
 #[cfg(unix)]
-#[test]
-fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
-    use super::super::harness::{
-        drive_until, posix_backend, read_pool_bytes, submit_and_wait_one, write_pool_bytes,
-    };
-    let fe_limits = Limits {
-        sockets_max: 12,
-        buffers: 4,
-        buffer_size: 4096,
-        accept_range_start: 6,
-        accept_range_len: 4,
-        ring_buffers: 4,
-        ring_buffer_size: 1024,
-        ops_max: 16,
-        ..Limits::BASE
-    };
-    let be_limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    };
-    let mut fe = posix_backend(fe_limits).unwrap();
+fn spawn_ping_backend(be_limits: Limits) -> (Sender<PingMsg, u64>, std::thread::JoinHandle<()>) {
+    use super::super::harness::posix_backend;
     let (tx_ready, rx_ready) = std::sync::mpsc::sync_channel(1);
-
     let be_handle = std::thread::spawn(move || {
         let mut be = posix_backend(be_limits).unwrap();
         let (tx_be, mut io_rx_be) = mailbox::<PingMsg, u64, _>(
@@ -107,26 +86,51 @@ fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
             be.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
                 if io_rx_be.on_completion(&mut be, c).unwrap() {
-                    loop {
-                        match io_rx_be.try_recv() {
-                            TryRecv::Message(msg) => {
-                                assert!(io_rx_be.answer(msg.slot, msg.seq ^ 0xA5A5).is_none());
-                            }
-                            TryRecv::Stop | TryRecv::Closed => {
-                                stop = true;
-                                break;
-                            }
-                            TryRecv::Empty => break,
-                        }
-                    }
+                    stop = answer_pings(&mut io_rx_be);
                 }
             }
         }
         io_rx_be.close(|_| {}, || 0, |_| {});
     });
-    let tx_be = rx_ready.recv().unwrap();
+    (rx_ready.recv().unwrap(), be_handle)
+}
 
-    let mut out_fe = Completions::new(16);
+/// Answers every queued ping; returns `true` once the mailbox stops or closes.
+#[cfg(unix)]
+fn answer_pings(io_rx_be: &mut Receiver<PingMsg, u64>) -> bool {
+    loop {
+        match io_rx_be.try_recv() {
+            TryRecv::Message(msg) => {
+                assert!(io_rx_be.answer(msg.slot, msg.seq ^ 0xA5A5).is_none());
+            }
+            TryRecv::Stop | TryRecv::Closed => return true,
+            TryRecv::Empty => return false,
+        }
+    }
+}
+
+/// Sends the eight bytes of `val` on `sock` from `buf`.
+#[cfg(unix)]
+fn send_u64<IO: Io>(io: &mut IO, token: Token, sock: Sock, buf: BufId, val: u64) {
+    use super::super::harness::write_pool_bytes;
+    write_pool_bytes(io, buf, 0, &val.to_le_bytes());
+    io.submit(
+        token,
+        Op::Send {
+            sock,
+            buf,
+            off: 0,
+            len: 8,
+            zero_copy: false,
+        },
+    )
+    .unwrap();
+}
+
+/// Accepts a loopback connection on an armed listener; returns the server socket.
+#[cfg(unix)]
+fn armed_accept_pair<IO: Io>(fe: &mut IO, out_fe: &mut Completions) -> Sock {
+    use super::super::harness::drive_until;
     let addr = fe.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
     fe.submit(Token(10), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
@@ -138,23 +142,40 @@ fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
         },
     )
     .unwrap();
-    let cs = drive_until(&mut fe, &mut out_fe, 10_000, |v| v.len() == 2).unwrap();
-    let srv =
-        Sock(u32::try_from(cs.iter().find(|c| c.token == Token(10)).unwrap().result).unwrap());
+    let cs = drive_until(fe, out_fe, 10_000, |v| v.len() == 2).unwrap();
+    Sock(u32::try_from(cs.iter().find(|c| c.token == Token(10)).unwrap().result).unwrap())
+}
+
+#[cfg(unix)]
+#[test]
+fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
+    use super::super::harness::{drive_until, posix_backend, read_pool_bytes, submit_and_wait_one};
+    let fe_limits = Limits {
+        sockets_max: 12,
+        buffers: 4,
+        buffer_size: 4096,
+        accept_range_start: 6,
+        accept_range_len: 4,
+        ring_buffers: 4,
+        ring_buffer_size: 1024,
+        ops_max: 16,
+        ..Limits::BASE
+    };
+    let be_limits = Limits {
+        sockets_max: 2,
+        buffers: 1,
+        buffer_size: 64,
+        ops_max: 4,
+        ..Limits::BASE
+    };
+    let mut fe = posix_backend(fe_limits).unwrap();
+    let (tx_be, be_handle) = spawn_ping_backend(be_limits);
+
+    let mut out_fe = Completions::new(16);
+    let srv = armed_accept_pair(&mut fe, &mut out_fe);
     fe.submit(Token(12), Op::ArmedRecv { sock: srv }).unwrap();
 
-    write_pool_bytes(&mut fe, BufId(0), 0, &42u64.to_le_bytes());
-    fe.submit(
-        Token(13),
-        Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
-            off: 0,
-            len: 8,
-            zero_copy: false,
-        },
-    )
-    .unwrap();
+    send_u64(&mut fe, Token(13), Sock(1), BufId(0), 42);
     let rcs = drive_until(&mut fe, &mut out_fe, 10_000, |v| {
         v.iter().any(|c| c.token == Token(12))
     })
@@ -170,18 +191,7 @@ fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
     be_handle.join().unwrap();
     assert_eq!(ans, 42 ^ 0xA5A5);
 
-    write_pool_bytes(&mut fe, BufId(1), 0, &ans.to_le_bytes());
-    fe.submit(
-        Token(14),
-        Op::Send {
-            sock: srv,
-            buf: BufId(1),
-            off: 0,
-            len: 8,
-            zero_copy: false,
-        },
-    )
-    .unwrap();
+    send_u64(&mut fe, Token(14), srv, BufId(1), ans);
     let ack = submit_and_wait_one(
         &mut fe,
         &mut out_fe,

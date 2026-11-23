@@ -9,8 +9,8 @@ use super::super::harness::{
     drive_until, read_pool_bytes, submit_and_wait_one, write_nul_path, write_pool_bytes,
 };
 use super::helpers::{
-    close_slot, file_ops_limits, open_slot, run_on_backends, stat_size, DynIo, LINUX_EEXIST,
-    LINUX_EINVAL,
+    close_slot, file_ops_limits, open_slot, read_at, run_on_backends, run_op, rw_create, stat_size,
+    write_at, DynIo, LINUX_EEXIST, LINUX_EINVAL,
 };
 use longshore::io::{BufId, Completions, FileSlot, Io, Op, OpenFlags, Token, ENOENT};
 
@@ -21,76 +21,27 @@ fn t2_f11_1_read_at_eof_and_short_read() {
     run_on_backends(limits, |io, prefix| {
         let mut out = Completions::new(8);
         let path = format!("{prefix}eof_short.bin");
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
         assert_eq!(
-            open_slot(io, &mut out, 1, FileSlot(0), BufId(0), &path, rw),
+            open_slot(io, &mut out, 1, FileSlot(0), BufId(0), &path, rw_create()),
             0
         );
 
         let payload: Vec<u8> = (0..100u8).collect();
-        let mut d = DynIo(io);
-        write_pool_bytes(&mut d, BufId(0), 0, &payload);
-        assert_eq!(
-            submit_and_wait_one(
-                &mut d,
-                &mut out,
-                Token(2),
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(0),
-                    off: 0,
-                    len: 100,
-                    file_off: 0,
-                },
-                10_000,
-            )
-            .expect("write")
-            .result,
-            100
-        );
+        write_pool_bytes(&mut DynIo(io), BufId(0), 0, &payload);
+        let write = write_at(FileSlot(0), BufId(0), 100, 0);
+        assert_eq!(run_op(io, &mut out, 2, write, "write"), 100);
 
         for (tok, file_off) in [(3u64, 100u64), (4, 4096)] {
-            assert_eq!(
-                submit_and_wait_one(
-                    &mut d,
-                    &mut out,
-                    Token(tok),
-                    Op::FileRead {
-                        slot: FileSlot(0),
-                        buf: BufId(1),
-                        off: 0,
-                        len: 64,
-                        file_off,
-                    },
-                    10_000,
-                )
-                .expect("eof read")
-                .result,
-                0
-            );
+            let read = read_at(FileSlot(0), BufId(1), 64, file_off);
+            assert_eq!(run_op(io, &mut out, tok, read, "eof read"), 0);
         }
 
-        let short = submit_and_wait_one(
-            &mut d,
-            &mut out,
-            Token(5),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(1),
-                off: 0,
-                len: 100,
-                file_off: 60,
-            },
-            10_000,
-        )
-        .expect("short read");
-        assert_eq!(short.result, 40);
-        assert_eq!(read_pool_bytes(&mut d, BufId(1), 0, 40), &payload[60..100]);
+        let short = read_at(FileSlot(0), BufId(1), 100, 60);
+        assert_eq!(run_op(io, &mut out, 5, short, "short read"), 40);
+        assert_eq!(
+            read_pool_bytes(&mut DynIo(io), BufId(1), 0, 40),
+            &payload[60..100]
+        );
         assert_eq!(close_slot(io, &mut out, 6, FileSlot(0)), 0);
     });
 }

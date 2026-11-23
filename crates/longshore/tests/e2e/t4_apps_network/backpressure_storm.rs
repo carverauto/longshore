@@ -35,9 +35,8 @@ fn storm_limits() -> Limits {
     }
 }
 
-fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
-    // 1. Saturate ops_max (4) and verify Busy on submit + submit_chain.
-    let mut small_out = Completions::new(2);
+/// Saturates `ops_max` (4) and checks `Busy` on both `submit` and `submit_chain`.
+fn saturate_ops_max<IO: Io>(io: &mut IO) {
     for t in 1..=4u64 {
         io.submit(Token(t), Op::Timeout { nanos: 100_000 }).unwrap();
     }
@@ -56,11 +55,13 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
         Err(Busy),
         "submit_chain when ops_max full must fail with Busy"
     );
+}
 
-    // 2. Completions::new(2) spillover: 4 ready timers drain cleanly across 2 turns.
+/// `Completions::new(2)` spillover: 4 ready timers drain cleanly across 2 turns.
+fn drain_spillover<IO: Io>(io: &mut IO, small_out: &mut Completions) {
     let mut total_drained = 0usize;
     for _ in 0..20 {
-        io.tick(true, &mut small_out).unwrap();
+        io.tick(true, small_out).unwrap();
         while small_out.pop().is_some() {
             total_drained += 1;
         }
@@ -69,8 +70,15 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
         }
     }
     assert_eq!(total_drained, 4);
+}
 
-    // 3. Saturate accept_range (len=2) with 3rd connect -> -ENFILE/-EMFILE on armed Accept.
+/// Fills the accept range (len=2) with two armed-accepted connections;
+/// returns the bound address and the accepted sockets.
+fn fill_accept_range<IO: Io>(
+    io: &mut IO,
+    small_out: &mut Completions,
+    addr: SocketAddr,
+) -> (SocketAddr, Vec<Sock>) {
     let bound = io.listen(Sock(0), addr).unwrap();
     io.submit(Token(10), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
@@ -87,7 +95,7 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
     let mut accepted = Vec::new();
     let mut conn_ok = 0usize;
     while accepted.len() < 2 || conn_ok < 2 {
-        io.tick(true, &mut small_out).unwrap();
+        io.tick(true, small_out).unwrap();
         while let Some(c) = small_out.pop() {
             if c.token.0 == 10 && c.result >= 0 {
                 accepted.push(Sock(u32::try_from(c.result).unwrap()));
@@ -96,8 +104,12 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
             }
         }
     }
+    (bound, accepted)
+}
 
-    // 3rd connection finds accept_range full!
+/// A 3rd connection finds the accept range full: the armed accept ends with
+/// `-ENFILE`/`-EMFILE`, and the rejected client sees EOF/reset or fails.
+fn third_connect_is_rejected<IO: Io>(io: &mut IO, small_out: &mut Completions, bound: SocketAddr) {
     io.submit(
         Token(22),
         Op::Connect {
@@ -109,7 +121,7 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
     let mut accept_ended = false;
     let mut third_res: Option<i32> = None;
     while !accept_ended || third_res.is_none() {
-        io.tick(true, &mut small_out).unwrap();
+        io.tick(true, small_out).unwrap();
         while let Some(c) = small_out.pop() {
             if c.token.0 == 10 {
                 assert!(!c.more);
@@ -123,7 +135,7 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
     if third_res == Some(0) {
         let peer_end = submit_and_wait_one(
             io,
-            &mut small_out,
+            small_out,
             Token(23),
             Op::Recv {
                 sock: Sock(3),
@@ -139,19 +151,21 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
             "rejected 3rd connection must observe EOF or reset, got {}",
             peer_end.result
         );
-        let _: Completion = submit_and_wait_one(
-            io,
-            &mut small_out,
-            Token(24),
-            Op::Close { sock: Sock(3) },
-            200,
-        )
-        .expect("close the rejected connection");
+        let _: Completion =
+            submit_and_wait_one(io, small_out, Token(24), Op::Close { sock: Sock(3) }, 200)
+                .expect("close the rejected connection");
     } else {
         assert!(third_res.unwrap() < 0);
     }
+}
 
-    // 4. Saturate ring_buffers (2) -> 3rd message triggers -ENOBUFS, give_back recovers.
+/// Saturates the ring buffers (2) until a message triggers `-ENOBUFS`;
+/// returns the ring buffers still held.
+fn exhaust_ring_buffers<IO: Io>(
+    io: &mut IO,
+    small_out: &mut Completions,
+    accepted: &[Sock],
+) -> Vec<BufId> {
     io.submit(Token(30), Op::ArmedRecv { sock: accepted[0] })
         .unwrap();
     io.submit(Token(31), Op::ArmedRecv { sock: accepted[1] })
@@ -173,7 +187,7 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
             },
         )
         .unwrap();
-        let cs = drive_until(io, &mut small_out, 200, |v| {
+        let cs = drive_until(io, small_out, 200, |v| {
             v.iter().any(|c| c.token == send_tok)
                 && v.iter().any(|c| c.buf.is_some() || c.result == -ENOBUFS)
         })
@@ -191,14 +205,24 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
         }
     }
     assert!(saw_enobufs, "ring exhaustion must trigger -ENOBUFS");
+    held_bufs
+}
 
-    // Give buffers back & close one accepted socket -> system recovers cleanly.
+/// Gives the buffers back and closes one accepted socket; a fresh armed
+/// accept and connect then succeed.
+fn recover_after_storm<IO: Io>(
+    io: &mut IO,
+    small_out: &mut Completions,
+    held_bufs: Vec<BufId>,
+    accepted: &[Sock],
+    bound: SocketAddr,
+) {
     for b in held_bufs {
         io.give_back(b);
     }
     let _: Completion = submit_and_wait_one(
         io,
-        &mut small_out,
+        small_out,
         Token(80),
         Op::Close { sock: accepted[1] },
         200,
@@ -214,14 +238,16 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut small_out, 200, |v| {
+    let cs = drive_until(io, small_out, 200, |v| {
         v.iter().any(|c| c.token.0 == 81 && c.result >= 0)
             && v.iter().any(|c| c.token.0 == 82 && c.result == 0)
     })
     .unwrap();
     assert!(cs.iter().any(|c| c.token.0 == 81 && c.result >= 0));
+}
 
-    // 5. Mailbox (cap=2) + Pool (slots=1, waiters=1) dynamic waiter growth storm.
+/// A capacity-2 queue refuses the 3rd message with `Full`.
+fn full_queue_refuses<IO: Io>(io: &mut IO) {
     let (tx, mut io_rx) = longshore::mailbox::queue::<u32, _>(io, 2, Token(90)).unwrap();
     io_rx.arm(io).unwrap();
     assert_eq!(tx.try_send(10), Ok(()));
@@ -230,7 +256,11 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
     assert_eq!(io_rx.try_recv(), TryRecv::Message(10));
     assert_eq!(io_rx.try_recv(), TryRecv::Message(20));
     io_rx.close(|_| {});
+}
 
+/// A one-slot pool with one preallocated waiter serves three more waiting
+/// callers, growing its waiter queue.
+fn pool_waiters_grow() {
     let (tx_p, mut rx_p) = mailbox_parked::<(u32, u32), u32>(Config {
         capacity: 8,
         slots: 1,
@@ -268,6 +298,18 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
     let mut vals: Vec<u32> = threads.into_iter().map(|h| h.join().unwrap()).collect();
     vals.sort_unstable();
     assert_eq!(vals, vec![100, 101, 102]);
+}
+
+fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
+    let mut small_out = Completions::new(2);
+    saturate_ops_max(io);
+    drain_spillover(io, &mut small_out);
+    let (bound, accepted) = fill_accept_range(io, &mut small_out, addr);
+    third_connect_is_rejected(io, &mut small_out, bound);
+    let held_bufs = exhaust_ring_buffers(io, &mut small_out, &accepted);
+    recover_after_storm(io, &mut small_out, held_bufs, &accepted, bound);
+    full_queue_refuses(io);
+    pool_waiters_grow();
 }
 
 #[cfg(feature = "sim")]

@@ -5,7 +5,9 @@
 
 //! Tier 1 E2E tests for Feature 3: `Virtual` world & `SimIo` trace parity (`#41`).
 
-use longshore::io::{BufId, Completions, Io, Limits, Op, Segment, Sock, Token, EAGAIN, ECANCELED};
+use longshore::io::{
+    BufId, Completions, FileId, Io, Limits, Op, Segment, Sock, Token, EAGAIN, ECANCELED,
+};
 use longshore::sim::scenario::echo;
 use longshore::sim::{Faults, SimIo};
 use std::collections::BTreeSet;
@@ -36,23 +38,20 @@ pub(super) fn drain_exact(
     got
 }
 
-pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, u64) {
-    let tcp_addr: SocketAddr = "192.0.2.1:443".parse().unwrap();
-    let udp_addr: SocketAddr = "192.0.2.2:5353".parse().unwrap();
-    let (listener, server, client, udp_srv, udp_cli) =
-        (Sock(0), Sock(1), Sock(2), Sock(3), Sock(4));
+/// The sockets of the all-ops trace.
+const LISTENER: Sock = Sock(0);
+const SERVER: Sock = Sock(1);
+const CLIENT: Sock = Sock(2);
+const UDP_SRV: Sock = Sock(3);
+const UDP_CLI: Sock = Sock(4);
 
-    let mut io = SimIo::new(sim_limits(), seed, faults);
-    let mut out = Completions::new(8);
-    let mut log = Vec::new();
-
-    let file = io.register_file("creds.txt").unwrap();
-    io.set_file(file, Some(b"secret-key"));
-    let _: SocketAddr = io.listen(listener, tcp_addr).unwrap();
-    io.bind_udp(udp_srv, udp_addr);
-    let waker = io.waker().unwrap();
-    waker.wake();
-
+/// Wake, file read, two timers (one cancelled) and a UDP connect.
+fn wake_file_timers_udp_connect(
+    io: &mut SimIo,
+    out: &mut Completions,
+    file: FileId,
+    udp_addr: SocketAddr,
+) -> Vec<(u64, i32)> {
     io.submit(Token(1), Op::AwaitWake).unwrap();
     io.submit(
         Token(2),
@@ -72,18 +71,25 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
     io.submit(
         Token(6),
         Op::ConnectUdp {
-            sock: udp_cli,
+            sock: UDP_CLI,
             addr: udp_addr,
         },
     )
     .unwrap();
-    log.extend(drain_exact(&mut io, &mut out, 6));
+    drain_exact(io, out, 6)
+}
 
+/// A UDP ping plus the TCP accept and connect.
+fn udp_ping_and_tcp_connect(
+    io: &mut SimIo,
+    out: &mut Completions,
+    tcp_addr: SocketAddr,
+) -> Vec<(u64, i32)> {
     io.buf(BufId(1))[..4].copy_from_slice(b"ping");
     io.submit(
         Token(7),
         Op::Send {
-            sock: udp_cli,
+            sock: UDP_CLI,
             buf: BufId(1),
             off: 0,
             len: 4,
@@ -94,7 +100,7 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
     io.submit(
         Token(8),
         Op::Recv {
-            sock: udp_srv,
+            sock: UDP_SRV,
             buf: BufId(2),
             off: 0,
             len: 64,
@@ -104,25 +110,28 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
     io.submit(
         Token(9),
         Op::Accept {
-            listener,
-            sock: server,
+            listener: LISTENER,
+            sock: SERVER,
         },
     )
     .unwrap();
     io.submit(
         Token(10),
         Op::Connect {
-            sock: client,
+            sock: CLIENT,
             addr: tcp_addr,
         },
     )
     .unwrap();
-    log.extend(drain_exact(&mut io, &mut out, 4));
+    drain_exact(io, out, 4)
+}
 
+/// An idle `RecvNow` and a cancel of an unknown token.
+fn idle_recv_now_and_stray_cancel(io: &mut SimIo, out: &mut Completions) -> Vec<(u64, i32)> {
     io.submit(
         Token(11),
         Op::RecvNow {
-            sock: server,
+            sock: SERVER,
             buf: BufId(3),
             off: 0,
             len: 64,
@@ -131,8 +140,12 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
     .unwrap();
     io.submit(Token(12), Op::Cancel { target: Token(999) })
         .unwrap();
-    log.extend(drain_exact(&mut io, &mut out, 2));
+    drain_exact(io, out, 2)
+}
 
+/// Streams a payload from client to server with zero-copy sends, resubmitting
+/// after short transfers, and logs every completion.
+fn stream_payload(io: &mut SimIo, out: &mut Completions, log: &mut Vec<(u64, i32)>) {
     let payload = b"hello-stream-payload";
     let (mut sent, mut recvd, mut tok) = (0usize, 0usize, 20u64);
     io.buf(BufId(0))[..payload.len()].copy_from_slice(payload);
@@ -142,7 +155,7 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
             io.submit(
                 Token(tok),
                 Op::Send {
-                    sock: client,
+                    sock: CLIENT,
                     buf: BufId(0),
                     off: sent as u32,
                     len: (payload.len() - sent) as u32,
@@ -157,7 +170,7 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
         io.submit(
             Token(rtok),
             Op::Recv {
-                sock: server,
+                sock: SERVER,
                 buf: BufId(3),
                 off: recvd as u32,
                 len: (payload.len() - recvd) as u32,
@@ -166,7 +179,7 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
         .unwrap();
         tok += 1;
         submitted += 1;
-        for (t, r) in drain_exact(&mut io, &mut out, submitted) {
+        for (t, r) in drain_exact(io, out, submitted) {
             log.push((t, r));
             if t == rtok {
                 recvd += usize::try_from(r).unwrap();
@@ -175,8 +188,31 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
             }
         }
     }
+}
 
-    for (idx, sock) in [client, server, listener, udp_cli, udp_srv]
+pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, u64) {
+    let tcp_addr: SocketAddr = "192.0.2.1:443".parse().unwrap();
+    let udp_addr: SocketAddr = "192.0.2.2:5353".parse().unwrap();
+
+    let mut io = SimIo::new(sim_limits(), seed, faults);
+    let mut out = Completions::new(8);
+    let mut log = Vec::new();
+
+    let file = io.register_file("creds.txt").unwrap();
+    io.set_file(file, Some(b"secret-key"));
+    let _: SocketAddr = io.listen(LISTENER, tcp_addr).unwrap();
+    io.bind_udp(UDP_SRV, udp_addr);
+    let waker = io.waker().unwrap();
+    waker.wake();
+
+    log.extend(wake_file_timers_udp_connect(
+        &mut io, &mut out, file, udp_addr,
+    ));
+    log.extend(udp_ping_and_tcp_connect(&mut io, &mut out, tcp_addr));
+    log.extend(idle_recv_now_and_stray_cancel(&mut io, &mut out));
+    stream_payload(&mut io, &mut out, &mut log);
+
+    for (idx, sock) in [CLIENT, SERVER, LISTENER, UDP_CLI, UDP_SRV]
         .into_iter()
         .enumerate()
     {

@@ -11,7 +11,50 @@ use super::helpers::{
     LINUX_EIO, LINUX_ENOSPC, LINUX_EOPNOTSUPP,
 };
 use longshore::io::{BufId, Completions, FileSlot, Op, OpenFlags, Token, ENOENT};
-use longshore::sim::{DiskFaults, PlacedFault};
+use longshore::sim::{DiskFaults, PlacedFault, SimIo};
+
+/// With `reserve_refused` and then `punch_refused` at the full rate, a
+/// `FileReserve` fails with `ENOSPC` and a `FilePunch` with `EOPNOTSUPP`.
+fn reserve_and_punch_refused(sim: &mut SimIo, out: &mut Completions) {
+    sim.set_disk_faults(DiskFaults {
+        reserve_refused: 1_000_000,
+        ..Default::default()
+    });
+    let res_r = submit_and_wait_one(
+        sim,
+        out,
+        Token(4),
+        Op::FileReserve {
+            slot: FileSlot(0),
+            file_off: 4096,
+            len: 4096,
+            keep_size: false,
+        },
+        10_000,
+    )
+    .unwrap();
+    assert_eq!(res_r.result, -LINUX_ENOSPC);
+    assert_eq!(sim.disk_fault_counters().reserve_refused, 1);
+
+    sim.set_disk_faults(DiskFaults {
+        punch_refused: 1_000_000,
+        ..Default::default()
+    });
+    let res_p = submit_and_wait_one(
+        sim,
+        out,
+        Token(5),
+        Op::FilePunch {
+            slot: FileSlot(0),
+            file_off: 0,
+            len: 4096,
+        },
+        10_000,
+    )
+    .unwrap();
+    assert_eq!(res_p.result, -LINUX_EOPNOTSUPP);
+    assert_eq!(sim.disk_fault_counters().punch_refused, 1);
+}
 
 /// `T1-F16-3`: Isolate `read_error`, `read_bit_flip`, `failed_sync`, `refused_reserve`, `refused_punch`.
 #[test]
@@ -43,44 +86,7 @@ fn t1_f16_3_read_error_bit_flip_sync_fail_reserve_punch_faults() {
     );
     assert_eq!(sim.disk_fault_counters().sync_fail, 1);
 
-    sim.set_disk_faults(DiskFaults {
-        reserve_refused: 1_000_000,
-        ..Default::default()
-    });
-    let res_r = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(4),
-        Op::FileReserve {
-            slot: FileSlot(0),
-            file_off: 4096,
-            len: 4096,
-            keep_size: false,
-        },
-        10_000,
-    )
-    .unwrap();
-    assert_eq!(res_r.result, -LINUX_ENOSPC);
-    assert_eq!(sim.disk_fault_counters().reserve_refused, 1);
-
-    sim.set_disk_faults(DiskFaults {
-        punch_refused: 1_000_000,
-        ..Default::default()
-    });
-    let res_p = submit_and_wait_one(
-        &mut sim,
-        &mut out,
-        Token(5),
-        Op::FilePunch {
-            slot: FileSlot(0),
-            file_off: 0,
-            len: 4096,
-        },
-        10_000,
-    )
-    .unwrap();
-    assert_eq!(res_p.result, -LINUX_EOPNOTSUPP);
-    assert_eq!(sim.disk_fault_counters().punch_refused, 1);
+    reserve_and_punch_refused(&mut sim, &mut out);
 
     sim.set_disk_faults(DiskFaults {
         bit_flip: 1_000_000,
@@ -100,6 +106,26 @@ fn t1_f16_3_read_error_bit_flip_sync_fail_reserve_punch_faults() {
         Err(-LINUX_EIO)
     );
     assert_eq!(sim.disk_fault_counters().read_error, 1);
+}
+
+/// Stats `path` (staged in `BufId(0)`) and returns the result.
+fn status_of(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) -> i32 {
+    let len = write_nul_path(sim, BufId(0), 0, path);
+    submit_and_wait_one(
+        sim,
+        out,
+        Token(tok),
+        Op::FileStatus {
+            path_buf: BufId(0),
+            path_off: 0,
+            path_len: len,
+            out_buf: BufId(2),
+            out_off: 0,
+        },
+        10_000,
+    )
+    .unwrap()
+    .result
 }
 
 /// `T1-F16-4`: `PlacedFault::FailAfter` on op #5 (`FileRename`) applies rename and returns `-EIO`.
@@ -145,44 +171,8 @@ fn t1_f16_4_placed_fail_after_on_rename_takes_effect_and_returns_eio() {
     .unwrap();
     assert_eq!(rn.result, -LINUX_EIO);
 
-    let l_chk = write_nul_path(&mut sim, BufId(0), 0, "/p_old.dat");
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(6),
-            Op::FileStatus {
-                path_buf: BufId(0),
-                path_off: 0,
-                path_len: l_chk,
-                out_buf: BufId(2),
-                out_off: 0,
-            },
-            10_000,
-        )
-        .unwrap()
-        .result,
-        -ENOENT
-    );
-    let l_new_chk = write_nul_path(&mut sim, BufId(0), 0, "/p_new.dat");
-    assert_eq!(
-        submit_and_wait_one(
-            &mut sim,
-            &mut out,
-            Token(7),
-            Op::FileStatus {
-                path_buf: BufId(0),
-                path_off: 0,
-                path_len: l_new_chk,
-                out_buf: BufId(2),
-                out_off: 0,
-            },
-            10_000,
-        )
-        .unwrap()
-        .result,
-        0
-    );
+    assert_eq!(status_of(&mut sim, &mut out, 6, "/p_old.dat"), -ENOENT);
+    assert_eq!(status_of(&mut sim, &mut out, 7, "/p_new.dat"), 0);
     let _: i32 = sync_root_dir(&mut sim, &mut out, 8, FileSlot(1));
 }
 

@@ -6,10 +6,13 @@
 //! Shared helpers for Features 14 & 15 (`t12_sim_disk_durability`).
 
 use super::super::harness::{
-    read_pool_bytes, submit_and_wait_one, write_nul_path, write_pool_bytes,
+    drive_until, read_pool_bytes, submit_and_wait_one, write_nul_path, write_pool_bytes,
 };
-use longshore::io::{BufId, Completions, FileSlot, Limits, Op, OpenFlags, Token, ENOENT};
+use longshore::io::{
+    BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token, ENOENT,
+};
 use longshore::sim::{DiskConfig, Faults, SimIo};
+use std::net::SocketAddr;
 
 pub const LINUX_EIO: i32 = 5;
 pub const LINUX_ENOSPC: i32 = 28;
@@ -198,4 +201,32 @@ pub fn stat_exists(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str)
         assert_eq!(r, 0, "unexpected FileStatus error {r}");
         true
     }
+}
+
+/// Listens on `Sock(0)` at `addr`, accepts `Sock(1)` (token `tok`) and
+/// connects `Sock(2)` (token `tok + 1`); returns both completions.
+pub fn listen_accept_connect(
+    sim: &mut SimIo,
+    out: &mut Completions,
+    addr: SocketAddr,
+    tok: u64,
+) -> Vec<Completion> {
+    let _: SocketAddr = sim.listen(Sock(0), addr).unwrap();
+    sim.submit(
+        Token(tok),
+        Op::Accept {
+            listener: Sock(0),
+            sock: Sock(1),
+        },
+    )
+    .unwrap();
+    sim.submit(
+        Token(tok + 1),
+        Op::Connect {
+            sock: Sock(2),
+            addr,
+        },
+    )
+    .unwrap();
+    drive_until(sim, out, 100, |v| v.len() == 2).unwrap()
 }

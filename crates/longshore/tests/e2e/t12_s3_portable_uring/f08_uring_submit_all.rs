@@ -199,13 +199,10 @@ fn t1_f08_3_uring_multi_sqe_turns_return_ok_with_exact_consumed_count() {
     }
 }
 
+/// Accepts `Sock(1)` from a `Sock(2)` connect and opens `mixed.dat` in `FileSlot(0)`, all in one
+/// batch.
 #[cfg(target_os = "linux")]
-#[test]
-fn t1_f08_4_uring_mixed_socket_and_file_ops_single_turn() {
-    let dir = TempDir::new("f08_mixed").unwrap();
-    let mut io = UringIo::new(file_limits(16)).expect("uring");
-    let mut out = Completions::new(16);
-
+fn connect_and_open_together(io: &mut UringIo, out: &mut Completions, dir: &TempDir) {
     let bound = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
     io.submit(
         Token(1),
@@ -224,7 +221,7 @@ fn t1_f08_4_uring_mixed_socket_and_file_ops_single_turn() {
     )
     .unwrap();
     let fpath = dir.file_path("mixed.dat");
-    let flen = write_nul_path(&mut io, BufId(0), 0, fpath.to_str().unwrap());
+    let flen = write_nul_path(io, BufId(0), 0, fpath.to_str().unwrap());
     io.submit(
         Token(3),
         Op::FileOpen {
@@ -236,51 +233,51 @@ fn t1_f08_4_uring_mixed_socket_and_file_ops_single_turn() {
         },
     )
     .unwrap();
-    let _: Vec<longshore::io::Completion> =
-        drive_until(&mut io, &mut out, 1_000, |v| v.len() == 3).unwrap();
+    let _: Vec<longshore::io::Completion> = drive_until(io, out, 1_000, |v| v.len() == 3).unwrap();
+}
 
-    write_pool_bytes(&mut io, BufId(1), 0, b"sock-msg");
-    write_pool_bytes(&mut io, BufId(2), 0, b"file-msg");
-    io.submit(
-        Token(10),
-        Op::Send {
-            sock: Sock(2),
-            buf: BufId(1),
-            off: 0,
-            len: 8,
-            zero_copy: false,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(11),
-        Op::Recv {
-            sock: Sock(1),
-            buf: BufId(3),
-            off: 0,
-            len: 64,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(12),
-        Op::FileWrite {
-            slot: FileSlot(0),
-            buf: BufId(2),
-            off: 0,
-            len: 8,
-            file_off: 0,
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(13),
-        Op::FileSync {
-            slot: FileSlot(0),
-            datasync: true,
-        },
-    )
-    .unwrap();
+/// Submits a socket send and receive next to a file write and sync (tokens 10..=13).
+#[cfg(target_os = "linux")]
+fn submit_mixed_batch(io: &mut UringIo) {
+    write_pool_bytes(io, BufId(1), 0, b"sock-msg");
+    write_pool_bytes(io, BufId(2), 0, b"file-msg");
+    let send = Op::Send {
+        sock: Sock(2),
+        buf: BufId(1),
+        off: 0,
+        len: 8,
+        zero_copy: false,
+    };
+    let recv = Op::Recv {
+        sock: Sock(1),
+        buf: BufId(3),
+        off: 0,
+        len: 64,
+    };
+    let write = Op::FileWrite {
+        slot: FileSlot(0),
+        buf: BufId(2),
+        off: 0,
+        len: 8,
+        file_off: 0,
+    };
+    let sync = Op::FileSync {
+        slot: FileSlot(0),
+        datasync: true,
+    };
+    for (tok, op) in [(10, send), (11, recv), (12, write), (13, sync)] {
+        io.submit(Token(tok), op).unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn t1_f08_4_uring_mixed_socket_and_file_ops_single_turn() {
+    let dir = TempDir::new("f08_mixed").unwrap();
+    let mut io = UringIo::new(file_limits(16)).expect("uring");
+    let mut out = Completions::new(16);
+    connect_and_open_together(&mut io, &mut out, &dir);
+    submit_mixed_batch(&mut io);
 
     let mut cs = drive_until(&mut io, &mut out, 1_000, |v| v.len() == 4).unwrap();
     cs.sort_by_key(|c| c.token.0);

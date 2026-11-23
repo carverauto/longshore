@@ -58,29 +58,35 @@ fn t2_f09_1_invalid_block_size_rejected() {
     }
 }
 
-/// `T2-F09-2`: Unprivileged child lowering `RLIMIT_MEMLOCK` gets descriptive error on `UringIo`.
 #[cfg(target_os = "linux")]
-#[test]
-fn t2_f09_2_linux_rlimit_memlock_descriptive_error() {
-    const CHILD_ENV: &str = "LONGSHORE_E2E_F09_MEMLOCK_CHILD";
-    if std::env::var(CHILD_ENV).is_ok() {
-        #[repr(C)]
-        struct RLimit {
-            rlim_cur: u64,
-            rlim_max: u64,
-        }
-        extern "C" {
-            fn getrlimit(resource: i32, rlim: *mut RLimit) -> i32;
-            fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
-            fn geteuid() -> u32;
-            fn setuid(uid: u32) -> i32;
-            fn setgid(gid: u32) -> i32;
-        }
-        const RLIMIT_MEMLOCK: i32 = 8;
+mod memlock_child {
+    use longshore::io::uring::UringIo;
+    use longshore::io::Limits;
+
+    #[repr(C)]
+    struct RLimit {
+        rlim_cur: u64,
+        rlim_max: u64,
+    }
+    extern "C" {
+        fn getrlimit(resource: i32, rlim: *mut RLimit) -> i32;
+        fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
+        fn geteuid() -> u32;
+        fn setuid(uid: u32) -> i32;
+        fn setgid(gid: u32) -> i32;
+    }
+    const RLIMIT_MEMLOCK: i32 = 8;
+
+    /// Drops root to `nobody` so `RLIMIT_MEMLOCK` applies.
+    fn drop_root() {
         if unsafe { geteuid() } == 0 {
             assert_eq!(unsafe { setgid(65534) }, 0, "setgid nobody");
             assert_eq!(unsafe { setuid(65534) }, 0, "setuid nobody");
         }
+    }
+
+    /// Lowers `RLIMIT_MEMLOCK` to the smallest power of two that still lets a tiny ring build.
+    fn lowest_workable_memlock() -> u64 {
         let mut orig = RLimit {
             rlim_cur: 0,
             rlim_max: 0,
@@ -110,7 +116,13 @@ fn t2_f09_2_linux_rlimit_memlock_descriptive_error() {
                 break;
             }
         }
-        let cap = chosen.expect("found RLIMIT_MEMLOCK high enough for ring setup");
+        chosen.expect("found RLIMIT_MEMLOCK high enough for ring setup")
+    }
+
+    /// In the child: a pool 1 MiB above the lowered limit fails with a descriptive error.
+    pub(super) fn run() {
+        drop_root();
+        let cap = lowest_workable_memlock();
         let pool_target = (cap as u32).saturating_add(1 << 20);
         let limits = Limits {
             sockets_max: 2,
@@ -138,6 +150,16 @@ fn t2_f09_2_linux_rlimit_memlock_descriptive_error() {
             "error must name pool_bytes ({}): {msg}",
             limits.pool_bytes()
         );
+    }
+}
+
+/// `T2-F09-2`: Unprivileged child lowering `RLIMIT_MEMLOCK` gets descriptive error on `UringIo`.
+#[cfg(target_os = "linux")]
+#[test]
+fn t2_f09_2_linux_rlimit_memlock_descriptive_error() {
+    const CHILD_ENV: &str = "LONGSHORE_E2E_F09_MEMLOCK_CHILD";
+    if std::env::var(CHILD_ENV).is_ok() {
+        memlock_child::run();
         return;
     }
 

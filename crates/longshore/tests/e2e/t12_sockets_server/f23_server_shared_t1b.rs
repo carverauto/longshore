@@ -5,14 +5,14 @@
 
 //! Feature 23 Tier 1 (part B) E2E tests: reset faults & Linux kernel server checks.
 
-#[cfg(any(feature = "sim", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 use super::super::harness::drive_until;
 #[cfg(target_os = "linux")]
 use super::super::harness::write_pool_bytes as write_pool_bytes_linux;
 #[cfg(feature = "sim")]
 use super::super::harness::{read_pool_bytes, write_pool_bytes};
 #[cfg(feature = "sim")]
-use super::f23_server_shared_t1a::server_limits;
+use super::f23_server_shared_t1a::{server_limits, sim_accept_connect};
 #[cfg(target_os = "linux")]
 use longshore::io::uring::UringIo;
 #[cfg(target_os = "linux")]
@@ -39,24 +39,7 @@ fn t1_f23_3_sim_armed_recv_under_reset_delivers_prior_bytes_then_final_reset() {
     let addr = io
         .listen(Sock(0), "192.0.2.23:9303".parse().unwrap())
         .unwrap();
-    io.submit(
-        Token(1),
-        Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
-        },
-    )
-    .unwrap();
-    io.submit(
-        Token(2),
-        Op::Connect {
-            sock: Sock(1),
-            addr,
-        },
-    )
-    .unwrap();
-    let _: Vec<longshore::io::Completion> =
-        drive_until(&mut io, &mut out, 60, |v| v.len() == 2).unwrap();
+    sim_accept_connect(&mut io, &mut out, addr, 60);
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();

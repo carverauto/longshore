@@ -125,85 +125,87 @@ fn t1_f20_3_non_armed_trace_hash_parity_preserved() {
     assert_ne!(hashes[0], 0);
 }
 
+/// Accepts `Sock(2)` from a `Sock(1)` connect on a fresh simulator.
+#[cfg(feature = "sim")]
+fn sim_with_pair() -> (SimIo, Completions) {
+    let limits = Limits {
+        sockets_max: 4,
+        buffers: 2,
+        buffer_size: 1024,
+        ops_max: 8,
+        ring_buffers: 4,
+        ring_buffer_size: 1024,
+        ..Limits::BASE
+    };
+    let mut io = SimIo::new(limits, 2004, Faults::default());
+    let mut out = Completions::new(16);
+    let addr = io.listen(Sock(0), ADDR).unwrap();
+    io.submit(
+        Token(1),
+        Op::Accept {
+            listener: Sock(0),
+            sock: Sock(2),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token(2),
+        Op::Connect {
+            sock: Sock(1),
+            addr,
+        },
+    )
+    .unwrap();
+    let _: Vec<Completion> = drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    (io, out)
+}
+
+/// Sends `bytes` from `Sock(1)` and drives until the armed receive (token 3) completes.
+#[cfg(feature = "sim")]
+fn send_and_await_armed_recv(
+    io: &mut SimIo,
+    out: &mut Completions,
+    token: Token,
+    bytes: &[u8],
+) -> Vec<Completion> {
+    write_pool_bytes(io, BufId(0), 0, bytes);
+    io.submit(
+        token,
+        Op::Send {
+            sock: Sock(1),
+            buf: BufId(0),
+            off: 0,
+            len: u32::try_from(bytes.len()).unwrap(),
+            zero_copy: false,
+        },
+    )
+    .unwrap();
+    drive_until(io, out, 30, |v| v.iter().any(|c| c.token == Token(3))).unwrap()
+}
+
+/// Trace hash after two armed receives, either holding or returning the first ring buffer.
+#[cfg(feature = "sim")]
+fn armed_recv_trace_hash(consume_one_first: bool) -> u64 {
+    let (mut io, mut out) = sim_with_pair();
+    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
+        .unwrap();
+    let cs = send_and_await_armed_recv(&mut io, &mut out, Token(4), b"first");
+    let r = cs.iter().find(|c| c.token == Token(3)).unwrap();
+    assert!(r.more);
+    let id = r.buf.expect("ring buf id");
+    if consume_one_first {
+        let _: BufId = id;
+    } else {
+        io.give_back(id);
+    }
+    let _: Vec<Completion> = send_and_await_armed_recv(&mut io, &mut out, Token(5), b"second");
+    io.trace_hash()
+}
+
 #[cfg(feature = "sim")]
 #[test]
 fn t1_f20_4_armed_completion_more_and_buf_affect_trace_hash() {
-    let run_with_skip = |consume_one_first: bool| -> u64 {
-        let limits = Limits {
-            sockets_max: 4,
-            buffers: 2,
-            buffer_size: 1024,
-            ops_max: 8,
-            ring_buffers: 4,
-            ring_buffer_size: 1024,
-            ..Limits::BASE
-        };
-        let mut io = SimIo::new(limits, 2004, Faults::default());
-        let mut out = Completions::new(16);
-        let addr = io.listen(Sock(0), ADDR).unwrap();
-        io.submit(
-            Token(1),
-            Op::Accept {
-                listener: Sock(0),
-                sock: Sock(2),
-            },
-        )
-        .unwrap();
-        io.submit(
-            Token(2),
-            Op::Connect {
-                sock: Sock(1),
-                addr,
-            },
-        )
-        .unwrap();
-        let _: Vec<Completion> = drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
-
-        io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
-            .unwrap();
-        write_pool_bytes(&mut io, BufId(0), 0, b"first");
-        io.submit(
-            Token(4),
-            Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
-                off: 0,
-                len: 5,
-                zero_copy: false,
-            },
-        )
-        .unwrap();
-        let cs = drive_until(&mut io, &mut out, 30, |v| {
-            v.iter().any(|c| c.token == Token(3))
-        })
-        .unwrap();
-        let r = cs.iter().find(|c| c.token == Token(3)).unwrap();
-        assert!(r.more);
-        let id = r.buf.expect("ring buf id");
-        if consume_one_first {
-            let _: BufId = id;
-        } else {
-            io.give_back(id);
-        }
-        write_pool_bytes(&mut io, BufId(0), 0, b"second");
-        io.submit(
-            Token(5),
-            Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
-                off: 0,
-                len: 6,
-                zero_copy: false,
-            },
-        )
-        .unwrap();
-        let _: Vec<Completion> = drive_until(&mut io, &mut out, 30, |v| {
-            v.iter().any(|c| c.token == Token(3))
-        })
-        .unwrap();
-        io.trace_hash()
-    };
-    assert_ne!(run_with_skip(true), run_with_skip(false));
+    assert_ne!(armed_recv_trace_hash(true), armed_recv_trace_hash(false));
 }
 
 #[cfg(target_os = "linux")]

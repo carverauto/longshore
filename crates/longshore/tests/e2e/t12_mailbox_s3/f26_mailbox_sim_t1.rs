@@ -31,6 +31,47 @@ pub(super) enum CoreTick {
     B,
 }
 
+/// Gives core B real network traffic: a loopback pair and one 10-byte send.
+#[cfg(feature = "sim")]
+fn connect_and_send_on_core_b(core_b: &mut SimIo, out_b: &mut Completions) {
+    let addr: SocketAddr = "192.0.2.26:9600".parse().unwrap();
+    let _: SocketAddr = core_b.listen(Sock(0), addr).unwrap();
+    core_b
+        .submit(
+            Token(50),
+            Op::Accept {
+                listener: Sock(0),
+                sock: Sock(2),
+            },
+        )
+        .unwrap();
+    core_b
+        .submit(
+            Token(51),
+            Op::Connect {
+                sock: Sock(1),
+                addr,
+            },
+        )
+        .unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until_nonblocking(core_b, out_b, 20, |v| v.len() == 2)
+            .expect("accept and connect complete");
+    write_pool_bytes(core_b, BufId(0), 0, b"core-b-net");
+    core_b
+        .submit(
+            Token(52),
+            Op::Send {
+                sock: Sock(1),
+                buf: BufId(0),
+                off: 0,
+                len: 10,
+                zero_copy: false,
+            },
+        )
+        .unwrap();
+}
+
 #[cfg(feature = "sim")]
 pub(super) fn run_two_core_ping_pong(
     seed_a: u64,
@@ -55,42 +96,7 @@ pub(super) fn run_two_core_ping_pong(
     m_ab.arm(&mut core_b).unwrap();
     m_ba.arm(&mut core_a).unwrap();
 
-    let addr: SocketAddr = "192.0.2.26:9600".parse().unwrap();
-    let _: SocketAddr = core_b.listen(Sock(0), addr).unwrap();
-    core_b
-        .submit(
-            Token(50),
-            Op::Accept {
-                listener: Sock(0),
-                sock: Sock(2),
-            },
-        )
-        .unwrap();
-    core_b
-        .submit(
-            Token(51),
-            Op::Connect {
-                sock: Sock(1),
-                addr,
-            },
-        )
-        .unwrap();
-    let _: Vec<longshore::io::Completion> =
-        drive_until_nonblocking(&mut core_b, &mut out_b, 20, |v| v.len() == 2)
-            .expect("accept and connect complete");
-    write_pool_bytes(&mut core_b, BufId(0), 0, b"core-b-net");
-    core_b
-        .submit(
-            Token(52),
-            Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
-                off: 0,
-                len: 10,
-                zero_copy: false,
-            },
-        )
-        .unwrap();
+    connect_and_send_on_core_b(&mut core_b, &mut out_b);
 
     let mut b_seen = Vec::new();
     let mut a_seen = Vec::new();

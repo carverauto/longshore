@@ -167,6 +167,61 @@ pub fn close_slot(io: &mut dyn Io, out: &mut Completions, tok: u64, slot: FileSl
     .result
 }
 
+/// Submits `op` under `Token(tok)`, waits for it, and returns its result.
+pub fn run_op(io: &mut dyn Io, out: &mut Completions, tok: u64, op: Op, what: &str) -> i32 {
+    submit_and_wait_one(&mut DynIo(io), out, Token(tok), op, 10_000)
+        .expect(what)
+        .result
+}
+
+/// Read, write, and create.
+pub fn rw_create() -> OpenFlags {
+    OpenFlags {
+        read: true,
+        write: true,
+        create: true,
+        ..Default::default()
+    }
+}
+
+/// `FileWrite` of `len` bytes from the start of `buf` at `file_off` in `slot`.
+pub fn write_at(slot: FileSlot, buf: BufId, len: u32, file_off: u64) -> Op {
+    Op::FileWrite {
+        slot,
+        buf,
+        off: 0,
+        len,
+        file_off,
+    }
+}
+
+/// `FileRead` of `len` bytes into the start of `buf` from `file_off` in `slot`.
+pub fn read_at(slot: FileSlot, buf: BufId, len: u32, file_off: u64) -> Op {
+    Op::FileRead {
+        slot,
+        buf,
+        off: 0,
+        len,
+        file_off,
+    }
+}
+
+/// Renames `old` to `new`, staging the paths in buffers 0 and 1.
+pub fn rename(io: &mut dyn Io, out: &mut Completions, tok: u64, old: &str, new: &str) -> i32 {
+    let mut d = DynIo(io);
+    let old_len = write_nul_path(&mut d, BufId(0), 0, old);
+    let new_len = write_nul_path(&mut d, BufId(1), 0, new);
+    let op = Op::FileRename {
+        old_buf: BufId(0),
+        old_off: 0,
+        old_len,
+        new_buf: BufId(1),
+        new_off: 0,
+        new_len,
+    };
+    run_op(io, out, tok, op, "rename")
+}
+
 pub fn stat_size(
     io: &mut dyn Io,
     out: &mut Completions,

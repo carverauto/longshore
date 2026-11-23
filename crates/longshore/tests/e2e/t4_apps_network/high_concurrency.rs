@@ -35,13 +35,13 @@ fn server_limits() -> Limits {
     }
 }
 
-fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
-    let mut out = Completions::new(64);
-    let bound = io.listen(LISTENER, addr).unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: LISTENER })
-        .unwrap();
-
-    // 1. Connect 20 idle clients and arm Recv on every accepted socket.
+/// Connects 20 idle clients through the armed accept; returns the accepted
+/// server sockets and the client sockets.
+fn connect_idle_clients<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    bound: SocketAddr,
+) -> (Vec<Sock>, Vec<Sock>) {
     let mut srv_socks = Vec::with_capacity(IDLE_CLIENTS as usize);
     let mut cli_socks = Vec::with_capacity(IDLE_CLIENTS as usize);
     for i in 0..IDLE_CLIENTS {
@@ -58,7 +58,7 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
     }
 
     while srv_socks.len() < IDLE_CLIENTS as usize {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
             if c.token.0 == 1 {
                 assert!(c.more && c.result >= 0, "accept must remain armed");
@@ -74,26 +74,45 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
             }
         }
     }
+    (srv_socks, cli_socks)
+}
 
+/// Arms recv on every accepted socket, then pumps a short timer while all
+/// clients stay silent: no ring buffer may be consumed.
+fn idle_armed_recvs_hold_no_buffers<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    srv_socks: &[Sock],
+) {
     for (idx, &ss) in srv_socks.iter().enumerate() {
         io.submit(Token(1000 + idx as u64), Op::ArmedRecv { sock: ss })
             .unwrap();
     }
-    // Pump briefly with a short timer while all 20 clients remain silent:
-    // zero ring buffers may be consumed (-ENOBUFS must not occur).
     io.submit(Token(500), Op::Timeout { nanos: 1_000_000 })
         .unwrap();
-    let idle_cs = drive_until(io, &mut out, 200, |v| v.iter().any(|c| c.token.0 == 500)).unwrap();
+    let idle_cs = drive_until(io, out, 200, |v| v.iter().any(|c| c.token.0 == 500)).unwrap();
     for c in idle_cs {
         if c.token.0 >= 1000 {
             panic!("idle armed recv must not complete or consume buffer: {c:?}");
         }
     }
+}
 
-    // 2. Burst 17 messages without calling give_back -> intentionally exhaust all 16 ring buffers!
-    let mut held_bufs: Vec<BufId> = Vec::new();
-    let mut ended_socks: Vec<usize> = Vec::new();
-    let mut saw_enobufs = false;
+/// Ring buffers held and armed recvs ended by `-ENOBUFS` during the burst.
+#[derive(Default)]
+struct Exhaustion {
+    held_bufs: Vec<BufId>,
+    ended_socks: Vec<usize>,
+    saw_enobufs: bool,
+}
+
+/// Bursts up to 18 messages without `give_back`, stopping at the first `-ENOBUFS`.
+fn burst_without_give_back<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    cli_socks: &[Sock],
+    ex: &mut Exhaustion,
+) {
     for burst in 0..(RING_BUFS + 2) {
         let msg = [0x60 + burst as u8; 64];
         write_pool_bytes(io, BufId(0), 0, &msg);
@@ -109,57 +128,62 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
             },
         )
         .unwrap();
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
             if c.token.0 >= 1000 && c.token.0 < 2000 {
                 if c.result > 0 {
                     if let Some(bid) = c.buf {
-                        held_bufs.push(bid);
+                        ex.held_bufs.push(bid);
                     }
                 } else if c.result == -ENOBUFS {
                     assert!(!c.more, "-ENOBUFS must end armed Recv with more=false");
                     assert!(c.buf.is_none());
-                    ended_socks.push((c.token.0 - 1000) as usize);
-                    saw_enobufs = true;
+                    ex.ended_socks.push((c.token.0 - 1000) as usize);
+                    ex.saw_enobufs = true;
                 }
             }
         }
-        if saw_enobufs {
+        if ex.saw_enobufs {
             break;
         }
     }
-    // Drain any remaining completions until -ENOBUFS is observed.
-    if !saw_enobufs {
-        io.submit(Token(501), Op::Timeout { nanos: 5_000_000 })
-            .unwrap();
-        let cs = drive_until(io, &mut out, 500, |v| {
-            v.iter().any(|c| c.result == -ENOBUFS) || v.iter().any(|c| c.token.0 == 501)
-        })
+}
+
+/// Drains remaining completions until `-ENOBUFS` shows up or a timer fires.
+fn drain_until_enobufs<IO: Io>(io: &mut IO, out: &mut Completions, ex: &mut Exhaustion) {
+    io.submit(Token(501), Op::Timeout { nanos: 5_000_000 })
         .unwrap();
-        for c in cs {
-            if let Some(bid) = c.buf {
-                held_bufs.push(bid);
+    let cs = drive_until(io, out, 500, |v| {
+        v.iter().any(|c| c.result == -ENOBUFS) || v.iter().any(|c| c.token.0 == 501)
+    })
+    .unwrap();
+    for c in cs {
+        if let Some(bid) = c.buf {
+            ex.held_bufs.push(bid);
+        }
+        if c.result == -ENOBUFS {
+            assert!(!c.more);
+            if c.token.0 >= 1000 && c.token.0 < 2000 {
+                ex.ended_socks.push((c.token.0 - 1000) as usize);
             }
-            if c.result == -ENOBUFS {
-                assert!(!c.more);
-                if c.token.0 >= 1000 && c.token.0 < 2000 {
-                    ended_socks.push((c.token.0 - 1000) as usize);
-                }
-                saw_enobufs = true;
-            }
+            ex.saw_enobufs = true;
         }
     }
-    assert!(
-        saw_enobufs,
-        "exhausting all {RING_BUFS} ring bufs must yield -ENOBUFS"
-    );
-    assert_eq!(held_bufs.len(), RING_BUFS as usize);
+}
 
-    // 3. Call give_back on held buffers and verify bytes arrive on re-armed socket.
-    for bid in held_bufs.drain(..) {
+/// Gives the held buffers back, re-arms the ended recvs, and checks a new
+/// message arrives; returns the server socket that received it.
+fn recover_with_give_back<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    ex: Exhaustion,
+    srv_socks: &[Sock],
+    cli_socks: &[Sock],
+) -> Sock {
+    for bid in ex.held_bufs {
         io.give_back(bid);
     }
-    for idx in ended_socks {
+    for idx in ex.ended_socks {
         io.submit(
             Token(1000 + idx as u64),
             Op::ArmedRecv {
@@ -183,7 +207,7 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
     let mut got_recovery = false;
     let mut matched_srv_sock = srv_socks[0];
     for _ in 0..200 {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
             if let Some(bid) = c.buf {
                 let slice = &io.buf(bid)[..usize::try_from(c.result).unwrap()];
@@ -204,26 +228,21 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
         got_recovery,
         "buffer give_back must restore armed recv flow"
     );
+    matched_srv_sock
+}
 
-    // 4. Close the matched server socket -> armed recv ends cleanly and peer client sees 0 EOF.
-    let _: Completion = submit_and_wait_one(
-        io,
-        &mut out,
-        Token(4000),
-        Op::Close {
-            sock: matched_srv_sock,
-        },
-        1_000,
-    )
-    .unwrap();
+/// Closes `srv` (ending its armed recv); the peer client reads to EOF.
+fn close_gives_peer_eof<IO: Io>(io: &mut IO, out: &mut Completions, srv: Sock, cli: Sock) {
+    let _: Completion =
+        submit_and_wait_one(io, out, Token(4000), Op::Close { sock: srv }, 1_000).unwrap();
 
     loop {
         let eof_c = submit_and_wait_one(
             io,
-            &mut out,
+            out,
             Token(4001),
             Op::Recv {
-                sock: cli_socks[0],
+                sock: cli,
                 buf: BufId(2),
                 off: 0,
                 len: 256,
@@ -236,6 +255,31 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
         }
         assert!(eof_c.result > 0);
     }
+}
+
+fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
+    let mut out = Completions::new(64);
+    let bound = io.listen(LISTENER, addr).unwrap();
+    io.submit(Token(1), Op::ArmedAccept { listener: LISTENER })
+        .unwrap();
+
+    let (srv_socks, cli_socks) = connect_idle_clients(io, &mut out, bound);
+    idle_armed_recvs_hold_no_buffers(io, &mut out, &srv_socks);
+
+    // Burst 17+ messages without give_back to exhaust all 16 ring buffers.
+    let mut ex = Exhaustion::default();
+    burst_without_give_back(io, &mut out, &cli_socks, &mut ex);
+    if !ex.saw_enobufs {
+        drain_until_enobufs(io, &mut out, &mut ex);
+    }
+    assert!(
+        ex.saw_enobufs,
+        "exhausting all {RING_BUFS} ring bufs must yield -ENOBUFS"
+    );
+    assert_eq!(ex.held_bufs.len(), RING_BUFS as usize);
+
+    let matched_srv_sock = recover_with_give_back(io, &mut out, ex, &srv_socks, &cli_socks);
+    close_gives_peer_eof(io, &mut out, matched_srv_sock, cli_socks[0]);
 }
 
 #[cfg(feature = "sim")]

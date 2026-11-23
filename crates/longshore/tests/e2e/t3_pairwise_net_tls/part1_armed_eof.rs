@@ -11,18 +11,14 @@ use super::super::harness::{drive_until, read_pool_bytes, submit_and_wait_one, w
 use super::net_limits;
 use longshore::io::{BufId, Completions, Io, Op, Sock, Token};
 
+/// Connects four clients to an armed accept on `Sock(0)`; returns the
+/// accepted server sockets once all four sides have completed.
 #[cfg(unix)]
-#[test]
-fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
-    use super::super::harness::posix_backend;
-
-    let limits = net_limits(16, 8, 6, 4, 1024);
-    let mut io = posix_backend(limits).expect("posix");
-    let addr = io
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
-        .expect("listen");
-    let mut tiny_out = Completions::new(1);
-
+fn accept_four_armed<IO: Io>(
+    io: &mut IO,
+    tiny_out: &mut Completions,
+    addr: std::net::SocketAddr,
+) -> Vec<Sock> {
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
     for i in 0..4u32 {
@@ -38,7 +34,7 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
 
     let mut accepted = Vec::new();
     let mut connected = 0usize;
-    let cs = drive_until(&mut io, &mut tiny_out, 10_000, |v| {
+    let cs = drive_until(io, tiny_out, 10_000, |v| {
         connected = v.iter().filter(|c| (10..14).contains(&c.token.0)).count();
         accepted.clear();
         for c in v.iter().filter(|c| c.token == Token(1)) {
@@ -53,12 +49,17 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         .iter()
         .filter(|c| (10..14).contains(&c.token.0))
         .all(|c| c.result >= 0));
+    accepted
+}
 
+/// Arms a recv on each accepted socket and sends `msg-{idx}` from each client.
+#[cfg(unix)]
+fn arm_and_send_greetings<IO: Io>(io: &mut IO, accepted: &[Sock]) {
     for (idx, &srv) in accepted.iter().enumerate() {
         io.submit(Token(100 + idx as u64), Op::ArmedRecv { sock: srv })
             .unwrap();
         let msg = format!("msg-{idx}");
-        write_pool_bytes(&mut io, BufId(0), idx * 16, msg.as_bytes());
+        write_pool_bytes(io, BufId(0), idx * 16, msg.as_bytes());
         io.submit(
             Token(200 + idx as u64),
             Op::Send {
@@ -71,9 +72,14 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         )
         .unwrap();
     }
+}
 
+/// Receives the four greetings through ring buffers, checks each, gives the
+/// buffers back, and returns the ring buffer ids seen.
+#[cfg(unix)]
+fn recv_greetings<IO: Io>(io: &mut IO, tiny_out: &mut Completions) -> Vec<BufId> {
     let mut seen_ids = Vec::new();
-    let recv_cs = drive_until(&mut io, &mut tiny_out, 10_000, |v| {
+    let recv_cs = drive_until(io, tiny_out, 10_000, |v| {
         v.iter().filter(|c| (100..104).contains(&c.token.0)).count() == 4
     })
     .unwrap();
@@ -84,15 +90,20 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         let idx = (c.token.0 - 100) as usize;
         let expected = format!("msg-{idx}");
         assert_eq!(
-            read_pool_bytes(&mut io, id, 0, usize::try_from(c.result).unwrap()),
+            read_pool_bytes(io, id, 0, usize::try_from(c.result).unwrap()),
             expected.as_bytes()
         );
         io.give_back(id);
     }
     assert_eq!(seen_ids.len(), 4);
+    seen_ids
+}
 
+/// Sends a second wave and checks it lands in the recycled ring buffers.
+#[cfg(unix)]
+fn second_wave_recycles<IO: Io>(io: &mut IO, tiny_out: &mut Completions, seen_ids: &[BufId]) {
     for idx in 0..4usize {
-        write_pool_bytes(&mut io, BufId(0), 0, b"wave2");
+        write_pool_bytes(io, BufId(0), 0, b"wave2");
         io.submit(
             Token(300 + idx as u64),
             Op::Send {
@@ -105,7 +116,7 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         )
         .unwrap();
     }
-    let wave2 = drive_until(&mut io, &mut tiny_out, 10_000, |v| {
+    let wave2 = drive_until(io, tiny_out, 10_000, |v| {
         v.iter().filter(|c| (100..104).contains(&c.token.0)).count() == 4
     })
     .unwrap();
@@ -113,11 +124,29 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
         let id = c.buf.expect("recycled ring buf");
         assert!(seen_ids.contains(&id), "ring buffer should recycle");
         assert_eq!(
-            read_pool_bytes(&mut io, id, 0, usize::try_from(c.result).unwrap()),
+            read_pool_bytes(io, id, 0, usize::try_from(c.result).unwrap()),
             b"wave2"
         );
         io.give_back(id);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
+    use super::super::harness::posix_backend;
+
+    let limits = net_limits(16, 8, 6, 4, 1024);
+    let mut io = posix_backend(limits).expect("posix");
+    let addr = io
+        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
+        .expect("listen");
+    let mut tiny_out = Completions::new(1);
+
+    let accepted = accept_four_armed(&mut io, &mut tiny_out, addr);
+    arm_and_send_greetings(&mut io, &accepted);
+    let seen_ids = recv_greetings(&mut io, &mut tiny_out);
+    second_wave_recycles(&mut io, &mut tiny_out, &seen_ids);
 }
 
 fn verify_shutdown_before_close<IO: Io>(io: &mut IO, addr: std::net::SocketAddr) {

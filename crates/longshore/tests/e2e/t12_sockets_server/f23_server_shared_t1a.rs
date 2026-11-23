@@ -35,9 +35,10 @@ pub(super) fn server_limits() -> Limits {
     }
 }
 
+/// Armed accept and armed recv over TCP, then EOF to the client after the
+/// server side closes.
 #[cfg(any(feature = "sim", unix))]
-fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
-    let mut out = Completions::new(32);
+fn armed_tcp_round<IO: Io>(io: &mut IO, out: &mut Completions, tcp_addr: SocketAddr) {
     let bound = io.listen(Sock(0), tcp_addr).unwrap();
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
         .unwrap();
@@ -49,7 +50,7 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let cs = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
+    let cs = drive_until(io, out, 50, |v| v.len() == 2).unwrap();
     let srv_sock =
         Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
     io.submit(Token(3), Op::ArmedRecv { sock: srv_sock })
@@ -67,8 +68,7 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let received =
-        drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(3))).unwrap();
+    let received = drive_until(io, out, 50, |v| v.iter().any(|c| c.token == Token(3))).unwrap();
     let rc = received.iter().find(|c| c.token == Token(3)).unwrap();
     let id = rc.buf.unwrap();
     assert_eq!(
@@ -78,7 +78,7 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
     io.give_back(id);
 
     io.submit(Token(5), Op::Close { sock: srv_sock }).unwrap();
-    let _: Vec<longshore::io::Completion> = drive_until(io, &mut out, 50, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(io, out, 50, |v| {
         v.iter().any(|c| c.token == Token(3) && !c.more) && v.iter().any(|c| c.token == Token(5))
     })
     .unwrap();
@@ -92,14 +92,16 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let eof = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(6))).unwrap();
+    let eof = drive_until(io, out, 50, |v| v.iter().any(|c| c.token == Token(6))).unwrap();
     assert_eq!(eof[0].result, 0);
     io.submit(Token(7), Op::Close { sock: Sock(1) }).unwrap();
     let _: Vec<longshore::io::Completion> =
-        drive_until(io, &mut out, 30, |v| v.iter().any(|c| c.token == Token(7))).unwrap();
+        drive_until(io, out, 30, |v| v.iter().any(|c| c.token == Token(7))).unwrap();
+}
 
-    // `#44` § Every backend specifies identical Unix-domain socket and armed accept/recv
-    // behavior across `SimIo`, `Posix`, and `UringIo`.
+/// A Unix-domain accept, connect and exchange on a socket in a fresh `tag` dir.
+#[cfg(any(feature = "sim", unix))]
+fn unix_round<IO: Io>(io: &mut IO, out: &mut Completions, tag: &str) {
     let dir = TempDir::new(tag).unwrap();
     let upath = dir.socket_path("suite.sock");
     io.listen_unix(Sock(2), upath.to_str().unwrap()).unwrap();
@@ -122,7 +124,7 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let unix_connected = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
+    let unix_connected = drive_until(io, out, 50, |v| v.len() == 2).unwrap();
     for c in unix_connected {
         assert_eq!(c.result, 0);
     }
@@ -148,7 +150,7 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         },
     )
     .unwrap();
-    let exchanged = drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
+    let exchanged = drive_until(io, out, 50, |v| v.len() == 2).unwrap();
     assert_eq!(
         exchanged
             .iter()
@@ -158,6 +160,15 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
         11
     );
     assert_eq!(read_pool_bytes(io, BufId(2), 0, 11), b"unix-shared");
+}
+
+#[cfg(any(feature = "sim", unix))]
+fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
+    let mut out = Completions::new(32);
+    armed_tcp_round(io, &mut out, tcp_addr);
+    // `#44` § Every backend specifies identical Unix-domain socket and armed accept/recv
+    // behavior across `SimIo`, `Posix`, and `UringIo`.
+    unix_round(io, &mut out, tag);
 }
 
 #[cfg(any(feature = "sim", unix))]
@@ -181,20 +192,15 @@ fn t1_f23_1_shared_server_net_suite_passes_across_backends() {
     }
 }
 
+/// Accepts `Sock(2)` (`Token(1)`) and connects `Sock(1)` (`Token(2)`) to
+/// `addr`, driving up to `ticks` ticks for both.
 #[cfg(feature = "sim")]
-#[test]
-fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_faults() {
-    let faults = Faults {
-        partial_recv: 300_000,
-        short_send: 300_000,
-        delay: 200_000,
-        ..Default::default()
-    };
-    let mut io = SimIo::new(server_limits(), 2302, faults);
-    let mut out = Completions::new(32);
-    let addr = io
-        .listen(Sock(0), "192.0.2.23:9302".parse().unwrap())
-        .unwrap();
+pub(super) fn sim_accept_connect(
+    io: &mut SimIo,
+    out: &mut Completions,
+    addr: SocketAddr,
+    ticks: usize,
+) {
     io.submit(
         Token(1),
         Op::Accept {
@@ -211,56 +217,53 @@ fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_fault
         },
     )
     .unwrap();
-    let _: Vec<longshore::io::Completion> =
-        drive_until(&mut io, &mut out, 100, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> = drive_until(io, out, ticks, |v| v.len() == 2).unwrap();
+}
 
-    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
-        .unwrap();
-    let expected: Vec<u8> = (0..1500u32).map(|i| (i % 251) as u8).collect();
-    write_pool_bytes(&mut io, BufId(0), 0, &expected);
-    let mut sent = 0usize;
-    let mut recvd = Vec::new();
+/// Submits a `Send` of `BufId(0)[off..off + len]` on `Sock(1)` as `Token(4)`.
+#[cfg(feature = "sim")]
+fn send_from(io: &mut SimIo, off: usize, len: usize) {
     io.submit(
         Token(4),
         Op::Send {
             sock: Sock(1),
             buf: BufId(0),
-            off: 0,
-            len: expected.len() as u32,
+            off: off as u32,
+            len: len as u32,
             zero_copy: false,
         },
     )
     .unwrap();
+}
+
+/// Sends `expected` from `Sock(1)` (resending after short sends) while
+/// `Sock(2)`'s armed recv (`Token(3)`) collects it; returns what arrived.
+#[cfg(feature = "sim")]
+fn stream_into_armed_recv(io: &mut SimIo, out: &mut Completions, expected: &[u8]) -> Vec<u8> {
+    write_pool_bytes(io, BufId(0), 0, expected);
+    let mut sent = 0usize;
+    let mut recvd = Vec::new();
+    send_from(io, 0, expected.len());
 
     for _ in 0..400 {
         if recvd.len() >= expected.len() {
             break;
         }
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
             match c.token.0 {
                 4 => {
                     assert!(c.result > 0);
                     sent += usize::try_from(c.result).unwrap();
                     if sent < expected.len() {
-                        io.submit(
-                            Token(4),
-                            Op::Send {
-                                sock: Sock(1),
-                                buf: BufId(0),
-                                off: sent as u32,
-                                len: (expected.len() - sent) as u32,
-                                zero_copy: false,
-                            },
-                        )
-                        .unwrap();
+                        send_from(io, sent, expected.len() - sent);
                     }
                 }
                 3 => {
                     assert!(c.result > 0);
                     let id = c.buf.unwrap();
                     recvd.extend_from_slice(&read_pool_bytes(
-                        &mut io,
+                        io,
                         id,
                         0,
                         usize::try_from(c.result).unwrap(),
@@ -271,5 +274,28 @@ fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_fault
             }
         }
     }
+    recvd
+}
+
+#[cfg(feature = "sim")]
+#[test]
+fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_faults() {
+    let faults = Faults {
+        partial_recv: 300_000,
+        short_send: 300_000,
+        delay: 200_000,
+        ..Default::default()
+    };
+    let mut io = SimIo::new(server_limits(), 2302, faults);
+    let mut out = Completions::new(32);
+    let addr = io
+        .listen(Sock(0), "192.0.2.23:9302".parse().unwrap())
+        .unwrap();
+    sim_accept_connect(&mut io, &mut out, addr, 100);
+
+    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
+        .unwrap();
+    let expected: Vec<u8> = (0..1500u32).map(|i| (i % 251) as u8).collect();
+    let recvd = stream_into_armed_recv(&mut io, &mut out, &expected);
     assert_eq!(recvd, expected);
 }

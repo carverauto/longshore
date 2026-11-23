@@ -19,6 +19,8 @@ use longshore::io::uring::UringIo;
 use longshore::io::{BufId, Completions, Io, Op, Sock, Token};
 #[cfg(feature = "sim")]
 use longshore::sim::{Faults, SimIo};
+#[cfg(feature = "sim")]
+use std::net::SocketAddr;
 
 #[cfg(target_os = "linux")]
 const EPERM: i32 = 1;
@@ -137,6 +139,86 @@ fn t2_f23_2_sim_armed_recv_observes_bit_flip_in_ring_buffer() {
     );
 }
 
+/// Connects `Sock(1)` to `addr` and returns the socket the armed accept
+/// (`Token(1)`) handed over for it.
+#[cfg(feature = "sim")]
+fn connect_to_armed_accept(
+    io: &mut SimIo,
+    out: &mut Completions,
+    addr: SocketAddr,
+    round: u64,
+) -> Sock {
+    io.submit(
+        Token(10 + round),
+        Op::Connect {
+            sock: Sock(1),
+            addr,
+        },
+    )
+    .unwrap();
+    let mut srv_sock = None;
+    let mut connected = false;
+    while srv_sock.is_none() || !connected {
+        io.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            if c.token == Token(1) {
+                srv_sock = Some(Sock(u32::try_from(c.result).unwrap()));
+            } else if c.token == Token(10 + round) {
+                connected = true;
+            }
+        }
+    }
+    srv_sock.unwrap()
+}
+
+/// Arms a recv on `srv`, sends 4 bytes from `Sock(1)` and gives the ring
+/// buffer that received them back.
+#[cfg(feature = "sim")]
+fn armed_recv_and_give_back(io: &mut SimIo, out: &mut Completions, srv: Sock, round: u64) {
+    io.submit(Token(100 + round), Op::ArmedRecv { sock: srv })
+        .unwrap();
+    io.buf(BufId(0))[..4].copy_from_slice(b"zero");
+    io.submit(
+        Token(200 + round),
+        Op::Send {
+            sock: Sock(1),
+            buf: BufId(0),
+            off: 0,
+            len: 4,
+            zero_copy: false,
+        },
+    )
+    .unwrap();
+    let mut got_buf = None;
+    while got_buf.is_none() {
+        io.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            if c.token == Token(100 + round) {
+                got_buf = c.buf;
+            }
+        }
+    }
+    io.give_back(got_buf.unwrap());
+}
+
+/// Closes both ends and waits for the two closes and the armed recv's end.
+#[cfg(feature = "sim")]
+fn close_both_ends(io: &mut SimIo, out: &mut Completions, srv: Sock, round: u64) {
+    io.submit(Token(300 + round), Op::Close { sock: srv })
+        .unwrap();
+    io.submit(Token(400 + round), Op::Close { sock: Sock(1) })
+        .unwrap();
+    let mut closed = 0;
+    while closed < 3 {
+        io.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            if c.token.0 == 100 + round || c.token.0 >= 300 {
+                closed += 1;
+            }
+        }
+    }
+}
+
 #[cfg(feature = "sim")]
 #[test]
 fn t2_f23_3_sim_armed_accept_recv_give_back_close_runs_under_alloc_guard() {
@@ -151,64 +233,9 @@ fn t2_f23_3_sim_armed_accept_recv_give_back_close_runs_under_alloc_guard() {
     let completed = sealed(|| {
         let mut count = 0u32;
         for round in 0..20u64 {
-            io.submit(
-                Token(10 + round),
-                Op::Connect {
-                    sock: Sock(1),
-                    addr,
-                },
-            )
-            .unwrap();
-            let mut srv_sock = None;
-            let mut connected = false;
-            while srv_sock.is_none() || !connected {
-                io.tick(true, &mut out).unwrap();
-                while let Some(c) = out.pop() {
-                    if c.token == Token(1) {
-                        srv_sock = Some(Sock(u32::try_from(c.result).unwrap()));
-                    } else if c.token == Token(10 + round) {
-                        connected = true;
-                    }
-                }
-            }
-            let srv = srv_sock.unwrap();
-            io.submit(Token(100 + round), Op::ArmedRecv { sock: srv })
-                .unwrap();
-            io.buf(BufId(0))[..4].copy_from_slice(b"zero");
-            io.submit(
-                Token(200 + round),
-                Op::Send {
-                    sock: Sock(1),
-                    buf: BufId(0),
-                    off: 0,
-                    len: 4,
-                    zero_copy: false,
-                },
-            )
-            .unwrap();
-            let mut got_buf = None;
-            while got_buf.is_none() {
-                io.tick(true, &mut out).unwrap();
-                while let Some(c) = out.pop() {
-                    if c.token == Token(100 + round) {
-                        got_buf = c.buf;
-                    }
-                }
-            }
-            io.give_back(got_buf.unwrap());
-            io.submit(Token(300 + round), Op::Close { sock: srv })
-                .unwrap();
-            io.submit(Token(400 + round), Op::Close { sock: Sock(1) })
-                .unwrap();
-            let mut closed = 0;
-            while closed < 3 {
-                io.tick(true, &mut out).unwrap();
-                while let Some(c) = out.pop() {
-                    if c.token.0 == 100 + round || c.token.0 >= 300 {
-                        closed += 1;
-                    }
-                }
-            }
+            let srv = connect_to_armed_accept(&mut io, &mut out, addr, round);
+            armed_recv_and_give_back(&mut io, &mut out, srv, round);
+            close_both_ends(&mut io, &mut out, srv, round);
             count += 1;
         }
         count

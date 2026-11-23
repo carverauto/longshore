@@ -174,13 +174,10 @@ fn t1_f02_3_engine_resolves_cancel_locally() {
         .any(|c| matches!(c, HookCall::Attempt(OpKind::Cancel))));
 }
 
-#[test]
-fn t1_f02_4_engine_respects_world_readiness_filter() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-    let after_first = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&after_first);
-    let world = TestWorld::new()
+/// Sock(1) is ready and receives 4 bytes; Sock(2) is never ready and must not be attempted once
+/// `flag` is set.
+fn readiness_world(flag: Arc<AtomicBool>) -> TestWorld {
+    TestWorld::new()
         .with_ready_socks(vec![Sock(1)])
         .with_attempt_handler(move |op, _, _| match *op {
             Op::Recv { sock: Sock(1), .. } => Some(4),
@@ -216,21 +213,28 @@ fn t1_f02_4_engine_respects_world_readiness_filter() {
             | Op::FileRename { .. }
             | Op::FileUnlink { .. }
             | Op::FileMkdir { .. } => None,
-        });
+        })
+}
+
+fn recv(sock: Sock, buf: BufId) -> Op {
+    Op::Recv {
+        sock,
+        buf,
+        off: 0,
+        len: 32,
+    }
+}
+
+#[test]
+fn t1_f02_4_engine_respects_world_readiness_filter() {
+    let after_first = Arc::new(AtomicBool::new(false));
+    let world = readiness_world(Arc::clone(&after_first));
     let mut engine = Engine::with_world(base_limits(), world);
     let mut out = Completions::new(8);
 
     // First tick visits fresh Sock(2) once, then clears its `fresh` bit.
     engine
-        .submit(
-            Token(20),
-            Op::Recv {
-                sock: Sock(2),
-                buf: BufId(0),
-                off: 0,
-                len: 32,
-            },
-        )
+        .submit(Token(20), recv(Sock(2), BufId(0)))
         .expect("submit s2");
     engine.tick(false, &mut out).expect("tick1");
     assert!(out.is_empty());
@@ -239,15 +243,7 @@ fn t1_f02_4_engine_respects_world_readiness_filter() {
 
     // Second turn: submit ready Sock(1), Timeout, and Cancel; Sock(2) must not be attempted.
     engine
-        .submit(
-            Token(21),
-            Op::Recv {
-                sock: Sock(1),
-                buf: BufId(1),
-                off: 0,
-                len: 32,
-            },
-        )
+        .submit(Token(21), recv(Sock(1), BufId(1)))
         .expect("submit s1");
     engine
         .submit(Token(22), Op::Timeout { nanos: 0 })

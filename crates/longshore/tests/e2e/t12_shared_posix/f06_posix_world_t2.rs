@@ -143,6 +143,28 @@ fn t2_f06_2_posix_stale_readiness_alone_then_real_data() {
     assert!(cs.iter().any(|c| c.token == Token(20) && c.result == 7));
 }
 
+/// Ticks into a one-slot `Completions` until `n` completions arrived or 5 s
+/// passed, and returns them.
+///
+/// Each tick can hand over one completion. The kernel may report the
+/// sockets ready a little late under load, so the loop runs to a deadline
+/// rather than a fixed number of ticks; a completion that was lost still
+/// fails the test, after the deadline.
+#[cfg(unix)]
+fn collect_one_per_tick<IO: Io>(io: &mut IO, n: usize) -> Vec<longshore::io::Completion> {
+    let mut small_out = Completions::new(1);
+    let mut got = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while got.len() < n && std::time::Instant::now() < deadline {
+        io.tick(false, &mut small_out).unwrap();
+        let _: usize = drain_completions(&mut small_out, &mut got);
+        if got.len() < n {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    got
+}
+
 #[cfg(unix)]
 #[test]
 fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
@@ -204,20 +226,7 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
         .unwrap();
     }
 
-    // Each tick can hand over one completion. The kernel may report the
-    // sockets ready a little late under load, so the loop runs to a deadline
-    // rather than a fixed number of ticks; a completion that was lost still
-    // fails the test, after the deadline.
-    let mut small_out = Completions::new(1);
-    let mut got = Vec::new();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while got.len() < 4 && std::time::Instant::now() < deadline {
-        io.tick(false, &mut small_out).unwrap();
-        let _: usize = drain_completions(&mut small_out, &mut got);
-        if got.len() < 4 {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-    }
+    let mut got = collect_one_per_tick(&mut io, 4);
     got.sort_by_key(|c| c.token.0);
     assert_eq!(
         got.iter()

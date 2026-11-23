@@ -7,8 +7,8 @@
 
 use super::super::harness::{drive_until, submit_and_wait_one};
 use super::helpers::{
-    close_file, make_disk_sim, open_file, read_file_vec, sync_file, sync_root_dir, write_file,
-    LINUX_EIO,
+    close_file, listen_accept_connect, make_disk_sim, open_file, read_file_vec, sync_file,
+    sync_root_dir, write_file, LINUX_EIO,
 };
 use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
 use longshore::sim::{DiskFaults, PlacedFault};
@@ -20,24 +20,7 @@ fn t2_f15_1_power_loss_drops_inflight_ops_frees_slots_clears_timers() {
     let mut sim = make_disk_sim(101, 512, 32, 64 * 1024);
     let mut out = Completions::new(16);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9100);
-    let _: SocketAddr = sim.listen(Sock(0), addr).unwrap();
-    sim.submit(
-        Token(1),
-        Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
-        },
-    )
-    .unwrap();
-    sim.submit(
-        Token(2),
-        Op::Connect {
-            sock: Sock(2),
-            addr,
-        },
-    )
-    .unwrap();
-    let _: Vec<Completion> = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
+    let _: Vec<Completion> = listen_accept_connect(&mut sim, &mut out, addr, 1);
 
     let rw = OpenFlags {
         read: true,

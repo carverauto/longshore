@@ -203,6 +203,68 @@ fn t1_f14_4_open_inode_survives_unlink_and_rename() {
     assert_eq!(close_file(&mut sim, &mut out, 7, FileSlot(0)), 0);
 }
 
+/// Submits `op` and ticks until its own completion arrives, without allocating.
+fn drive_one(disk: &mut SimIo, out: &mut Completions, tok: u64, op: Op) -> i32 {
+    disk.submit(Token(tok), op).expect("submit");
+    loop {
+        disk.tick(true, out).expect("tick");
+        if let Some(c) = out.pop() {
+            if c.token == Token(tok) {
+                return c.result;
+            }
+        }
+    }
+}
+
+/// Opens `/zero.db` (path staged in `BufId(0)`), writes the 512-byte block
+/// in `BufId(1)` and syncs it.
+fn open_write_sync_block(sim: &mut SimIo, out: &mut Completions) {
+    let rw = OpenFlags {
+        read: true,
+        write: true,
+        create: true,
+        ..Default::default()
+    };
+    let open = Op::FileOpen {
+        slot: FileSlot(0),
+        path_buf: BufId(0),
+        path_off: 0,
+        path_len: 9,
+        flags: rw,
+    };
+    assert_eq!(drive_one(sim, out, 1, open), 0);
+    let write = Op::FileWrite {
+        slot: FileSlot(0),
+        buf: BufId(1),
+        off: 0,
+        len: 512,
+        file_off: 0,
+    };
+    assert_eq!(drive_one(sim, out, 2, write), 512);
+    let sync = Op::FileSync {
+        slot: FileSlot(0),
+        datasync: true,
+    };
+    assert_eq!(drive_one(sim, out, 3, sync), 0);
+}
+
+/// Reads the block back into `BufId(2)`, checks it, and closes the file.
+fn read_back_block_and_close(sim: &mut SimIo, out: &mut Completions) {
+    let read = Op::FileRead {
+        slot: FileSlot(0),
+        buf: BufId(2),
+        off: 0,
+        len: 512,
+        file_off: 0,
+    };
+    assert_eq!(drive_one(sim, out, 4, read), 512);
+    assert!(sim.buf(BufId(2))[..512].iter().all(|&b| b == 0x5A));
+    assert_eq!(
+        drive_one(sim, out, 5, Op::FileClose { slot: FileSlot(0) }),
+        0
+    );
+}
+
 /// `T1-F14-5`: Simulated disk open/write/read/sync/rename/close run with zero heap allocations.
 #[test]
 fn t1_f14_5_disk_ops_zero_alloc_under_alloc_guard() {
@@ -216,80 +278,7 @@ fn t1_f14_5_disk_ops_zero_alloc_under_alloc_guard() {
     }
 
     sealed(|| {
-        let mut drive_one = |disk: &mut SimIo, tok: u64, op: Op| -> i32 {
-            disk.submit(Token(tok), op).expect("submit");
-            loop {
-                disk.tick(true, &mut out).expect("tick");
-                if let Some(c) = out.pop() {
-                    if c.token == Token(tok) {
-                        return c.result;
-                    }
-                }
-            }
-        };
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            drive_one(
-                &mut sim,
-                1,
-                Op::FileOpen {
-                    slot: FileSlot(0),
-                    path_buf: BufId(0),
-                    path_off: 0,
-                    path_len: 9,
-                    flags: rw,
-                },
-            ),
-            0
-        );
-        assert_eq!(
-            drive_one(
-                &mut sim,
-                2,
-                Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 512,
-                    file_off: 0,
-                },
-            ),
-            512
-        );
-        assert_eq!(
-            drive_one(
-                &mut sim,
-                3,
-                Op::FileSync {
-                    slot: FileSlot(0),
-                    datasync: true,
-                },
-            ),
-            0
-        );
-        assert_eq!(
-            drive_one(
-                &mut sim,
-                4,
-                Op::FileRead {
-                    slot: FileSlot(0),
-                    buf: BufId(2),
-                    off: 0,
-                    len: 512,
-                    file_off: 0,
-                },
-            ),
-            512
-        );
-        assert!(sim.buf(BufId(2))[..512].iter().all(|&b| b == 0x5A));
-        assert_eq!(
-            drive_one(&mut sim, 5, Op::FileClose { slot: FileSlot(0) }),
-            0
-        );
+        open_write_sync_block(&mut sim, &mut out);
+        read_back_block_and_close(&mut sim, &mut out);
     });
 }

@@ -7,9 +7,11 @@
 
 use super::super::harness::{drive_until, read_pool_bytes, submit_and_wait_one, write_pool_bytes};
 use super::helpers::{
-    close_file, make_disk_sim, open_file, read_file_vec, sync_file, sync_root_dir, write_file,
+    close_file, listen_accept_connect, make_disk_sim, open_file, read_file_vec, sync_file,
+    sync_root_dir, write_file,
 };
 use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
+use longshore::sim::SimIo;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// `T1-F15-1`: Unsynced 4-sector write across seeds yields absent, whole, or sector-cut prefix.
@@ -218,72 +220,9 @@ fn t1_f15_4_same_seed_power_loss_bit_identical_recovery() {
     assert_eq!(h1, h2);
 }
 
-/// `T1-F15-5`: Network and storage callers can be rebuilt on the same `SimIo` after `power_loss()`.
-#[test]
-fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
-    let mut sim = make_disk_sim(55, 512, 32, 64 * 1024);
-    let mut out = Completions::new(16);
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001);
-    let _: SocketAddr = sim.listen(Sock(0), addr).unwrap();
-    sim.submit(
-        Token(1),
-        Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
-        },
-    )
-    .unwrap();
-    sim.submit(
-        Token(2),
-        Op::Connect {
-            sock: Sock(2),
-            addr,
-        },
-    )
-    .unwrap();
-    let _: Vec<Completion> = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
-
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
-    assert_eq!(
-        open_file(&mut sim, &mut out, 3, FileSlot(0), "/srv.dat", rw),
-        0
-    );
-    assert_eq!(
-        write_file(&mut sim, &mut out, 4, FileSlot(0), 0, b"before-crash"),
-        12
-    );
-    assert_eq!(sync_file(&mut sim, &mut out, 5, FileSlot(0), false), 0);
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 6, FileSlot(1)), 0);
-
-    sim.power_loss();
-
-    // Rebuild listener + connection + file handle on the same SimIo.
-    let _: SocketAddr = sim.listen(Sock(0), addr).unwrap();
-    sim.submit(
-        Token(10),
-        Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
-        },
-    )
-    .unwrap();
-    sim.submit(
-        Token(11),
-        Op::Connect {
-            sock: Sock(2),
-            addr,
-        },
-    )
-    .unwrap();
-    let conn = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
-    assert!(conn.iter().all(|c| c.result == 0));
-
-    write_pool_bytes(&mut sim, BufId(0), 0, b"post-crash-tcp");
+/// Sends 14 bytes from `Sock(2)` to `Sock(1)` and checks they arrive.
+fn tcp_round_trip_after_crash(sim: &mut SimIo, out: &mut Completions) {
+    write_pool_bytes(sim, BufId(0), 0, b"post-crash-tcp");
     sim.submit(
         Token(12),
         Op::Send {
@@ -305,12 +244,42 @@ fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
         },
     )
     .unwrap();
-    let io_done = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
+    let io_done = drive_until(sim, out, 100, |v| v.len() == 2).unwrap();
     assert!(io_done.iter().all(|c| c.result == 14));
+    assert_eq!(read_pool_bytes(sim, BufId(1), 0, 14), b"post-crash-tcp");
+}
+
+/// `T1-F15-5`: Network and storage callers can be rebuilt on the same `SimIo` after `power_loss()`.
+#[test]
+fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
+    let mut sim = make_disk_sim(55, 512, 32, 64 * 1024);
+    let mut out = Completions::new(16);
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001);
+    let _: Vec<Completion> = listen_accept_connect(&mut sim, &mut out, addr, 1);
+
+    let rw = OpenFlags {
+        read: true,
+        write: true,
+        create: true,
+        ..Default::default()
+    };
     assert_eq!(
-        read_pool_bytes(&mut sim, BufId(1), 0, 14),
-        b"post-crash-tcp"
+        open_file(&mut sim, &mut out, 3, FileSlot(0), "/srv.dat", rw),
+        0
     );
+    assert_eq!(
+        write_file(&mut sim, &mut out, 4, FileSlot(0), 0, b"before-crash"),
+        12
+    );
+    assert_eq!(sync_file(&mut sim, &mut out, 5, FileSlot(0), false), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 6, FileSlot(1)), 0);
+
+    sim.power_loss();
+
+    // Rebuild listener + connection + file handle on the same SimIo.
+    let conn = listen_accept_connect(&mut sim, &mut out, addr, 10);
+    assert!(conn.iter().all(|c| c.result == 0));
+    tcp_round_trip_after_crash(&mut sim, &mut out);
 
     assert_eq!(
         open_file(&mut sim, &mut out, 20, FileSlot(0), "/srv.dat", rw),

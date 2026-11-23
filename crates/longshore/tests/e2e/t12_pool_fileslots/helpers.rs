@@ -115,6 +115,52 @@ pub fn close_slot(io: &mut dyn Io, out: &mut Completions, tok: u64, slot: FileSl
     .result
 }
 
+/// Submits `op` under `Token(tok)`, waits for it, and returns its result.
+pub fn run_op<IO: Io + ?Sized>(
+    io: &mut IO,
+    out: &mut Completions,
+    tok: u64,
+    op: Op,
+    what: &str,
+) -> i32 {
+    submit_and_wait_one(io, out, Token(tok), op, 10_000)
+        .expect(what)
+        .result
+}
+
+/// Read, write, and create; `O_DIRECT` when `direct`.
+pub fn rw_create(direct: bool) -> OpenFlags {
+    OpenFlags {
+        read: true,
+        write: true,
+        create: true,
+        direct,
+        ..Default::default()
+    }
+}
+
+/// `FileWrite` of `len` bytes from the start of `buf` to offset 0 of slot 0.
+pub fn write_start(buf: BufId, len: u32) -> Op {
+    Op::FileWrite {
+        slot: FileSlot(0),
+        buf,
+        off: 0,
+        len,
+        file_off: 0,
+    }
+}
+
+/// `FileRead` of `len` bytes from offset 0 of slot 0 into the start of `buf`.
+pub fn read_start(buf: BufId, len: u32) -> Op {
+    Op::FileRead {
+        slot: FileSlot(0),
+        buf,
+        off: 0,
+        len,
+        file_off: 0,
+    }
+}
+
 /// Thin wrapper so `&mut dyn Io` can pass to generic `IO: Io` harness helpers.
 pub struct DynIo<'a>(pub &'a mut dyn Io);
 

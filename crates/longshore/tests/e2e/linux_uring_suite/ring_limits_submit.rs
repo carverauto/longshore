@@ -109,6 +109,13 @@ fn uring_submit_all_partial_refusal_batch_executes_trailing_ops() {
     .unwrap();
 }
 
+/// Submits `op` and returns its result once it completes.
+fn result_of(ring: &mut UringIo, out: &mut Completions, token: Token, op: Op) -> i32 {
+    submit_and_wait_one(ring, out, token, op, 200)
+        .unwrap()
+        .result
+}
+
 #[test]
 fn uring_more_than_16384_registered_buffers_and_last_buf_io() {
     let tmp = TempDir::new("uring_17k_bufs").unwrap();
@@ -131,70 +138,40 @@ fn uring_more_than_16384_registered_buffers_and_last_buf_io() {
     let fpath = tmp.file_path("many_bufs.bin");
     let plen = write_nul_path(&mut ring, path_buf, 0, fpath.to_str().unwrap());
 
-    assert_eq!(
-        submit_and_wait_one(
-            &mut ring,
-            &mut out,
-            Token(1),
-            Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf,
-                path_off: 0,
-                path_len: plen,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    empty: true,
-                    ..Default::default()
-                },
-            },
-            200,
-        )
-        .unwrap()
-        .result,
-        0
-    );
+    let open = Op::FileOpen {
+        slot: FileSlot(0),
+        path_buf,
+        path_off: 0,
+        path_len: plen,
+        flags: OpenFlags {
+            read: true,
+            write: true,
+            create: true,
+            empty: true,
+            ..Default::default()
+        },
+    };
+    assert_eq!(result_of(&mut ring, &mut out, Token(1), open), 0);
 
     let payload = [0x6Bu8; 128];
     write_pool_bytes(&mut ring, last_buf, 0, &payload);
-    assert_eq!(
-        submit_and_wait_one(
-            &mut ring,
-            &mut out,
-            Token(2),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: last_buf,
-                off: 0,
-                len: 128,
-                file_off: 0,
-            },
-            200,
-        )
-        .unwrap()
-        .result,
-        128
-    );
+    let write = Op::FileWrite {
+        slot: FileSlot(0),
+        buf: last_buf,
+        off: 0,
+        len: 128,
+        file_off: 0,
+    };
+    assert_eq!(result_of(&mut ring, &mut out, Token(2), write), 128);
 
-    assert_eq!(
-        submit_and_wait_one(
-            &mut ring,
-            &mut out,
-            Token(3),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(0),
-                off: 0,
-                len: 128,
-                file_off: 0,
-            },
-            200,
-        )
-        .unwrap()
-        .result,
-        128
-    );
+    let read = Op::FileRead {
+        slot: FileSlot(0),
+        buf: BufId(0),
+        off: 0,
+        len: 128,
+        file_off: 0,
+    };
+    assert_eq!(result_of(&mut ring, &mut out, Token(3), read), 128);
     let mut got = [0u8; 128];
     read_pool_into(&mut ring, BufId(0), 0, &mut got);
     assert_eq!(got, payload);

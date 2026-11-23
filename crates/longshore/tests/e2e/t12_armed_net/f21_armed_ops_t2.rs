@@ -158,11 +158,9 @@ fn t2_f21_2_rearm_accept_after_closing_slot_accepts_next_client() {
     assert_eq!(u32::try_from(accepted.result).unwrap(), first_slot.0);
 }
 
+/// Accepts `Sock(2)` from a `Sock(1)` connect.
 #[cfg(feature = "sim")]
-#[test]
-fn t2_f21_3_empty_buffer_ring_returns_enobufs_and_preserves_bytes_on_rearm() {
-    let mut io = SimIo::new(armed_limits(4, 2), 2113, Faults::default());
-    let mut out = Completions::new(16);
+fn accept_pair(io: &mut SimIo, out: &mut Completions) {
     let addr = io.listen(Sock(0), ADDR).unwrap();
     io.submit(
         Token(1),
@@ -180,30 +178,33 @@ fn t2_f21_3_empty_buffer_ring_returns_enobufs_and_preserves_bytes_on_rearm() {
         },
     )
     .unwrap();
-    let _: Vec<longshore::io::Completion> =
-        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> = drive_until(io, out, 30, |v| v.len() == 2).unwrap();
+}
 
-    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
-        .unwrap();
+#[cfg(feature = "sim")]
+fn send_from_client(io: &mut SimIo, token: Token, msg: &[u8]) {
+    write_pool_bytes(io, BufId(0), 0, msg);
+    io.submit(
+        token,
+        Op::Send {
+            sock: Sock(1),
+            buf: BufId(0),
+            off: 0,
+            len: u32::try_from(msg.len()).unwrap(),
+            zero_copy: false,
+        },
+    )
+    .unwrap();
+}
+
+/// Receives two messages on the armed receive (token 3) and holds both ring buffers.
+#[cfg(feature = "sim")]
+fn hold_two_ring_buffers(io: &mut SimIo, out: &mut Completions) -> Vec<BufId> {
     let mut held = Vec::new();
     for i in 0..2u8 {
         let msg = [b'1' + i; 10];
-        write_pool_bytes(&mut io, BufId(0), 0, &msg);
-        io.submit(
-            Token(10 + u64::from(i)),
-            Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
-                off: 0,
-                len: 10,
-                zero_copy: false,
-            },
-        )
-        .unwrap();
-        let cs = drive_until(&mut io, &mut out, 30, |v| {
-            v.iter().any(|c| c.token == Token(3))
-        })
-        .unwrap();
+        send_from_client(io, Token(10 + u64::from(i)), &msg);
+        let cs = drive_until(io, out, 30, |v| v.iter().any(|c| c.token == Token(3))).unwrap();
         held.push(
             cs.iter()
                 .find(|c| c.token == Token(3))
@@ -212,19 +213,21 @@ fn t2_f21_3_empty_buffer_ring_returns_enobufs_and_preserves_bytes_on_rearm() {
                 .unwrap(),
         );
     }
+    held
+}
 
-    write_pool_bytes(&mut io, BufId(0), 0, b"third-chunk");
-    io.submit(
-        Token(12),
-        Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
-            off: 0,
-            len: 11,
-            zero_copy: false,
-        },
-    )
-    .unwrap();
+#[cfg(feature = "sim")]
+#[test]
+fn t2_f21_3_empty_buffer_ring_returns_enobufs_and_preserves_bytes_on_rearm() {
+    let mut io = SimIo::new(armed_limits(4, 2), 2113, Faults::default());
+    let mut out = Completions::new(16);
+    accept_pair(&mut io, &mut out);
+
+    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
+        .unwrap();
+    let held = hold_two_ring_buffers(&mut io, &mut out);
+
+    send_from_client(&mut io, Token(12), b"third-chunk");
     let cs = drive_until(&mut io, &mut out, 30, |v| {
         v.iter().any(|c| c.token == Token(3) && !c.more)
     })

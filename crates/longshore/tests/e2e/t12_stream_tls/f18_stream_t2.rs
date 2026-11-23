@@ -10,9 +10,9 @@ use super::super::harness::write_pool_bytes;
 #[cfg(all(feature = "sim", feature = "tls"))]
 use super::super::harness::{drive_until, make_tls_identity, read_pool_bytes};
 #[cfg(all(feature = "sim", feature = "tls"))]
-use super::f18_stream_t1::drive_tls_handshakes;
+use super::stream_rig::drive_tls_handshakes;
 #[cfg(feature = "sim")]
-use super::f18_stream_t1::{connect_pair_sim, CLIENT, SERVER};
+use super::stream_rig::{connect_pair_sim, CLIENT, SERVER};
 #[cfg(feature = "sim")]
 use longshore::io::Io;
 #[cfg(all(feature = "sim", feature = "tls"))]

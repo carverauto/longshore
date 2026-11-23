@@ -14,6 +14,18 @@ use longshore::io::{
     BufId, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token, ECANCELED, ENOENT,
 };
 
+/// Submits a three-op chain under tokens `base..base + 3` and returns the first three results
+/// in completion order.
+fn chain_results(io: &mut dyn Io, out: &mut Completions, base: u64, ops: [Op; 3]) -> [i32; 3] {
+    let chain = [
+        (Token(base), ops[0]),
+        (Token(base + 1), ops[1]),
+        (Token(base + 2), ops[2]),
+    ];
+    let cs = submit_chain_and_collect(io, out, &chain);
+    [cs[0].result, cs[1].result, cs[2].result]
+}
+
 /// `T2-F12-3`: Failure at position 0, 1, or 2 in a 3-op chain cancels only subsequent members.
 #[test]
 fn t2_f12_3_chain_failure_at_each_position_cancels_tail() {
@@ -60,48 +72,57 @@ fn t2_f12_3_chain_failure_at_each_position_cancels_tail() {
         };
 
         // Position 0 fails: pos 1 and pos 2 are cancelled.
-        let c0 = submit_chain_and_collect(
-            io,
-            &mut out,
-            &[
-                (Token(10), fail_open),
-                (Token(11), write_ok),
-                (Token(12), sync_ok),
-            ],
-        );
-        assert_eq!(
-            (c0[0].result, c0[1].result, c0[2].result),
-            (-ENOENT, -ECANCELED, -ECANCELED)
-        );
+        let c0 = chain_results(io, &mut out, 10, [fail_open, write_ok, sync_ok]);
+        assert_eq!(c0, [-ENOENT, -ECANCELED, -ECANCELED]);
 
         // Position 1 fails: pos 0 succeeds, pos 2 is cancelled.
-        let c1 = submit_chain_and_collect(
-            io,
-            &mut out,
-            &[
-                (Token(20), write_ok),
-                (Token(21), fail_open),
-                (Token(22), sync_ok),
-            ],
-        );
-        assert_eq!(
-            (c1[0].result, c1[1].result, c1[2].result),
-            (11, -ENOENT, -ECANCELED)
-        );
+        let c1 = chain_results(io, &mut out, 20, [write_ok, fail_open, sync_ok]);
+        assert_eq!(c1, [11, -ENOENT, -ECANCELED]);
 
         // Position 2 fails: pos 0 and pos 1 succeed.
-        let c2 = submit_chain_and_collect(
-            io,
-            &mut out,
-            &[
-                (Token(30), write_ok),
-                (Token(31), sync_ok),
-                (Token(32), fail_open),
-            ],
-        );
-        assert_eq!((c2[0].result, c2[1].result, c2[2].result), (11, 0, -ENOENT));
+        let c2 = chain_results(io, &mut out, 30, [write_ok, sync_ok, fail_open]);
+        assert_eq!(c2, [11, 0, -ENOENT]);
         assert_eq!(close_slot(io, &mut out, 40, FileSlot(0)), 0);
     });
+}
+
+/// Pos 0 opens with `direct = true`; pos 1 fails the shared check (unaligned len 100); pos 2 syncs.
+fn direct_open_unaligned_write_sync(plen: u32) -> [(Token, Op); 3] {
+    [
+        (
+            Token(1),
+            Op::FileOpen {
+                slot: FileSlot(0),
+                path_buf: BufId(0),
+                path_off: 0,
+                path_len: plen,
+                flags: OpenFlags {
+                    read: true,
+                    write: true,
+                    create: true,
+                    direct: true,
+                    ..Default::default()
+                },
+            },
+        ),
+        (
+            Token(2),
+            Op::FileWrite {
+                slot: FileSlot(0),
+                buf: BufId(1),
+                off: 0,
+                len: 100,
+                file_off: 0,
+            },
+        ),
+        (
+            Token(3),
+            Op::FileSync {
+                slot: FileSlot(0),
+                datasync: true,
+            },
+        ),
+    ]
 }
 
 /// `T2-F12-4`: Shared-check refusal inside chain cancels EVERY other member without file mutation.
@@ -113,58 +134,11 @@ fn t2_f12_4_chain_shared_check_refusal_cancels_all_without_mutation() {
         let mut d = DynIo(io);
         let plen = write_nul_path(&mut d, BufId(0), 0, &never_created);
 
-        // Pos 0 opens with direct=true; Pos 1 fails shared check (unaligned len 100); Pos 2 Sync.
-        let cs = submit_chain_and_collect(
-            io,
-            &mut out,
-            &[
-                (
-                    Token(1),
-                    Op::FileOpen {
-                        slot: FileSlot(0),
-                        path_buf: BufId(0),
-                        path_off: 0,
-                        path_len: plen,
-                        flags: OpenFlags {
-                            read: true,
-                            write: true,
-                            create: true,
-                            direct: true,
-                            ..Default::default()
-                        },
-                    },
-                ),
-                (
-                    Token(2),
-                    Op::FileWrite {
-                        slot: FileSlot(0),
-                        buf: BufId(1),
-                        off: 0,
-                        len: 100,
-                        file_off: 0,
-                    },
-                ),
-                (
-                    Token(3),
-                    Op::FileSync {
-                        slot: FileSlot(0),
-                        datasync: true,
-                    },
-                ),
-            ],
-        );
-        assert_eq!(
-            cs.iter().find(|c| c.token == Token(1)).unwrap().result,
-            -ECANCELED
-        );
-        assert_eq!(
-            cs.iter().find(|c| c.token == Token(2)).unwrap().result,
-            -LINUX_EINVAL
-        );
-        assert_eq!(
-            cs.iter().find(|c| c.token == Token(3)).unwrap().result,
-            -ECANCELED
-        );
+        let cs = submit_chain_and_collect(io, &mut out, &direct_open_unaligned_write_sync(plen));
+        let result_of = |t: u64| cs.iter().find(|c| c.token == Token(t)).unwrap().result;
+        assert_eq!(result_of(1), -ECANCELED);
+        assert_eq!(result_of(2), -LINUX_EINVAL);
+        assert_eq!(result_of(3), -ECANCELED);
 
         d = DynIo(io);
         let st = submit_and_wait_one(
