@@ -23,7 +23,6 @@ use rustls::{
     ClientConfig, ClientConnection, ConnectionTrafficSecrets, RootCertStore, ServerConfig,
     ServerConnection,
 };
-use std::io::Write;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -266,7 +265,6 @@ impl Handshake {
                     break;
                 }
             }
-            let _ = cursor.flush();
             cursor.position() as usize
         })
     }

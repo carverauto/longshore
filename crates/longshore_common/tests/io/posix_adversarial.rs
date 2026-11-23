@@ -249,7 +249,8 @@ fn posix_armed_zero_limits_and_unix_armed_range_full_enfile() {
 
     // ArmedAccept range-full (-ENFILE) on Unix-domain listener (SO_LINGER failure ignored cleanly).
     let dir = std::env::temp_dir().join(format!("longshore_posix_adv_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    // A file left by an earlier run would get in the way; usually there is none.
+    std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
     let sock_path = dir.join("u.sock");
     let path_str = sock_path.to_str().unwrap();
@@ -303,5 +304,6 @@ fn posix_armed_zero_limits_and_unix_armed_range_full_enfile() {
         }
     }
     assert!(got_enfile);
-    let _ = std::fs::remove_dir_all(&dir);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_dir_all(&dir).ok();
 }

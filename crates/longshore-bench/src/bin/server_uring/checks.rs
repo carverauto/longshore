@@ -263,9 +263,11 @@ fn cq_driven_to_limit<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketA
 
 pub(super) fn run_uring(addr: SocketAddr) {
     let unix_path = format!("/tmp/longshore-server-uring-{}.sock", std::process::id());
-    let _ = std::fs::remove_file(&unix_path);
+    // A file left by an earlier run would get in the way; usually there is none.
+    std::fs::remove_file(&unix_path).ok();
     contract_net::run_all(&mut |l| UringIo::new(l).unwrap(), addr, &unix_path);
-    let _ = std::fs::remove_file(&unix_path);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_file(&unix_path).ok();
 
     thousand_idle_connections(&mut |l| UringIo::new(l).unwrap(), addr);
     peer_sees_eof_on_armed_close(&mut |l| UringIo::new(l).unwrap(), addr);
@@ -275,9 +277,11 @@ pub(super) fn run_uring(addr: SocketAddr) {
 
 pub(super) fn run_posix(addr: SocketAddr) {
     let unix_path = format!("/tmp/longshore-server-posix-{}.sock", std::process::id());
-    let _ = std::fs::remove_file(&unix_path);
+    // A file left by an earlier run would get in the way; usually there is none.
+    std::fs::remove_file(&unix_path).ok();
     contract_net::run_all(&mut |l| PosixIo::new(l).unwrap(), addr, &unix_path);
-    let _ = std::fs::remove_file(&unix_path);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_file(&unix_path).ok();
 
     thousand_idle_connections(&mut |l| PosixIo::new(l).unwrap(), addr);
     peer_sees_eof_on_armed_close(&mut |l| PosixIo::new(l).unwrap(), addr);

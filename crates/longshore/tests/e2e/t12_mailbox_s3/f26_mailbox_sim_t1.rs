@@ -75,7 +75,8 @@ pub(super) fn run_two_core_ping_pong(
             },
         )
         .unwrap();
-    let _ = drive_until_nonblocking(&mut core_b, &mut out_b, 20, |v| v.len() == 2);
+    drive_until_nonblocking(&mut core_b, &mut out_b, 20, |v| v.len() == 2)
+        .expect("accept and connect complete");
     write_pool_bytes(&mut core_b, BufId(0), 0, b"core-b-net");
     core_b
         .submit(
@@ -105,7 +106,9 @@ pub(super) fn run_two_core_ping_pong(
                             a_seen.push(ans);
                             if next_ping < 50 {
                                 next_ping += 1;
-                                let _ = tx_ab.try_send(next_ping);
+                                tx_ab
+                                    .try_send(next_ping)
+                                    .expect("one ping in flight fits the queue");
                             }
                         }
                     }
@@ -117,7 +120,9 @@ pub(super) fn run_two_core_ping_pong(
                     if m_ab.on_completion(&mut core_b, c).unwrap() {
                         while let TryRecv::Message(req) = m_ab.try_recv() {
                             b_seen.push(req);
-                            let _ = tx_ba.try_send(req * 10);
+                            tx_ba
+                                .try_send(req * 10)
+                                .expect("one answer in flight fits the queue");
                         }
                     }
                 }

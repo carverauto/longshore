@@ -267,12 +267,13 @@ fn t2_f15_5_power_loss_respects_4096_sector_cuts() {
         );
         assert!(got[..prefix_new].iter().all(|&b| b == 0x22));
         assert!(got[prefix_new..].iter().all(|&b| b == 0x11));
-        let _ = submit_and_wait_one(
+        submit_and_wait_one(
             &mut sim,
             &mut out,
             Token(22),
             Op::FileClose { slot: FileSlot(0) },
             100,
-        );
+        )
+        .expect("close");
     }
 }

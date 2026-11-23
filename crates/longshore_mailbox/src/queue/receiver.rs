@@ -147,12 +147,12 @@ impl<M: Copy> QueueReceiver<M> {
             *g = Some(sync::current());
         }
         if self.shared.park_mode.load(Ordering::Acquire) == PARK_NONE {
-            let _ = self.shared.park_mode.compare_exchange(
-                PARK_NONE,
-                PARK_STOP,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            );
+            // Only the receiver moves the mode off PARK_NONE, so there is no
+            // competing writer whose value a failed exchange would report.
+            self.shared
+                .park_mode
+                .compare_exchange(PARK_NONE, PARK_STOP, Ordering::SeqCst, Ordering::SeqCst)
+                .ok();
         }
         loop {
             self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);

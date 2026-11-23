@@ -149,7 +149,9 @@ fn t2_f26_4_two_sim_cores_steady_state_loop_runs_under_alloc_guard() {
             while let Some(c) = out_b.pop() {
                 if m_ab.on_completion(&mut core_b, c).unwrap() {
                     while let TryRecv::Message(v) = m_ab.try_recv() {
-                        let _ = tx_ba.try_send(v + 1);
+                        tx_ba
+                            .try_send(v + 1)
+                            .expect("one message in flight fits the queue");
                     }
                 }
             }
@@ -158,7 +160,9 @@ fn t2_f26_4_two_sim_cores_steady_state_loop_runs_under_alloc_guard() {
                 if m_ba.on_completion(&mut core_a, c).unwrap() {
                     while let TryRecv::Message(v) = m_ba.try_recv() {
                         count += v;
-                        let _ = tx_ab.try_send(v + 1);
+                        tx_ab
+                            .try_send(v + 1)
+                            .expect("one message in flight fits the queue");
                     }
                 }
             }

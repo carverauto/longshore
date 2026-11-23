@@ -192,9 +192,9 @@ fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
             let mut fut = pin!(tx_a.call(|s| s, 0));
             assert_eq!(fut.as_mut().poll(&mut cx), Poll::Pending);
         }
-        let _ = sim_a.tick(false, &mut out_a);
+        sim_a.tick(false, &mut out_a).expect("tick");
         while let Some(c) = out_a.pop() {
-            let _ = rx_a.on_completion(&mut sim_a, c);
+            rx_a.on_completion(&mut sim_a, c).expect("re-arm the wake");
         }
         let mut got_slot = None;
         rx_a.drain(|item| {

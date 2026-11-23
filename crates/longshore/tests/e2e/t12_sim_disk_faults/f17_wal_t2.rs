@@ -144,7 +144,10 @@ fn t2_f17_3_wal_sector_read_error_stops_cleanly() {
         read_error: 1_000_000,
         ..Default::default()
     });
-    let _ = super::helpers::read_file_vec(&mut sim, &mut out, 51, FileSlot(0), 4096, 512);
+    assert!(
+        super::helpers::read_file_vec(&mut sim, &mut out, 51, FileSlot(0), 4096, 512).is_err(),
+        "the injected read error must fire"
+    );
     sim.set_disk_faults(DiskFaults::default());
     assert_eq!(close_file(&mut sim, &mut out, 52, FileSlot(0)), 0);
 

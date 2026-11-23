@@ -302,7 +302,8 @@ impl Drop for Threads {
             lane.sender.stop();
         }
         for j in self.joins.lock().expect("joins lock").drain(..) {
-            let _ = j.join();
+            // A panicked I/O thread has already reported it; Drop must not panic again.
+            j.join().ok();
         }
     }
 }

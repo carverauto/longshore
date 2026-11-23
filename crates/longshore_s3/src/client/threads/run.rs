@@ -112,7 +112,8 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
     let mut io = match B::build(limits) {
         Ok(io) => io,
         Err(e) => {
-            let _ = ready.send(Err(e));
+            // The builder may have stopped waiting; this thread ends either way.
+            ready.send(Err(e)).ok();
             return;
         }
     };
@@ -128,7 +129,8 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
                 validate: b.credentials_validate,
             }),
             Err(e) => {
-                let _ = ready.send(Err(e));
+                // The builder may have stopped waiting; this thread ends either way.
+                ready.send(Err(e)).ok();
                 return;
             }
         },

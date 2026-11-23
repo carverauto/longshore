@@ -14,7 +14,7 @@ use longshore::mailbox::block_on;
 use longshore::store::creds::Credentials;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Waker};
+use std::task::{Context, Poll, Waker};
 use std::thread;
 
 fn creds(ak: &str, sk: &str) -> Credentials {
@@ -116,7 +116,12 @@ fn t4_09_threaded_s3_client_mailbox_sealed_detach_and_reload() {
         let mut buf = client.buffer_blocking();
         buf.as_mut_slice()[..4].copy_from_slice(b"drop");
         let mut fut = client.store(&format!("detached-{i}"), buf, 4);
-        let _ = Pin::new(&mut fut).poll(&mut cx);
+        match Pin::new(&mut fut).poll(&mut cx) {
+            // Dropped in flight next: the detach is what this exercises.
+            Poll::Pending => {}
+            // Finished already: nothing is left to detach, which is also fine.
+            Poll::Ready(_) => {}
+        }
         drop(fut);
     }
     // Verify all 8 buffers across the 2 threads can still be borrowed simultaneously.

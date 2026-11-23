@@ -120,7 +120,8 @@ fn t2_f05_3_connect_unbound_port_refused_and_slot_free() {
         for (k, sock) in [Sock(1), Sock(2), Sock(0)].into_iter().enumerate() {
             io.submit(Token(10 + k as u64), Op::Close { sock }).unwrap();
         }
-        let _ = drive_until(&mut *io, &mut out, 1_000, |v| v.len() == 3);
+        // Teardown: the checks are done, and a slow close does not change them.
+        drive_until(&mut *io, &mut out, 1_000, |v| v.len() == 3).ok();
     });
 }
 
@@ -277,6 +278,7 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
             io.submit(Token(200 + k as u64), Op::Close { sock })
                 .unwrap();
         }
-        let _ = drive_until(&mut *io, &mut out, 100, |v| v.len() == 2);
+        // Teardown: the checks are done, and a slow close does not change them.
+        drive_until(&mut *io, &mut out, 100, |v| v.len() == 2).ok();
     });
 }

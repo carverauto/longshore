@@ -305,6 +305,8 @@ fn random_mutations_never_panic() {
             assert!(h.fields.head_len <= m.len());
             let _ = h.fields.header(&m, "content-length");
         }
-        let _ = parse_request(&m, LIMIT);
+        if let Ok(Some(h)) = parse_request(&m, LIMIT) {
+            assert!(h.fields.head_len <= m.len());
+        }
     }
 }

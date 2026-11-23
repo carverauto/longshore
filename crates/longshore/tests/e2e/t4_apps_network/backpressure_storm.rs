@@ -139,13 +139,14 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
             "rejected 3rd connection must observe EOF or reset, got {}",
             peer_end.result
         );
-        let _ = submit_and_wait_one(
+        submit_and_wait_one(
             io,
             &mut small_out,
             Token(24),
             Op::Close { sock: Sock(3) },
             200,
-        );
+        )
+        .expect("close the rejected connection");
     } else {
         assert!(third_res.unwrap() < 0);
     }

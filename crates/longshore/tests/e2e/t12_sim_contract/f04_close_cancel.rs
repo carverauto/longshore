@@ -71,7 +71,8 @@ fn close_all<IO: Io + ?Sized>(io: &mut IO, out: &mut Completions, socks: &[Sock]
         io.submit(Token(900 + i as u64), Op::Close { sock })
             .unwrap();
     }
-    let _ = drive_until(io, out, 1_000, |v| v.len() == socks.len());
+    // Teardown: the checks are done, and a slow close does not change them.
+    drive_until(io, out, 1_000, |v| v.len() == socks.len()).ok();
 }
 
 #[test]

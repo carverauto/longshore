@@ -16,7 +16,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 #[test]
 fn posix_file_edge_cases_and_sun_path_boundary() {
     let dir = std::env::temp_dir().join(format!("longshore_posix_files_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    // A file left by an earlier run would get in the way; usually there is none.
+    std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
 
     let mut io = PosixIo::new(Limits {
@@ -147,7 +148,8 @@ fn posix_file_edge_cases_and_sun_path_boundary() {
     if cfg!(target_os = "macos") {
         assert_eq!(c.result, -ENAMETOOLONG);
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

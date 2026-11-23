@@ -26,7 +26,7 @@ fn facade_non_optional_reexports_send_alert_plain_and_builder_errors_without_sim
     assert_eq!(sha256(b"").len(), 32);
     assert!(!crc64_header_value(crc64_nvme(b"abc")).is_empty());
     const { assert!(KEY_RECORDS_RETIRE > 0) };
-    let _ = format!("{:?}", TlsError::BadRecord);
+    assert!(!format!("{:?}", TlsError::BadRecord).is_empty());
     let _http_cfg_size = core::mem::size_of::<HttpConfig>();
     let _s3_size = core::mem::size_of::<(S3Config, S3)>();
     let _resolver_size = core::mem::size_of::<Resolver>();

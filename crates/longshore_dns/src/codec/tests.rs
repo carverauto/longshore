@@ -221,7 +221,9 @@ fn random_mutations_never_panic_or_read_out_of_bounds() {
             m[i] = rnd() as u8;
         }
         m.truncate(1 + (rnd() % m.len() as u64) as usize + (rnd() % 2) as usize * m.len());
-        let _ = parse_response(&m, 0xbeef, "bucket.s3.example.com");
+        if let Ok(a) = parse_response(&m, 0xbeef, "bucket.s3.example.com") {
+            assert!(a.len <= a.addrs.len());
+        }
     }
 }
 

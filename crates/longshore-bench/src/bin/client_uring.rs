@@ -186,7 +186,8 @@ fn main() {
             "every I/O thread adopts the new keys, {adopted} of {threads} did"
         );
         assert_eq!(client.erase("rotate-probe").wait(), Ok(()));
-        let _ = std::fs::remove_file(&credentials_path);
+        // Best-effort cleanup: a leftover temporary file does not change the result.
+        std::fs::remove_file(&credentials_path).ok();
         println!(
             "ok rotate: refused {refused} times with the first keys, then accepted with the file's"
         );

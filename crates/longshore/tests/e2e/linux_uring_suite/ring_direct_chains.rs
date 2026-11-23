@@ -204,5 +204,6 @@ fn uring_direct_io_chain_punch_statx_sealed() {
         );
     });
 
-    let _ = std::fs::remove_dir_all(&dir);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_dir_all(&dir).ok();
 }

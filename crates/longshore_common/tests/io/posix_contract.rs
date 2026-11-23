@@ -50,8 +50,9 @@ fn posix_keeps_the_shared_io_contract_v4_and_v6() {
         .as_nanos();
     let p4 = std::env::temp_dir().join(format!("longshore-posix-v4-{unique}.sock"));
     let p6 = std::env::temp_dir().join(format!("longshore-posix-v6-{unique}.sock"));
-    let _ = std::fs::remove_file(&p4);
-    let _ = std::fs::remove_file(&p6);
+    // A file left by an earlier run would get in the way; usually there is none.
+    std::fs::remove_file(&p4).ok();
+    std::fs::remove_file(&p6).ok();
     contract::run_all(&mut |l| PosixIo::new(l).unwrap(), v4());
     contract::run_all(&mut |l| PosixIo::new(l).unwrap(), v6());
     contract_net::run_all(
@@ -64,8 +65,9 @@ fn posix_keeps_the_shared_io_contract_v4_and_v6() {
         v6(),
         p6.to_str().unwrap(),
     );
-    let _ = std::fs::remove_file(&p4);
-    let _ = std::fs::remove_file(&p6);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_file(&p4).ok();
+    std::fs::remove_file(&p6).ok();
 }
 
 #[test]
@@ -104,7 +106,8 @@ fn read_file_and_errno_translation() {
     .unwrap();
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(2, 15)]);
     assert_eq!(&io.buf(BufId(0))[..15], b"posix-file-body");
-    let _ = std::fs::remove_file(&path);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_file(&path).ok();
 
     // Unknown errno falls back to -EIO.
     assert_eq!(to_linux_errno(99_999), -linux::EIO);
@@ -182,7 +185,8 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("longshore-posix-closed-{unique}.sock"));
-    let _ = std::fs::remove_file(&path);
+    // A file left by an earlier run would get in the way; usually there is none.
+    std::fs::remove_file(&path).ok();
     let limits = Limits {
         accept_range_start: 2,
         accept_range_len: 4,
@@ -240,5 +244,6 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
         .unwrap();
     io.submit(Token(7), Op::Close { sock: Sock(0) }).unwrap();
     let _ = drain_n(&mut io, &mut out, 4);
-    let _ = std::fs::remove_file(&path);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_file(&path).ok();
 }

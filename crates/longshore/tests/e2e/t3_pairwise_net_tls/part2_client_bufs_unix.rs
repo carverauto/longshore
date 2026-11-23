@@ -76,7 +76,10 @@ fn t3_13_s3_client_portable_with_stream_server_plain_and_tls() {
             Ok(c) => {
                 let mut b2 = c.buffer_blocking();
                 b2.as_mut_slice()[..4].copy_from_slice(b"tls!");
-                let _ = c.store("k-tls", b2, 4).wait();
+                // The client does not trust the test identity's root, so the store
+                // ends in BadCertificate; this part checks only that a TLS client
+                // builds and runs a handshake against the server.
+                c.store("k-tls", b2, 4).wait().0.ok();
             }
             Err(BuildError::Setting(msg)) => panic!("unexpected setting error: {msg}"),
             Err(e) => panic!("unexpected build error: {e}"),

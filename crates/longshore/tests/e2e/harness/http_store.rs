@@ -117,9 +117,11 @@ impl HttpStoreServer {
 impl Drop for HttpStoreServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        let _ = TcpStream::connect(self.addr);
+        // Only wakes the accept loop, which may already have stopped.
+        TcpStream::connect(self.addr).ok();
         if let Some(h) = self.thread.take() {
-            let _ = h.join();
+            // A panicked server thread has already reported it; Drop must not panic again.
+            h.join().ok();
         }
     }
 }
@@ -139,7 +141,8 @@ fn accept_loop(l: &TcpListener, st: &Arc<Mutex<StoreState>>, sp: &Arc<AtomicBool
         }
     }
     for w in workers {
-        let _ = w.join();
+        // A panicked connection thread has already reported it; its client saw the failure.
+        w.join().ok();
     }
 }
 
@@ -163,11 +166,14 @@ fn read_more(s: &mut TcpStream, dst: &mut Vec<u8>, tmp: &mut [u8]) -> io::Result
 }
 
 fn handle_conn(mut s: TcpStream, st: &Mutex<StoreState>, sp: &AtomicBool, tls: MaybeTls) {
-    let _ = s.set_nonblocking(false);
-    let _ = s.set_read_timeout(Some(Duration::from_millis(50)));
+    // The peer may already be gone (macOS then refuses socket options with EINVAL);
+    // the read loop below ends on a dead socket either way.
+    s.set_nonblocking(false).ok();
+    s.set_read_timeout(Some(Duration::from_millis(50))).ok();
     #[cfg(feature = "tls")]
     if let Some(setup) = tls {
-        let _ = handle_tls(s, st, sp, &setup);
+        // A failed TLS connection just ends; its client sees the failure.
+        handle_tls(s, st, sp, &setup).ok();
         return;
     }
     #[cfg(not(feature = "tls"))]

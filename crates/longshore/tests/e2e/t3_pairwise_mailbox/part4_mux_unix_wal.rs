@@ -274,25 +274,30 @@ fn t3_30_sealed_wal_append_over_mailbox_within_prealloc_waiters() {
                             b[8..16].copy_from_slice(&m.seq.to_le_bytes());
                             b[16..24].copy_from_slice(&sum.to_le_bytes());
                             b[24..24 + payload.len()].copy_from_slice(&payload);
-                            let _ = sim.submit_chain(&[
-                                (
-                                    Token(1),
-                                    Op::FileWrite {
-                                        slot: FileSlot(0),
-                                        buf: write_buf,
-                                        off: 0,
-                                        len: 4096,
-                                        file_off: cursor,
-                                    },
-                                ),
-                                (
-                                    Token(2),
-                                    Op::FileSync {
-                                        slot: FileSlot(0),
-                                        datasync: true,
-                                    },
-                                ),
-                            ]);
+                            if sim
+                                .submit_chain(&[
+                                    (
+                                        Token(1),
+                                        Op::FileWrite {
+                                            slot: FileSlot(0),
+                                            buf: write_buf,
+                                            off: 0,
+                                            len: 4096,
+                                            file_off: cursor,
+                                        },
+                                    ),
+                                    (
+                                        Token(2),
+                                        Op::FileSync {
+                                            slot: FileSlot(0),
+                                            datasync: true,
+                                        },
+                                    ),
+                                ])
+                                .is_err()
+                            {
+                                return false;
+                            }
                             pending_slot = Some(m.slot);
                         }
                     } else if c.token == Token(1) {

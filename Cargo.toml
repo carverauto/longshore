@@ -58,8 +58,7 @@ deprecated_safe = { level = "warn", priority = -1 }
 unused_must_use = "deny"
 
 [workspace.lints.clippy]
-# The workspace's one lint table: every crate takes it with `[lints] workspace = true`.
-# Adopted from UltraGraphDB's lint set one lint at a time, each with its violations fixed.
+# The workspace's lint table: every crate takes it with `[lints] workspace = true`.
 all = { level = "deny", priority = -1 }
 infinite_iter = "deny"
 maybe_infinite_iter = "deny"
@@ -72,6 +71,7 @@ await_holding_refcell_ref = "deny"
 trivially_copy_pass_by_ref = "deny"
 needless_pass_by_value = "deny"
 large_types_passed_by_value = "deny"
+let_underscore_must_use = "deny"
 
 [profile.release]
 opt-level = 3

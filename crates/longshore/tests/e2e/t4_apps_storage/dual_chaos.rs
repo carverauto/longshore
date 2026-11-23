@@ -130,7 +130,9 @@ fn run_chaos_seed(seed: u64) -> (u64, u64) {
     for round in 0..4u64 {
         if connected {
             write_pool_bytes(&mut sim, BufId(0), 0, &[0x40 + round as u8; 512]);
-            let _ = submit_and_wait_one(
+            // Network faults may fail or stall this exchange; the test checks
+            // that the disk chain beside it is unaffected, not the exchange.
+            submit_and_wait_one(
                 &mut sim,
                 &mut out,
                 Token(10 + round * 4),
@@ -142,8 +144,9 @@ fn run_chaos_seed(seed: u64) -> (u64, u64) {
                     zero_copy: false,
                 },
                 500,
-            );
-            let _ = submit_and_wait_one(
+            )
+            .ok();
+            submit_and_wait_one(
                 &mut sim,
                 &mut out,
                 Token(11 + round * 4),
@@ -154,7 +157,8 @@ fn run_chaos_seed(seed: u64) -> (u64, u64) {
                     len: 512,
                 },
                 500,
-            );
+            )
+            .ok();
         }
         write_pool_bytes(&mut sim, BufId(2), 0, &[0x70 + round as u8; 512]);
         sim.submit_chain(&[

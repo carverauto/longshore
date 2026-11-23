@@ -160,12 +160,13 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
         io.give_back(bid);
     }
     for idx in ended_socks {
-        let _ = io.submit(
+        io.submit(
             Token(1000 + idx as u64),
             Op::ArmedRecv {
                 sock: srv_socks[idx],
             },
-        );
+        )
+        .expect("re-arm the receive");
     }
     write_pool_bytes(io, BufId(1), 0, b"recovered-after-give-back");
     io.submit(

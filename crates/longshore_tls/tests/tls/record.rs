@@ -344,7 +344,9 @@ fn arbitrary_records_are_rejected(tc: TestCase) {
     let junk = tc.draw(gs::binary().max_size(300));
     let mut out = [0u8; 400];
     assert!(d.open(&junk, &mut out).is_err());
-    let _ = record_len(&junk);
+    if let Ok(Some(n)) = record_len(&junk) {
+        assert!(n > HEADER_LEN);
+    }
 }
 
 #[test]

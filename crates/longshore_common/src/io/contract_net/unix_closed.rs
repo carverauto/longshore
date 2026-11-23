@@ -82,7 +82,8 @@ fn connect_unix_then_close<IO: Io>(
 }
 
 fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, unix_path: &str) {
-    let _ = std::fs::remove_file(unix_path);
+    // A file left by an earlier run would get in the way; usually there is none.
+    std::fs::remove_file(unix_path).ok();
     let mut io = make(net_limits());
     let mut out = Completions::new(8);
     io.listen_unix(Sock(0), unix_path).expect("listen_unix");
@@ -202,7 +203,8 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
         close_socks(&mut io, &mut out, &[Sock(1), Sock(2)]);
     }
     close_socks(&mut io, &mut out, &[Sock(0)]);
-    let _ = std::fs::remove_file(unix_path);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    std::fs::remove_file(unix_path).ok();
 }
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, unix_path: &str) {

@@ -35,7 +35,7 @@ fn builder_rejects_zero_waiters_with_setting_error() {
 fn threaded_client_operations_allocate_nothing_after_waker_warmup() {
     use core::future::Future;
     use core::pin::pin;
-    use core::task::{Context, Waker};
+    use core::task::{Context, Poll, Waker};
     use longshore_common::io::alloc_guard::sealed;
     use longshore_common::io::posix::PosixIo;
     use longshore_common::io::{Completions, Io, Limits, Op, Sock, Token};
@@ -166,14 +166,24 @@ fn threaded_client_operations_allocate_nothing_after_waker_warmup() {
                         {
                             let mut cx = Context::from_waker(Waker::noop());
                             let mut pending = pin!(client.store(&detach_key, body, 64));
-                            let _ = pending.as_mut().poll(&mut cx);
+                            match pending.as_mut().poll(&mut cx) {
+                                // Dropped in flight next: the detach is what this exercises.
+                                Poll::Pending => {}
+                                // Finished already: nothing is left to detach, which is also fine.
+                                Poll::Ready(_) => {}
+                            }
                         }
 
                         // Exercise dropped Pending detach without a lent buffer.
                         {
                             let mut cx = Context::from_waker(Waker::noop());
                             let mut pending = pin!(client.erase(&detach_key));
-                            let _ = pending.as_mut().poll(&mut cx);
+                            match pending.as_mut().poll(&mut cx) {
+                                // Dropped in flight next: the detach is what this exercises.
+                                Poll::Pending => {}
+                                // Finished already: nothing is left to detach, which is also fine.
+                                Poll::Ready(_) => {}
+                            }
                         }
                     }
 
