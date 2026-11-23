@@ -39,7 +39,7 @@ impl Span {
             len: (end - start) as u16,
         }
     }
-    fn get<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
+    fn get(self, buf: &[u8]) -> &[u8] {
         &buf[self.start as usize..self.start as usize + self.len as usize]
     }
 }
