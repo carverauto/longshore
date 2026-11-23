@@ -22,6 +22,7 @@ mod common;
 #[path = "model/machine.rs"]
 mod machine;
 
+use core::task::Poll;
 use longshore_s3::client::Error;
 use machine::*;
 
@@ -76,7 +77,10 @@ fn an_operation_dropped_unfinished_gives_its_slot_to_the_next_caller() {
         let t = spawn(move || assert_eq!(other.erase("b").wait(), Ok(())));
         // Sent if the slot was free, queued for it if not, then let go.
         let mut dropped = Box::pin(w.client.erase("a"));
-        let _ = poll_once(dropped.as_mut());
+        // Pending or answered: either way the caller walks away from it.
+        match poll_once(dropped.as_mut()) {
+            Poll::Ready(_) | Poll::Pending => {}
+        }
         drop(dropped);
         t.join().unwrap();
         assert_eq!(w.client.erase("c").wait(), Ok(()));
@@ -91,7 +95,10 @@ fn a_waiter_that_gives_up_passes_its_turn_on() {
         let (second, third) = (w.client.clone(), w.client.clone());
         let gives_up = spawn(move || {
             let mut waiting = Box::pin(second.erase("b"));
-            let _ = poll_once(waiting.as_mut());
+            // Pending or answered: either way the caller walks away from it.
+            match poll_once(waiting.as_mut()) {
+                Poll::Ready(_) | Poll::Pending => {}
+            }
         });
         let waits = spawn(move || assert_eq!(third.erase("c").wait(), Ok(())));
         assert_eq!(w.client.erase("a").wait(), Ok(()));
@@ -164,7 +171,10 @@ fn a_caller_waiting_for_a_slot_when_its_lane_fails_stops_waiting() {
             // Takes the lane's one slot if the lane is still open, and is
             // then left alone: its caller does not come back for the result.
             let mut held = Box::pin(w.client.erase("a"));
-            let _ = poll_once(held.as_mut());
+            // Pending or answered: either way the caller walks away from it.
+            match poll_once(held.as_mut()) {
+                Poll::Ready(_) | Poll::Pending => {}
+            }
             let other = w.client.clone();
             // The slot will not come back, so this ends only because the
             // lane closing wakes it.

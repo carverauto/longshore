@@ -307,8 +307,11 @@ fn slots_call_future_drop_detach_races_answer_and_close() {
         let h = loom::thread::spawn(move || {
             let mut fut = pin!(tx2.call(|s| s, 999));
             let mut cx = Context::from_waker(Waker::noop());
-            let _ = fut.as_mut().poll(&mut cx);
-            drop(fut);
+            // Answered or not, the call is abandoned here: the future ends with
+            // this thread, which is what the slot must survive.
+            match fut.as_mut().poll(&mut cx) {
+                Poll::Ready(_) | Poll::Pending => {}
+            }
         });
         match rx.recv_parked() {
             Recv::Message(s) => {

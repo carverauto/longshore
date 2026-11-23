@@ -150,7 +150,7 @@ struct Seen {
 
 /// One caller: store and fetch its own key until told to stop. An answer
 /// of `Closed` is expected once threads fail. Anything else is a failure.
-fn caller(client: Client, n: usize, stop: Arc<AtomicBool>, seen: Arc<Seen>) {
+fn caller(client: &Client, n: usize, stop: &AtomicBool, seen: &Seen) {
     let key = format!("caller-{n}");
     let len = SIZE as usize;
     let mut round = 0u8;
@@ -210,7 +210,7 @@ fn break_threads(fault: Fault, threads: u32) {
     let callers: Vec<_> = (0..CALLERS)
         .map(|n| {
             let (c, s, k) = (client.clone(), stop.clone(), seen.clone());
-            std::thread::spawn(move || caller(c, n, s, k))
+            std::thread::spawn(move || caller(&c, n, &s, &k))
         })
         .collect();
     let count = |a: &AtomicU64| a.load(Ordering::Relaxed);

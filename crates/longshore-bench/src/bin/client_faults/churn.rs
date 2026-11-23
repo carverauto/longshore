@@ -36,7 +36,7 @@ enum Way {
     Fail,
 }
 
-fn caller(client: Client, n: usize, way: Way) {
+fn caller(client: &Client, n: usize, way: Way) {
     let key = format!("churn-{n}");
     let mut body = client.buffer_blocking();
     let void = body.is_empty();
@@ -82,7 +82,7 @@ pub fn run(rounds: u32, bounded_memory: bool) {
         let callers: Vec<_> = (0..CALLERS)
             .map(|n| {
                 let c = client.clone();
-                std::thread::spawn(move || caller(c, n, way))
+                std::thread::spawn(move || caller(&c, n, way))
             })
             .collect();
         match way {

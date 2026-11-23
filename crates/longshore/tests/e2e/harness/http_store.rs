@@ -38,6 +38,10 @@ fn clone_tls(t: &MaybeTls) -> MaybeTls {
     t.as_ref().map(Arc::clone)
 }
 #[cfg(not(feature = "tls"))]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "MaybeTls is () without the tls feature and an Option<Arc<..>> with it; one signature serves both"
+)]
 fn clone_tls(_: &MaybeTls) -> MaybeTls {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,6 +119,13 @@ impl Drop for HttpStoreServer {
     }
 }
 
+#[cfg_attr(
+    not(feature = "tls"),
+    expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "MaybeTls is () without the tls feature and an Option<Arc<..>> with it; one signature serves both"
+    )
+)]
 fn accept_loop(l: &TcpListener, st: &Arc<Mutex<StoreState>>, sp: &Arc<AtomicBool>, tls: &MaybeTls) {
     let mut workers = Vec::new();
     while !sp.load(Ordering::Acquire) {
