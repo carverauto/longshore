@@ -32,7 +32,7 @@ impl<'a> Request<'a> {
         self.method
     }
 
-    /// Already URI-encoded path, e.g. from [`uri_encode`] with `encode_slash = false`.
+    /// Already URI-encoded path, e.g. from [`uri_encode`](super::uri_encode) with `encode_slash = false`.
     #[inline]
     pub const fn canonical_uri(&self) -> &'a str {
         self.canonical_uri
