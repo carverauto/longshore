@@ -86,10 +86,40 @@ fn verify_kernels() {
     }
 }
 
+type F64 = fn(&[u8]) -> u64;
+type F32 = fn(&[u8]) -> u32;
+
+/// Every implementation gives the catalogue check value for its CRC.
+fn verify_check_values(crc64: &[(&str, F64)], crc32c: &[(&str, F32)]) {
+    for &(name, f) in crc64 {
+        assert_eq!(
+            f(CHECK_INPUT),
+            CRC64_NVME_CHECK,
+            "{name} fails the CRC-64/NVME check value"
+        );
+    }
+    for &(name, f) in crc32c {
+        assert_eq!(
+            f(CHECK_INPUT),
+            CRC32C_CHECK,
+            "{name} fails the CRC-32C check value"
+        );
+    }
+}
+
+/// `size` in bytes as a benchmark group label: `8MiB`, `64KiB`, `256B`.
+fn size_label(size: usize) -> String {
+    if size >= 1 << 20 {
+        format!("{}MiB", size >> 20)
+    } else if size >= 1 << 10 {
+        format!("{}KiB", size >> 10)
+    } else {
+        format!("{size}B")
+    }
+}
+
 fn bench(c: &mut Criterion) {
     verify_kernels();
-    type F64 = fn(&[u8]) -> u64;
-    type F32 = fn(&[u8]) -> u32;
     let crc64: [(&str, F64); 4] = [
         ("crc (table)", crc64_table),
         ("crc64fast-nvme", crc64_crc64fast_nvme),
@@ -102,20 +132,7 @@ fn bench(c: &mut Criterion) {
         ("crc-fast", crc32c_crc_fast),
         ("longshore", crc32c_longshore),
     ];
-    for (name, f) in crc64 {
-        assert_eq!(
-            f(CHECK_INPUT),
-            CRC64_NVME_CHECK,
-            "{name} fails the CRC-64/NVME check value"
-        );
-    }
-    for (name, f) in crc32c {
-        assert_eq!(
-            f(CHECK_INPUT),
-            CRC32C_CHECK,
-            "{name} fails the CRC-32C check value"
-        );
-    }
+    verify_check_values(&crc64, &crc32c);
 
     // Each of longshore's kernels this processor supports, by name, so lane
     // counts and register widths can be compared. "longshore" above is the
@@ -137,13 +154,7 @@ fn bench(c: &mut Criterion) {
         let data: Vec<u8> = (0..size)
             .map(|i| (i as u32).wrapping_mul(2654435761).to_le_bytes()[1])
             .collect();
-        let label = if size >= 1 << 20 {
-            format!("{}MiB", size >> 20)
-        } else if size >= 1 << 10 {
-            format!("{}KiB", size >> 10)
-        } else {
-            format!("{size}B")
-        };
+        let label = size_label(size);
         let mut g64 = c.benchmark_group(format!("crc64_nvme/{label}"));
         let _: &mut BenchmarkGroup<'_, WallTime> = g64.throughput(Throughput::Bytes(size as u64));
         for (name, f) in crc64 {

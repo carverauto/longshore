@@ -132,15 +132,42 @@ mod linux {
             let _: i32 = unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
         }
 
-        // Handshake in user space, AES-128-GCM only so the key layout is fixed.
+        // KTLS_VERSION=1.2 speaks TLS 1.2 instead, to see whether the card
+        // takes an offload it refuses for 1.3.
+        let tls12 = std::env::var("KTLS_VERSION").is_ok_and(|v| v == "1.2");
+        let (sock, seq, secrets) = handshake(addr, client_config(der_path, tls12));
+        let fd = sock.as_raw_fd();
+        let on_device = give_kernel_keys(fd, tls12, seq, &secrets);
+
+        let body = vec![0x5au8; SIZE];
+        let head = format!(
+            "PUT /bench/object HTTP/1.1\r\nHost: bench.test\r\nContent-Length: {SIZE}\r\n\r\n"
+        );
+        let file = if mode == "sendfile" {
+            Some(zero_copy_file(fd, &body))
+        } else {
+            None
+        };
+
+        let (requests, wall, cpu) = send_for(fd, &head, &body, file, secs);
+        let gb = (requests * SIZE as u64) as f64 / 1e9;
+        println!(
+            "{{\"cmd\":\"ktls-{mode}\",\"tls\":\"{}\",\"card_encrypts\":{on_device},\"conns\":1,\"secs\":{wall:.2},\"requests\":{requests},\"gb_per_s\":{:.2},\"thread_cpu\":{:.2},\"gb_per_cpu_s\":{:.2}}}",
+            if tls12 { "1.2" } else { "1.3" },
+            gb / wall,
+            cpu / wall,
+            gb / cpu.max(1e-9)
+        );
+    }
+
+    /// A rustls client trusting only `der_path`, AES-128-GCM only so the key
+    /// layout is fixed, its secrets extractable.
+    fn client_config(der_path: &str, tls12: bool) -> rustls::ClientConfig {
         let der = std::fs::read(der_path).unwrap_or_else(|e| die(&format!("{der_path}: {e}")));
         let mut roots = rustls::RootCertStore::empty();
         roots
             .add(CertificateDer::from(der))
             .unwrap_or_else(|e| die(&format!("certificate: {e}")));
-        // KTLS_VERSION=1.2 speaks TLS 1.2 instead, to see whether the card
-        // takes an offload it refuses for 1.3.
-        let tls12 = std::env::var("KTLS_VERSION").is_ok_and(|v| v == "1.2");
         use rustls::crypto::aws_lc_rs::cipher_suite as suite;
         let provider = rustls::crypto::CryptoProvider {
             cipher_suites: if tls12 {
@@ -164,6 +191,15 @@ mod linux {
             .with_root_certificates(roots)
             .with_no_client_auth();
         cfg.enable_secret_extraction = true;
+        cfg
+    }
+
+    /// Handshake in user space over a connection to `addr`: the socket, and
+    /// the sending sequence number and secrets.
+    fn handshake(
+        addr: &str,
+        cfg: rustls::ClientConfig,
+    ) -> (TcpStream, u64, ConnectionTrafficSecrets) {
         let mut conn = rustls::ClientConnection::new(
             Arc::new(cfg),
             rustls::pki_types::ServerName::try_from("bench.test")
@@ -186,13 +222,22 @@ mod linux {
         let secrets = conn
             .dangerous_extract_secrets()
             .unwrap_or_else(|e| die(&format!("secrets: {e}")));
-        let (seq, ConnectionTrafficSecrets::Aes128Gcm { key, iv }) = secrets.tx else {
+        let (seq, tx) = secrets.tx;
+        (sock, seq, tx)
+    }
+
+    /// Hand the sending keys to the kernel. If the route's card offers TLS
+    /// offload the kernel uses it by itself; otherwise it encrypts in
+    /// software. Whether the card took it.
+    fn give_kernel_keys(
+        fd: c_int,
+        tls12: bool,
+        seq: u64,
+        secrets: &ConnectionTrafficSecrets,
+    ) -> bool {
+        let ConnectionTrafficSecrets::Aes128Gcm { key, iv } = secrets else {
             die("not AES-128-GCM")
         };
-
-        // Hand the sending keys to the kernel. If the route's card offers TLS
-        // offload the kernel uses it by itself; otherwise it encrypts in software.
-        let fd = sock.as_raw_fd();
         let before = device_connections();
         let ulp = b"tls";
         if unsafe { setsockopt(fd, SOL_TCP, TCP_ULP, ulp.as_ptr().cast(), ulp.len() as u32) } != 0 {
@@ -222,45 +267,50 @@ mod linux {
         {
             die(&format!("TLS_TX: {}", std::io::Error::last_os_error()));
         }
-        let on_device = device_connections() > before;
+        device_connections() > before
+    }
 
-        let body = vec![0x5au8; SIZE];
-        let head = format!(
-            "PUT /bench/object HTTP/1.1\r\nHost: bench.test\r\nContent-Length: {SIZE}\r\n\r\n"
-        );
-        let file = if mode == "sendfile" {
-            let one: c_int = 1;
-            if unsafe {
-                setsockopt(
-                    fd,
-                    SOL_TLS,
-                    TLS_TX_ZEROCOPY_RO,
-                    (&one as *const c_int).cast(),
-                    4,
-                )
-            } != 0
-            {
-                die(&format!(
-                    "TLS_TX_ZEROCOPY_RO: {} (needs the card to encrypt)",
-                    std::io::Error::last_os_error()
-                ));
-            }
-            let m = unsafe { memfd_create(c"longshore-ktls".as_ptr().cast(), 0) };
-            if m < 0 || usize::try_from(unsafe { write(m, body.as_ptr().cast(), SIZE) }) != Ok(SIZE)
-            {
-                die("memfd");
-            }
-            Some(m)
-        } else {
-            None
-        };
+    /// Turn on `TLS_TX_ZEROCOPY_RO` and put `body` in a memory file to send
+    /// from.
+    fn zero_copy_file(fd: c_int, body: &[u8]) -> c_int {
+        let one: c_int = 1;
+        if unsafe {
+            setsockopt(
+                fd,
+                SOL_TLS,
+                TLS_TX_ZEROCOPY_RO,
+                (&one as *const c_int).cast(),
+                4,
+            )
+        } != 0
+        {
+            die(&format!(
+                "TLS_TX_ZEROCOPY_RO: {} (needs the card to encrypt)",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let m = unsafe { memfd_create(c"longshore-ktls".as_ptr().cast(), 0) };
+        if m < 0 || usize::try_from(unsafe { write(m, body.as_ptr().cast(), SIZE) }) != Ok(SIZE) {
+            die("memfd");
+        }
+        m
+    }
 
+    /// Send PUTs for `secs` seconds: the requests sent, the wall seconds and
+    /// the thread CPU seconds.
+    fn send_for(
+        fd: c_int,
+        head: &str,
+        body: &[u8],
+        file: Option<c_int>,
+        secs: f64,
+    ) -> (u64, f64, f64) {
         let (t0, cpu0) = (Instant::now(), thread_cpu_secs());
         let mut requests = 0u64;
         while t0.elapsed().as_secs_f64() < secs {
             send_all(fd, head.as_bytes(), MSG_MORE);
             match file {
-                None => send_all(fd, &body, 0),
+                None => send_all(fd, body, 0),
                 Some(m) => {
                     let mut off: c_long = 0;
                     loop {
@@ -277,14 +327,10 @@ mod linux {
             }
             requests += 1;
         }
-        let (wall, cpu) = (t0.elapsed().as_secs_f64(), thread_cpu_secs() - cpu0);
-        let gb = (requests * SIZE as u64) as f64 / 1e9;
-        println!(
-            "{{\"cmd\":\"ktls-{mode}\",\"tls\":\"{}\",\"card_encrypts\":{on_device},\"conns\":1,\"secs\":{wall:.2},\"requests\":{requests},\"gb_per_s\":{:.2},\"thread_cpu\":{:.2},\"gb_per_cpu_s\":{:.2}}}",
-            if tls12 { "1.2" } else { "1.3" },
-            gb / wall,
-            cpu / wall,
-            gb / cpu.max(1e-9)
-        );
+        (
+            requests,
+            t0.elapsed().as_secs_f64(),
+            thread_cpu_secs() - cpu0,
+        )
     }
 }

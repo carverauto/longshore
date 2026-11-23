@@ -151,12 +151,6 @@ fn main() -> Result<()> {
     let body: Vec<u8> = (0..100_000u32)
         .map(|i| i.wrapping_mul(2654435761).to_le_bytes()[2])
         .collect();
-    let crc = longshore::checksum::crc64_nvme(&body);
-    let be = longshore::checksum::crc64_header_value(crc);
-    let be = std::str::from_utf8(&be)?;
-    let le = longshore::checksum::crc64_azure_header_value(crc);
-    let le = std::str::from_utf8(&le)?;
-    let block = ("x-ms-blob-type", "BlockBlob");
     let mut ok = true;
 
     ok &= show(
@@ -173,7 +167,23 @@ fn main() -> Result<()> {
         )?,
         201,
     );
-    let stored = call(addr, "PUT", &blob, &[], &[block], "*", "", &body)?;
+    ok &= store(addr, &blob, &body)?;
+    ok &= fetch(addr, &blob, &body)?;
+    ok &= list_and_erase(addr, &container, &blob)?;
+    println!("{}", if ok { "probe ok" } else { "probe FAILED" });
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
+/// Store the blob if absent, again, and with right and wrong checksums.
+fn store(addr: &str, blob: &str, body: &[u8]) -> Result<bool> {
+    let crc = longshore::checksum::crc64_nvme(body);
+    let be = longshore::checksum::crc64_header_value(crc);
+    let be = std::str::from_utf8(&be)?;
+    let le = longshore::checksum::crc64_azure_header_value(crc);
+    let le = std::str::from_utf8(&le)?;
+    let block = ("x-ms-blob-type", "BlockBlob");
+    let mut ok = true;
+    let stored = call(addr, "PUT", blob, &[], &[block], "*", "", body)?;
     ok &= show("store if absent", &stored, 201);
     let returned = stored
         .header("x-ms-content-crc64")
@@ -190,19 +200,19 @@ fn main() -> Result<()> {
     );
     // The reference documents 412 for an unmet If-None-Match on a write;
     // the emulator answers 409 BlobAlreadyExists. The client must take both.
-    let again = call(addr, "PUT", &blob, &[], &[block], "*", "", &body)?;
+    let again = call(addr, "PUT", blob, &[], &[block], "*", "", body)?;
     ok &= show("store if absent, again", &again, again.status) && matches!(again.status, 409 | 412);
     ok &= show(
         "store with checksum, least significant first",
         &call(
             addr,
             "PUT",
-            &blob,
+            blob,
             &[],
             &[block, ("x-ms-content-crc64", le)],
             "",
             "",
-            &body,
+            body,
         )?,
         201,
     );
@@ -211,12 +221,12 @@ fn main() -> Result<()> {
         &call(
             addr,
             "PUT",
-            &blob,
+            blob,
             &[],
             &[block, ("x-ms-content-crc64", be)],
             "",
             "",
-            &body,
+            body,
         )?,
         400,
     );
@@ -225,30 +235,42 @@ fn main() -> Result<()> {
         &call(
             addr,
             "PUT",
-            &blob,
+            blob,
             &[],
             &[block, ("x-ms-content-crc64", "AAAAAAAAAAA=")],
             "",
             "",
-            &body,
+            body,
         )?,
         400,
     );
-    let fetched = call(addr, "GET", &blob, &[], &[], "", "", b"")?;
+    Ok(ok)
+}
+
+/// Fetch the blob whole and in part, and its properties.
+fn fetch(addr: &str, blob: &str, body: &[u8]) -> Result<bool> {
+    let mut ok = true;
+    let fetched = call(addr, "GET", blob, &[], &[], "", "", b"")?;
     ok &= show("fetch", &fetched, 200) && fetched.body == body;
-    let ranged = call(addr, "GET", &blob, &[], &[], "", "bytes=100-199", b"")?;
+    let ranged = call(addr, "GET", blob, &[], &[], "", "bytes=100-199", b"")?;
     ok &= show("fetch a range", &ranged, 206) && ranged.body == body[100..200];
-    let props = call(addr, "HEAD", &blob, &[], &[], "", "", b"")?;
+    let props = call(addr, "HEAD", blob, &[], &[], "", "", b"")?;
     ok &= show("properties", &props, 200);
     println!(
         "  properties x-ms-content-crc64: {}   content-md5: {}",
         props.header("x-ms-content-crc64").unwrap_or("(none)"),
         props.header("content-md5").unwrap_or("(none)")
     );
+    Ok(ok)
+}
+
+/// List the container, erase the blob, and delete the container.
+fn list_and_erase(addr: &str, container: &str, blob: &str) -> Result<bool> {
+    let mut ok = true;
     let listed = call(
         addr,
         "GET",
-        &container,
+        container,
         &[
             ("restype", "container"),
             ("comp", "list"),
@@ -270,12 +292,12 @@ fn main() -> Result<()> {
     );
     ok &= show(
         "erase",
-        &call(addr, "DELETE", &blob, &[], &[], "", "", b"")?,
+        &call(addr, "DELETE", blob, &[], &[], "", "", b"")?,
         202,
     );
     ok &= show(
         "fetch after erase",
-        &call(addr, "GET", &blob, &[], &[], "", "", b"")?,
+        &call(addr, "GET", blob, &[], &[], "", "", b"")?,
         404,
     );
     ok &= show(
@@ -283,7 +305,7 @@ fn main() -> Result<()> {
         &call(
             addr,
             "DELETE",
-            &container,
+            container,
             &[("restype", "container")],
             &[],
             "",
@@ -292,6 +314,5 @@ fn main() -> Result<()> {
         )?,
         202,
     );
-    println!("{}", if ok { "probe ok" } else { "probe FAILED" });
-    std::process::exit(if ok { 0 } else { 1 });
+    Ok(ok)
 }

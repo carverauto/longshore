@@ -48,7 +48,38 @@ fn main() -> Result<()> {
     let host = args.next().ok_or("usage: tls_probe HOST [PATH]")?;
     let path = args.next().unwrap_or_else(|| "/".into());
 
-    // TLS 1.3 only, AES-GCM suites only.
+    let (mut sock, conn) = handshake(&host)?;
+    // From here on rustls is out of the picture.
+    let (mut tx, mut rx) = extract_keys(conn)?;
+    println!("keys extracted");
+
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    let mut record = vec![0u8; request.len() + OVERHEAD];
+    let n = tx
+        .seal(CONTENT_APPLICATION_DATA, request.as_bytes(), &mut record)
+        .map_err(|e| format!("seal the request: {e:?}"))?;
+    sock.write_all(&record[..n])
+        .map_err(|e| format!("send: {e}"))?;
+
+    let (plain, counts) = read_response(&mut sock, &mut rx)?;
+    let text = String::from_utf8_lossy(&plain);
+    let status = text.lines().next().unwrap_or("(no response)");
+    println!(
+        "records opened: {} application data, {} handshake, {} alert",
+        counts[0], counts[1], counts[2]
+    );
+    println!("response: {status} ({} bytes of plaintext)", plain.len());
+    assert!(
+        status.starts_with("HTTP/1.1 "),
+        "no HTTP response came through our record layer"
+    );
+    println!("ok: handshake by rustls, every record after it by longshore::tls");
+    Ok(())
+}
+
+/// A rustls client for TLS 1.3 with AES-GCM suites only, its traffic
+/// secrets extractable.
+fn client_config() -> Result<ClientConfig> {
     let mut p = provider::default_provider();
     p.cipher_suites.retain(|s| {
         matches!(
@@ -65,11 +96,16 @@ fn main() -> Result<()> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.enable_secret_extraction = true;
+    Ok(config)
+}
 
-    let mut sock = TcpStream::connect((host.as_str(), 443)).map_err(|e| format!("connect: {e}"))?;
+/// Connect to `host` on port 443 and complete the handshake with rustls.
+fn handshake(host: &str) -> Result<(TcpStream, ClientConnection)> {
+    let config = client_config()?;
+    let mut sock = TcpStream::connect((host, 443)).map_err(|e| format!("connect: {e}"))?;
     let mut conn = ClientConnection::new(
         Arc::new(config),
-        rustls::pki_types::ServerName::try_from(host.clone())
+        rustls::pki_types::ServerName::try_from(host.to_owned())
             .map_err(|e| format!("server name {host}: {e}"))?,
     )
     .map_err(|e| format!("client: {e}"))?;
@@ -88,8 +124,12 @@ fn main() -> Result<()> {
             .ok_or("no protocol version negotiated")?,
         suite
     );
+    Ok((sock, conn))
+}
 
-    // From here on rustls is out of the picture.
+/// The send and receive record directions, keyed from the connection's
+/// traffic secrets.
+fn extract_keys(conn: ClientConnection) -> Result<(Direction, Direction)> {
     let secrets = conn
         .dangerous_extract_secrets()
         .map_err(|e| format!("extract secrets: {e}"))?;
@@ -101,16 +141,13 @@ fn main() -> Result<()> {
     let (rx_suite, rx_key, rx_iv) = keys(&rx_secret)?;
     rx.set_keys(rx_suite, &rx_key, &rx_iv, rx_seq)
         .map_err(|e| format!("receive keys: {e:?}"))?;
-    println!("keys extracted");
+    Ok((tx, rx))
+}
 
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
-    let mut record = vec![0u8; request.len() + OVERHEAD];
-    let n = tx
-        .seal(CONTENT_APPLICATION_DATA, request.as_bytes(), &mut record)
-        .map_err(|e| format!("seal the request: {e:?}"))?;
-    sock.write_all(&record[..n])
-        .map_err(|e| format!("send: {e}"))?;
-
+/// Read and open records until an alert or the end of the stream: the
+/// application data, and the count of application data, handshake and
+/// alert records.
+fn read_response(sock: &mut TcpStream, rx: &mut Direction) -> Result<(Vec<u8>, [usize; 3])> {
     let (mut inbox, mut plain, mut out) = (Vec::new(), Vec::new(), vec![0u8; 17000]);
     let mut counts = [0usize; 3];
     let mut chunk = [0u8; 16384];
@@ -142,17 +179,5 @@ fn main() -> Result<()> {
             Ok(read) => inbox.extend_from_slice(&chunk[..read]),
         }
     }
-    let text = String::from_utf8_lossy(&plain);
-    let status = text.lines().next().unwrap_or("(no response)");
-    println!(
-        "records opened: {} application data, {} handshake, {} alert",
-        counts[0], counts[1], counts[2]
-    );
-    println!("response: {status} ({} bytes of plaintext)", plain.len());
-    assert!(
-        status.starts_with("HTTP/1.1 "),
-        "no HTTP response came through our record layer"
-    );
-    println!("ok: handshake by rustls, every record after it by longshore::tls");
-    Ok(())
+    Ok((plain, counts))
 }
