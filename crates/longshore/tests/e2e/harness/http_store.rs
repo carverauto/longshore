@@ -257,22 +257,22 @@ fn handle_tls(
 fn try_http(buf: &mut Vec<u8>, state: &Mutex<StoreState>) -> Option<(Vec<u8>, bool)> {
     let head = parse_request(buf, 16 * 1024).ok()??;
     let (hl, bl) = (
-        head.fields.head_len,
-        head.fields.content_length.unwrap_or(0) as usize,
+        head.fields().head_len(),
+        head.fields().content_length().unwrap_or(0) as usize,
     );
     if buf.len() < hl + bl {
         return None;
     }
     let m = String::from_utf8_lossy(head.method(buf)).into_owned();
     let t = String::from_utf8_lossy(head.target(buf)).into_owned();
-    let inm = head.fields.header(buf, "if-none-match") == Some(b"*");
+    let inm = head.fields().header(buf, "if-none-match") == Some(b"*");
     let rng = head
-        .fields
+        .fields()
         .header(buf, "range")
         .and_then(|v| std::str::from_utf8(v).ok())
         .and_then(|s| s.strip_prefix("bytes=")?.split_once('-'))
         .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)));
-    let (close, body) = (head.fields.close, buf[hl..hl + bl].to_vec());
+    let (close, body) = (head.fields().close(), buf[hl..hl + bl].to_vec());
     let _: std::vec::Drain<'_, u8> = buf.drain(..hl + bl);
     let mut st = state.lock().expect("lock");
     st.requests += 1;

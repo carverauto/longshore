@@ -159,12 +159,12 @@ impl Steps<'_> {
         let first_ok = listed_len(&first_page.outcome).is_some_and(|len| {
             Listing::parse(&self.io.buf(self.rx)[..len as usize]).is_ok_and(|listing| {
                 continuation_len = listing
-                    .next_token_raw
+                    .next_token_raw()
                     .and_then(|raw| longshore::store::list::unescape(raw, &mut continuation))
                     .unwrap_or(0);
                 let one_key =
                     matches!(listing.entries().next(), Some(Ok(e)) if e.key_raw == a.as_bytes());
-                listing.is_truncated && one_key && listing.common_prefixes().next().is_none()
+                listing.is_truncated() && one_key && listing.common_prefixes().next().is_none()
             })
         });
         first_ok
@@ -183,7 +183,7 @@ impl Steps<'_> {
                     prefix_ok
                         && prefixes.next().is_none()
                         && listing.entries().next().is_none()
-                        && !listing.is_truncated
+                        && !listing.is_truncated()
                 })
             })
     }

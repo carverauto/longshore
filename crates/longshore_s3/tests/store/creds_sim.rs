@@ -33,8 +33,8 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
     assert_eq!(
         (
             w.s3.access_key(),
-            w.s3.credential_rotations,
-            w.s3.credential_failures
+            w.s3.credential_rotations(),
+            w.s3.credential_failures()
         ),
         (KEY_A, 0, 1)
     );
@@ -44,11 +44,11 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
     w.io.set_file(w.creds, Some(file(KEY_B).as_bytes()));
     w.settle(REREAD_MS + 50);
     assert_eq!(
-        (w.s3.access_key(), w.s3.credential_rotations),
+        (w.s3.access_key(), w.s3.credential_rotations()),
         (KEY_A, 0),
         "refused credentials must not be adopted"
     );
-    assert!(w.s3.credential_failures >= 2);
+    assert!(w.s3.credential_failures() >= 2);
     assert_eq!(
         w.store().outcome,
         Outcome::Stored,
@@ -58,7 +58,7 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
     // The operator enables the new key alongside the old one.
     w.server.allow_access_keys(&[KEY_A, KEY_B]);
     w.settle(REREAD_MS + 50);
-    assert_eq!((w.s3.access_key(), w.s3.credential_rotations), (KEY_B, 1));
+    assert_eq!((w.s3.access_key(), w.s3.credential_rotations()), (KEY_B, 1));
 
     // The old key is revoked; requests are signed with the new one.
     w.server.allow_access_keys(&[KEY_B]);
@@ -66,13 +66,13 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
     assert_eq!(w.store().attempts, 1);
 
     // An unchanged file causes no further validation requests.
-    let (requests, failures) = (w.server.requests(), w.s3.credential_failures);
+    let (requests, failures) = (w.server.requests(), w.s3.credential_failures());
     w.settle(5 * REREAD_MS);
     assert_eq!(
         (
             w.server.requests(),
-            w.s3.credential_rotations,
-            w.s3.credential_failures
+            w.s3.credential_rotations(),
+            w.s3.credential_failures()
         ),
         (requests, 1, failures),
         "an unchanged file must not trigger validation"
@@ -84,8 +84,8 @@ fn new_credentials_are_adopted_only_after_the_store_accepts_them() {
         Some(b"[default]\naws_access_key_id = AKIDHALF\naws_secret_acc"),
     );
     w.settle(REREAD_MS + 50);
-    assert_eq!((w.s3.access_key(), w.s3.credential_rotations), (KEY_B, 1));
-    assert!(w.s3.credential_failures > failures);
+    assert_eq!((w.s3.access_key(), w.s3.credential_rotations()), (KEY_B, 1));
+    assert!(w.s3.credential_failures() > failures);
     assert_eq!(w.store().outcome, Outcome::Stored);
 }
 
@@ -104,16 +104,16 @@ fn a_file_longer_than_one_read_is_refused() {
     w.io.set_file(w.creds, Some(text.as_bytes()));
     w.settle(REREAD_MS + 50);
     assert_eq!(
-        (w.s3.access_key(), w.s3.credential_rotations),
+        (w.s3.access_key(), w.s3.credential_rotations()),
         (KEY_A, 0),
         "a file longer than one read must not be adopted"
     );
-    assert!(w.s3.credential_failures >= 1);
+    assert!(w.s3.credential_failures() >= 1);
 
     // The same key pair in a file that fits is adopted.
     w.io.set_file(w.creds, Some(file(KEY_B).as_bytes()));
     w.settle(REREAD_MS + 50);
-    assert_eq!((w.s3.access_key(), w.s3.credential_rotations), (KEY_B, 1));
+    assert_eq!((w.s3.access_key(), w.s3.credential_rotations()), (KEY_B, 1));
 }
 
 /// The whole rotation, with requests running throughout and network faults
@@ -144,7 +144,7 @@ fn rotation_under_load_fails_no_request() {
                     stage = 1;
                 }
                 // Revoke the old key only once the client has moved off it.
-                (1, _) if w.s3.credential_rotations == 1 => {
+                (1, _) if w.s3.credential_rotations() == 1 => {
                     w.server.allow_access_keys(&[KEY_B]);
                     stage = 2;
                 }
@@ -153,7 +153,7 @@ fn rotation_under_load_fails_no_request() {
             w.settle(10);
         }
         assert_eq!(
-            (stage, w.s3.access_key(), w.s3.credential_rotations),
+            (stage, w.s3.access_key(), w.s3.credential_rotations()),
             (2, KEY_B, 1),
             "seed {seed}: rotation did not complete"
         );
@@ -178,13 +178,13 @@ fn temporary_keys_send_their_session_token_and_rotate_with_it() {
     };
     w.io.set_file(w.creds, Some(with_token("token-one").as_bytes()));
     w.settle(REREAD_MS + 50);
-    assert_eq!(w.s3.credential_rotations, 1);
+    assert_eq!(w.s3.credential_rotations(), 1);
     assert_eq!(w.store().outcome, Outcome::Stored);
 
     // The token is replaced, as it is every few hours in practice.
     w.server.require_session_token("token-two");
     w.io.set_file(w.creds, Some(with_token("token-two").as_bytes()));
     w.settle(REREAD_MS + 50);
-    assert_eq!(w.s3.credential_rotations, 2);
+    assert_eq!(w.s3.credential_rotations(), 2);
     assert_eq!(w.store().outcome, Outcome::Stored);
 }

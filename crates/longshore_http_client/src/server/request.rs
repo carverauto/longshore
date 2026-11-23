@@ -20,8 +20,8 @@ impl Server {
         let target = in_bucket(head.target(buf), self.bucket.as_bytes());
         let authorized = self.authorizes(buf, head);
         let c = &mut self.conns[i];
-        let too_long = c.note_target(buf, &head.fields, method, target);
-        c.note_fields(buf, &head.fields);
+        let too_long = c.note_target(buf, head.fields(), method, target);
+        c.note_fields(buf, head.fields());
         c.authorized = authorized;
         too_long
     }
@@ -32,7 +32,7 @@ impl Server {
     fn authorizes(&self, buf: &[u8], head: &RequestHead) -> bool {
         let (allowed_keys, allowed_count) = (&self.allowed_keys, self.allowed_count);
         let mut authorized = allowed_count == 0
-            || head.fields.header(buf, "authorization").is_some_and(|v| {
+            || head.fields().header(buf, "authorization").is_some_and(|v| {
                 // "... Credential=<access key>/<date>/...", or "Bearer <token>".
                 let key = v.strip_prefix(b"Bearer ").or_else(|| {
                     v.windows(11)
@@ -50,14 +50,14 @@ impl Server {
             authorized &= verify(
                 head.method(buf),
                 head.target(buf),
-                &buf[..head.fields.head_len],
-                &head.fields,
+                &buf[..head.fields().head_len()],
+                head.fields(),
             );
         }
         let (token, token_len) = self.session_token;
         if token_len > 0 {
             authorized &=
-                head.fields.header(buf, "x-amz-security-token") == Some(&token[..token_len]);
+                head.fields().header(buf, "x-amz-security-token") == Some(&token[..token_len]);
         }
         authorized
     }
@@ -98,14 +98,14 @@ impl Conn {
     /// Keep what the request's other headers ask for, and forget what the
     /// last response carried.
     fn note_fields(&mut self, buf: &[u8], fields: &Fields) {
-        self.close_after = fields.close;
+        self.close_after = fields.close();
         self.if_none_match = fields.header(buf, "if-none-match") == Some(b"*")
             || fields.header(buf, "x-goog-if-generation-match") == Some(b"0");
         self.claimed = claimed_checksum(buf, fields);
         self.reply_checksum = None;
         self.reply_tag = None;
         self.reply_object = None;
-        self.note_describing(&buf[..fields.head_len]);
+        self.note_describing(&buf[..fields.head_len()]);
         let source = fields
             .header(buf, "x-amz-copy-source")
             .or_else(|| fields.header(buf, "x-goog-copy-source"))

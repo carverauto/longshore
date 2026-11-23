@@ -82,8 +82,8 @@ fn listings_round_trip(tc: TestCase) {
     };
 
     let listing = Listing::parse(xml.as_bytes()).expect("a well-formed listing must parse");
-    assert_eq!(listing.is_truncated, truncated);
-    let got_token = listing.next_token_raw.map(|raw| {
+    assert_eq!(listing.is_truncated(), truncated);
+    let got_token = listing.next_token_raw().map(|raw| {
         let mut out = vec![0u8; raw.len()];
         let n = unescape(raw, &mut out).expect("valid references");
         String::from_utf8(out[..n].to_vec()).unwrap()
@@ -135,7 +135,7 @@ fn arbitrary_documents_are_safe(tc: TestCase) {
         for p in listing.common_prefixes().flatten() {
             assert!(!p.is_empty() && inside(p));
         }
-        if let Some(token) = listing.next_token_raw {
+        if let Some(token) = listing.next_token_raw() {
             assert!(!token.is_empty() && inside(token));
         }
         // An error is reported once and ends the iteration.

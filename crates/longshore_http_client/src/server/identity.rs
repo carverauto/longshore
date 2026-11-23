@@ -25,13 +25,13 @@ pub(super) struct Asked {
     /// The `versionId` the target carried; zero for none.
     version: u32,
     /// `x-amz-server-side-encryption: AES256` was sent.
-    pub encrypt: bool,
+    encrypt: bool,
     /// The `x-amz-checksum-sha256` sent with the request.
-    pub sha256: Option<[u8; SHA256_LEN]>,
+    sha256: Option<[u8; SHA256_LEN]>,
     /// The object whose identity goes on the response, and the range of it
     /// the response carries.
-    pub reply: Option<u32>,
-    pub reply_range: Option<(u32, u32)>,
+    reply: Option<u32>,
+    reply_range: Option<(u32, u32)>,
 }
 
 impl Asked {
@@ -69,6 +69,18 @@ impl Asked {
             .and_then(|v| v.strip_prefix("sim-v")?.parse().ok())
             .unwrap_or(u32::MAX);
         (asked, at)
+    }
+
+    /// Put the identity of object `slot` on the response.
+    #[inline]
+    pub(super) const fn set_reply(&mut self, slot: u32) {
+        self.reply = Some(slot);
+    }
+
+    /// The response carries bytes `first..=last` of the object.
+    #[inline]
+    pub(super) const fn set_reply_range(&mut self, first: u32, last: u32) {
+        self.reply_range = Some((first, last));
     }
 }
 

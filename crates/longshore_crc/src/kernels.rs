@@ -23,7 +23,7 @@ mod arch {
 
 /// One way of computing both checksums.
 pub struct Kernel {
-    pub name: &'static str,
+    name: &'static str,
     supported: fn() -> bool,
     crc64: unsafe fn(u64, &[u8]) -> u64,
     crc32c: unsafe fn(u32, &[u8]) -> u32,
@@ -45,6 +45,13 @@ impl Kernel {
             crc64,
             crc32c,
         }
+    }
+
+    /// The kernel's name, such as `table`.
+    #[inline]
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        self.name
     }
 
     /// Whether this processor has the instructions the kernel uses.

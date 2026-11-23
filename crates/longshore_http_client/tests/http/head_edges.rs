@@ -30,7 +30,7 @@ fn the_size_limit_is_exact() {
         let fits = head(limit);
         assert_eq!(fits.len(), limit);
         let parsed = parse_response(&fits, limit).unwrap().unwrap();
-        assert_eq!(parsed.fields.head_len, limit);
+        assert_eq!(parsed.fields.head_len(), limit);
         assert_eq!(
             parse_response(&head(limit + 1), limit),
             Err(HttpError::HeadTooLarge),
@@ -72,7 +72,7 @@ fn framing_headers_are_refused_in_every_ambiguous_form() {
         assert_eq!(p(bad).err(), Some(HttpError::BadFraming), "{bad}");
     }
     let f = p("transfer-ENCODING:  CHUNKED\t").unwrap();
-    assert!(f.chunked && f.content_length.is_none());
+    assert!(f.chunked() && f.content_length().is_none());
     for bad in [
         "Content-Length: 5\r\nContent-Length: 6",
         "Content-Length: 5, 5",
@@ -86,11 +86,11 @@ fn framing_headers_are_refused_in_every_ambiguous_form() {
     assert_eq!(
         p("Content-Length: 7\r\nContent-Length: 7")
             .unwrap()
-            .content_length,
+            .content_length(),
         Some(7),
         "a repeated equal length is one length"
     );
-    assert_eq!(p("Content-Length: 007").unwrap().content_length, Some(7));
+    assert_eq!(p("Content-Length: 007").unwrap().content_length(), Some(7));
 }
 
 /// `close` and `keep-alive` are whole tokens. A parser that looked for the
@@ -103,7 +103,7 @@ fn connection_tokens_are_matched_whole() {
             .unwrap()
             .unwrap()
             .fields
-            .close
+            .close()
     };
     for not_close in [
         "Connection: closed",
@@ -251,5 +251,5 @@ fn the_writer_fits_exactly_or_not_at_all() {
         assert_eq!(write(&mut buf), Err(HttpError::BadRequest), "{short} bytes");
     }
     let parsed = parse_request(&exact, LIMIT).unwrap().unwrap();
-    assert_eq!(parsed.fields.content_length, Some(u64::MAX));
+    assert_eq!(parsed.fields().content_length(), Some(u64::MAX));
 }

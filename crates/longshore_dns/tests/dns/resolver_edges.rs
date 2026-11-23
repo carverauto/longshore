@@ -59,7 +59,10 @@ fn a_query_waits_for_the_previous_send_to_complete_then_goes_out() {
         (r.addrs(0), r.addrs(1)),
         (&zone_addrs(0)[..], &zone_addrs(1)[..])
     );
-    assert_eq!((s.queries, r.queries, r.cycles, r.failures), (2, 2, 1, 0));
+    assert_eq!(
+        (s.queries, r.queries(), r.cycles(), r.failures()),
+        (2, 2, 1, 0)
+    );
 }
 
 /// With every nameserver dead, each question is put to each server once,
@@ -71,13 +74,13 @@ fn with_both_nameservers_dead_each_is_tried_once_per_host() {
     pump(&mut io, &mut r, &mut s, &mut out, 400 * MS);
     assert!(!r.ready() && r.lookup(0).is_none() && r.lookup(1).is_none());
     assert_eq!(
-        (r.queries, r.failures, r.cycles, s.queries),
+        (r.queries(), r.failures(), r.cycles(), s.queries),
         (4, 4, 1, 0),
         "two hosts, two servers, one timeout each"
     );
     // And the next cycle starts a refresh interval later, not sooner.
     pump(&mut io, &mut r, &mut s, &mut out, SEC);
-    assert_eq!((r.queries, r.cycles), (4, 1));
+    assert_eq!((r.queries(), r.cycles()), (4, 1));
 }
 
 /// A nameserver whose socket could not be opened is not received from: its
@@ -90,7 +93,7 @@ fn a_nameserver_that_cannot_be_connected_costs_timeouts_and_no_more() {
     // it failed, and its socket slot is not a socket.
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
     assert!(r.on_completion(&mut io, completion(K_CONNECT, -111)));
-    assert_eq!((r.failures, r.queries), (1, 1), "it asks all the same");
+    assert_eq!((r.failures(), r.queries()), (1, 1), "it asks all the same");
     let mut out = Completions::new(8);
     while io.now_ns() < 200 * MS {
         io.tick(true, &mut out).unwrap();
@@ -99,7 +102,7 @@ fn a_nameserver_that_cannot_be_connected_costs_timeouts_and_no_more() {
         }
     }
     // The connect, then per host a send that fails and a query that times out.
-    assert_eq!((r.failures, r.queries, r.cycles), (5, 2, 1));
+    assert_eq!((r.failures(), r.queries(), r.cycles()), (5, 2, 1));
     assert!(!r.ready());
 }
 
@@ -118,7 +121,7 @@ fn only_tokens_in_the_resolvers_range_are_its_own() {
         assert!(r.on_completion(&mut io, completion(unused, 0)), "{unused}");
         assert!(r.on_completion(&mut io, completion(unused, -5)), "{unused}");
     }
-    assert_eq!((r.failures, r.queries, r.cycles), (0, 0, 0));
+    assert_eq!((r.failures(), r.queries(), r.cycles()), (0, 0, 0));
     let mut out = Completions::new(8);
     io.tick(false, &mut out).unwrap();
     assert!(out.is_empty(), "and it submitted nothing");
@@ -142,7 +145,7 @@ fn a_completion_for_a_server_it_does_not_have_is_ignored() {
                 );
             }
         }
-        assert_eq!((r.failures, r.queries, r.cycles), (0, 0, 0));
+        assert_eq!((r.failures(), r.queries(), r.cycles()), (0, 0, 0));
         let mut out = Completions::new(8);
         io.tick(false, &mut out).unwrap();
         assert!(out.is_empty(), "and it submitted nothing");
@@ -162,7 +165,7 @@ fn a_completion_for_a_server_it_does_not_have_is_ignored() {
         }
     }
     assert!(r.ready());
-    assert_eq!(r.failures, 0);
+    assert_eq!(r.failures(), 0);
 }
 
 #[test]

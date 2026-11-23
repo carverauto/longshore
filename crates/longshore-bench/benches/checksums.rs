@@ -54,7 +54,7 @@ fn crc32c_crc_fast(data: &[u8]) -> u32 {
 /// on the benchmark machine, which may have instructions that one lacks.
 fn verify_kernels() {
     let all = longshore::checksum::kernels::all();
-    let Some(table) = all.iter().find(|k| k.name == "table") else {
+    let Some(table) = all.iter().find(|k| k.name() == "table") else {
         eprintln!("checksums: no table kernel to check the others against");
         std::process::exit(1)
     };
@@ -68,21 +68,26 @@ fn verify_kernels() {
             let d = &data[offset..];
             let (mut want64, mut want32) = (!0u64, !0u32);
             for len in 0..=8192 {
-                let name = k.name;
+                let name = k.name();
                 assert_eq!(k.crc64_update(!0, &d[..len]), want64, "{name} {len}");
                 assert_eq!(k.crc32c_update(!0, &d[..len]), want32, "{name} {len}");
                 want64 = table.crc64_update(want64, &d[len..len + 1]);
                 want32 = table.crc32c_update(want32, &d[len..len + 1]);
             }
         }
-        assert_eq!(!k.crc64_update(!0, &data), crc64_table(&data), "{}", k.name);
+        assert_eq!(
+            !k.crc64_update(!0, &data),
+            crc64_table(&data),
+            "{}",
+            k.name()
+        );
         assert_eq!(
             !k.crc32c_update(!0, &data),
             crc32c_table(&data),
             "{}",
-            k.name
+            k.name()
         );
-        println!("verified: {}", k.name);
+        println!("verified: {}", k.name());
     }
 }
 
@@ -139,11 +144,11 @@ fn bench(c: &mut Criterion) {
     // one it selects.
     let kernels: Vec<_> = longshore::checksum::kernels::all()
         .iter()
-        .filter(|k| k.supported() && k.name != "table")
+        .filter(|k| k.supported() && k.name() != "table")
         .collect();
     println!(
         "longshore selects: {}",
-        longshore::checksum::kernels::selected().name
+        longshore::checksum::kernels::selected().name()
     );
 
     // 64 B, 256 B and 1 KiB show the cost of a call and of the stages that
@@ -163,7 +168,7 @@ fn bench(c: &mut Criterion) {
         }
         for k in &kernels {
             let _: &mut BenchmarkGroup<'_, WallTime> = g64
-                .bench_function(format!("longshore {}", k.name), |b| {
+                .bench_function(format!("longshore {}", k.name()), |b| {
                     b.iter(|| !k.crc64_update(!0, black_box(&data)))
                 });
         }
@@ -176,7 +181,7 @@ fn bench(c: &mut Criterion) {
         }
         for k in &kernels {
             let _: &mut BenchmarkGroup<'_, WallTime> = g32
-                .bench_function(format!("longshore {}", k.name), |b| {
+                .bench_function(format!("longshore {}", k.name()), |b| {
                     b.iter(|| !k.crc32c_update(!0, black_box(&data)))
                 });
         }

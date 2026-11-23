@@ -380,7 +380,7 @@ mod linux {
         };
         println!(
             "{{\"cmd\":\"{}\",\"mode\":\"{}\",\"arch\":\"{}\",\"conns\":{},\"chunk\":{},\"secs\":{:.2},\"gb\":{:.2},\"gb_per_s\":{:.2},\"thread_cpu\":{:.2},\"core_util\":{:.2},\"gb_per_cpu_s\":{:.2},\"ops\":{},\"enters\":{},\"ops_per_enter\":{:.2},\"zc_notifs\":{},\"zc_copied\":{}}}",
-            a.cmd, a.mode, std::env::consts::ARCH, a.conns, a.chunk, wall, gb, gb / wall, cpu / wall, core_util, gb / cpu, ops, ring.enters, ops as f64 / ring.enters as f64, t.notifs, t.copied
+            a.cmd, a.mode, std::env::consts::ARCH, a.conns, a.chunk, wall, gb, gb / wall, cpu / wall, core_util, gb / cpu, ops, ring.enters(), ops as f64 / ring.enters() as f64, t.notifs, t.copied
         );
     }
 }

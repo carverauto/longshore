@@ -169,7 +169,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
         cpu_s: thread_cpu_secs() - cpu0,
         enters: io.enters() - enters0,
         connects: s3.connects(),
-        retired: s3.small_segment_retired,
+        retired: s3.small_segment_retired(),
     }
 }
 

@@ -90,7 +90,7 @@ impl Client {
     /// Where the end of a chunked body's framing is read once the caller's
     /// buffer is full: the head buffer, after the head it still holds.
     pub(super) fn chunked_tail_area(&self, i: usize) -> (u32, u32) {
-        let head_len = self.conns[i].fields.map_or(0, |f| f.head_len as u32);
+        let head_len = self.conns[i].fields.map_or(0, |f| f.head_len() as u32);
         (head_len, self.cfg.head_max() - head_len)
     }
 

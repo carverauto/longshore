@@ -173,7 +173,7 @@ fn a_refused_token_is_fatal_and_a_new_token_is_rotated_in() {
     // The token helper writes a new token; it is validated and adopted.
     w.io.set_file(w.token_file, Some(format!("{TOKEN_B}\n").as_bytes()));
     w.settle(REREAD_MS + 50);
-    assert_eq!(w.s3.credential_rotations, 1);
+    assert_eq!(w.s3.credential_rotations(), 1);
     w.s3.store(&mut w.io, 2, "k", TX, 100, Checksum::Compute)
         .unwrap();
     assert_eq!(

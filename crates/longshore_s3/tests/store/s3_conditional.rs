@@ -121,7 +121,7 @@ fn no_clobber_stores_under_faults_are_never_falsely_refused() {
             let d = w.last();
             assert_eq!(d.outcome, Outcome::Stored, "seed {seed}, key {key}: {d:?}");
         }
-        comparisons += w.s3.store_comparisons;
+        comparisons += w.s3.store_comparisons();
     }
     assert!(comparisons > 0, "no seed lost a response after the store applied it; the faults are too mild to test anything");
 }
@@ -225,7 +225,7 @@ fn an_object_that_vanishes_before_the_comparison_is_stored_again() {
             attempts: 5
         }
     );
-    assert_eq!(w.s3.store_comparisons, 2);
+    assert_eq!(w.s3.store_comparisons(), 2);
     let sent = w.io.buf(TX)[..1000].to_vec();
     assert_eq!(w.server.object("/k"), Some(&sent[..]));
 

@@ -34,9 +34,9 @@ fn restricted_to(prefix: &'static str, validate: &Validate) -> World {
 #[test]
 fn credentials_that_may_not_list_the_whole_bucket_are_never_adopted_by_default() {
     let w = restricted(&Validate::List(KeyPrefix::EMPTY));
-    assert_eq!((w.s3.access_key(), w.s3.credential_rotations), (KEY_A, 0));
+    assert_eq!((w.s3.access_key(), w.s3.credential_rotations()), (KEY_A, 0));
     assert!(
-        w.s3.credential_failures >= 2,
+        w.s3.credential_failures() >= 2,
         "every refused try is counted, so the caller can see it"
     );
 }
@@ -47,8 +47,8 @@ fn they_are_adopted_when_the_trial_listing_names_a_prefix_they_may_list() {
     assert_eq!(
         (
             w.s3.access_key(),
-            w.s3.credential_rotations,
-            w.s3.credential_failures
+            w.s3.credential_rotations(),
+            w.s3.credential_failures()
         ),
         (KEY_B, 1, 0)
     );
@@ -59,7 +59,7 @@ fn they_are_adopted_when_the_trial_listing_names_a_prefix_they_may_list() {
 fn with_no_trial_request_the_file_is_adopted_as_it_is() {
     // The server would refuse any listing these keys made.
     let mut w = restricted(&Validate::Nothing);
-    assert_eq!((w.s3.access_key(), w.s3.credential_rotations), (KEY_B, 1));
+    assert_eq!((w.s3.access_key(), w.s3.credential_rotations()), (KEY_B, 1));
     assert_eq!(w.store().outcome, Outcome::Stored);
     // Nothing proves them: a key the server refuses is adopted too, and
     // operations fail until the file is corrected.
@@ -93,8 +93,8 @@ fn a_prefix_at_the_limit_is_listed_however_long_it_encodes() {
         assert_eq!(
             (
                 w.s3.access_key(),
-                w.s3.credential_rotations,
-                w.s3.credential_failures
+                w.s3.credential_rotations(),
+                w.s3.credential_failures()
             ),
             (KEY_B, 1, 0),
             "prefix of {} bytes",

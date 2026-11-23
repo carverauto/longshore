@@ -47,17 +47,43 @@ impl Span {
 /// Header fields common to requests and responses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fields {
-    /// Bytes of the head, including the blank line. The body starts here.
-    pub head_len: usize,
-    pub content_length: Option<u64>,
-    pub chunked: bool,
-    /// The peer will close, or must be closed, after this message.
-    pub close: bool,
+    head_len: usize,
+    content_length: Option<u64>,
+    chunked: bool,
+    close: bool,
     headers: [(Span, Span); HEADERS_MAX],
     count: usize,
 }
 
 impl Fields {
+    /// Bytes of the head, including the blank line. The body starts here.
+    #[inline]
+    #[must_use]
+    pub const fn head_len(&self) -> usize {
+        self.head_len
+    }
+
+    /// The `Content-Length`, if the head carries one.
+    #[inline]
+    #[must_use]
+    pub const fn content_length(&self) -> Option<u64> {
+        self.content_length
+    }
+
+    /// The body is sent with `Transfer-Encoding: chunked`.
+    #[inline]
+    #[must_use]
+    pub const fn chunked(&self) -> bool {
+        self.chunked
+    }
+
+    /// The peer will close, or must be closed, after this message.
+    #[inline]
+    #[must_use]
+    pub const fn close(&self) -> bool {
+        self.close
+    }
+
     /// First value of a header, by case-insensitive name. `buf` must be the
     /// buffer the head was parsed from.
     pub fn header<'a>(&self, buf: &'a [u8], name: &str) -> Option<&'a [u8]> {
@@ -88,10 +114,17 @@ pub struct ResponseHead {
 pub struct RequestHead {
     method: Span,
     target: Span,
-    pub fields: Fields,
+    fields: Fields,
 }
 
 impl RequestHead {
+    /// The request's header fields.
+    #[inline]
+    #[must_use]
+    pub const fn fields(&self) -> &Fields {
+        &self.fields
+    }
+
     pub fn method<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
         self.method.get(buf)
     }

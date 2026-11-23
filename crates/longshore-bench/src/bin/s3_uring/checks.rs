@@ -66,7 +66,7 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
             if failed >= count {
                 break;
             }
-        } else if listing.is_truncated {
+        } else if listing.is_truncated() {
             after = keys.last().map(|k| k.0.clone());
         } else {
             break;

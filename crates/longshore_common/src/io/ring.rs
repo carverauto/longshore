@@ -50,7 +50,7 @@ impl Drop for Map {
 
 pub struct Ring {
     fd: c_int,
-    pub params: io_uring_params,
+    params: io_uring_params,
     _sq_map: Map,
     _cq_map: Option<Map>,
     _sqe_map: Map,
@@ -67,8 +67,7 @@ pub struct Ring {
     cq_tail: *const AtomicU32,
     cq_mask: u32,
     cqes: *const io_uring_cqe,
-    /// Number of `io_uring_enter` calls made, for benchmarks.
-    pub enters: u64,
+    enters: u64,
 }
 
 /// The submission queue has no free slot; call `enter` first.
@@ -194,6 +193,20 @@ impl Ring {
         };
         self.sq_tail_local = self.sq_tail_local.wrapping_add(1);
         Ok(())
+    }
+
+    /// The parameters the kernel returned when it set the ring up.
+    #[inline]
+    #[must_use]
+    pub const fn params(&self) -> &io_uring_params {
+        &self.params
+    }
+
+    /// Number of `io_uring_enter` calls made, for benchmarks.
+    #[inline]
+    #[must_use]
+    pub const fn enters(&self) -> u64 {
+        self.enters
     }
 
     /// SQEs pushed but not yet handed to the kernel.

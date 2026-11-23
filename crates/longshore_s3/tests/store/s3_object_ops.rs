@@ -240,7 +240,7 @@ fn a_delimiter_lists_one_level() {
             .common_prefixes()
             .map(|p| p.unwrap().to_vec())
             .collect();
-        (keys, prefixes, listing.is_truncated)
+        (keys, prefixes, listing.is_truncated())
     };
     let (mut keys, mut prefixes, mut truncated) = list("", None, 100);
     assert_eq!(keys, [b"top"]);

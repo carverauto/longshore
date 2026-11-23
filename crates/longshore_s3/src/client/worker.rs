@@ -181,12 +181,10 @@ impl Worker {
     }
 
     fn report(&mut self) {
-        for (shown, count) in self
-            .lane
-            .reloads
-            .iter()
-            .zip([self.s3.credential_rotations, self.s3.credential_failures])
-        {
+        for (shown, count) in self.lane.reloads.iter().zip([
+            self.s3.credential_rotations(),
+            self.s3.credential_failures(),
+        ]) {
             shown.store(count, Ordering::Relaxed);
         }
         while let Some(d) = self.s3.poll() {

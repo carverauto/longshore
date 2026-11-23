@@ -152,7 +152,7 @@ fn a_completion_whose_response_was_lost_is_confirmed_by_the_object_checksum() {
         .unwrap();
     let d = w.last();
     assert_eq!(d.outcome, Outcome::Stored);
-    assert_eq!(w.s3.store_comparisons, 1);
+    assert_eq!(w.s3.store_comparisons(), 1);
 
     // Without a checksum there is nothing to confirm it with.
     let other = w.begin(2, "other", false);

@@ -18,12 +18,12 @@ impl Server {
             Ok(None) => return self.recv_head(io, i, have),
             Ok(Some(h)) => h,
         };
-        let head_len = head.fields.head_len as u32;
-        let body_len = head.fields.content_length.unwrap_or(0);
+        let head_len = head.fields().head_len() as u32;
+        let body_len = head.fields().content_length().unwrap_or(0);
         let extra = have - head_len;
         let too_long = self.note_request(i, io.buf(self.head_buf(i)), &head);
         if too_long
-            || head.fields.chunked
+            || head.fields().chunked()
             || body_len > u64::from(self.cfg.buffer_size())
             || u64::from(extra) > body_len
         {

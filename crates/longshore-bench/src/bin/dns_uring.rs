@@ -99,7 +99,7 @@ fn main() {
     r.start(&mut io);
     sealed(|| {
         // One full pass over the hosts, or 5 seconds.
-        while r.cycles == 0 && io.now_ns() - t0 < 5_000_000_000 {
+        while r.cycles() == 0 && io.now_ns() - t0 < 5_000_000_000 {
             io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 let _: bool = r.on_completion(&mut io, c);
@@ -113,8 +113,8 @@ fn main() {
     println!(
         "ready={} queries={} failures={} elapsed_ms={ms:.1} enters={}",
         r.ready(),
-        r.queries,
-        r.failures,
+        r.queries(),
+        r.failures(),
         io.enters()
     );
     std::process::exit(if r.ready() { 0 } else { 1 });

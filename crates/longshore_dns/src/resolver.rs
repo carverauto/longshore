@@ -68,18 +68,11 @@ pub struct Resolver {
     send_wanted: bool,
     /// Families that answered with no addresses for the host being asked.
     empty: [bool; 2],
-    /// Lookups that failed or timed out, and receive errors.
-    pub failures: u64,
-    /// Queries sent.
-    pub queries: u64,
-    /// Completed passes over all hosts.
-    pub cycles: u64,
-    /// Times a host's lookups moved to the other family after a failed
-    /// connection.
-    pub family_switches: u64,
-    /// Refreshes started early because a host had only small-segment
-    /// addresses.
-    pub early_refreshes: u64,
+    failures: u64,
+    queries: u64,
+    cycles: u64,
+    family_switches: u64,
+    early_refreshes: u64,
 }
 
 impl Resolver {
@@ -113,6 +106,43 @@ impl Resolver {
             family_switches: 0,
             early_refreshes: 0,
         })
+    }
+
+    /// Lookups that failed or timed out, and receive errors.
+    #[inline]
+    #[must_use]
+    pub const fn failures(&self) -> u64 {
+        self.failures
+    }
+
+    /// Queries sent.
+    #[inline]
+    #[must_use]
+    pub const fn queries(&self) -> u64 {
+        self.queries
+    }
+
+    /// Completed passes over all hosts.
+    #[inline]
+    #[must_use]
+    pub const fn cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    /// Times a host's lookups moved to the other family after a failed
+    /// connection.
+    #[inline]
+    #[must_use]
+    pub const fn family_switches(&self) -> u64 {
+        self.family_switches
+    }
+
+    /// Refreshes started early because a host had only small-segment
+    /// addresses.
+    #[inline]
+    #[must_use]
+    pub const fn early_refreshes(&self) -> u64 {
+        self.early_refreshes
     }
 
     /// Begin resolving. Call once.

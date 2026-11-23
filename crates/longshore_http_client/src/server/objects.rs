@@ -113,7 +113,7 @@ impl Server {
             .windows(12)
             .any(|w| w == b"?partNumber=")
         {
-            self.conns[i].asked.reply = Some(slot as u32);
+            self.conns[i].asked.set_reply(slot as u32);
         }
         self.status(io, i, 200, "OK", 0, 0, false);
     }
@@ -155,13 +155,13 @@ impl Server {
         }
         let is_get = &c.method[..c.method_len] == b"GET";
         self.conns[i].reply_object = Some(slot as u32);
-        self.conns[i].asked.reply = Some(slot as u32);
+        self.conns[i].asked.set_reply(slot as u32);
         let o = &self.objects[slot];
         // A satisfiable range is served as 206 with just those bytes.
         if let Some((a, b)) = c.range.filter(|(a, b)| a <= b && *a < o.len && is_get) {
             let b = b.min(o.len - 1);
             let n = (b - a + 1) as usize;
-            self.conns[i].asked.reply_range = Some((a, b));
+            self.conns[i].asked.set_reply_range(a, b);
             io.buf(self.body_buf(i))[..n].copy_from_slice(&o.data[a as usize..a as usize + n]);
             return self.status(io, i, 206, "Partial Content", n as u64, n as u32, false);
         }

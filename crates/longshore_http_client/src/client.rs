@@ -288,7 +288,7 @@ impl Client {
     /// The `Content-Length` of the last response served by `conn`. For a
     /// HEAD this is the length of the body that was not sent.
     pub fn content_length(&self, conn: u32) -> Option<u64> {
-        self.conns[conn as usize].fields?.content_length
+        self.conns[conn as usize].fields?.content_length()
     }
 
     /// Copy the head of the last response served by `conn` into `into`, as

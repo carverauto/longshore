@@ -266,7 +266,7 @@ impl UringIo {
 
     /// `io_uring_enter` calls made so far.
     pub fn enters(&self) -> u64 {
-        self.ring.enters
+        self.ring.enters()
     }
 
     fn buf_ptr(&self, buf: BufId, off: u32, len: u32) -> u64 {

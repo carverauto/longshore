@@ -132,9 +132,9 @@ fn a_refresh_keeps_the_sizes_of_addresses_still_in_the_answer() {
     for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], SMALL)] {
         let _: u32 = r.connected(0, ip, seg(size));
     }
-    let before = r.cycles;
+    let before = r.cycles();
     pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC);
-    assert!(r.cycles > before);
+    assert!(r.cycles() > before);
     assert_eq!(handed_out(&mut r, 9), [all[1]]);
     // A measurement for an address the host does not have is ignored.
     let stranger = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
@@ -169,11 +169,11 @@ fn addresses_all_small_for_the_path_bring_an_early_refresh() {
     assert_eq!(handed_out(&mut r, 6), all);
     // The refresh interval is a second. Starved, the resolver asks again
     // after one answer timeout (50 ms) instead.
-    let before = r.cycles;
+    let before = r.cycles();
     pump(&mut io, &mut r, &mut s, &mut out, 600 * MS);
-    assert!(r.cycles >= before + 5, "{} cycles", r.cycles - before);
-    assert!(r.early_refreshes >= 5);
-    assert_eq!(r.failures, 0);
+    assert!(r.cycles() >= before + 5, "{} cycles", r.cycles() - before);
+    assert!(r.early_refreshes() >= 5);
+    assert_eq!(r.failures(), 0);
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn small_segments_on_a_path_that_carries_no_more_are_not_starvation() {
         let _: u32 = r.connected(0, ip, segment);
     }
     pump(&mut io, &mut r, &mut s, &mut out, 600 * MS);
-    assert_eq!(r.early_refreshes, 0);
+    assert_eq!(r.early_refreshes(), 0);
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn starvation_begins_one_byte_under_a_quarter_of_the_path_limit() {
             let _: u32 = r.connected(0, ip, on_path(size));
         }
         pump(&mut io, &mut r, &mut s, &mut out, 600 * MS);
-        assert_eq!(r.early_refreshes > 0, starved, "size {size}");
+        assert_eq!(r.early_refreshes() > 0, starved, "size {size}");
         assert_eq!(handed_out(&mut r, 6), zone_addrs(0), "size {size}");
     }
 }

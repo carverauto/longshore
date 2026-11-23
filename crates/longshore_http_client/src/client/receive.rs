@@ -84,7 +84,7 @@ impl Client {
         );
         // Close when the server asked to, and when the traffic keys have done
         // enough work: the next request gets a new connection and new keys.
-        if c.fields.is_some_and(|f| f.close)
+        if c.fields.is_some_and(|f| f.close())
             || self.streams[i].records() >= self.cfg.tls_records_max()
         {
             c.state = State::Closing {
@@ -124,14 +124,14 @@ impl Client {
             // either cannot be skipped safely: its "body" would be read as
             // the real response.
             if head.status == 101
-                || head.fields.chunked
-                || head.fields.content_length.is_some_and(|n| n > 0)
-                || head.fields.close
+                || head.fields.chunked()
+                || head.fields.content_length().is_some_and(|n| n > 0)
+                || head.fields.close()
             {
                 return self.fail(io, i, Error::Head(HttpError::BadFraming));
             }
             // Interim response (e.g. 100 Continue): drop it and parse what follows.
-            let head_len = head.fields.head_len as u32;
+            let head_len = head.fields.head_len() as u32;
             io.buf(self.head_buf(i))
                 .copy_within(head_len as usize..have as usize, 0);
             have -= head_len;
@@ -147,23 +147,23 @@ impl Client {
         head: &ResponseHead,
         have: u32,
     ) -> Handled {
-        let head_len = head.fields.head_len as u32;
+        let head_len = head.fields.head_len() as u32;
         let c = &mut self.conns[i];
         c.status = head.status;
         c.fields = Some(head.fields);
         // From here `head_len` is the response head's length; the request head is gone.
         c.head_len = head_len;
         let no_body = c.is_head || matches!(head.status, 204 | 304);
-        if !no_body && head.fields.chunked {
+        if !no_body && head.fields.chunked() {
             return self.start_chunked(io, i, head_len, have);
         }
-        if !no_body && head.fields.content_length.is_none() {
+        if !no_body && head.fields.content_length().is_none() {
             return self.fail(io, i, Error::UnsupportedFraming);
         }
         let body_len = if no_body {
             0
         } else {
-            head.fields.content_length.unwrap_or(0)
+            head.fields.content_length().unwrap_or(0)
         };
         let extra = have - head_len;
         if u64::from(extra) > body_len {

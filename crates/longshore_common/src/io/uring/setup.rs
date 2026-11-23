@@ -176,7 +176,7 @@ impl UringIo {
             cq_entries,
             IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_SUBMIT_ALL,
         )?;
-        check_features(ring.params.features)?;
+        check_features(ring.params().features)?;
         let mut bufs = vec![0u8; limits.pool_bytes()].into_boxed_slice();
         let pool_base = limits.pool_base(bufs.as_ptr() as usize);
         let buf_range = register_pool_ranges(&mut ring, &limits, &mut bufs, pool_base)?;

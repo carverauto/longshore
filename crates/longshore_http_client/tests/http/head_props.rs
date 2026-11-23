@@ -33,12 +33,12 @@ fn string_from(tc: &TestCase, alphabet: &[u8], max: usize) -> String {
 fn parsing_arbitrary_bytes_is_safe(tc: TestCase) {
     let data = tc.draw(gs::binary().max_size(600));
     if let Ok(Some(h)) = parse_response(&data, LIMIT) {
-        assert!(h.fields.head_len <= data.len());
-        assert!(data[..h.fields.head_len].ends_with(b"\r\n\r\n"));
+        assert!(h.fields.head_len() <= data.len());
+        assert!(data[..h.fields.head_len()].ends_with(b"\r\n\r\n"));
         let _: Option<&[u8]> = h.fields.header(&data, "content-length");
     }
     if let Ok(Some(h)) = parse_request(&data, LIMIT) {
-        assert!(h.fields.head_len <= data.len());
+        assert!(h.fields().head_len() <= data.len());
         let _: (&[u8], &[u8]) = (h.method(&data), h.target(&data));
     }
 }
@@ -127,15 +127,15 @@ fn written_heads_parse_back(tc: TestCase) {
     let head = parse_request(&buf[..n], LIMIT)
         .expect("writer output must parse")
         .expect("writer output is a complete head");
-    assert_eq!(head.fields.head_len, n);
+    assert_eq!(head.fields().head_len(), n);
     assert_eq!(
         (head.method(&buf), head.target(&buf)),
         (method.as_bytes(), target.as_bytes())
     );
-    assert_eq!(head.fields.content_length, Some(length));
+    assert_eq!(head.fields().content_length(), Some(length));
     for (name, value) in &headers {
         assert_eq!(
-            head.fields.header(&buf, &name.to_uppercase()),
+            head.fields().header(&buf, &name.to_uppercase()),
             Some(value.as_bytes()),
             "header {name}"
         );
@@ -205,8 +205,8 @@ fn written_response_heads_parse_back(tc: TestCase) {
         .expect("what the writer wrote is well formed")
         .expect("and complete");
     assert_eq!(head.status, status);
-    assert_eq!(head.fields.head_len, n);
-    assert_eq!(head.fields.content_length, Some(length));
+    assert_eq!(head.fields.head_len(), n);
+    assert_eq!(head.fields.content_length(), Some(length));
     for (name, value) in names.iter().zip(&values) {
         assert_eq!(
             head.fields.header(&buf[..n], &name.to_ascii_uppercase()),

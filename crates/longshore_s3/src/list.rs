@@ -29,12 +29,8 @@ pub struct Entry<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct Listing<'a> {
     body: &'a [u8],
-    /// More keys exist after the last one returned.
-    pub is_truncated: bool,
-    /// The token that resumes a truncated listing, as it appears in the
-    /// XML, possibly with character references; decode it with [`unescape`].
-    /// Stores send it with a truncated listing.
-    pub next_token_raw: Option<&'a [u8]>,
+    is_truncated: bool,
+    next_token_raw: Option<&'a [u8]>,
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -98,6 +94,22 @@ impl<'a> Listing<'a> {
             is_truncated: is_truncated.ok_or(ListError::Malformed)?,
             next_token_raw,
         })
+    }
+
+    /// More keys exist after the last one returned.
+    #[inline]
+    #[must_use]
+    pub const fn is_truncated(&self) -> bool {
+        self.is_truncated
+    }
+
+    /// The token that resumes a truncated listing, as it appears in the
+    /// XML, possibly with character references; decode it with [`unescape`].
+    /// Stores send it with a truncated listing.
+    #[inline]
+    #[must_use]
+    pub const fn next_token_raw(&self) -> Option<&'a [u8]> {
+        self.next_token_raw
     }
 
     pub fn entries(&self) -> Entries<'a> {

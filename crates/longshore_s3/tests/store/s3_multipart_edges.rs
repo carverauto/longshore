@@ -57,7 +57,7 @@ fn a_lost_completion_is_not_confirmed_by_someone_elses_object() {
             attempts: 3
         }
     );
-    assert_eq!(w.s3.store_comparisons, 1);
+    assert_eq!(w.s3.store_comparisons(), 1);
     assert_eq!(w.server.object("/k"), Some(&theirs[..]));
 }
 

@@ -43,7 +43,7 @@ fn list_page(
             (String::from_utf8(out[..n].to_vec()).unwrap(), e.size)
         })
         .collect();
-    (keys, listing.is_truncated)
+    (keys, listing.is_truncated())
 }
 
 #[test]
@@ -151,11 +151,11 @@ fn delimited_page(
         .map(|p| text(p.unwrap()))
         .collect();
     assert_eq!(
-        listing.is_truncated,
-        listing.next_token_raw.is_some(),
+        listing.is_truncated(),
+        listing.next_token_raw().is_some(),
         "a token comes with a truncated page and only then"
     );
-    (keys, prefixes, listing.next_token_raw.map(text))
+    (keys, prefixes, listing.next_token_raw().map(text))
 }
 
 #[test]

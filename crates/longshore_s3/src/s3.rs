@@ -41,16 +41,10 @@ pub struct S3 {
     provider: Provider,
     /// Connections use TLS.
     secure: bool,
-    /// Times new credentials were validated and adopted.
-    pub credential_rotations: u64,
-    /// Times the file could not be read or parsed, or its credentials were refused.
-    pub credential_failures: u64,
-    /// Times a retried conditional store was refused and the stored object's
-    /// checksum was fetched to decide whose object it is.
-    pub store_comparisons: u64,
-    /// Connections retired because their address's segment size ranked too
-    /// small, when the resolver prefers large segments.
-    pub small_segment_retired: u64,
+    credential_rotations: u64,
+    credential_failures: u64,
+    store_comparisons: u64,
+    small_segment_retired: u64,
     /// The resolver's cycle count when its answer was last acted on.
     resolver_cycles: u64,
 }
@@ -202,6 +196,36 @@ impl S3 {
         }
     }
 
+    /// Times new credentials were validated and adopted.
+    #[inline]
+    #[must_use]
+    pub const fn credential_rotations(&self) -> u64 {
+        self.credential_rotations
+    }
+
+    /// Times the file could not be read or parsed, or its credentials were refused.
+    #[inline]
+    #[must_use]
+    pub const fn credential_failures(&self) -> u64 {
+        self.credential_failures
+    }
+
+    /// Times a retried conditional store was refused and the stored object's
+    /// checksum was fetched to decide whose object it is.
+    #[inline]
+    #[must_use]
+    pub const fn store_comparisons(&self) -> u64 {
+        self.store_comparisons
+    }
+
+    /// Connections retired because their address's segment size ranked too
+    /// small, when the resolver prefers large segments.
+    #[inline]
+    #[must_use]
+    pub const fn small_segment_retired(&self) -> u64 {
+        self.small_segment_retired
+    }
+
     /// HTTP connections opened so far.
     pub fn connects(&self) -> u64 {
         self.client.connects()
@@ -247,8 +271,8 @@ impl S3 {
             if r.on_completion(io, c) {
                 // A new answer: replace connections it ranks too small, and
                 // open one to each address worth measuring.
-                if r.cycles != self.resolver_cycles {
-                    self.resolver_cycles = r.cycles;
+                if r.cycles() != self.resolver_cycles {
+                    self.resolver_cycles = r.cycles();
                     let floor = r.segment_floor(0);
                     self.small_segment_retired += u64::from(self.client.retire_below(0, floor));
                     let _: u32 = self.client.retire_some(0, r.probes_wanted(0) as u32);
