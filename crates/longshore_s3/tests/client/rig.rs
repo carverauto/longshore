@@ -41,19 +41,16 @@ pub fn rig_with(lanes: usize, operations: u32) -> Rig {
     let lanes: Vec<LaneRig> = (0..lanes)
         .map(|n| {
             let mut io = SimIo::new(WIDE, 40 + n as u64, Faults::default());
-            let mut server = Server::new(server::Config {
-                listener: Sock(0),
-                connections_max: CONNS,
-                first_sock: 1 + CONNS,
-                first_buf: 0,
-                head_max: 2048,
-                buffer_size: BUF,
-                objects_max: 8,
-                token_base: 2 << 40,
-                checksum: Some(|body: &[u8]| {
-                    longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body))
-                }),
-            });
+            let mut server = Server::new(
+                server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+                    .head_max(2048)
+                    .objects_max(8)
+                    .checksum(|body: &[u8]| {
+                        longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body))
+                    })
+                    .build()
+                    .unwrap(),
+            );
             let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
             let layout = Layout {
                 operations,

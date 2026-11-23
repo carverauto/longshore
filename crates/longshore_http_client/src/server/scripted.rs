@@ -41,7 +41,7 @@ impl Server {
                 self.raw(io, i, b"\x00\x01 this is not HTTP \xff\xfe\r\n\r\n");
             }
             Behavior::EndlessHead => {
-                let n = self.cfg.head_max as usize;
+                let n = self.cfg.head_max() as usize;
                 let buf = &mut io.buf(self.head_buf(i))[..n];
                 buf.fill(b'a');
                 buf[..22].copy_from_slice(b"HTTP/1.1 200 OK\r\nX-A: ");

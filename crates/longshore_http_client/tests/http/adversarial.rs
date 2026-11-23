@@ -111,17 +111,13 @@ mod tls_cases {
         ops_max: CONNS * 3 + CONNS + 2,
         ..Limits::BASE
     };
-    const TLS_SRV_CFG: server::Config = server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 6,
-        head_max: HEAD_MAX,
-        buffer_size: TLS_BUF,
-        objects_max: 4,
-        token_base: 2 << 40,
-        checksum: None,
-    };
+    fn tls_srv_cfg() -> server::ServerConfig {
+        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 6, TLS_BUF, 2 << 40)
+            .head_max(HEAD_MAX)
+            .objects_max(4)
+            .build()
+            .unwrap()
+    }
 
     fn tls_cli_cfg() -> client::Config {
         client::Config {
@@ -160,7 +156,7 @@ mod tls_cases {
     /// Invalid hostname triggers TlsError::Setup during connect -> handshake transition.
     fn invalid_hostname_fails_tls_setup(cs: ClientSetup, ss: ServerSetup, out: &mut Completions) {
         let mut io = SimIo::new(TLS_LIMITS, 55, Faults::default());
-        let mut srv = Server::with_tls(TLS_SRV_CFG, ss, 10);
+        let mut srv = Server::with_tls(tls_srv_cfg(), ss, 10);
         let _: std::net::SocketAddr = srv.start(&mut io, ADDR).unwrap();
         let mut cli = Client::with_tls(tls_cli_cfg(), cs, 2);
         cli.start(&mut io, 900, &get_k("not a host:443")).unwrap();
@@ -171,7 +167,7 @@ mod tls_cases {
     /// Explicit Client::cancel() mid-TlsHandshake (plain server stalls in RecvHead after ClientHello).
     fn cancel_mid_tls_handshake(cs2: ClientSetup, out: &mut Completions) {
         let mut io2 = SimIo::new(TLS_LIMITS, 56, Faults::default());
-        let mut plain_srv = Server::new(TLS_SRV_CFG);
+        let mut plain_srv = Server::new(tls_srv_cfg());
         let _: std::net::SocketAddr = plain_srv.start(&mut io2, ADDR).unwrap();
         let mut cli2 = Client::with_tls(tls_cli_cfg(), cs2, 2);
         cli2.start(&mut io2, 901, &get_k("objects.test")).unwrap();

@@ -31,7 +31,7 @@ pub struct ServerThread {
 impl ServerThread {
     /// Starts a server with `config` on a `PosixIo` with `limits`, listening
     /// on a free loopback port, and returns once it listens.
-    pub fn start(limits: Limits, config: server::Config) -> Self {
+    pub fn start(limits: Limits, config: server::ServerConfig) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_server = stop.clone();
         let (ready_tx, ready_rx) = channel();

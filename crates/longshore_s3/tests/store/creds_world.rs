@@ -55,17 +55,13 @@ pub struct World {
 
 pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate) -> World {
     let mut io = SimIo::new(limits(buf), seed, faults);
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: CONNS,
-        head_max: 2048,
-        buffer_size: buf,
-        objects_max: 4,
-        token_base: 2 << 40,
-        checksum: None,
-    });
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, CONNS, buf, 2 << 40)
+            .head_max(2048)
+            .objects_max(4)
+            .build()
+            .unwrap(),
+    );
     let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[KEY_A]);
     let creds = io.register_file("/etc/store/credentials").unwrap();

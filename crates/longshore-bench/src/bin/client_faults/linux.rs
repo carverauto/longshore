@@ -67,17 +67,13 @@ pub fn serve(connections: u32) -> SocketAddr {
             ..Limits::BASE
         })
         .or_die("server ring");
-        let mut server = Server::new(server::Config {
-            listener: Sock(0),
-            connections_max: connections,
-            first_sock: 1,
-            first_buf: 0,
-            head_max: 4096,
-            buffer_size: SIZE,
-            objects_max: 64,
-            token_base: 2 << 40,
-            checksum: None,
-        });
+        let mut server = Server::new(
+            server::ServerConfig::builder(Sock(0), connections, 1, 0, SIZE, 2 << 40)
+                .head_max(4096)
+                .objects_max(64)
+                .build()
+                .or_die("server config"),
+        );
         let addr = server
             .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
             .or_die("server start");

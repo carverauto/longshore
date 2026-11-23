@@ -69,6 +69,10 @@ name = "http_server_refusals"
 path = "tests/http/server_refusals.rs"
 
 [[test]]
+name = "http_server_config"
+path = "tests/http/server_config.rs"
+
+[[test]]
 name = "http_adversarial"
 path = "tests/http/adversarial.rs"
 

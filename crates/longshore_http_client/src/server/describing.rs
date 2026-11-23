@@ -82,7 +82,7 @@ impl Server {
             );
             // Through the connection's body buffer: two objects cannot be
             // borrowed at once.
-            let scratch = BufId(self.cfg.first_buf + i as u32 * 2 + 1);
+            let scratch = BufId(self.cfg.first_buf() + i as u32 * 2 + 1);
             io.buf(scratch)[..len as usize]
                 .copy_from_slice(&self.objects[from].data[..len as usize]);
             let o = &mut self.objects[to];
@@ -104,7 +104,7 @@ impl Server {
     pub(super) fn erase_many<IO: Io>(&mut self, io: &mut IO, i: usize) {
         let c = self.conns[i];
         let len = c.request_len as usize;
-        if let (Some(sum), Some(claimed)) = (self.cfg.checksum, c.claimed) {
+        if let (Some(sum), Some(claimed)) = (self.cfg.checksum(), c.claimed) {
             if sum(&io.buf(self.body_buf(i))[..len]) != claimed {
                 return self.error_document(io, i, 400, "BadDigest");
             }

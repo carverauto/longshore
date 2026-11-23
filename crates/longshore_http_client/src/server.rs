@@ -18,36 +18,9 @@ use longshore_tls::handshake::{Handshake, ServerSetup};
 use std::io;
 use std::net::SocketAddr;
 
-/// Maps a body to the checksum header value it must carry.
-///
-/// Two forms are understood. Twelve base64 characters are a CRC-64/NVME as S3
-/// carries it in `x-amz-checksum-crc64nvme`. Eight base64 characters followed
-/// by four zero bytes are a CRC-32C as Google Cloud Storage carries it in
-/// `x-goog-hash: crc32c=...`.
-pub type ChecksumFn = fn(&[u8]) -> [u8; 12];
-
-#[derive(Clone, Copy, Debug)]
-pub struct Config {
-    pub listener: Sock,
-    pub connections_max: u32,
-    /// Socket slots `first_sock..first_sock + connections_max`.
-    pub first_sock: u32,
-    /// Two buffers per connection, head then body, starting here.
-    pub first_buf: u32,
-    pub head_max: u32,
-    pub buffer_size: u32,
-    /// Objects the store can hold. Each reserves `buffer_size` bytes at init.
-    pub objects_max: u32,
-    /// Tokens used are `token_base..token_base + connections_max * 8 + 1`.
-    pub token_base: u64,
-    /// If set, the value an `x-amz-checksum-crc64nvme` header must have for
-    /// a given body. A PUT whose header disagrees is refused with a
-    /// `BadDigest` error document, and GET returns the stored value.
-    pub checksum: Option<ChecksumFn>,
-}
-
+/// An object server over an `Io`, made from a [`ServerConfig`].
 pub struct Server {
-    cfg: Config,
+    cfg: ServerConfig,
     conns: Box<[Conn]>,
     streams: Box<[Stream]>,
     /// Present when the server speaks TLS.
@@ -101,6 +74,9 @@ mod object;
 mod objects;
 mod request;
 mod scripted;
+mod server_config;
+mod server_config_builder;
+mod server_config_error;
 mod state;
 mod transport;
 mod xml;
@@ -111,11 +87,14 @@ use consts::{DESCRIBING_MAX, K_CLOSE, K_RECV, K_SEND, LIST_TARGET_MAX, SCRIPT_MA
 pub use identity::Sha256Fn;
 use object::Object;
 pub use request::VerifyFn;
+pub use server_config::{ChecksumFn, ServerConfig};
+pub use server_config_builder::ServerConfigBuilder;
+pub use server_config_error::ServerConfigError;
 use state::State;
 
 impl Server {
     /// A plain-HTTP server.
-    pub fn new(cfg: Config) -> Server {
+    pub fn new(cfg: ServerConfig) -> Server {
         #[cfg(feature = "tls")]
         {
             Self::build(cfg, None)
@@ -129,18 +108,18 @@ impl Server {
     /// An HTTPS server. Each connection additionally uses two pool buffers
     /// for sealed records, starting at `first_tls_buf`.
     #[cfg(feature = "tls")]
-    pub fn with_tls(cfg: Config, setup: ServerSetup, first_tls_buf: u32) -> Server {
+    pub fn with_tls(cfg: ServerConfig, setup: ServerSetup, first_tls_buf: u32) -> Server {
         Self::build(cfg, Some((setup, first_tls_buf)))
     }
 
     /// Operations in flight at most: one per connection plus the accept.
-    pub fn ops_in_flight_max(cfg: &Config) -> u32 {
-        cfg.connections_max + 1
+    pub fn ops_in_flight_max(cfg: &ServerConfig) -> u32 {
+        cfg.connections_max() + 1
     }
 
     /// Listen and start accepting. Returns the bound address.
     pub fn start<IO: Io>(&mut self, io: &mut IO, addr: SocketAddr) -> io::Result<SocketAddr> {
-        let bound = io.listen(self.cfg.listener, addr)?;
+        let bound = io.listen(self.cfg.listener(), addr)?;
         self.accept(io);
         Ok(bound)
     }
@@ -225,23 +204,23 @@ impl Server {
     }
 
     fn sock(&self, i: usize) -> Sock {
-        Sock(self.cfg.first_sock + i as u32)
+        Sock(self.cfg.first_sock() + i as u32)
     }
 
     fn head_buf(&self, i: usize) -> BufId {
-        BufId(self.cfg.first_buf + i as u32 * 2)
+        BufId(self.cfg.first_buf() + i as u32 * 2)
     }
 
     fn body_buf(&self, i: usize) -> BufId {
-        BufId(self.cfg.first_buf + i as u32 * 2 + 1)
+        BufId(self.cfg.first_buf() + i as u32 * 2 + 1)
     }
 
     fn accept_token(&self) -> u64 {
-        self.cfg.token_base + u64::from(self.cfg.connections_max) * 8
+        self.cfg.token_base() + u64::from(self.cfg.connections_max()) * 8
     }
 
     fn submit<IO: Io>(&self, io: &mut IO, i: usize, kind: u64, op: Op) {
-        Self::submit_as(io, Token(self.cfg.token_base + i as u64 * 8 + kind), op);
+        Self::submit_as(io, Token(self.cfg.token_base() + i as u64 * 8 + kind), op);
     }
 
     #[expect(

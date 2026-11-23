@@ -64,17 +64,11 @@ mod threaded {
                 ops_max: CONNS * 6 + 3,
                 ..Limits::BASE
             },
-            server::Config {
-                listener: Sock(0),
-                connections_max: CONNS * 2,
-                first_sock: 1,
-                first_buf: 0,
-                head_max: 4096,
-                buffer_size: SIZE,
-                objects_max: (CALLERS * 2) as u32,
-                token_base: 2 << 40,
-                checksum: None,
-            },
+            server::ServerConfig::builder(Sock(0), CONNS * 2, 1, 0, SIZE, 2 << 40)
+                .head_max(4096)
+                .objects_max((CALLERS * 2) as u32)
+                .build()
+                .unwrap(),
         );
 
         let mut b = server.builder(CONNS, SIZE);

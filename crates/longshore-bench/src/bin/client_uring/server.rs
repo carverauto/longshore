@@ -31,20 +31,17 @@ pub fn start(args: Args) -> SocketAddr {
             ..Limits::BASE
         })
         .or_die("server ring");
-        let mut server = Server::new(server::Config {
-            listener: Sock(0),
-            connections_max: server_conns,
-            first_sock: 1,
-            first_buf: 0,
-            head_max: 4096,
-            buffer_size: SIZE,
-            objects_max: (CALLERS * 2) as u32,
-            token_base: 2 << 40,
-            // The server keeps and checks the checksum the client sends.
-            checksum: Some(|body: &[u8]| {
-                longshore::checksum::crc64_header_value(longshore::checksum::crc64_nvme(body))
-            }),
-        });
+        let mut server = Server::new(
+            server::ServerConfig::builder(Sock(0), server_conns, 1, 0, SIZE, 2 << 40)
+                .head_max(4096)
+                .objects_max((CALLERS * 2) as u32)
+                // The server keeps and checks the checksum the client sends.
+                .checksum(|body: &[u8]| {
+                    longshore::checksum::crc64_header_value(longshore::checksum::crc64_nvme(body))
+                })
+                .build()
+                .or_die("server config"),
+        );
         // And the SHA-256 of a store that sends one, and it names versions.
         server.check_sha256(exact::sha256_header);
         server.keep_versions();

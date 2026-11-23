@@ -83,18 +83,13 @@ fn client_cfg() -> client::Config {
     }
 }
 
-fn server_cfg() -> server::Config {
-    server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 6,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        objects_max: 2,
-        token_base: 2 << 40,
-        checksum: None,
-    }
+#[cfg(test)]
+fn server_cfg() -> server::ServerConfig {
+    server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 6, BUF, 2 << 40)
+        .head_max(HEAD_MAX)
+        .objects_max(2)
+        .build()
+        .unwrap()
 }
 
 /// `client_tls` and `server_tls` choose each side's protocol independently.

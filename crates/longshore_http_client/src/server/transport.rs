@@ -19,7 +19,7 @@ impl Server {
                 io,
                 Token(self.accept_token()),
                 Op::Accept {
-                    listener: self.cfg.listener,
+                    listener: self.cfg.listener(),
                     sock: self.sock(i),
                 },
             );
@@ -62,7 +62,7 @@ impl Server {
 
     pub(super) fn recv_head<IO: Io>(&mut self, io: &mut IO, i: usize, have: u32) {
         self.conns[i].state = State::RecvHead { have };
-        self.recv_into(io, i, self.head_buf(i), have, self.cfg.head_max - have);
+        self.recv_into(io, i, self.head_buf(i), have, self.cfg.head_max() - have);
     }
 
     /// Send `len` bytes of the head buffer, then `body_len` of the body buffer.
@@ -96,7 +96,7 @@ impl Server {
         body_len: u32,
         close: bool,
     ) {
-        let limit = self.cfg.head_max as usize;
+        let limit = self.cfg.head_max() as usize;
         let buf = &mut io.buf(self.head_buf(i))[..limit];
         let mut w = HeadWriter::response(buf, status, reason);
         let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", content_length);

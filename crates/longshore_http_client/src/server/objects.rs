@@ -95,8 +95,9 @@ impl Server {
         let kept = self.keep(&c.asked);
         let o = &mut self.objects[slot];
         o.kept = kept;
-        o.checksum = c.claimed.filter(|_| self.cfg.checksum.is_some());
-        o.data[..len].copy_from_slice(&io.buf(BufId(self.cfg.first_buf + i as u32 * 2 + 1))[..len]); // body buffer
+        o.checksum = c.claimed.filter(|_| self.cfg.checksum().is_some());
+        o.data[..len]
+            .copy_from_slice(&io.buf(BufId(self.cfg.first_buf() + i as u32 * 2 + 1))[..len]); // body buffer
         o.target[..c.target_len].copy_from_slice(&c.target[..c.target_len]);
         o.target_len = c.target_len;
         o.len = len as u32;
@@ -120,7 +121,7 @@ impl Server {
     /// Refuse a body whose claimed checksum is wrong, the way a real store
     /// does. Returns whether it was refused.
     fn refuse_checksum<IO: Io>(&mut self, io: &mut IO, i: usize, c: &Conn) -> bool {
-        let (Some(sum), Some(claimed)) = (self.cfg.checksum, c.claimed) else {
+        let (Some(sum), Some(claimed)) = (self.cfg.checksum(), c.claimed) else {
             return false;
         };
         if sum(&io.buf(self.body_buf(i))[..c.request_len as usize]) == claimed {

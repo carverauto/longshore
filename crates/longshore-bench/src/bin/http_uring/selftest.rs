@@ -75,17 +75,13 @@ pub(super) fn selftest() {
         ..Limits::BASE
     };
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: 1,
-        first_sock: 2,
-        first_buf: 0,
-        head_max: 4096,
-        buffer_size: SIZE,
-        objects_max: 1,
-        token_base: 2 << 40,
-        checksum: None,
-    });
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock(0), 1, 2, 0, SIZE, 2 << 40)
+            .head_max(4096)
+            .objects_max(1)
+            .build()
+            .or_die("server config"),
+    );
     let addr = server
         .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap_or_else(|e| die(e));

@@ -34,7 +34,7 @@ impl Server {
     /// Write the listing `q` asks for into `body`; returns its length.
     fn write_listing(&self, body: &mut [u8], q: &Query) -> usize {
         let (prefix, delimiter) = (&q.prefix.0[..q.prefix.1], &q.delimiter.0[..q.delimiter.1]);
-        let cap = self.cfg.buffer_size as usize - 256;
+        let cap = self.cfg.buffer_size() as usize - 256;
         let mut out = Out { body, n: 0 };
         let (mut last, mut emitted, mut truncated) = (q.after, 0usize, false);
         out.put(b"<ListBucketResult>");

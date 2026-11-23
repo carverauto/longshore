@@ -30,17 +30,13 @@ fn world_for_bucket(seed: u64, bucket: &'static str) -> World {
 /// A server listening on `ADDR` that serves `bucket` from its path.
 #[cfg(test)]
 fn path_server(mut io: SimIo, bucket: &'static str) -> (SimIo, Server) {
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 0,
-        head_max: 2048,
-        buffer_size: BUF,
-        objects_max: 8,
-        token_base: 2 << 40,
-        checksum: None,
-    });
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+            .head_max(2048)
+            .objects_max(8)
+            .build()
+            .unwrap(),
+    );
     server.serve_bucket_in_path(bucket);
     let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
     (io, server)
@@ -218,17 +214,13 @@ fn signed_and_copied_from_dotted(method: &[u8], target: &[u8], head: &[u8], f: &
 #[test]
 fn a_copy_names_a_dotted_bucket_in_the_host_whole() {
     let mut io = SimIo::new(LIMITS, 9, Faults::default());
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 0,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        objects_max: 8,
-        token_base: 2 << 40,
-        checksum: None,
-    });
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+            .head_max(HEAD_MAX)
+            .objects_max(8)
+            .build()
+            .unwrap(),
+    );
     server.verify_requests(signed_and_copied_from_dotted);
     let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
     let mut cfg = s3_config(3, false);

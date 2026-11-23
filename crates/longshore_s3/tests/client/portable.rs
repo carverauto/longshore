@@ -28,17 +28,11 @@ fn client_stores_and_fetches_over_loopback_on_portable_backend() {
             ops_max: CONNS * 3 + 3,
             ..Limits::BASE
         },
-        server::Config {
-            listener: Sock(0),
-            connections_max: CONNS,
-            first_sock: 1,
-            first_buf: 0,
-            head_max: 4096,
-            buffer_size: SIZE,
-            objects_max: 4,
-            token_base: 2 << 40,
-            checksum: None,
-        },
+        server::ServerConfig::builder(Sock(0), CONNS, 1, 0, SIZE, 2 << 40)
+            .head_max(4096)
+            .objects_max(4)
+            .build()
+            .unwrap(),
     );
 
     let mut b = server.builder(CONNS, SIZE);

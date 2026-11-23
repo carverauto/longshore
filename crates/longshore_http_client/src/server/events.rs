@@ -11,7 +11,7 @@ impl Server {
     pub(super) fn on_head_bytes<IO: Io>(&mut self, io: &mut IO, i: usize, have: u32) {
         let parsed = parse_request(
             &io.buf(self.head_buf(i))[..have as usize],
-            self.cfg.head_max as usize,
+            self.cfg.head_max() as usize,
         );
         let head = match parsed {
             Err(_) => return self.status(io, i, 400, "Bad Request", 0, 0, true),
@@ -24,7 +24,7 @@ impl Server {
         let too_long = self.note_request(i, io.buf(self.head_buf(i)), &head);
         if too_long
             || head.fields.chunked
-            || body_len > u64::from(self.cfg.buffer_size)
+            || body_len > u64::from(self.cfg.buffer_size())
             || u64::from(extra) > body_len
         {
             return self.status(io, i, 400, "Bad Request", 0, 0, true);
@@ -44,8 +44,8 @@ impl Server {
         let Some(rel) = c
             .token
             .0
-            .checked_sub(self.cfg.token_base)
-            .filter(|r| *r <= u64::from(self.cfg.connections_max) * 8)
+            .checked_sub(self.cfg.token_base())
+            .filter(|r| *r <= u64::from(self.cfg.connections_max()) * 8)
         else {
             return false;
         };

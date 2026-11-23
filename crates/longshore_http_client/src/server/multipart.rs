@@ -190,7 +190,7 @@ impl Server {
         if count == 0 {
             return self.error_document(io, i, 400, "MalformedXML");
         }
-        if let (Some(sum), Some(claimed)) = (self.cfg.checksum, c.claimed) {
+        if let (Some(sum), Some(claimed)) = (self.cfg.checksum(), c.claimed) {
             if sum(&io.buf(self.body_buf(i))[..total]) != claimed {
                 return self.error_document(io, i, 400, "BadDigest");
             }
@@ -233,7 +233,7 @@ impl Server {
                 return Err("InvalidPart");
             }
             let len = part.len as usize;
-            if total + len > self.cfg.buffer_size as usize {
+            if total + len > self.cfg.buffer_size() as usize {
                 return Err("EntityTooLarge");
             }
             io.buf(self.body_buf(i))[total..total + len].copy_from_slice(&part.data[..len]);
@@ -254,14 +254,14 @@ impl Server {
             .expect("the parts just freed leave room");
         let o = &mut self.objects[slot];
         o.data[..total]
-            .copy_from_slice(&io.buf(BufId(self.cfg.first_buf + i as u32 * 2 + 1))[..total]);
+            .copy_from_slice(&io.buf(BufId(self.cfg.first_buf() + i as u32 * 2 + 1))[..total]);
         o.target[..path.len()].copy_from_slice(path);
         o.target_len = path.len();
         o.len = total as u32;
         o.used = true;
         // A store that keeps checksums has one for the assembled object
         // whether or not the request claimed it.
-        o.checksum = self.cfg.checksum.map(|sum| sum(&o.data[..total]));
+        o.checksum = self.cfg.checksum().map(|sum| sum(&o.data[..total]));
     }
 }
 

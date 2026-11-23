@@ -69,19 +69,17 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
 /// `enforce`: the server checks and returns CRC-64/NVME checksums, as AWS does.
 pub fn world_with(seed: u64, faults: Faults, attempts_max: u32, enforce: bool) -> World {
     let mut io = SimIo::new(LIMITS, seed, faults);
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 0,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        objects_max: 8,
-        token_base: 2 << 40,
-        checksum: enforce.then_some(|body: &[u8]| {
+    let cfg = server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+        .head_max(HEAD_MAX)
+        .objects_max(8);
+    let cfg = if enforce {
+        cfg.checksum(|body: &[u8]| {
             longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body))
-        }),
-    });
+        })
+    } else {
+        cfg
+    };
+    let mut server = Server::new(cfg.build().unwrap());
     // Every request must carry a signature that matches the bytes it
     // arrived as; see `signing`.
     server.verify_requests(signing::verify_sigv4);

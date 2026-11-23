@@ -9,22 +9,21 @@ use super::*;
 
 impl Server {
     pub(super) fn build(
-        cfg: Config,
+        cfg: ServerConfig,
         #[cfg(feature = "tls")] tls: Option<(ServerSetup, u32)>,
     ) -> Server {
-        assert!(cfg.head_max <= cfg.buffer_size && cfg.head_max <= u32::from(u16::MAX));
         #[cfg(feature = "tls")]
         let streams = streams(&cfg, tls.as_ref().map(|t| t.1));
         #[cfg(not(feature = "tls"))]
         let streams = streams(&cfg);
         Server {
             cfg,
-            conns: vec![Conn::FREE; cfg.connections_max as usize].into_boxed_slice(),
+            conns: vec![Conn::FREE; cfg.connections_max() as usize].into_boxed_slice(),
             streams,
             #[cfg(feature = "tls")]
             tls: tls.map(|t| t.0),
-            objects: (0..cfg.objects_max)
-                .map(|_| Object::empty(cfg.buffer_size))
+            objects: (0..cfg.objects_max())
+                .map(|_| Object::empty(cfg.buffer_size()))
                 .collect(),
             uploads: [0; multipart::UPLOADS_MAX],
             uploads_begun: 0,
@@ -51,18 +50,21 @@ impl Server {
 
 /// One stream per connection, each sealing TLS records in its own two
 /// buffers from `first_tls_buf` when the server speaks TLS.
-fn streams(cfg: &Config, #[cfg(feature = "tls")] first_tls_buf: Option<u32>) -> Box<[Stream]> {
-    (0..cfg.connections_max)
+fn streams(
+    cfg: &ServerConfig,
+    #[cfg(feature = "tls")] first_tls_buf: Option<u32>,
+) -> Box<[Stream]> {
+    (0..cfg.connections_max())
         .map(|i| {
-            let token = |kind| Token(cfg.token_base + u64::from(i) * 8 + kind);
-            let s = Stream::new(Sock(cfg.first_sock + i), token(K_SEND), token(K_RECV));
+            let token = |kind| Token(cfg.token_base() + u64::from(i) * 8 + kind);
+            let s = Stream::new(Sock(cfg.first_sock() + i), token(K_SEND), token(K_RECV));
             #[cfg(feature = "tls")]
             let s = match first_tls_buf {
                 Some(first) => s.with_tls_buffers(
                     BufId(first + 2 * i),
                     BufId(first + 2 * i + 1),
-                    cfg.buffer_size,
-                    cfg.buffer_size,
+                    cfg.buffer_size(),
+                    cfg.buffer_size(),
                     u32::MAX,
                 ),
                 None => s,

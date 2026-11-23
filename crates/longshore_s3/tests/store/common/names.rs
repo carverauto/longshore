@@ -117,17 +117,13 @@ pub fn resolved_world(
     ns: Nameserver,
 ) -> (World, Nameserver) {
     let mut io = SimIo::new(WIDE, 7, Faults::default());
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 0,
-        head_max: 2048,
-        buffer_size: BUF,
-        objects_max: 8,
-        token_base: 2 << 40,
-        checksum: None,
-    });
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+            .head_max(2048)
+            .objects_max(8)
+            .build()
+            .unwrap(),
+    );
     let _: SocketAddr = server.start(&mut io, listen).unwrap();
     io.bind_udp(NS_SOCK, NS);
     Nameserver::recv(&mut io);

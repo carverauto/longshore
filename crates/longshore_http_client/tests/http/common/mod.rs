@@ -76,17 +76,13 @@ pub fn client_cfg() -> client::Config {
 
 pub fn world_with(seed: u64, faults: Faults, cfg: client::Config) -> World {
     let mut io = SimIo::new(LIMITS, seed, faults);
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: CONNS,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        objects_max: 4,
-        token_base: 2 << 40,
-        checksum: None,
-    });
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, CONNS, BUF, 2 << 40)
+            .head_max(HEAD_MAX)
+            .objects_max(4)
+            .build()
+            .unwrap(),
+    );
     let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();

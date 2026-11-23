@@ -61,17 +61,14 @@ pub struct World {
 
 pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
     let mut io = SimIo::new(LIMITS, seed, faults);
-    let mut server = Server::new(server::Config {
-        listener: Sock(0),
-        connections_max: CONNS,
-        first_sock: 1 + CONNS,
-        first_buf: 0,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        objects_max: 8,
-        token_base: 2 << 40,
-        checksum: Some(crc32c_form),
-    });
+    let mut server = Server::new(
+        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+            .head_max(HEAD_MAX)
+            .objects_max(8)
+            .checksum(crc32c_form)
+            .build()
+            .unwrap(),
+    );
     let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[TOKEN_A]);
     let token_file = io.register_file("/var/run/token").unwrap();
