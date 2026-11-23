@@ -63,59 +63,18 @@ pub fn presign(
     unix_secs: u64,
     expires_secs: u32,
 ) -> Result<usize, PresignError> {
-    if key.is_empty() {
-        return Err(PresignError::BadKey);
-    }
-    if expires_secs == 0 || expires_secs > EXPIRES_MAX_SECS {
-        return Err(PresignError::BadExpiry);
-    }
+    check(target, key, expires_secs)?;
     let creds = target.credentials;
-    if creds.access_key().is_empty() {
-        return Err(PresignError::NotSigningCredentials);
-    }
     let date = amz_date(unix_secs);
     let date_str = crate::text::written(&date);
 
     // Pieces that are signed and also appear in the URL, each encoded once.
     let mut path = [0u8; 64 + 1 + 3 * 1024];
-    let at = target.root.len();
-    path.get_mut(..at)
-        .ok_or(PresignError::BadKey)?
-        .copy_from_slice(target.root.as_bytes());
-    path[at] = b'/';
-    let path_len = at
-        + 1
-        + uri_encode(key.as_bytes(), false, &mut path[at + 1..]).ok_or(PresignError::BadKey)?;
-    let path = crate::text::written(&path[..path_len]);
-
+    let path = encode_path(&mut path, target.root, key)?;
     let mut credential = [0u8; 256];
-    let mut credential_len = 0;
-    for piece in [
-        creds.access_key().as_bytes(),
-        b"%2F",
-        &date[..8],
-        b"%2F",
-        target.region.as_bytes(),
-        b"%2Fs3%2Faws4_request",
-    ] {
-        credential
-            .get_mut(credential_len..credential_len + piece.len())
-            .ok_or(PresignError::OutputTooSmall)?
-            .copy_from_slice(piece);
-        credential_len += piece.len();
-    }
-    let credential = crate::text::written(&credential[..credential_len]);
-
+    let credential = write_credential(&mut credential, creds.access_key(), &date, target.region)?;
     let mut expires = [0u8; 10];
-    let mut d = expires.len();
-    let mut v = expires_secs;
-    while v > 0 {
-        d -= 1;
-        expires[d] = b'0' + (v % 10) as u8;
-        v /= 10;
-    }
-    let expires = crate::text::written(&expires[d..]);
-
+    let expires = write_decimal(&mut expires, expires_secs);
     let mut token = [0u8; 3 * crate::creds::SESSION_MAX];
     // Three times the longest token: always room, so `None` cannot happen.
     let token_len = uri_encode(creds.session_token().as_bytes(), true, &mut token)
@@ -159,7 +118,79 @@ pub fn presign(
         },
     )
     .map_err(|_| PresignError::OutputTooSmall)?;
+    write_url(out, target, path, pairs, &signature)
+}
 
+/// Refuse an empty key, a life out of range, or credentials that cannot sign.
+fn check(target: &Target, key: &str, expires_secs: u32) -> Result<(), PresignError> {
+    if key.is_empty() {
+        return Err(PresignError::BadKey);
+    }
+    if expires_secs == 0 || expires_secs > EXPIRES_MAX_SECS {
+        return Err(PresignError::BadExpiry);
+    }
+    if target.credentials.access_key().is_empty() {
+        return Err(PresignError::NotSigningCredentials);
+    }
+    Ok(())
+}
+
+/// `root/key` with the key URI-encoded, written into `buf`.
+fn encode_path<'b>(buf: &'b mut [u8], root: &str, key: &str) -> Result<&'b str, PresignError> {
+    let at = root.len();
+    buf.get_mut(..at)
+        .ok_or(PresignError::BadKey)?
+        .copy_from_slice(root.as_bytes());
+    buf[at] = b'/';
+    let len = at
+        + 1
+        + uri_encode(key.as_bytes(), false, &mut buf[at + 1..]).ok_or(PresignError::BadKey)?;
+    Ok(crate::text::written(&buf[..len]))
+}
+
+/// The encoded `X-Amz-Credential` value, written into `buf`.
+fn write_credential<'b>(
+    buf: &'b mut [u8],
+    access_key: &str,
+    date: &[u8; 16],
+    region: &str,
+) -> Result<&'b str, PresignError> {
+    let mut len = 0;
+    for piece in [
+        access_key.as_bytes(),
+        b"%2F",
+        &date[..8],
+        b"%2F",
+        region.as_bytes(),
+        b"%2Fs3%2Faws4_request",
+    ] {
+        buf.get_mut(len..len + piece.len())
+            .ok_or(PresignError::OutputTooSmall)?
+            .copy_from_slice(piece);
+        len += piece.len();
+    }
+    Ok(crate::text::written(&buf[..len]))
+}
+
+/// `v` in decimal, written at the end of `buf`.
+fn write_decimal(buf: &mut [u8; 10], mut v: u32) -> &str {
+    let mut d = buf.len();
+    while v > 0 {
+        d -= 1;
+        buf[d] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    crate::text::written(&buf[d..])
+}
+
+/// Write the URL: scheme, host, path, query and signature.
+fn write_url(
+    out: &mut [u8],
+    target: &Target,
+    path: &str,
+    pairs: &[(&str, &str)],
+    signature: &[u8],
+) -> Result<usize, PresignError> {
     let mut n = 0;
     let mut put = |bytes: &[u8]| -> Result<(), PresignError> {
         out.get_mut(n..n + bytes.len())
@@ -179,7 +210,7 @@ pub fn presign(
         put(value.as_bytes())?;
     }
     put(b"&X-Amz-Signature=")?;
-    put(&signature)?;
+    put(signature)?;
     Ok(n)
 }
 

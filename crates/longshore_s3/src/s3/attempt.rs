@@ -5,7 +5,8 @@
 
 //! Building and sending one attempt of an operation, in the store vendor's request form.
 
-use super::exact::{self, Cause, Encryption};
+use super::exact::Cause;
+use super::head::{gcs_headers, s3_headers, Bufs, Head, Headers, Text};
 use super::*;
 
 impl S3 {
@@ -14,124 +15,13 @@ impl S3 {
         if self.past_deadline(io, i) {
             return self.end_unanswered(i, Cause::Deadline);
         }
-        let addr = match &mut self.cfg.endpoint {
-            Endpoint::Fixed(a) => Some(*a),
-            Endpoint::Resolved(r) => r.lookup(0).map(|ip| SocketAddr::new(ip, self.cfg.port)),
+        let Some(addr) = self.address() else {
+            return self.wait_for_address(io, i);
         };
-        // No address yet: wait a little rather than fail. This does not count
-        // as an attempt, but it is not allowed to go on for ever: a name that
-        // never resolves would otherwise hold the slot for good. The limit is
-        // the time the operation's attempts could have taken.
-        let Some(addr) = addr else {
-            let waits_max = (self
-                .cfg
-                .http
-                .request_timeout_ns
-                .saturating_mul(u64::from(self.cfg.attempts_max))
-                / self.cfg.backoff_ns.max(1))
-            .max(1);
-            if u64::from(self.slots[i].address_waits) >= waits_max {
-                return self.fail_unsent(i, Fatal::NoAddress);
-            }
-            self.slots[i].address_waits += 1;
-            return self.wait(io, i, self.cfg.backoff_ns);
-        };
-
         let s = self.slots[i];
-        let path = crate::text::written(&s.path[..s.path_len]);
         let date = amz_date(io.unix_secs());
-        let date_str = crate::text::written(&date);
-        let (method, payload) = match s.kind {
-            Kind::Store { .. } if s.comparing => ("HEAD", EMPTY_SHA256),
-            Kind::Store { .. } => ("PUT", UNSIGNED_PAYLOAD),
-            Kind::Fetch { .. } | Kind::List => ("GET", EMPTY_SHA256),
-            Kind::Erase | Kind::Abort => ("DELETE", EMPTY_SHA256),
-            Kind::Begin { .. } => ("POST", EMPTY_SHA256),
-            Kind::Part => ("PUT", UNSIGNED_PAYLOAD),
-            // The comparison after a lost completion asks about the object itself.
-            Kind::Complete if s.comparing => ("HEAD", EMPTY_SHA256),
-            Kind::Complete => ("POST", UNSIGNED_PAYLOAD),
-            Kind::Stat => ("HEAD", EMPTY_SHA256),
-            Kind::Copy => ("PUT", EMPTY_SHA256),
-            Kind::EraseMany => ("POST", UNSIGNED_PAYLOAD),
-        };
-        // A multipart request's target is the key and its query.
-        let mut target_buf = [0u8; PATH_MAX + 1 + QUERY_MAX];
-        let multipart_query = core::str::from_utf8(&s.query[..s.query_len])
-            .ok()
-            .filter(|q| !q.is_empty() && !s.comparing && s.kind != Kind::Copy);
-        let copy_source = core::str::from_utf8(&s.query[..s.query_len])
-            .ok()
-            .filter(|_| s.kind == Kind::Copy);
-
-        // Optional headers, under the names this vendor gives them.
-        let vendor_prefix = match self.cfg.vendor {
-            Vendor::S3 => "x-amz-",
-            Vendor::Gcs => "x-goog-",
-        };
-        let mut names = [0u8; OPTIONS_MAX * NAME_MAX];
-        let mut name_ends = [0usize; OPTIONS_MAX];
-        let mut values = [""; OPTIONS_MAX];
-        let mut option_count = 0;
-        if matches!(s.kind, Kind::Store { .. } | Kind::Begin { .. }) && !s.comparing {
-            let mut at = 0;
-            for (prefix, name, value) in s.options.headers(vendor_prefix) {
-                for part in [prefix, name] {
-                    names[at..at + part.len()].copy_from_slice(part.as_bytes());
-                    at += part.len();
-                }
-                name_ends[option_count] = at;
-                values[option_count] = value;
-                option_count += 1;
-            }
-        }
-        let option = |k: usize| -> (&str, &str) {
-            let start = if k == 0 { 0 } else { name_ends[k - 1] };
-            (crate::text::written(&names[start..name_ends[k]]), values[k])
-        };
-        let target = match multipart_query {
-            Some(q) => {
-                let n = path.len() + 1 + q.len();
-                target_buf[..path.len()].copy_from_slice(path.as_bytes());
-                target_buf[path.len()] = b'?';
-                target_buf[path.len() + 1..n].copy_from_slice(q.as_bytes());
-                crate::text::written(&target_buf[..n])
-            }
-            None => path,
-        };
-
-        // "bytes=a-b" without allocating.
-        let mut range_buf = [0u8; 48];
-        let mut range_len = 0;
-        if let Kind::Fetch {
-            range: Some((a, b)),
-        } = s.kind
-        {
-            let mut put = |bytes: &[u8]| {
-                range_buf[range_len..range_len + bytes.len()].copy_from_slice(bytes);
-                range_len += bytes.len();
-            };
-            let digits = |mut v: u64, out: &mut [u8; 20]| -> usize {
-                let mut k = 20;
-                loop {
-                    k -= 1;
-                    out[k] = b'0' + (v % 10) as u8;
-                    v /= 10;
-                    if v == 0 {
-                        return k;
-                    }
-                }
-            };
-            let mut d = [0u8; 20];
-            put(b"bytes=");
-            let a_start = digits(a, &mut d);
-            put(&d[a_start..]);
-            put(b"-");
-            let b_start = digits(b, &mut d);
-            put(&d[b_start..]);
-        }
-        let range = crate::text::written(&range_buf[..range_len]);
-
+        let mut text = Text::new();
+        let head = Head::of(&s, self.cfg.vendor, &mut text);
         // Sent with the credentials in use now. A request already sent keeps
         // what it carries; only later attempts see a rotation.
         let creds = &self.creds[if s.candidate {
@@ -139,160 +29,25 @@ impl S3 {
         } else {
             self.active
         }];
-        let mut auth = [0u8; 7 + TOKEN_MAX];
-        let mut headers: [(&str, &[u8]); sigv4::HEADERS_MAX] = [("", b""); sigv4::HEADERS_MAX];
-        let goog_hash;
-        // S3: headers that are both sent and signed.
-        let crc_value = s.crc.map(longshore_crc::crc64_header_value);
-        let crc_str = crc_value.as_ref().map(|v| crate::text::written(v));
-        let mut sha_value = [0u8; 44];
-        let sha_str = s.sha256.map(|digest| {
-            let _: usize = longshore_crc::base64(&digest, &mut sha_value);
-            crate::text::written(&sha_value)
-        });
-        let asked = s.exact.unwrap_or_default();
-        let if_match = asked
-            .if_match
-            .as_ref()
-            .map(|tag| crate::text::written(tag.as_bytes()));
-        let mut signed: [(&str, &str); sigv4::HEADERS_MAX] = [("", ""); sigv4::HEADERS_MAX];
-        signed[0] = ("host", &self.cfg.host);
-        signed[1] = ("x-amz-content-sha256", payload);
-        signed[2] = ("x-amz-date", date_str);
+        let mut bufs = Bufs::new();
+        let mut headers: Headers = [("", b""); sigv4::HEADERS_MAX];
         let n = if self.cfg.vendor == Vendor::Gcs {
-            // No signature: the token is the whole proof, so nothing depends
-            // on the other headers or on the clock.
-            let mut k = 0;
-            if let (true, Some(crc), false) = (s.kind.stores_bytes(), s.crc, s.comparing) {
-                let mut v = *b"crc32c=AAAAAAAA";
-                v[7..].copy_from_slice(&longshore_crc::crc32c_header_value(crc as u32));
-                goog_hash = v;
-                headers[k] = ("x-goog-hash", &goog_hash);
-                k += 1;
-            }
-            if !range.is_empty() {
-                headers[k] = ("range", range.as_bytes());
-                k += 1;
-            }
-            if s.kind == (Kind::Store { no_clobber: true }) && !s.comparing {
-                headers[k] = ("x-goog-if-generation-match", b"0");
-                k += 1;
-            }
-            if let Some(source) = copy_source {
-                headers[k] = ("x-goog-copy-source", source.as_bytes());
-                k += 1;
-            }
-            for o in 0..option_count {
-                let (name, value) = option(o);
-                headers[k] = (name, value.as_bytes());
-                k += 1;
-            }
-            auth[..7].copy_from_slice(b"Bearer ");
-            let token = creds.secret_key().as_bytes();
-            auth[7..7 + token.len()].copy_from_slice(token);
-            headers[k] = ("authorization", &auth[..7 + token.len()]);
-            k + 1
+            gcs_headers(&head, creds.secret_key(), &mut bufs, &mut headers)
         } else {
-            let mut m = 3;
-            // A part carries its own checksum; a completion carries the whole object's.
-            let checksummed =
-                s.kind.stores_bytes() || matches!(s.kind, Kind::Complete | Kind::EraseMany);
-            if let (true, Some(v), false) = (checksummed, crc_str, s.comparing) {
-                signed[m] = (CHECKSUM_HEADER, v);
-                m += 1;
-            } else if let (Kind::Store { .. }, Some(v), false) = (s.kind, sha_str, s.comparing) {
-                signed[m] = ("x-amz-checksum-sha256", v);
-                m += 1;
-            }
-            if let Some(tag) = if_match {
-                signed[m] = ("if-match", tag);
-                m += 1;
-            }
-            if asked.encryption == Some(Encryption::Aes256) {
-                signed[m] = ("x-amz-server-side-encryption", "AES256");
-                m += 1;
-            }
-            // Whole-object checksums have to be asked for when the upload begins.
-            if s.kind == (Kind::Begin { checksums: true }) {
-                signed[m] = ("x-amz-checksum-algorithm", "CRC64NVME");
-                signed[m + 1] = ("x-amz-checksum-type", "FULL_OBJECT");
-                m += 2;
-            }
-            // Ask the store to return the object's checksum with a whole-object
-            // fetch, and when comparing a stored object with ours.
-            if matches!(s.kind, Kind::Fetch { range: None } | Kind::Stat) || s.comparing {
-                signed[m] = ("x-amz-checksum-mode", "ENABLED");
-                m += 1;
-            }
-            if !range.is_empty() {
-                signed[m] = ("range", range);
-                m += 1;
-            }
-            if s.kind == (Kind::Store { no_clobber: true }) && !s.comparing {
-                signed[m] = ("if-none-match", "*");
-                m += 1;
-            }
-            if let Some(source) = copy_source {
-                signed[m] = ("x-amz-copy-source", source);
-                m += 1;
-            }
-            for o in 0..option_count {
-                signed[m] = option(o);
-                m += 1;
-            }
-            // Temporary keys are only valid together with their session
-            // token, which is sent and signed like any other header.
-            if !creds.session_token().is_empty() {
-                signed[m] = ("x-amz-security-token", creds.session_token());
-                m += 1;
-            }
-            let scope = sigv4::Scope {
-                access_key: creds.access_key(),
-                secret_key: creds.secret_key(),
-                region: &self.cfg.region,
-                service: "s3",
-                amz_date: &date,
-            };
-            // A listing's target carries a query; it is signed as sorted pairs.
-            let (uri, query) = match path.split_once('?') {
-                Some((uri, query)) if matches!(s.kind, Kind::List | Kind::EraseMany) => {
-                    (uri, query)
-                }
-                _ => (path, multipart_query.unwrap_or("")),
-            };
-            let mut pairs = [("", ""); 5];
-            let mut pair_count = 0;
-            for kv in query.split('&').filter(|kv| !kv.is_empty()) {
-                pairs[pair_count] = kv.split_once('=').unwrap_or((kv, ""));
-                pair_count += 1;
-            }
-            let sreq = sigv4::Request {
-                method,
-                canonical_uri: uri,
-                query: &pairs[..pair_count],
-                headers: &signed[..m],
-                payload_hash: payload,
-            };
-            #[expect(
-                clippy::expect_used,
-                reason = "sixteen headers at most are signed, and the Authorization buffer fits them all"
-            )]
-            let auth_len = authorization(&sreq, &scope, &mut auth)
-                .expect("at most sixteen headers, and the Authorization buffer always fits");
-            if let Some(exact) = &mut self.slots[i].exact {
-                exact.signing = Some(exact::describe(method, &date, &sreq));
-            }
-
-            // Host is added by the HTTP client; send the rest plus Authorization.
-            for (k, (name, value)) in signed[1..m].iter().enumerate() {
-                headers[k] = (name, value.as_bytes());
-            }
-            headers[m - 1] = ("authorization", &auth[..auth_len]);
-            m
+            let exact = &mut self.slots[i].exact;
+            s3_headers(
+                &head,
+                &self.cfg,
+                creds,
+                &date,
+                exact,
+                &mut bufs,
+                &mut headers,
+            )
         };
         let req = Request {
-            method,
-            target,
+            method: head.method,
+            target: head.target,
             host: &self.cfg.host,
             host_id: 0,
             addr,
@@ -311,5 +66,32 @@ impl S3 {
             Err(Error::Busy) => self.wait(io, i, self.cfg.backoff_ns),
             Err(e) => self.fail_unsent(i, Fatal::Transport(e)),
         }
+    }
+
+    /// The address to send to: the fixed one, or the resolver's current answer.
+    fn address(&mut self) -> Option<SocketAddr> {
+        match &mut self.cfg.endpoint {
+            Endpoint::Fixed(a) => Some(*a),
+            Endpoint::Resolved(r) => r.lookup(0).map(|ip| SocketAddr::new(ip, self.cfg.port)),
+        }
+    }
+
+    /// No address yet: wait a little rather than fail. This does not count
+    /// as an attempt, but it is not allowed to go on for ever: a name that
+    /// never resolves would otherwise hold the slot for good. The limit is
+    /// the time the operation's attempts could have taken.
+    fn wait_for_address<IO: Io>(&mut self, io: &mut IO, i: usize) {
+        let waits_max = (self
+            .cfg
+            .http
+            .request_timeout_ns
+            .saturating_mul(u64::from(self.cfg.attempts_max))
+            / self.cfg.backoff_ns.max(1))
+        .max(1);
+        if u64::from(self.slots[i].address_waits) >= waits_max {
+            return self.fail_unsent(i, Fatal::NoAddress);
+        }
+        self.slots[i].address_waits += 1;
+        self.wait(io, i, self.cfg.backoff_ns);
     }
 }

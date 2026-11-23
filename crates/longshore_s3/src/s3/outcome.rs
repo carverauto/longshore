@@ -5,7 +5,9 @@
 
 //! Deciding what a finished attempt means: success, a retry, or a fatal outcome.
 
+use super::checksum::Checked;
 use super::*;
+use std::ops::ControlFlow;
 
 impl S3 {
     pub(super) fn on_attempt_done<IO: Io>(
@@ -19,201 +21,221 @@ impl S3 {
         if s.exact.is_some() {
             return self.on_exact_done(io, i, result, sent);
         }
-        let finish = |me: &mut S3, o: Outcome| me.finish(i, &o);
         // A completion's response was lost and the retry found the upload
         // gone. The object at the key decides: ours if its checksum is.
         if s.kind == Kind::Complete && s.comparing {
-            #[expect(
-                clippy::expect_used,
-                reason = "a completion compares only when it was sent with a checksum"
-            )]
-            let ours =
-                self.checksum_value(s.crc.expect("only completions with a checksum compare"));
-            let class = classify(&result);
-            if matches!(class, Class::Retry | Class::RetryDelayed) {
-                if s.attempts < self.cfg.attempts_max {
-                    return self.attempt(io, i);
-                }
-                // The comparison could not be made, so whether the upload
-                // completed is not known. A 404 would say it did not.
-                return finish(self, Outcome::Fatal(Fatal::RetriesExhausted));
-            }
-            let same = matches!(result, Ok(r) if r.status == 200
-                && self.stored_checksum(io, r.conn) == Some(ours));
-            return finish(
-                self,
-                if same {
-                    Outcome::Stored
-                } else {
-                    Outcome::Fatal(Fatal::Status(404))
-                },
-            );
+            return self.on_completion_compared(io, i, &s, result);
         }
         let mut decided = None;
         // Statuses with a meaning specific to the operation.
         if let Ok(r) = result {
-            if r.status == 200 {
-                match self.multipart_outcome(io, s.kind, r, s.crc) {
-                    Some(Ok(outcome)) => return finish(self, outcome),
-                    Some(Err(class)) => decided = Some(class),
-                    None => {}
+            match self.on_status(io, i, &s, r) {
+                ControlFlow::Break(()) => return,
+                ControlFlow::Continue(class) => decided = class,
+            }
+        }
+        let class = decided.unwrap_or_else(|| classify(&result));
+        let class = self.transient(io, &s, result, class);
+        let check = self.check_body(io, &s, result, class);
+        self.conclude(io, i, &s, result, check);
+    }
+
+    /// The answer to the comparison after a completion's response was lost.
+    fn on_completion_compared<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        i: usize,
+        s: &Slot,
+        result: Result<client::Response, Error>,
+    ) {
+        #[expect(
+            clippy::expect_used,
+            reason = "a completion compares only when it was sent with a checksum"
+        )]
+        let ours = self.checksum_value(s.crc.expect("only completions with a checksum compare"));
+        let class = classify(&result);
+        if matches!(class, Class::Retry | Class::RetryDelayed) {
+            if s.attempts < self.cfg.attempts_max {
+                return self.attempt(io, i);
+            }
+            // The comparison could not be made, so whether the upload
+            // completed is not known. A 404 would say it did not.
+            return self.finish(i, &Outcome::Fatal(Fatal::RetriesExhausted));
+        }
+        let same = matches!(result, Ok(r) if r.status == 200
+            && self.stored_checksum(io, r.conn) == Some(ours));
+        let outcome = if same {
+            Outcome::Stored
+        } else {
+            Outcome::Fatal(Fatal::Status(404))
+        };
+        self.finish(i, &outcome);
+    }
+
+    /// Statuses with a meaning specific to the operation. Breaks when the
+    /// operation finished or was attempted again; otherwise carries the
+    /// class a multipart step decided, if any.
+    fn on_status<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        i: usize,
+        s: &Slot,
+        r: client::Response,
+    ) -> ControlFlow<(), Option<Class>> {
+        let mut decided = None;
+        if r.status == 200 {
+            match self.multipart_outcome(io, s.kind, r, s.crc) {
+                Some(Ok(outcome)) => {
+                    self.finish(i, &outcome);
+                    return ControlFlow::Break(());
+                }
+                Some(Err(class)) => decided = Some(class),
+                None => {}
+            }
+        }
+        let outcome = match (s.kind, r.status) {
+            // The upload is gone after an earlier attempt was sent: that
+            // attempt may have completed it.
+            (Kind::Complete, 404)
+                if s.attempts > 1 && s.crc.is_some() && s.attempts < self.cfg.attempts_max =>
+            {
+                self.slots[i].comparing = true;
+                self.store_comparisons += 1;
+                self.attempt(io, i);
+                return ControlFlow::Break(());
+            }
+            (Kind::Store { .. }, _) => {
+                return match self.on_store_status(io, i, s, r) {
+                    ControlFlow::Break(()) => ControlFlow::Break(()),
+                    ControlFlow::Continue(()) => ControlFlow::Continue(decided),
+                };
+            }
+            // Nothing left to abort.
+            (Kind::Abort, 404) => Outcome::Aborted,
+            (Kind::Stat, 200) => Outcome::Stat(self.stat_of(io, s.response_buf, r.conn)),
+            // A copy of something that is not there.
+            (Kind::Stat | Kind::Copy, 404) | (Kind::Fetch { .. }, 404) => Outcome::NotFound,
+            // A server may ignore Range and send the whole object. Those are
+            // not the bytes that were asked for.
+            (Kind::Fetch { range: Some(_) }, status)
+                if (200..300).contains(&status) && status != 206 =>
+            {
+                Outcome::Fatal(Fatal::RangeIgnored)
+            }
+            // Google Cloud Storage answers an erase of an absent object, or the
+            // retry of one whose response was lost, with 404 NoSuchKey.
+            // The code is read as the document's code: a store may
+            // repeat the key in the document, and a key can be called anything.
+            (Kind::Erase, 404)
+                if multipart::error_code_in(self.client.discarded_body(io, r.conn))
+                    == Some(b"NoSuchKey") =>
+            {
+                Outcome::Erased
+            }
+            _ => return ControlFlow::Continue(decided),
+        };
+        self.finish(i, &outcome);
+        ControlFlow::Break(())
+    }
+
+    /// A store's statuses: the answer to a comparison, and a refusal of a
+    /// conditional store. Breaks when the operation finished or was
+    /// attempted again.
+    fn on_store_status<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        i: usize,
+        s: &Slot,
+        r: client::Response,
+    ) -> ControlFlow<()> {
+        let outcome = match (s.kind, r.status) {
+            // The comparison's answer: the object at the key, and its checksum.
+            (Kind::Store { .. }, 200) if s.comparing => {
+                #[expect(
+                    clippy::expect_used,
+                    reason = "a store compares only when it was sent with a checksum"
+                )]
+                let ours = self.checksum_value(s.crc.expect("only stores with a checksum compare"));
+                match self.stored_checksum(io, r.conn) {
+                    Some(theirs) if theirs == ours => Outcome::Stored,
+                    // Someone else's object, not ours.
+                    Some(_) => Outcome::AlreadyExists { after_retry: false },
+                    // The store keeps no checksum: the caller has to decide.
+                    None => Outcome::AlreadyExists { after_retry: true },
                 }
             }
-            match (s.kind, r.status) {
-                // The upload is gone after an earlier attempt was sent: that
-                // attempt may have completed it.
-                (Kind::Complete, 404)
-                    if s.attempts > 1 && s.crc.is_some() && s.attempts < self.cfg.attempts_max =>
-                {
+            // The object went away between the refusal and the comparison: store it again.
+            (Kind::Store { .. }, 404) if s.comparing && s.attempts < self.cfg.attempts_max => {
+                self.slots[i].comparing = false;
+                self.attempt(io, i);
+                return ControlFlow::Break(());
+            }
+            // A refusal on the first attempt is someone else's object. After a
+            // retry it may be ours, written by an attempt whose response was lost.
+            (Kind::Store { no_clobber: true }, STATUS_PRECONDITION_FAILED) => {
+                if s.attempts > 1 && s.crc.is_some() && s.attempts < self.cfg.attempts_max {
                     self.slots[i].comparing = true;
                     self.store_comparisons += 1;
-                    return self.attempt(io, i);
+                    self.attempt(io, i);
+                    return ControlFlow::Break(());
                 }
-                // Nothing left to abort.
-                (Kind::Abort, 404) => return finish(self, Outcome::Aborted),
-                (Kind::Stat, 200) => {
-                    let stat = self.stat_of(io, s.response_buf, r.conn);
-                    return finish(self, Outcome::Stat(stat));
-                }
-                // A copy of something that is not there.
-                (Kind::Stat | Kind::Copy, 404) => return finish(self, Outcome::NotFound),
-                // The comparison's answer: the object at the key, and its checksum.
-                (Kind::Store { .. }, 200) if s.comparing => {
-                    #[expect(
-                        clippy::expect_used,
-                        reason = "a store compares only when it was sent with a checksum"
-                    )]
-                    let ours =
-                        self.checksum_value(s.crc.expect("only stores with a checksum compare"));
-                    return match self.stored_checksum(io, r.conn) {
-                        Some(theirs) if theirs == ours => finish(self, Outcome::Stored),
-                        // Someone else's object, not ours.
-                        Some(_) => finish(self, Outcome::AlreadyExists { after_retry: false }),
-                        // The store keeps no checksum: the caller has to decide.
-                        None => finish(self, Outcome::AlreadyExists { after_retry: true }),
-                    };
-                }
-                // The object went away between the refusal and the comparison: store it again.
-                (Kind::Store { .. }, 404) if s.comparing && s.attempts < self.cfg.attempts_max => {
-                    self.slots[i].comparing = false;
-                    return self.attempt(io, i);
-                }
-                // A refusal on the first attempt is someone else's object. After a
-                // retry it may be ours, written by an attempt whose response was lost.
-                (Kind::Store { no_clobber: true }, STATUS_PRECONDITION_FAILED) => {
-                    if s.attempts > 1 && s.crc.is_some() && s.attempts < self.cfg.attempts_max {
-                        self.slots[i].comparing = true;
-                        self.store_comparisons += 1;
-                        return self.attempt(io, i);
-                    }
-                    return finish(
-                        self,
-                        Outcome::AlreadyExists {
-                            after_retry: s.attempts > 1,
-                        },
-                    );
-                }
-                // The object went away and there are no attempts left to store it again.
-                (Kind::Store { .. }, 404) if s.comparing => {
-                    return finish(self, Outcome::Fatal(Fatal::RetriesExhausted))
-                }
-                (Kind::Fetch { .. }, 404) => return finish(self, Outcome::NotFound),
-                // A server may ignore Range and send the whole object. Those are
-                // not the bytes that were asked for.
-                (Kind::Fetch { range: Some(_) }, status)
-                    if (200..300).contains(&status) && status != 206 =>
-                {
-                    return finish(self, Outcome::Fatal(Fatal::RangeIgnored))
-                }
-                // Google Cloud Storage answers an erase of an absent object, or the
-                // retry of one whose response was lost, with 404 NoSuchKey.
-                // The code is read as the document's code: a store may
-                // repeat the key in the document, and a key can be called anything.
-                (Kind::Erase, 404)
-                    if multipart::error_code_in(self.client.discarded_body(io, r.conn))
-                        == Some(b"NoSuchKey") =>
-                {
-                    return finish(self, Outcome::Erased)
-                }
-                _ => {}
-            }
-        }
-        let mut class = decided.unwrap_or_else(|| classify(&result));
-        // Answers that are transient although their status alone says otherwise.
-        if let Ok(r) = result {
-            match (s.kind, r.status) {
-                // Another conditional write to the key is in progress: possibly
-                // our own earlier attempt, still being committed.
-                (Kind::Store { no_clobber: true }, 409) if !s.comparing => {
-                    class = Class::RetryDelayed
-                }
-                // The store gave up waiting for the body.
-                (kind, 400)
-                    if kind.stores_bytes()
-                        && !s.comparing
-                        && self
-                            .client
-                            .discarded_body(io, r.conn)
-                            .windows(14)
-                            .any(|w| w == b"RequestTimeout") =>
-                {
-                    class = Class::Retry
-                }
-                _ => {}
-            }
-        }
-        let mut verified = false;
-        let mut mismatch = false;
-        match (result, s.kind) {
-            // A whole-object fetch: check the bytes against the store's checksum.
-            (Ok(r), Kind::Fetch { range: None }) if class == Class::Success => {
-                if let Some(expected) = self.stored_checksum(io, r.conn) {
-                    #[expect(
-                        clippy::expect_used,
-                        reason = "a fetch is always given a response buffer"
-                    )]
-                    let buf = s.response_buf.expect("fetches have a response buffer");
-                    let body = &io.buf(buf)[..r.body_len as usize];
-                    let actual = self.checksum_value(match self.cfg.vendor {
-                        Vendor::S3 => longshore_crc::crc64_nvme(body),
-                        Vendor::Gcs => u64::from(longshore_crc::crc32c(body)),
-                    });
-                    verified = actual == expected;
-                    // Corrupted in transit: fetch again rather than hand back bad bytes.
-                    if !verified {
-                        mismatch = true;
-                        class = Class::Retry;
-                    }
-                } else if self.cfg.require_checksums {
-                    // The checksum itself is missing or mangled.
-                    mismatch = true;
-                    class = Class::Retry;
+                Outcome::AlreadyExists {
+                    after_retry: s.attempts > 1,
                 }
             }
-            // The store rejected our checksum: the body was damaged on the way.
-            (Ok(r), kind)
-                if (kind.stores_bytes() || kind == Kind::EraseMany)
-                    && r.status == 400
-                    && s.crc.is_some()
-                    && !s.comparing =>
+            // The object went away and there are no attempts left to store it again.
+            (Kind::Store { .. }, 404) if s.comparing => Outcome::Fatal(Fatal::RetriesExhausted),
+            _ => return ControlFlow::Continue(()),
+        };
+        self.finish(i, &outcome);
+        ControlFlow::Break(())
+    }
+
+    /// Answers that are transient although their status alone says otherwise.
+    fn transient<IO: Io>(
+        &self,
+        io: &mut IO,
+        s: &Slot,
+        result: Result<client::Response, Error>,
+        class: Class,
+    ) -> Class {
+        let Ok(r) = result else {
+            return class;
+        };
+        match (s.kind, r.status) {
+            // Another conditional write to the key is in progress: possibly
+            // our own earlier attempt, still being committed.
+            (Kind::Store { no_clobber: true }, 409) if !s.comparing => Class::RetryDelayed,
+            // The store gave up waiting for the body.
+            (kind, 400)
+                if kind.stores_bytes()
+                    && !s.comparing
+                    && self
+                        .client
+                        .discarded_body(io, r.conn)
+                        .windows(14)
+                        .any(|w| w == b"RequestTimeout") =>
             {
-                // A batch erase reads its response into the caller's buffer.
-                let doc = match s.response_buf.filter(|_| kind == Kind::EraseMany) {
-                    Some(buf) => &io.buf(buf)[..r.body_len as usize],
-                    None => self.client.discarded_body(io, r.conn),
-                };
-                // S3 names it BadDigest (assumed; no enforcing S3 store has been
-                // tried). Google Cloud Storage names it CrcMismatch (observed).
-                let code: &[u8] = match self.cfg.vendor {
-                    Vendor::S3 => b"BadDigest",
-                    Vendor::Gcs => b"CrcMismatch",
-                };
-                if doc.windows(code.len()).any(|w| w == code) {
-                    class = Class::Retry;
-                }
+                Class::Retry
             }
-            _ => {}
+            _ => class,
         }
+    }
+
+    /// Finish, retry or delay the operation as its class says.
+    fn conclude<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        i: usize,
+        s: &Slot,
+        result: Result<client::Response, Error>,
+        checked: Checked,
+    ) {
+        let Checked {
+            class,
+            verified,
+            mismatch,
+        } = checked;
         // The comparison could not be completed, but the refusal that led to it
         // already proved an object is there, and it may be ours. Reporting a
         // plain failure would lose that: a caller who tried again would be told
@@ -222,47 +244,20 @@ impl S3 {
             && (class == Class::Fatal
                 || (class != Class::Success && s.attempts >= self.cfg.attempts_max))
         {
-            return finish(self, Outcome::AlreadyExists { after_retry: true });
+            return self.finish(i, &Outcome::AlreadyExists { after_retry: true });
         }
         match class {
-            Class::Success => {
-                let outcome = match s.kind {
-                    // A comparison that succeeded returned above; any other
-                    // success status says nothing about whose object it is.
-                    Kind::Store { .. } if s.comparing => {
-                        Outcome::AlreadyExists { after_retry: true }
-                    }
-                    Kind::Store { .. } | Kind::Complete => Outcome::Stored,
-                    Kind::Abort => Outcome::Aborted,
-                    Kind::Copy => Outcome::Copied,
-                    Kind::EraseMany => Outcome::ErasedMany {
-                        len: result.map_or(0, |r| r.body_len),
-                    },
-                    // Their success is decided above, from a 200 response.
-                    Kind::Begin { .. } | Kind::Part | Kind::Stat => {
-                        Outcome::Fatal(Fatal::BadResponse)
-                    }
-                    Kind::Fetch { .. } => Outcome::Fetched {
-                        len: result.map_or(0, |r| r.body_len),
-                        verified,
-                    },
-                    Kind::Erase => Outcome::Erased,
-                    Kind::List => Outcome::Listed {
-                        len: result.map_or(0, |r| r.body_len),
-                    },
-                };
-                finish(self, outcome)
-            }
-            Class::Fatal => finish(
-                self,
-                Outcome::Fatal(match result {
+            Class::Success => self.finish(i, &succeeded(s, result, verified)),
+            Class::Fatal => self.finish(
+                i,
+                &Outcome::Fatal(match result {
                     Ok(r) => Fatal::Status(r.status),
                     Err(e) => Fatal::Transport(e),
                 }),
             ),
-            _ if s.attempts >= self.cfg.attempts_max => finish(
-                self,
-                Outcome::Fatal(if mismatch {
+            _ if s.attempts >= self.cfg.attempts_max => self.finish(
+                i,
+                &Outcome::Fatal(if mismatch {
                     Fatal::ChecksumMismatch
                 } else {
                     Fatal::RetriesExhausted
@@ -276,42 +271,29 @@ impl S3 {
             }
         }
     }
+}
 
-    /// A checksum as the store's header carries it, padded with zeros:
-    /// twelve base64 characters for S3, eight for Google Cloud Storage.
-    pub(super) fn checksum_value(&self, crc: u64) -> [u8; 12] {
-        match self.cfg.vendor {
-            Vendor::S3 => longshore_crc::crc64_header_value(crc),
-            Vendor::Gcs => {
-                let mut out = [0u8; 12];
-                out[..8].copy_from_slice(&longshore_crc::crc32c_header_value(crc as u32));
-                out
-            }
-        }
-    }
-
-    /// The checksum the store sent with the response on `conn`, in the form
-    /// [`S3::checksum_value`] produces. `None` if there is none or it is malformed.
-    pub(super) fn stored_checksum<IO: Io>(&self, io: &mut IO, conn: u32) -> Option<[u8; 12]> {
-        let mut out = [0u8; 12];
-        match self.cfg.vendor {
-            Vendor::S3 => out.copy_from_slice(
-                self.client
-                    .header(io, conn, CHECKSUM_HEADER)
-                    .filter(|v| v.len() == 12)?,
-            ),
-            Vendor::Gcs => {
-                // "crc32c=AAAAAA==,md5=...": the parts may come in either
-                // order, on one line or on a line each.
-                let part = self
-                    .client
-                    .headers(io, conn, "x-goog-hash")
-                    .flat_map(|value| value.split(|b| *b == b','))
-                    .map(|p| p.trim_ascii())
-                    .find_map(|p| p.strip_prefix(b"crc32c="))?;
-                out[..8].copy_from_slice(Some(part).filter(|p| p.len() == 8)?);
-            }
-        }
-        Some(out)
+/// The outcome of an attempt that succeeded.
+fn succeeded(s: &Slot, result: Result<client::Response, Error>, verified: bool) -> Outcome {
+    match s.kind {
+        // A comparison that succeeded returned above; any other
+        // success status says nothing about whose object it is.
+        Kind::Store { .. } if s.comparing => Outcome::AlreadyExists { after_retry: true },
+        Kind::Store { .. } | Kind::Complete => Outcome::Stored,
+        Kind::Abort => Outcome::Aborted,
+        Kind::Copy => Outcome::Copied,
+        Kind::EraseMany => Outcome::ErasedMany {
+            len: result.map_or(0, |r| r.body_len),
+        },
+        // Their success is decided above, from a 200 response.
+        Kind::Begin { .. } | Kind::Part | Kind::Stat => Outcome::Fatal(Fatal::BadResponse),
+        Kind::Fetch { .. } => Outcome::Fetched {
+            len: result.map_or(0, |r| r.body_len),
+            verified,
+        },
+        Kind::Erase => Outcome::Erased,
+        Kind::List => Outcome::Listed {
+            len: result.map_or(0, |r| r.body_len),
+        },
     }
 }

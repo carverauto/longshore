@@ -183,7 +183,9 @@ impl S3 {
 }
 
 mod attempt;
+mod checksum;
 mod exact;
+mod head;
 mod multipart_ops;
 mod object_ops;
 mod outcome;
