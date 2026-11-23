@@ -56,6 +56,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(longshore_model)'] }
 bare_trait_objects = "forbid"
 deprecated_safe = { level = "warn", priority = -1 }
 unused_must_use = "deny"
+# 622 public items have no documentation yet; that is a separate piece of work.
+# missing_docs = "deny"
 
 [workspace.lints.clippy]
 # The workspace's lint table: every crate takes it with `[lints] workspace = true`.
