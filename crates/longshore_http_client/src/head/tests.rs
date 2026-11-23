@@ -110,9 +110,14 @@ fn status_line_forms() {
     assert_eq!(parse(b"HTT"), Ok(None));
 }
 
+/// A 200 response head carrying the header lines `h`.
+fn with_header(h: &str) -> Result<Option<ResponseHead>, HttpError> {
+    parse(format!("HTTP/1.1 200 OK\r\n{h}\r\n\r\n").as_bytes())
+}
+
 #[test]
-fn rejects_malformed_and_ambiguous_headers() {
-    let p = |h: &str| parse(format!("HTTP/1.1 200 OK\r\n{h}\r\n\r\n").as_bytes());
+fn rejects_malformed_header_lines() {
+    let p = with_header;
     assert_eq!(p("NoColon"), Err(HttpError::BadHeader));
     assert_eq!(p("Bad Name: x"), Err(HttpError::BadHeader));
     assert_eq!(
@@ -127,6 +132,11 @@ fn rejects_malformed_and_ambiguous_headers() {
     );
     assert_eq!(p("A: bad\x00value"), Err(HttpError::BadHeader));
     assert_eq!(p("A: bare\rcr"), Err(HttpError::BadHeader));
+}
+
+#[test]
+fn reads_content_length_strictly() {
+    let p = with_header;
     assert_eq!(p("Content-Length: 1x"), Err(HttpError::BadContentLength));
     assert_eq!(p("Content-Length: -1"), Err(HttpError::BadContentLength));
     assert_eq!(p("Content-Length: "), Err(HttpError::BadContentLength));
@@ -176,6 +186,11 @@ fn rejects_malformed_and_ambiguous_headers() {
             .content_length,
         Some(5)
     );
+}
+
+#[test]
+fn rejects_ambiguous_framing() {
+    let p = with_header;
     assert_eq!(
         p("Transfer-Encoding: chunked\r\nContent-Length: 5"),
         Err(HttpError::BadFraming)

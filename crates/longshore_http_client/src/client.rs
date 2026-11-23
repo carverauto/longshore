@@ -16,7 +16,7 @@
 //! [`Client::tick`] at its own pace to enforce request timeouts.
 
 use crate::chunked::Chunked;
-use crate::head::{parse_response, Fields, HeadWriter, HttpError};
+use crate::head::{parse_response, Fields, HeadWriter, HttpError, ResponseHead};
 #[cfg(feature = "tls")]
 use longshore_common::io::ECANCELED;
 use longshore_common::io::{BufId, Completion, Io, Op, Segment, Sock, Token};
@@ -245,6 +245,7 @@ pub struct Client {
 
 mod chunked_body;
 mod events;
+mod plain;
 mod request;
 mod response;
 mod retire;

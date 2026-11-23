@@ -127,66 +127,13 @@ fn fields(buf: &[u8], start: usize, end: usize, http10: bool) -> Result<Fields, 
     let mut keep_alive = false;
     let mut at = start;
     while at < end - 2 {
-        let line_end = at
-            + buf[at..end]
-                .windows(2)
-                .position(|w| w == b"\r\n")
-                .ok_or(HttpError::BadHeader)?;
-        let line = &buf[at..line_end];
-        let colon = line
-            .iter()
-            .position(|b| *b == b':')
-            .ok_or(HttpError::BadHeader)?;
-        // No whitespace before the colon, no folded lines, no control bytes.
-        if colon == 0
-            || !line[..colon].iter().all(|b| is_token(*b))
-            || line[colon + 1..]
-                .iter()
-                .any(|b| *b < 0x20 && *b != b'\t' || *b == 0x7f)
-        {
-            return Err(HttpError::BadHeader);
-        }
-        let mut v0 = colon + 1;
-        let mut v1 = line.len();
-        while v0 < v1 && matches!(line[v0], b' ' | b'\t') {
-            v0 += 1;
-        }
-        while v1 > v0 && matches!(line[v1 - 1], b' ' | b'\t') {
-            v1 -= 1;
-        }
+        let (line_end, name, value) = header_line(buf, at, end)?;
         if f.count == HEADERS_MAX {
             return Err(HttpError::TooManyHeaders);
         }
-        let (name, value) = (&line[..colon], &line[v0..v1]);
-        f.headers[f.count] = (Span::of(at, at + colon), Span::of(at + v0, at + v1));
+        f.headers[f.count] = (name, value);
         f.count += 1;
-        if name.eq_ignore_ascii_case(b"content-length") {
-            if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
-                return Err(HttpError::BadContentLength);
-            }
-            // Every u64 is a legal length; anything larger is rejected, not wrapped.
-            let n = value
-                .iter()
-                .try_fold(0u64, |n, d| {
-                    n.checked_mul(10)?.checked_add(u64::from(d - b'0'))
-                })
-                .ok_or(HttpError::BadContentLength)?;
-            if f.content_length.is_some_and(|prev| prev != n) {
-                return Err(HttpError::BadContentLength);
-            }
-            f.content_length = Some(n);
-        } else if name.eq_ignore_ascii_case(b"transfer-encoding") {
-            if !value.eq_ignore_ascii_case(b"chunked") || f.chunked {
-                return Err(HttpError::BadFraming);
-            }
-            f.chunked = true;
-        } else if name.eq_ignore_ascii_case(b"connection") {
-            for token in value.split(|b| *b == b',') {
-                let t = token.trim_ascii();
-                f.close |= t.eq_ignore_ascii_case(b"close");
-                keep_alive |= t.eq_ignore_ascii_case(b"keep-alive");
-            }
-        }
+        keep_alive |= note_framing(&mut f, name.get(buf), value.get(buf))?;
         at = line_end + 2;
     }
     if f.chunked && f.content_length.is_some() {
@@ -194,6 +141,77 @@ fn fields(buf: &[u8], start: usize, end: usize, http10: bool) -> Result<Fields, 
     }
     f.close |= http10 && !keep_alive;
     Ok(f)
+}
+
+/// The header line starting at `at`: where it ends, and its name and its
+/// value without surrounding whitespace.
+fn header_line(buf: &[u8], at: usize, end: usize) -> Result<(usize, Span, Span), HttpError> {
+    let line_end = at
+        + buf[at..end]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or(HttpError::BadHeader)?;
+    let line = &buf[at..line_end];
+    let colon = line
+        .iter()
+        .position(|b| *b == b':')
+        .ok_or(HttpError::BadHeader)?;
+    // No whitespace before the colon, no folded lines, no control bytes.
+    if colon == 0
+        || !line[..colon].iter().all(|b| is_token(*b))
+        || line[colon + 1..]
+            .iter()
+            .any(|b| *b < 0x20 && *b != b'\t' || *b == 0x7f)
+    {
+        return Err(HttpError::BadHeader);
+    }
+    let mut v0 = colon + 1;
+    let mut v1 = line.len();
+    while v0 < v1 && matches!(line[v0], b' ' | b'\t') {
+        v0 += 1;
+    }
+    while v1 > v0 && matches!(line[v1 - 1], b' ' | b'\t') {
+        v1 -= 1;
+    }
+    Ok((
+        line_end,
+        Span::of(at, at + colon),
+        Span::of(at + v0, at + v1),
+    ))
+}
+
+/// Record what a header says about framing and the connection. Returns
+/// whether it asks to keep the connection alive.
+fn note_framing(f: &mut Fields, name: &[u8], value: &[u8]) -> Result<bool, HttpError> {
+    let mut keep_alive = false;
+    if name.eq_ignore_ascii_case(b"content-length") {
+        if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
+            return Err(HttpError::BadContentLength);
+        }
+        // Every u64 is a legal length; anything larger is rejected, not wrapped.
+        let n = value
+            .iter()
+            .try_fold(0u64, |n, d| {
+                n.checked_mul(10)?.checked_add(u64::from(d - b'0'))
+            })
+            .ok_or(HttpError::BadContentLength)?;
+        if f.content_length.is_some_and(|prev| prev != n) {
+            return Err(HttpError::BadContentLength);
+        }
+        f.content_length = Some(n);
+    } else if name.eq_ignore_ascii_case(b"transfer-encoding") {
+        if !value.eq_ignore_ascii_case(b"chunked") || f.chunked {
+            return Err(HttpError::BadFraming);
+        }
+        f.chunked = true;
+    } else if name.eq_ignore_ascii_case(b"connection") {
+        for token in value.split(|b| *b == b',') {
+            let t = token.trim_ascii();
+            f.close |= t.eq_ignore_ascii_case(b"close");
+            keep_alive |= t.eq_ignore_ascii_case(b"keep-alive");
+        }
+    }
+    Ok(keep_alive)
 }
 
 /// `HTTP/1.0` or `HTTP/1.1` at the start of `s`; returns whether it is 1.0.
@@ -281,105 +299,8 @@ pub fn parse_request(buf: &[u8], limit: usize) -> Result<Option<RequestHead>, Ht
     }))
 }
 
-/// Writes a request (or, for the test server, a response) head into a fixed
-/// buffer. Overflow and illegal bytes are remembered and reported by `finish`.
-pub struct HeadWriter<'a> {
-    buf: &'a mut [u8],
-    len: usize,
-    bad: bool,
-}
-
-impl<'a> HeadWriter<'a> {
-    /// `METHOD target HTTP/1.1`.
-    pub fn request(buf: &'a mut [u8], method: &str, target: &str) -> HeadWriter<'a> {
-        let mut w = HeadWriter {
-            buf,
-            len: 0,
-            bad: false,
-        };
-        w.bad |= method.is_empty()
-            || !method.bytes().all(is_token)
-            || target.is_empty()
-            || target.bytes().any(|b| b <= 0x20 || b == 0x7f);
-        w.put(method.as_bytes());
-        w.put(b" ");
-        w.put(target.as_bytes());
-        w.put(b" HTTP/1.1\r\n");
-        w
-    }
-
-    /// `HTTP/1.1 status reason`.
-    pub fn response(buf: &'a mut [u8], status: u16, reason: &str) -> HeadWriter<'a> {
-        let mut w = HeadWriter {
-            buf,
-            len: 0,
-            bad: false,
-        };
-        w.bad |= !(100..1000).contains(&status) || reason.bytes().any(|b| b < 0x20 || b == 0x7f);
-        w.put(b"HTTP/1.1 ");
-        w.put_u64(u64::from(status));
-        w.put(b" ");
-        w.put(reason.as_bytes());
-        w.put(b"\r\n");
-        w
-    }
-
-    fn put(&mut self, b: &[u8]) {
-        match self.buf.get_mut(self.len..self.len + b.len()) {
-            Some(dst) => {
-                dst.copy_from_slice(b);
-                self.len += b.len();
-            }
-            None => self.bad = true,
-        }
-    }
-
-    fn put_u64(&mut self, mut v: u64) {
-        let mut digits = [0u8; 20];
-        let mut i = digits.len();
-        loop {
-            i -= 1;
-            digits[i] = b'0' + (v % 10) as u8;
-            v /= 10;
-            if v == 0 {
-                break;
-            }
-        }
-        self.put(&digits[i..]);
-    }
-
-    fn name(&mut self, name: &str) {
-        self.bad |= name.is_empty() || !name.bytes().all(is_token);
-        self.put(name.as_bytes());
-        self.put(b": ");
-    }
-
-    pub fn header(&mut self, name: &str, value: &[u8]) -> &mut Self {
-        // CR or LF here would let a value inject headers or a second request.
-        self.bad |= value.iter().any(|b| *b < 0x20 && *b != b'\t' || *b == 0x7f);
-        self.name(name);
-        self.put(value);
-        self.put(b"\r\n");
-        self
-    }
-
-    pub fn header_u64(&mut self, name: &str, value: u64) -> &mut Self {
-        self.name(name);
-        self.put_u64(value);
-        self.put(b"\r\n");
-        self
-    }
-
-    /// Terminate the head. Returns its length.
-    pub fn finish(&mut self) -> Result<usize, HttpError> {
-        self.put(b"\r\n");
-        if self.bad {
-            Err(HttpError::BadRequest)
-        } else {
-            Ok(self.len)
-        }
-    }
-}
+mod writer;
+pub use writer::HeadWriter;
 
 #[cfg(test)]
 mod tests;

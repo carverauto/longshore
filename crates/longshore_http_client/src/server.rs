@@ -10,7 +10,7 @@
 //! Because it is generic over `Io`, the client and this server run together
 //! on one simulated `Io`, or on real sockets.
 
-use crate::head::{parse_request, Fields, HeadWriter};
+use crate::head::{parse_request, Fields, HeadWriter, RequestHead};
 use longshore_common::io::{BufId, Completion, Io, Op, Sock, Token};
 use longshore_stream::{Step, Stream};
 #[cfg(feature = "tls")]
@@ -220,6 +220,7 @@ pub struct Server {
     pub closed: u64,
 }
 
+mod build;
 mod describing;
 mod events;
 mod identity;
@@ -227,6 +228,8 @@ pub use identity::Sha256Fn;
 mod listing;
 mod multipart;
 mod objects;
+mod request;
+mod scripted;
 mod transport;
 mod xml;
 
@@ -248,95 +251,6 @@ impl Server {
     #[cfg(feature = "tls")]
     pub fn with_tls(cfg: Config, setup: ServerSetup, first_tls_buf: u32) -> Server {
         Self::build(cfg, Some((setup, first_tls_buf)))
-    }
-
-    fn build(cfg: Config, #[cfg(feature = "tls")] tls: Option<(ServerSetup, u32)>) -> Server {
-        assert!(cfg.head_max <= cfg.buffer_size && cfg.head_max <= u32::from(u16::MAX));
-        let conn = Conn {
-            state: State::Free,
-            target: [0; LIST_TARGET_MAX],
-            target_len: 0,
-            method: [0; 8],
-            method_len: 0,
-            request_len: 0,
-            head_len: 0,
-            body_len: 0,
-            close_after: false,
-            if_none_match: false,
-            range: None,
-            claimed: None,
-            reply_checksum: None,
-            checksum_mode: false,
-            authorized: true,
-            bearer: false,
-            reply_tag: None,
-            describing: [0; DESCRIBING_MAX],
-            describing_len: 0,
-            copy_source: [0; TARGET_MAX],
-            copy_source_len: 0,
-            reply_object: None,
-            asked: identity::Asked::NOTHING,
-        };
-        let objects = (0..cfg.objects_max)
-            .map(|_| Object {
-                target: [0; TARGET_MAX],
-                target_len: 0,
-                len: 0,
-                data: vec![0u8; cfg.buffer_size as usize].into_boxed_slice(),
-                used: false,
-                checksum: None,
-                describing: [0; DESCRIBING_MAX],
-                describing_len: 0,
-                kept: Default::default(),
-            })
-            .collect();
-        #[cfg(feature = "tls")]
-        let first_tls_buf = tls.as_ref().map(|t| t.1);
-        let streams = (0..cfg.connections_max)
-            .map(|i| {
-                let token = |kind| Token(cfg.token_base + u64::from(i) * 8 + kind);
-                let s = Stream::new(Sock(cfg.first_sock + i), token(K_SEND), token(K_RECV));
-                #[cfg(feature = "tls")]
-                let s = match first_tls_buf {
-                    Some(first) => s.with_tls_buffers(
-                        BufId(first + 2 * i),
-                        BufId(first + 2 * i + 1),
-                        cfg.buffer_size,
-                        cfg.buffer_size,
-                        u32::MAX,
-                    ),
-                    None => s,
-                };
-                s
-            })
-            .collect();
-        Server {
-            cfg,
-            conns: vec![conn; cfg.connections_max as usize].into_boxed_slice(),
-            streams,
-            #[cfg(feature = "tls")]
-            tls: tls.map(|t| t.0),
-            objects,
-            uploads: [0; multipart::UPLOADS_MAX],
-            uploads_begun: 0,
-            erase_denied: "",
-            list_only_under: "",
-            bucket: "",
-            script: [Behavior::Normal; SCRIPT_MAX],
-            script_head: 0,
-            script_len: 0,
-            accepting: false,
-            allowed_keys: [([0; 64], 0); 2],
-            allowed_count: 0,
-            session_token: ([0; 64], 0),
-            verify: None,
-            versions: None,
-            encrypts: true,
-            sha256: None,
-            accepted: 0,
-            requests: 0,
-            closed: 0,
-        }
     }
 
     /// Operations in flight at most: one per connection plus the accept.

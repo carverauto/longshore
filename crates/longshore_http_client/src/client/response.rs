@@ -123,85 +123,106 @@ impl Client {
                 Ok(None) => return self.recv_head(io, i, have),
                 Ok(Some(h)) => h,
             };
-            let head_len = head.fields.head_len as u32;
+            if !(100..200).contains(&head.status) {
+                return self.on_final_head(io, i, &head, have);
+            }
             // 101 is not interim: what follows it is another protocol, which
-            // this client never asks for and cannot read.
-            if head.status == 101 {
+            // this client never asks for and cannot read. An interim response
+            // has no body and does not end the connection. One that claims
+            // either cannot be skipped safely: its "body" would be read as
+            // the real response.
+            if head.status == 101
+                || head.fields.chunked
+                || head.fields.content_length.is_some_and(|n| n > 0)
+                || head.fields.close
+            {
                 return self.fail(io, i, Error::Head(HttpError::BadFraming));
             }
-            if (100..200).contains(&head.status) {
-                // An interim response has no body and does not end the
-                // connection. One that claims either cannot be skipped
-                // safely: its "body" would be read as the real response.
-                if head.fields.chunked
-                    || head.fields.content_length.is_some_and(|n| n > 0)
-                    || head.fields.close
-                {
-                    return self.fail(io, i, Error::Head(HttpError::BadFraming));
-                }
-                // Interim response (e.g. 100 Continue): drop it and parse what follows.
-                io.buf(self.head_buf(i))
-                    .copy_within(head_len as usize..have as usize, 0);
-                have -= head_len;
-                continue;
-            }
-            let c = &mut self.conns[i];
-            c.status = head.status;
-            c.fields = Some(head.fields);
-            // From here `head_len` is the response head's length; the request head is gone.
-            c.head_len = head_len;
-            let no_body = c.is_head || matches!(head.status, 204 | 304);
-            if !no_body && head.fields.chunked {
-                return self.start_chunked(io, i, head_len, have);
-            }
-            if !no_body && head.fields.content_length.is_none() {
-                return self.fail(io, i, Error::UnsupportedFraming);
-            }
-            let body_len = if no_body {
-                0
-            } else {
-                head.fields.content_length.unwrap_or(0)
-            };
-            let extra = have - head_len;
-            if u64::from(extra) > body_len {
-                // Bytes beyond the declared body: the framing cannot be trusted.
-                return self.fail(io, i, Error::Head(HttpError::BadFraming));
-            }
-            if body_len == 0 {
-                c.body_len = 0;
-                return self.succeed(io, i);
-            }
-            let Some(dst) = c.response_buf else {
-                // No buffer: discard the body so the connection stays usable.
-                let room = self.cfg.head_max - head_len;
-                if body_len > DRAIN_MAX || room == 0 {
-                    return self.fail(io, i, Error::BodyTooLarge);
-                }
-                c.body_len = body_len as u32;
-                if u64::from(extra) == body_len {
-                    return self.succeed(io, i);
-                }
-                return self.drain(io, i, extra);
-            };
-            if body_len > u64::from(self.cfg.buffer_size) {
+            // Interim response (e.g. 100 Continue): drop it and parse what follows.
+            let head_len = head.fields.head_len as u32;
+            io.buf(self.head_buf(i))
+                .copy_within(head_len as usize..have as usize, 0);
+            have -= head_len;
+        }
+    }
+
+    /// The final response head is parsed, and the head buffer holds `have`
+    /// bytes: choose how its body is read.
+    fn on_final_head<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        i: usize,
+        head: &ResponseHead,
+        have: u32,
+    ) -> Handled {
+        let head_len = head.fields.head_len as u32;
+        let c = &mut self.conns[i];
+        c.status = head.status;
+        c.fields = Some(head.fields);
+        // From here `head_len` is the response head's length; the request head is gone.
+        c.head_len = head_len;
+        let no_body = c.is_head || matches!(head.status, 204 | 304);
+        if !no_body && head.fields.chunked {
+            return self.start_chunked(io, i, head_len, have);
+        }
+        if !no_body && head.fields.content_length.is_none() {
+            return self.fail(io, i, Error::UnsupportedFraming);
+        }
+        let body_len = if no_body {
+            0
+        } else {
+            head.fields.content_length.unwrap_or(0)
+        };
+        let extra = have - head_len;
+        if u64::from(extra) > body_len {
+            // Bytes beyond the declared body: the framing cannot be trusted.
+            return self.fail(io, i, Error::Head(HttpError::BadFraming));
+        }
+        if body_len == 0 {
+            c.body_len = 0;
+            return self.succeed(io, i);
+        }
+        let Some(dst) = c.response_buf else {
+            // No buffer: discard the body so the connection stays usable.
+            let room = self.cfg.head_max - head_len;
+            if body_len > DRAIN_MAX || room == 0 {
                 return self.fail(io, i, Error::BodyTooLarge);
             }
             c.body_len = body_len as u32;
-            // Move the body bytes that arrived with the head. This is the only
-            // copy of response data, and it is bounded by the head buffer.
-            let mut tmp = [0u8; 1024];
-            let mut moved = 0usize;
-            while moved < extra as usize {
-                let n = (extra as usize - moved).min(tmp.len());
-                let from = head_len as usize + moved;
-                tmp[..n].copy_from_slice(&io.buf(self.head_buf(i))[from..from + n]);
-                io.buf(dst)[moved..moved + n].copy_from_slice(&tmp[..n]);
-                moved += n;
-            }
             if u64::from(extra) == body_len {
                 return self.succeed(io, i);
             }
-            return self.recv_body(io, i, extra);
+            return self.drain(io, i, extra);
+        };
+        if body_len > u64::from(self.cfg.buffer_size) {
+            return self.fail(io, i, Error::BodyTooLarge);
+        }
+        c.body_len = body_len as u32;
+        self.move_early_body(io, i, dst, head_len, extra);
+        if u64::from(extra) == body_len {
+            return self.succeed(io, i);
+        }
+        self.recv_body(io, i, extra)
+    }
+
+    /// Move the `extra` body bytes that arrived with the head to `dst`. This
+    /// is the only copy of response data, and it is bounded by the head buffer.
+    fn move_early_body<IO: Io>(
+        &self,
+        io: &mut IO,
+        i: usize,
+        dst: BufId,
+        head_len: u32,
+        extra: u32,
+    ) {
+        let mut tmp = [0u8; 1024];
+        let mut moved = 0usize;
+        while moved < extra as usize {
+            let n = (extra as usize - moved).min(tmp.len());
+            let from = head_len as usize + moved;
+            tmp[..n].copy_from_slice(&io.buf(self.head_buf(i))[from..from + n]);
+            io.buf(dst)[moved..moved + n].copy_from_slice(&tmp[..n]);
+            moved += n;
         }
     }
 }

@@ -89,25 +89,7 @@ impl Chunked {
             let b = buf[at];
             self.state = match self.state {
                 State::Done => break,
-                State::Size { value, digits } => match (b as char).to_digit(16) {
-                    Some(digit) => {
-                        // 16 hex digits is the whole u64; more cannot be a real size.
-                        if digits == 16 {
-                            return Err(HttpError::BadFraming);
-                        }
-                        State::Size {
-                            value: value << 4 | u64::from(digit),
-                            digits: digits + 1,
-                        }
-                    }
-                    None if digits == 0 => return Err(HttpError::BadFraming),
-                    None => match b {
-                        b'\r' => State::SizeLf { value },
-                        b';' => State::Extension { value },
-                        b' ' | b'\t' => State::SizeSpace { value },
-                        _ => return Err(HttpError::BadFraming),
-                    },
-                },
+                State::Size { value, digits } => size_byte(value, digits, b)?,
                 // "5 ;ext" is tolerated; "5 5" and "5 garbage" are not a size.
                 State::SizeSpace { value } => match b {
                     b' ' | b'\t' => State::SizeSpace { value },
@@ -128,18 +110,7 @@ impl Chunked {
                     _ => return Err(HttpError::BadFraming),
                 },
                 State::Data { left } => {
-                    // Move as much of this chunk as has arrived, in one step.
-                    let n = (left.min((raw_end - at) as u64)) as usize;
-                    buf.copy_within(at..at + n, *decoded);
-                    *decoded += n;
-                    at += n;
-                    self.state = if left == n as u64 {
-                        State::DataCr
-                    } else {
-                        State::Data {
-                            left: left - n as u64,
-                        }
-                    };
+                    at += self.take_data(buf, decoded, at, raw_end, left);
                     continue;
                 }
                 State::DataCr if b == b'\r' => State::DataLf,
@@ -170,6 +141,55 @@ impl Chunked {
         }
         Ok(at - raw_start)
     }
+
+    /// Move as much of a chunk with `left` bytes to go as has arrived in
+    /// `buf[at..raw_end]`, in one step. Returns how many bytes moved.
+    #[inline]
+    fn take_data(
+        &mut self,
+        buf: &mut [u8],
+        decoded: &mut usize,
+        at: usize,
+        raw_end: usize,
+        left: u64,
+    ) -> usize {
+        let n = (left.min((raw_end - at) as u64)) as usize;
+        buf.copy_within(at..at + n, *decoded);
+        *decoded += n;
+        self.state = if left == n as u64 {
+            State::DataCr
+        } else {
+            State::Data {
+                left: left - n as u64,
+            }
+        };
+        n
+    }
+}
+
+/// The state after byte `b` of a chunk size of which `digits` hex digits,
+/// making `value`, have been read.
+#[inline]
+fn size_byte(value: u64, digits: u8, b: u8) -> Result<State, HttpError> {
+    Ok(match (b as char).to_digit(16) {
+        Some(digit) => {
+            // 16 hex digits is the whole u64; more cannot be a real size.
+            if digits == 16 {
+                return Err(HttpError::BadFraming);
+            }
+            State::Size {
+                value: value << 4 | u64::from(digit),
+                digits: digits + 1,
+            }
+        }
+        None if digits == 0 => return Err(HttpError::BadFraming),
+        None => match b {
+            b'\r' => State::SizeLf { value },
+            b';' => State::Extension { value },
+            b' ' | b'\t' => State::SizeSpace { value },
+            _ => return Err(HttpError::BadFraming),
+        },
+    })
 }
 
 #[cfg(test)]
