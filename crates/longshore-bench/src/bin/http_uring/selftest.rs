@@ -8,10 +8,63 @@
 use super::*;
 use crate::die::OrDie;
 
+const SIZE: u32 = 8 << 20;
+
+/// PUT `tx` to the server at `addr`, GET it back into `rx`, then HEAD it,
+/// each request run to its end before the next starts.
+fn exchange(
+    io: &mut UringIo,
+    client: &mut Client,
+    server: &mut Server,
+    out: &mut Completions,
+    addr: SocketAddr,
+    (tx, rx): (BufId, BufId),
+) -> [Result<client::Response, Error>; 3] {
+    let mut results = [Err(Error::Busy); 3];
+    for (step, (method, body, resp)) in [
+        ("PUT", Some((tx, SIZE)), None),
+        ("GET", None, Some(rx)),
+        ("HEAD", None, None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let req = Request {
+            method,
+            target: "/bucket/object",
+            host: "localhost",
+            host_id: 0,
+            addr,
+            headers: &[],
+            body,
+            response_buf: resp,
+        };
+        if let Err(e) = client.start(io, step as u64, &req) {
+            results[step] = Err(e);
+            continue;
+        }
+        'wait: loop {
+            io.tick(true, out).or_die("tick");
+            while let Some(c) = out.pop() {
+                match client.on_completion(io, c) {
+                    Handled::Done(d) => {
+                        results[step] = d.result;
+                        break 'wait;
+                    }
+                    Handled::Pending => {}
+                    Handled::NotMine => {
+                        let _: bool = server.on_completion(io, c);
+                    }
+                }
+            }
+        }
+    }
+    results
+}
+
 /// Client and server on one ring. Large buffers: server head 0, server
 /// body 1, user tx 2, user rx 3. Small buffers: the client head.
 pub(super) fn selftest() {
-    const SIZE: u32 = 8 << 20;
     let limits = Limits {
         sockets_max: 3,
         buffers: 4,
@@ -48,48 +101,7 @@ pub(super) fn selftest() {
     let enters0 = io.enters();
 
     // Everything from here to the end of the exchange runs with allocation forbidden.
-    let results = sealed(|| {
-        let mut results = [Err(Error::Busy); 3];
-        for (step, (method, body, resp)) in [
-            ("PUT", Some((tx, SIZE)), None),
-            ("GET", None, Some(rx)),
-            ("HEAD", None, None),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let req = Request {
-                method,
-                target: "/bucket/object",
-                host: "localhost",
-                host_id: 0,
-                addr,
-                headers: &[],
-                body,
-                response_buf: resp,
-            };
-            if let Err(e) = client.start(&mut io, step as u64, &req) {
-                results[step] = Err(e);
-                continue;
-            }
-            'wait: loop {
-                io.tick(true, &mut out).or_die("tick");
-                while let Some(c) = out.pop() {
-                    match client.on_completion(&mut io, c) {
-                        Handled::Done(d) => {
-                            results[step] = d.result;
-                            break 'wait;
-                        }
-                        Handled::Pending => {}
-                        Handled::NotMine => {
-                            let _: bool = server.on_completion(&mut io, c);
-                        }
-                    }
-                }
-            }
-        }
-        results
-    });
+    let results = sealed(|| exchange(&mut io, &mut client, &mut server, &mut out, addr, (tx, rx)));
 
     let statuses: Vec<String> = results
         .iter()

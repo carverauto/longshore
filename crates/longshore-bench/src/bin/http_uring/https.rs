@@ -8,6 +8,40 @@
 use super::*;
 use crate::die::OrDie;
 
+/// Run the loop until the request is done; returns its result and how
+/// many completions (other than the heartbeat's) it took. With `trace`,
+/// each completion is printed.
+fn exchange(
+    io: &mut UringIo,
+    client: &mut Client,
+    out: &mut Completions,
+    trace: bool,
+) -> (Result<client::Response, Error>, u32) {
+    let mut completions = 0u32;
+    let result = sealed(|| loop {
+        io.tick(true, out).or_die("tick");
+        while let Some(c) = out.pop() {
+            if c.token.0 == HEARTBEAT {
+                client.tick(io);
+                io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
+                    .or_die("submit");
+                continue;
+            }
+            completions += 1;
+            if trace {
+                // Tracing allocates; it is a debugging aid only.
+                longshore::io::alloc_guard::allow_alloc(|| {
+                    eprintln!("completion token={:#x} result={}", c.token.0, c.result)
+                });
+            }
+            if let Handled::Done(d) = client.on_completion(io, c) {
+                return d.result;
+            }
+        }
+    });
+    (result, completions)
+}
+
 /// Buffers: client head 0, TLS records 1 and 2, response 3.
 pub(super) fn https(host: &str, ip: &str, path: &str) {
     const SIZE: u32 = 1 << 20;
@@ -48,30 +82,9 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
         .or_die("submit");
     let t0 = io.now_ns();
-    let mut completions = 0u32;
     // Read before sealing: looking up an environment variable allocates.
     let trace = std::env::var_os("LONGSHORE_TRACE").is_some();
-    let result = sealed(|| loop {
-        io.tick(true, &mut out).or_die("tick");
-        while let Some(c) = out.pop() {
-            if c.token.0 == HEARTBEAT {
-                client.tick(&mut io);
-                io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
-                    .or_die("submit");
-                continue;
-            }
-            completions += 1;
-            if trace {
-                // Tracing allocates; it is a debugging aid only.
-                longshore::io::alloc_guard::allow_alloc(|| {
-                    eprintln!("completion token={:#x} result={}", c.token.0, c.result)
-                });
-            }
-            if let Handled::Done(d) = client.on_completion(&mut io, c) {
-                return d.result;
-            }
-        }
-    });
+    let (result, completions) = exchange(&mut io, &mut client, &mut out, trace);
     let ms = (io.now_ns() - t0) / MS;
     match result {
         Ok(r) => {
