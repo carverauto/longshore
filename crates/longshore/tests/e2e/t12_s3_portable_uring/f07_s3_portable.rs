@@ -18,20 +18,16 @@ fn test_creds() -> Credentials {
 }
 
 fn portable_builder(server: &HttpStoreServer) -> Builder {
-    let mut b = Builder::new("127.0.0.1", "us-east-1", test_creds());
-    b.port = server.port();
-    b.address = Some(server.addr());
-    b.bucket_in_path = Some("test-bucket".into());
-    b.tls = false;
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b
+    Builder::new("127.0.0.1", "us-east-1", test_creds())
+        .port(server.port())
+        .address(Some(server.addr()))
+        .bucket_in_path(Some("test-bucket".into()))
+        .tls(false)
+        .buffers(4)
+        .buffer_size(16 * 1024)
+        .connections(4)
+        .operations(8)
+        .portable(true)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -60,8 +56,7 @@ fn t1_f07_1_portable_s3_store_and_fetch_loopback() {
 #[test]
 fn t1_f07_2_portable_multithread_store_fetch_range_erase() {
     let server = HttpStoreServer::start_plain().expect("server");
-    let mut b = portable_builder(&server);
-    b.threads = 2;
+    let b = portable_builder(&server).threads(2);
     let client = b.build().expect("2-thread portable client");
 
     let handles: Vec<_> = (0..2)
@@ -94,11 +89,10 @@ fn t1_f07_2_portable_multithread_store_fetch_range_erase() {
 #[test]
 fn t1_f07_3_linux_default_portable_false_uses_uring() {
     let server = HttpStoreServer::start_plain().expect("server");
-    let mut b = portable_builder(&server);
-    b.portable = false;
+    let b = portable_builder(&server).portable(false);
     let default_b = Builder::new("127.0.0.1", "us-east-1", test_creds());
     assert!(
-        !default_b.portable,
+        !default_b.is_portable(),
         "Linux Builder must default portable to false"
     );
 
@@ -153,9 +147,7 @@ fn t1_f07_4_portable_multipart_upload_lifecycle() {
 #[test]
 fn t1_f07_5_portable_client_accessors_and_no_checksums() {
     let server = HttpStoreServer::start_plain().expect("server");
-    let mut b = portable_builder(&server);
-    b.threads = 2;
-    b.buffer_size = 16 * 1024;
+    let b = portable_builder(&server).threads(2).buffer_size(16 * 1024);
     let client = b.build().expect("client").with_checksums(false);
     assert_eq!(client.threads(), 2);
     assert_eq!(client.buffer_size(), 16 * 1024);
@@ -173,8 +165,7 @@ fn t1_f07_5_portable_client_accessors_and_no_checksums() {
 #[test]
 fn t2_f07_1_macos_pin_returns_setting_error() {
     let server = HttpStoreServer::start_plain().expect("server");
-    let mut b = portable_builder(&server);
-    b.pin = Some((0, 1));
+    let b = portable_builder(&server).pin(Some((0, 1)));
     match b.build() {
         Err(BuildError::Setting(_)) => {}
         Err(other) => panic!("expected BuildError::Setting, got {other:?}"),
@@ -203,12 +194,12 @@ fn t2_f07_2_linux_uring_refused_returns_io_error_without_fallback() {
         let rc = unsafe { setrlimit(RLIMIT_NOFILE, &limit) };
         assert_eq!(rc, 0, "setrlimit failed");
 
-        let mut b = Builder::new("127.0.0.1", "us-east-1", test_creds());
-        b.address = Some("127.0.0.1:80".parse().unwrap());
-        b.connections = 64;
-        b.buffers = 4;
-        b.buffer_size = 8192;
-        b.portable = false;
+        let b = Builder::new("127.0.0.1", "us-east-1", test_creds())
+            .address(Some("127.0.0.1:80".parse().unwrap()))
+            .connections(64)
+            .buffers(4)
+            .buffer_size(8192)
+            .portable(false);
         match b.build() {
             Err(BuildError::Io(e)) => assert!(!e.to_string().is_empty()),
             Err(other) => panic!("expected BuildError::Io, got {other:?}"),
@@ -239,42 +230,37 @@ fn t2_f07_2_linux_uring_refused_returns_io_error_without_fallback() {
 fn t2_f07_3_builder_invalid_threads_or_buffer_size() {
     let server = HttpStoreServer::start_plain().expect("server");
 
-    let mut b0 = portable_builder(&server);
-    b0.threads = 0;
+    let b0 = portable_builder(&server).threads(0);
     assert!(matches!(b0.build(), Err(BuildError::Setting(_))));
 
-    let mut b_hi = portable_builder(&server);
-    b_hi.threads = 1025;
+    let b_hi = portable_builder(&server).threads(1025);
     assert!(matches!(b_hi.build(), Err(BuildError::Setting(_))));
 
-    let mut b_small = portable_builder(&server);
-    b_small.buffer_size = 4096;
+    let b_small = portable_builder(&server).buffer_size(4096);
     assert!(matches!(b_small.build(), Err(BuildError::Setting(_))));
 
-    let mut b_conn = portable_builder(&server);
-    b_conn.connections = 0;
+    let b_conn = portable_builder(&server).connections(0);
     assert!(matches!(b_conn.build(), Err(BuildError::Setting(_))));
 }
 
 #[test]
 fn t2_f07_4_builder_invalid_host_or_nameservers() {
-    let mut b_empty = Builder::new("", "us-east-1", test_creds());
-    b_empty.address = Some("127.0.0.1:80".parse().unwrap());
+    let b_empty =
+        Builder::new("", "us-east-1", test_creds()).address(Some("127.0.0.1:80".parse().unwrap()));
     assert!(matches!(b_empty.build(), Err(BuildError::Setting(_))));
 
     let b_bad = Builder::new("bad host!", "us-east-1", test_creds());
     assert!(matches!(b_bad.build(), Err(BuildError::Setting(_))));
 
-    let mut b_ns = Builder::new("example.com", "us-east-1", test_creds());
-    b_ns.nameservers = vec![
+    let b_ns = Builder::new("example.com", "us-east-1", test_creds()).nameservers(vec![
         "127.0.0.1:53".parse().unwrap(),
         "127.0.0.2:53".parse().unwrap(),
         "127.0.0.3:53".parse().unwrap(),
-    ];
+    ]);
     assert!(matches!(b_ns.build(), Err(BuildError::Setting(_))));
 
-    let mut b_reg = Builder::new("example.com", &"r".repeat(65), test_creds());
-    b_reg.address = Some("127.0.0.1:80".parse().unwrap());
+    let b_reg = Builder::new("example.com", &"r".repeat(65), test_creds())
+        .address(Some("127.0.0.1:80".parse().unwrap()));
     assert!(matches!(b_reg.build(), Err(BuildError::Setting(_))));
 }
 
@@ -282,8 +268,7 @@ fn t2_f07_4_builder_invalid_host_or_nameservers() {
 fn t2_f07_5_builder_invalid_bucket_in_path() {
     let server = HttpStoreServer::start_plain().expect("server");
     for bad in ["AB", "ab", "MyBucket", "bad_bucket"] {
-        let mut b = portable_builder(&server);
-        b.bucket_in_path = Some(bad.into());
+        let b = portable_builder(&server).bucket_in_path(Some(bad.into()));
         assert!(
             matches!(b.build(), Err(BuildError::Setting(_))),
             "expected BuildError::Setting for bucket_in_path={bad:?}"

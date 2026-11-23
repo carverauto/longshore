@@ -150,22 +150,19 @@ fn t1_f25_4_waiting_within_preallocated_waiters_allocates_zero_heap() {
 #[test]
 fn t1_f25_5_mailbox_block_on_drives_both_mailbox_and_s3_client_pending() {
     let srv = HttpStoreServer::start_plain().expect("plain store");
-    let mut b = Builder::new(
+    let b = Builder::new(
         "127.0.0.1",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = false;
-    b.port = srv.port();
-    b.address = Some(srv.addr());
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.buffers = 2;
-    b.buffer_size = 16 * 1024;
-    b.connections = 2;
-    b.operations = 2;
+    )
+    .tls(false)
+    .port(srv.port())
+    .address(Some(srv.addr()))
+    .portable(true)
+    .buffers(2)
+    .buffer_size(16 * 1024)
+    .connections(2)
+    .operations(2);
     let client = b.build().expect("client");
 
     let buf = block_on(client.buffer());

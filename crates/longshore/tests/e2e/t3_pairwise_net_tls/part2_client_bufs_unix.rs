@@ -24,20 +24,17 @@ fn t3_13_s3_client_portable_with_stream_server_plain_and_tls() {
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     )
     .unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds);
-    b.port = server.port();
-    b.address = Some(server.addr());
-    b.bucket_in_path = Some("test-bucket".into());
-    b.tls = false;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.threads = 1;
-    b.buffers = 4;
-    b.buffer_size = 64 * 1024;
-    b.connections = 4;
-    b.operations = 4;
+    let b = Builder::new("127.0.0.1", "us-east-1", creds)
+        .port(server.port())
+        .address(Some(server.addr()))
+        .bucket_in_path(Some("test-bucket".into()))
+        .tls(false)
+        .portable(true)
+        .threads(1)
+        .buffers(4)
+        .buffer_size(64 * 1024)
+        .connections(4)
+        .operations(4);
     let client = b.build().expect("portable plain S3 client");
 
     let mut buf = client.buffer_blocking();
@@ -55,20 +52,17 @@ fn t3_13_s3_client_portable_with_stream_server_plain_and_tls() {
 
         let id = make_tls_identity(&["localhost", "127.0.0.1"]);
         let tls_srv = HttpStoreServer::start_tls(id.server_setup()).expect("tls server");
-        let mut bt = Builder::new("127.0.0.1", "us-east-1", creds);
-        bt.port = tls_srv.port();
-        bt.address = Some(tls_srv.addr());
-        bt.bucket_in_path = Some("test-bucket".into());
-        bt.tls = true;
-        #[cfg(target_os = "linux")]
-        {
-            bt.portable = true;
-        }
-        bt.threads = 1;
-        bt.buffers = 4;
-        bt.buffer_size = 64 * 1024;
-        bt.connections = 4;
-        bt.operations = 4;
+        let bt = Builder::new("127.0.0.1", "us-east-1", creds)
+            .port(tls_srv.port())
+            .address(Some(tls_srv.addr()))
+            .bucket_in_path(Some("test-bucket".into()))
+            .tls(true)
+            .portable(true)
+            .threads(1)
+            .buffers(4)
+            .buffer_size(64 * 1024)
+            .connections(4)
+            .operations(4);
         match bt.build() {
             Ok(c) => {
                 let mut b2 = c.buffer_blocking();

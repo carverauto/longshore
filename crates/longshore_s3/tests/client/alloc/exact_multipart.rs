@@ -38,11 +38,12 @@ fn threaded_client_exact_and_multipart_allocate_nothing_under_sealed() {
             .unwrap(),
     );
 
-    let mut b = server.builder(CONNS, SIZE);
-    b.threads = 1;
-    b.buffers = 2;
-    b.operations = 4;
-    b.waiters = 8;
+    let b = server
+        .builder(CONNS, SIZE)
+        .threads(1)
+        .buffers(2)
+        .operations(4)
+        .waiters(8);
 
     let client = b.build().expect("client build");
     block_on(core::future::ready(()));

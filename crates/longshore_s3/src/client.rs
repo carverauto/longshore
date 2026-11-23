@@ -24,11 +24,12 @@
 //! use longshore_s3::creds::Credentials;
 //!
 //! let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-//! let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
-//! settings.tls = true;
-//! settings.port = 443;
-//! settings.threads = 4; // four independent I/O threads
-//! let client = settings.build().unwrap();
+//! let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+//!     .tls(true)
+//!     .port(443)
+//!     .threads(4) // four independent I/O threads
+//!     .build()
+//!     .unwrap();
 //!
 //! let mut body = client.buffer_blocking();
 //! body.as_mut_slice()[..5].copy_from_slice(b"hello");

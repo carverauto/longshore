@@ -168,17 +168,16 @@ fn build(
         "bucket.objects.test",
         "us-test-1",
         Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new"),
-    );
-    b.port = addr.port();
-    b.address = Some(addr);
-    b.threads = args.threads;
-    b.connections = CONNS_PER_THREAD;
-    b.buffers = 2;
-    b.operations = 4;
-    b.buffer_size = SIZE;
+    )
+    .port(addr.port())
+    .address(Some(addr))
+    .threads(args.threads)
+    .connections(CONNS_PER_THREAD)
+    .buffers(2)
+    .operations(4)
+    .buffer_size(SIZE);
     if args.path_style {
-        b.host = "objects.test".into();
-        b.bucket_in_path = Some("media".into());
+        b = b.host("objects.test").bucket_in_path(Some("media".into()));
     }
     if args.rotate {
         std::fs::write(
@@ -186,8 +185,9 @@ fn build(
             "[default]\naws_access_key_id = AKIDSECOND\naws_secret_access_key = second-secret\n",
         )
         .or_die("write the credentials file");
-        b.credentials_file = Some(credentials_path.to_path_buf());
-        b.credentials_reread_secs = 1;
+        b = b
+            .credentials_file(Some(credentials_path.to_path_buf()))
+            .credentials_reread_secs(1);
     }
     b.build().unwrap_or_else(|e| {
         eprintln!("client_uring: {e}");

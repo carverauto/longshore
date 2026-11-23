@@ -13,11 +13,12 @@ use longshore::client::Builder;
 use longshore::store::creds::Credentials;
 
 let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
-settings.tls = true;
-settings.port = 443;
-settings.threads = 4; // four independent I/O threads
-let client = settings.build().unwrap();
+let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+    .tls(true)
+    .port(443)
+    .threads(4) // four independent I/O threads
+    .build()
+    .unwrap();
 
 // A body lives in a registered buffer borrowed from the client, so the
 // client never copies it. The operation takes the buffer and hands it back.
@@ -123,7 +124,8 @@ match put.expect("an error means nothing was sent").end {
 
 ## Settings
 
-Settings on the builder cover what a long-running program needs:
+Setters on the builder, named after the settings, cover what a
+long-running program needs:
 
 - `credentials_file`: a file the client rereads its keys from. Temporary
   keys expire, and a client that only has the keys it was built with stops

@@ -23,30 +23,27 @@ fn creds(ak: &str, sk: &str) -> Credentials {
 
 /// The two-thread plain client whose credentials reload from `cred_path`.
 fn reloading_client(store: &HttpStoreServer, cred_path: &std::path::Path) -> Client {
-    let mut b = Builder::new(
+    let b = Builder::new(
         "127.0.0.1",
         "us-east-1",
         creds(
             "AKIAIOSFODNN7EXAMPLE",
             "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         ),
-    );
-    b.bucket_in_path = Some("mb-bucket".into());
-    b.tls = false;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.threads = 2;
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    b.waiters = 64;
-    b.credentials_file = Some(cred_path.to_path_buf());
-    b.credentials_reread_secs = 1;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    )
+    .bucket_in_path(Some("mb-bucket".into()))
+    .tls(false)
+    .port(store.port())
+    .address(Some(store.addr()))
+    .threads(2)
+    .buffers(4)
+    .buffer_size(16 * 1024)
+    .connections(4)
+    .operations(8)
+    .waiters(64)
+    .credentials_file(Some(cred_path.to_path_buf()))
+    .credentials_reread_secs(1)
+    .portable(true);
     b.build().expect("build S3 client on mailbox")
 }
 

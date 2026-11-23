@@ -128,7 +128,7 @@ either redesigned or left out.
   (without zero-copy sends or registered buffers; macOS refuses core pinning
   with `BuildError::Setting` and runs file ops synchronously via `F_NOCACHE`,
   `F_FULLFSYNC`, best-effort `F_PREALLOCATE`, and `F_PUNCHHOLE`). Building
-  with `tls = true` when the `tls` feature is disabled returns
+  with `tls(true)` when the `tls` feature is disabled returns
   `BuildError::Setting` naming `tls`. Other platforms build the crate and
   run the simulator, while `Builder::build` returns `BuildError::Unsupported`.
 - Not planned: HTTP/2 (object stores gain nothing from it over pooled

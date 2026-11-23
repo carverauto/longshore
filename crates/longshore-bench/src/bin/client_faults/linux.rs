@@ -90,19 +90,18 @@ pub fn serve(connections: u32) -> SocketAddr {
 }
 
 pub fn builder(addr: SocketAddr, threads: u32) -> Builder {
-    let mut b = Builder::new(
+    Builder::new(
         "bucket.objects.test",
         "us-test-1",
         Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new"),
-    );
-    b.port = addr.port();
-    b.address = Some(addr);
-    b.threads = threads;
-    b.connections = CONNS;
-    b.buffers = 2;
-    b.operations = 4;
-    b.buffer_size = SIZE;
-    b
+    )
+    .port(addr.port())
+    .address(Some(addr))
+    .threads(threads)
+    .connections(CONNS)
+    .buffers(2)
+    .operations(4)
+    .buffer_size(SIZE)
 }
 
 /// The client's I/O threads alive in this process, by their names.

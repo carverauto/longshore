@@ -35,9 +35,7 @@ fn client_stores_and_fetches_over_loopback_on_portable_backend() {
             .unwrap(),
     );
 
-    let mut b = server.builder(CONNS, SIZE);
-    b.buffers = 2;
-    b.operations = 4;
+    let b = server.builder(CONNS, SIZE).buffers(2).operations(4);
 
     let client = b.build().expect("client build on portable backend");
 
@@ -71,12 +69,12 @@ fn pinning_threads_to_cores_is_refused_on_macos() {
     use longshore_s3::client::{BuildError, Builder};
     use longshore_s3::creds::Credentials;
 
-    let mut b = Builder::new(
+    let b = Builder::new(
         "bucket.s3.example.com",
         "us-east-1",
         Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
-    );
-    b.nameservers = vec!["192.0.2.53:53".parse().unwrap()];
-    b.pin = Some((0, 1));
+    )
+    .nameservers(vec!["192.0.2.53:53".parse().unwrap()])
+    .pin(Some((0, 1)));
     assert!(matches!(b.build(), Err(BuildError::Setting(_))));
 }

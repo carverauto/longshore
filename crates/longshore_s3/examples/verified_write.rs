@@ -103,17 +103,20 @@ fn client_from_env() -> Result<Client, Failure> {
         Err(_) => Credentials::new(&var("AWS_ACCESS_KEY_ID")?, &var("AWS_SECRET_ACCESS_KEY")?),
     }
     .ok_or("the credentials are not usable")?;
-    let mut settings = Builder::new(
+    let settings = Builder::new(
         &var("LONGSHORE_HOST")?,
         &var("LONGSHORE_REGION")?,
         credentials,
-    );
-    settings.bucket_in_path = var("LONGSHORE_BUCKET").ok();
-    (settings.tls, settings.port) = (true, 443);
+    )
+    .bucket_in_path(var("LONGSHORE_BUCKET").ok())
+    .tls(true)
+    .port(443)
     // One operation at a time needs little: a megabyte for the object, and
     // what two connections use.
-    (settings.connections, settings.buffers, settings.operations) = (2, 2, 2);
-    settings.buffer_size = 1 << 20;
+    .connections(2)
+    .buffers(2)
+    .operations(2)
+    .buffer_size(1 << 20);
     Ok(settings.build()?)
 }
 

@@ -259,21 +259,18 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     )
     .unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds);
-    b.port = server.port();
-    b.address = Some(server.addr());
-    b.bucket_in_path = Some("bucket".into());
-    b.tls = false;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.waiters = 32;
-    b.threads = 1;
-    b.buffers = 2;
-    b.buffer_size = 64 * 1024;
-    b.connections = 2;
-    b.operations = 4;
+    let b = Builder::new("127.0.0.1", "us-east-1", creds)
+        .port(server.port())
+        .address(Some(server.addr()))
+        .bucket_in_path(Some("bucket".into()))
+        .tls(false)
+        .portable(true)
+        .waiters(32)
+        .threads(1)
+        .buffers(2)
+        .buffer_size(64 * 1024)
+        .connections(2)
+        .operations(4);
     let client = b.build().expect("plain client");
     let mut buf = client.buffer_blocking();
     buf.as_mut_slice()[..5].copy_from_slice(b"hello");
@@ -284,11 +281,11 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
 
     #[cfg(not(feature = "tls"))]
     {
-        let mut bt = Builder::new("127.0.0.1", "us-east-1", creds);
-        bt.port = server.port();
-        bt.address = Some(server.addr());
-        bt.tls = true;
-        bt.waiters = 32;
+        let bt = Builder::new("127.0.0.1", "us-east-1", creds)
+            .port(server.port())
+            .address(Some(server.addr()))
+            .tls(true)
+            .waiters(32);
         match bt.build() {
             Err(BuildError::Setting(msg)) => {
                 assert!(msg.contains("tls"), "error must name tls feature: {msg}");

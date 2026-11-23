@@ -179,22 +179,24 @@ fn build(a: &Args, checksums: bool) -> longshore::client::Client {
     } else {
         format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT"))
     };
-    let mut b = Builder::new(&host, &env("S3_REGION"), credentials);
-    b.bucket_in_path = path_style.then(|| env("S3_BUCKET"));
-    // S3_CREDENTIALS_FILE: an absolute path the client rereads its keys from.
-    b.credentials_file = std::env::var("S3_CREDENTIALS_FILE").ok().map(Into::into);
-    b.checksums = checksums;
-    b.tls = tls;
-    b.port = if tls { 443 } else { 80 };
-    b.threads = a.threads;
-    b.pin = a.cpu.map(|c| (c, a.cpu_step));
-    b.connections = a.conns;
-    b.buffers = a.conns;
-    b.operations = a.conns;
-    b.buffer_size = a.size;
-    b.prefer_large_segments = std::env::var("S3_PREFER_LARGE_SEGMENTS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|n| *n > 0);
+    let b = Builder::new(&host, &env("S3_REGION"), credentials)
+        .bucket_in_path(path_style.then(|| env("S3_BUCKET")))
+        // S3_CREDENTIALS_FILE: an absolute path the client rereads its keys from.
+        .credentials_file(std::env::var("S3_CREDENTIALS_FILE").ok().map(Into::into))
+        .checksums(checksums)
+        .tls(tls)
+        .port(if tls { 443 } else { 80 })
+        .threads(a.threads)
+        .pin(a.cpu.map(|c| (c, a.cpu_step)))
+        .connections(a.conns)
+        .buffers(a.conns)
+        .operations(a.conns)
+        .buffer_size(a.size)
+        .prefer_large_segments(
+            std::env::var("S3_PREFER_LARGE_SEGMENTS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|n| *n > 0),
+        );
     b.build().unwrap_or_else(|e| die(&e.to_string()))
 }

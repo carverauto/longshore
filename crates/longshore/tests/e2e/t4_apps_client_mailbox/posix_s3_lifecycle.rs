@@ -34,22 +34,19 @@ fn creds() -> Credentials {
 /// The two-thread checksummed plain client the lifecycle runs against.
 #[cfg(unix)]
 fn lifecycle_client(store: &HttpStoreServer) -> Client {
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds());
-    b.bucket_in_path = Some("posix-bucket".into());
-    b.tls = false;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.threads = 2;
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    b.waiters = 32;
-    b.checksums = true;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    let b = Builder::new("127.0.0.1", "us-east-1", creds())
+        .bucket_in_path(Some("posix-bucket".into()))
+        .tls(false)
+        .port(store.port())
+        .address(Some(store.addr()))
+        .threads(2)
+        .buffers(4)
+        .buffer_size(16 * 1024)
+        .connections(4)
+        .operations(8)
+        .waiters(32)
+        .checksums(true)
+        .portable(true);
     b.build().expect("Posix S3 client build")
 }
 
@@ -141,11 +138,11 @@ fn t4_15_posix_loopback_s3_client_full_object_lifecycle() {
 
     #[cfg(target_os = "macos")]
     {
-        let mut bad = Builder::new("127.0.0.1", "us-east-1", creds());
-        bad.pin = Some((0, 1));
-        bad.address = Some(store.addr());
-        bad.port = store.port();
-        bad.tls = false;
+        let bad = Builder::new("127.0.0.1", "us-east-1", creds())
+            .pin(Some((0, 1)))
+            .address(Some(store.addr()))
+            .port(store.port())
+            .tls(false);
         assert!(matches!(bad.build(), Err(BuildError::Setting(_))));
     }
 

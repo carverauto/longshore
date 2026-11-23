@@ -13,9 +13,7 @@ use std::net::SocketAddr;
 #[cfg(test)]
 fn settings(host: &str) -> Builder {
     let credentials = Credentials::new("AKIDEXAMPLE", "secret").unwrap();
-    let mut b = Builder::new(host, "us-east-1", credentials);
-    b.nameservers = vec!["192.0.2.53:53".parse().unwrap()];
-    b
+    Builder::new(host, "us-east-1", credentials).nameservers(vec!["192.0.2.53:53".parse().unwrap()])
 }
 
 fn refused(b: Builder) -> bool {
@@ -24,17 +22,17 @@ fn refused(b: Builder) -> bool {
 
 #[test]
 fn a_region_longer_than_64_bytes_is_refused() {
-    let mut b = settings("bucket.s3.example.com");
-    b.region = "r".repeat(65);
+    let b = settings("bucket.s3.example.com").region(&"r".repeat(65));
     assert!(refused(b));
 }
 
 #[test]
 fn more_than_two_nameservers_are_refused() {
-    let mut b = settings("bucket.s3.example.com");
-    b.nameservers = (1..=3)
-        .map(|n| SocketAddr::from(([192, 0, 2, n], 53)))
-        .collect();
+    let b = settings("bucket.s3.example.com").nameservers(
+        (1..=3)
+            .map(|n| SocketAddr::from(([192, 0, 2, n], 53)))
+            .collect(),
+    );
     assert!(refused(b));
 }
 
@@ -46,27 +44,29 @@ fn a_host_dns_cannot_look_up_is_refused_unless_an_address_is_given() {
         "bücket.example",
     ] {
         assert!(refused(settings(host)), "{host:?}");
-        let mut fixed = settings(host);
-        fixed.address = Some("192.0.2.1:80".parse().unwrap());
+        let fixed = settings(host).address(Some("192.0.2.1:80".parse().unwrap()));
         assert!(!refused(fixed), "{host:?} with a fixed address");
     }
 }
 
 #[test]
 fn ordinary_settings_pass_the_checks() {
-    let mut b = settings("bucket.s3.example.com");
-    b.region = "r".repeat(64);
-    b.nameservers.push("192.0.2.54:53".parse().unwrap());
+    let b = settings("bucket.s3.example.com")
+        .region(&"r".repeat(64))
+        .nameservers(vec![
+            "192.0.2.53:53".parse().unwrap(),
+            "192.0.2.54:53".parse().unwrap(),
+        ]);
     assert!(!refused(b));
 }
 
 #[test]
 fn a_credentials_file_must_be_an_absolute_path() {
-    let mut relative = settings("bucket.s3.example.com");
-    relative.credentials_file = Some("relative/credentials".into());
+    let relative =
+        settings("bucket.s3.example.com").credentials_file(Some("relative/credentials".into()));
     assert!(refused(relative));
-    let mut absolute = settings("bucket.s3.example.com");
-    absolute.credentials_file = Some("/etc/longshore/credentials".into());
+    let absolute = settings("bucket.s3.example.com")
+        .credentials_file(Some("/etc/longshore/credentials".into()));
     assert!(!refused(absolute));
 }
 
@@ -79,20 +79,17 @@ fn a_bucket_in_the_path_must_be_a_bucket_name() {
         "with/slash",
         &"x".repeat(64),
     ] {
-        let mut b = settings("s3.example.com");
-        b.bucket_in_path = Some(bad.into());
+        let b = settings("s3.example.com").bucket_in_path(Some(bad.into()));
         assert!(refused(b), "{bad:?}");
     }
-    let mut b = settings("s3.example.com");
-    b.bucket_in_path = Some("my.bucket-1".into());
+    let b = settings("s3.example.com").bucket_in_path(Some("my.bucket-1".into()));
     assert!(!refused(b));
 }
 
 #[cfg(not(feature = "tls"))]
 #[test]
 fn tls_without_the_feature_is_refused_with_a_setting_error_naming_tls() {
-    let mut b = settings("bucket.s3.example.com");
-    b.tls = true;
+    let b = settings("bucket.s3.example.com").tls(true);
     match b.build() {
         Err(BuildError::Setting(msg)) => {
             assert!(msg.contains("tls"), "setting error must name tls: {msg}");
@@ -103,20 +100,16 @@ fn tls_without_the_feature_is_refused_with_a_setting_error_naming_tls() {
 
 #[test]
 fn builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure() {
-    let mut no_operations = settings("bucket.s3.example.com");
-    no_operations.operations = 0;
+    let no_operations = settings("bucket.s3.example.com").operations(0);
     assert!(refused(no_operations));
 
-    let mut no_buffers = settings("bucket.s3.example.com");
-    no_buffers.buffers = 0;
+    let no_buffers = settings("bucket.s3.example.com").buffers(0);
     assert!(refused(no_buffers));
 
-    let mut small_buffers = settings("bucket.s3.example.com");
-    small_buffers.buffer_size = 8191;
+    let small_buffers = settings("bucket.s3.example.com").buffer_size(8191);
     assert!(refused(small_buffers));
 
-    let mut long_host = settings(&"a".repeat(254));
-    long_host.address = Some("192.0.2.1:80".parse().unwrap());
+    let long_host = settings(&"a".repeat(254)).address(Some("192.0.2.1:80".parse().unwrap()));
     assert!(refused(long_host));
 
     #[cfg(unix)]
@@ -125,8 +118,8 @@ fn builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure()
         use std::os::unix::ffi::OsStrExt;
         use std::path::PathBuf;
 
-        let mut non_utf8 = settings("bucket.s3.example.com");
-        non_utf8.credentials_file = Some(PathBuf::from(OsStr::from_bytes(b"/etc/\xff/creds")));
+        let non_utf8 = settings("bucket.s3.example.com")
+            .credentials_file(Some(PathBuf::from(OsStr::from_bytes(b"/etc/\xff/creds"))));
         assert!(refused(non_utf8));
     }
 
@@ -153,17 +146,14 @@ const PARTIAL_START: &str = "LONGSHORE_S3_PARTIAL_START";
 #[cfg(test)]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn partial_start_fails_with_io_error() {
-    let mut partial = settings("bucket.s3.example.com");
-    partial.address = Some("127.0.0.1:1".parse().unwrap());
-    partial.threads = 32;
-    partial.connections = 1;
-    partial.buffers = 1;
-    partial.operations = 1;
-    partial.waiters = 1;
-    #[cfg(target_os = "linux")]
-    {
-        partial.portable = true;
-    }
+    let partial = settings("bucket.s3.example.com")
+        .address(Some("127.0.0.1:1".parse().unwrap()))
+        .threads(32)
+        .connections(1)
+        .buffers(1)
+        .operations(1)
+        .waiters(1)
+        .portable(true);
     assert!(matches!(partial.build(), Err(BuildError::Io(_))));
 }
 

@@ -34,14 +34,11 @@ fn test_creds() -> Credentials {
 #[test]
 fn t4_04_plain_build_rejects_tls_setting_naming_tls() {
     let creds = test_creds();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds);
-    b.tls = true;
-    b.port = 443;
-    b.address = Some("127.0.0.1:443".parse().unwrap());
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    let b = Builder::new("127.0.0.1", "us-east-1", creds)
+        .tls(true)
+        .port(443)
+        .address(Some("127.0.0.1:443".parse().unwrap()))
+        .portable(true);
     let err = match b.build() {
         Ok(_) => panic!("tls = true must fail when tls feature is disabled"),
         Err(e) => e,
@@ -66,20 +63,17 @@ fn t4_04_plain_http_s3_client_full_lifecycle_and_tls_error_accessible() {
     assert!(!format!("{err_sample:?}").is_empty());
 
     let store = HttpStoreServer::start_plain().unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", test_creds());
-    b.bucket_in_path = Some("plain-bucket".into());
-    b.tls = false;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.threads = 1;
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    let b = Builder::new("127.0.0.1", "us-east-1", test_creds())
+        .bucket_in_path(Some("plain-bucket".into()))
+        .tls(false)
+        .port(store.port())
+        .address(Some(store.addr()))
+        .threads(1)
+        .buffers(4)
+        .buffer_size(16 * 1024)
+        .connections(4)
+        .operations(8)
+        .portable(true);
     let client = b.build().expect("plain S3 client build");
 
     let mut buf = client.buffer_blocking();

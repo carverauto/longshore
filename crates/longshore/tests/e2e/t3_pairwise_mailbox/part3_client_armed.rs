@@ -22,21 +22,18 @@ fn t3_26_s3_client_portable_waiter_saturation_and_drop_stop() {
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     )
     .unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds);
-    b.port = server.port();
-    b.address = Some(server.addr());
-    b.bucket_in_path = Some("sat".into());
-    b.tls = false;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.threads = 1;
-    b.operations = 2;
-    b.waiters = 2;
-    b.buffers = 4;
-    b.buffer_size = 64 * 1024;
-    b.connections = 4;
+    let b = Builder::new("127.0.0.1", "us-east-1", creds)
+        .port(server.port())
+        .address(Some(server.addr()))
+        .bucket_in_path(Some("sat".into()))
+        .tls(false)
+        .portable(true)
+        .threads(1)
+        .operations(2)
+        .waiters(2)
+        .buffers(4)
+        .buffer_size(64 * 1024)
+        .connections(4);
     let client = b.build().expect("client");
 
     let handles: Vec<_> = (0..6u32)

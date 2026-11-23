@@ -25,13 +25,13 @@ fn builder_rejects_zero_waiters_with_setting_error() {
     use longshore_s3::client::{BuildError, Builder};
     use longshore_s3::creds::Credentials;
 
-    let mut b = Builder::new(
+    let b = Builder::new(
         "bucket.s3.example.com",
         "us-east-1",
         Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
-    );
-    b.nameservers = vec!["192.0.2.53:53".parse().unwrap()];
-    b.waiters = 0;
+    )
+    .nameservers(vec!["192.0.2.53:53".parse().unwrap()])
+    .waiters(0);
     assert!(matches!(b.build(), Err(BuildError::Setting(_))));
 }
 
@@ -71,12 +71,13 @@ mod threaded {
                 .unwrap(),
         );
 
-        let mut b = server.builder(CONNS, SIZE);
-        b.threads = 2;
-        // Fewer buffers and slots than callers to force slot/buffer waiter contention.
-        b.buffers = 1;
-        b.operations = 1;
-        b.waiters = 32;
+        let b = server
+            .builder(CONNS, SIZE)
+            .threads(2)
+            // Fewer buffers and slots than callers to force slot/buffer waiter contention.
+            .buffers(1)
+            .operations(1)
+            .waiters(32);
 
         let client = b.build().expect("client build on portable backend");
         let start_barrier = Arc::new(Barrier::new(CALLERS));

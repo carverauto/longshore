@@ -18,25 +18,21 @@ use std::sync::Arc;
 use std::thread;
 
 fn test_builder(srv: &HttpStoreServer, threads: u32, ops: u32, bufs: u32, waiters: u32) -> Builder {
-    let mut b = Builder::new(
+    Builder::new(
         "127.0.0.1",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = false;
-    b.port = srv.port();
-    b.address = Some(srv.addr());
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.threads = threads;
-    b.connections = 4;
-    b.buffers = bufs;
-    b.buffer_size = 16 * 1024;
-    b.operations = ops;
-    b.waiters = waiters;
-    b
+    )
+    .tls(false)
+    .port(srv.port())
+    .address(Some(srv.addr()))
+    .portable(true)
+    .threads(threads)
+    .connections(4)
+    .buffers(bufs)
+    .buffer_size(16 * 1024)
+    .operations(ops)
+    .waiters(waiters)
 }
 
 fn report_status(rep: &Report) -> Option<u16> {
@@ -192,8 +188,7 @@ fn t1_f27_5_unedited_s3_client_model_tests_pass() {
 #[test]
 fn t2_f27_1_failed_uring_thread_answers_closed_and_keeps_lent_buffer_valid() {
     let srv = HttpStoreServer::start_plain().expect("plain store");
-    let mut b = test_builder(&srv, 1, 4, 2, 16);
-    b.portable = false;
+    let b = test_builder(&srv, 1, 4, 2, 16).portable(false);
     let client = match b.build() {
         Ok(c) => c,
         Err(_) => return,
@@ -263,8 +258,7 @@ fn t2_f27_4_multi_lane_routing_and_lane_isolation() {
 
     #[cfg(all(feature = "fault-injection", target_os = "linux"))]
     {
-        let mut b = test_builder(&srv, 4, 4, 2, 32);
-        b.portable = false;
+        let b = test_builder(&srv, 4, 4, 2, 32).portable(false);
         if let Ok(uring_client) = b.build() {
             uring_client.inject_fault(0, Fault::TickFails);
             for _ in 0..100 {

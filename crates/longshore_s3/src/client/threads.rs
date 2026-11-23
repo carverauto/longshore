@@ -41,73 +41,47 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
-/// Settings for a [`Client`]. Fill in the fields that differ from
-/// [`Builder::new`]'s, then call [`Builder::build`].
+/// Settings for a [`Client`]. Start from [`Builder::new`], change what
+/// differs with the setters, which are named after the settings, then call
+/// [`Builder::build`]:
+///
+/// ```no_run
+/// # use longshore_s3::client::Builder;
+/// # use longshore_s3::creds::Credentials;
+/// # let credentials = Credentials::new("K", "S").unwrap();
+/// let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+///     .tls(true)
+///     .port(443)
+///     .threads(4)
+///     .build();
+/// ```
+///
+/// The setters only record a value; [`Builder::build`] checks them all and
+/// returns [`BuildError::Setting`] for one out of range.
 #[derive(Clone)]
 pub struct Builder {
-    /// Host header and DNS name of the store: `bucket.endpoint`, or the
-    /// endpoint's own name with [`Builder::bucket_in_path`].
-    pub host: String,
-    /// `Some(bucket)` addresses the bucket in the path, `/bucket/key` on
-    /// `host`, as self-hosted S3-compatible stores commonly expect.
-    pub bucket_in_path: Option<String>,
-    pub port: u16,
-    pub region: String,
-    /// The credentials to start with.
-    pub credentials: Credentials,
-    /// A file to reread credentials from, in the form
-    /// [`Credentials::parse`] reads. Each I/O thread rereads it every
-    /// [`Builder::credentials_reread_secs`] and, when its contents differ
-    /// from the credentials in use, tries the new ones with one request
-    /// and adopts them if the store accepts them (see
-    /// [`Builder::credentials_validate`]). Temporary credentials expire, so
-    /// a client that runs longer than they last needs this. The path must
-    /// be absolute and UTF-8.
-    pub credentials_file: Option<std::path::PathBuf>,
-    pub credentials_reread_secs: u64,
-    /// The request that proves new credentials before they are adopted.
-    /// The default lists one key in the whole bucket. Credentials that may
-    /// list only under a prefix need that prefix here, or they are never
-    /// adopted. [`Client::credential_reloads`] counts both outcomes.
-    pub credentials_validate: Validate,
-    /// Send a CRC-64/NVME with every stored body, which the store checks.
-    /// On by default. It is one more pass over the body: a plain upload
-    /// from one thread ran at 16 GB/s with it and 37 GB/s without. Off
-    /// affects plain stores and multipart uploads (see
-    /// [`Client::upload_begin`]). [`Client::store_no_clobber`] always sends
-    /// one, since a retry refused because an object exists compares it to
-    /// tell this call's own write from someone else's.
-    pub checksums: bool,
-    /// HTTPS, verified against the public root certificates.
-    pub tls: bool,
-    /// I/O threads. Each is an independent store with its own connections
-    /// and buffers. One fills a fast card with plain uploads; more are for
-    /// HTTPS and downloads, which one core bounds.
-    pub threads: u32,
-    /// Pin thread `n` to CPU `first + n * step`. On a machine with several
-    /// NUMA nodes, choose CPUs on the network card's node. Refused on macOS.
-    pub pin: Option<(usize, usize)>,
-    /// Use the portable readiness backend (`epoll` on Linux) instead of
-    /// `io_uring`. On macOS the portable backend (`kqueue`) is always used.
-    pub portable: bool,
-    /// The limits below are per thread.
-    pub connections: u32,
-    /// Buffers lent to callers. An operation holds one while it runs.
-    pub buffers: u32,
-    /// Bytes per buffer, which is the largest object one operation moves.
-    pub buffer_size: u32,
-    /// Operations in progress at most. Others wait.
-    pub operations: u32,
-    /// Waiters preallocated per pool on each thread. Waiting beyond this
-    /// grows the queue rather than refusing callers.
-    pub waiters: u32,
-    pub family: Family,
-    /// See [`longshore_dns::Config::prefer_large_segments`].
-    pub prefer_large_segments: Option<usize>,
-    /// Nameservers to ask. Empty reads `/etc/resolv.conf`.
-    pub nameservers: Vec<SocketAddr>,
-    /// Connect here and resolve nothing, for a store at a known address.
-    pub address: Option<SocketAddr>,
+    host: String,
+    bucket_in_path: Option<String>,
+    port: u16,
+    region: String,
+    credentials: Credentials,
+    credentials_file: Option<std::path::PathBuf>,
+    credentials_reread_secs: u64,
+    credentials_validate: Validate,
+    checksums: bool,
+    tls: bool,
+    threads: u32,
+    pin: Option<(usize, usize)>,
+    portable: bool,
+    connections: u32,
+    buffers: u32,
+    buffer_size: u32,
+    operations: u32,
+    waiters: u32,
+    family: Family,
+    prefer_large_segments: Option<usize>,
+    nameservers: Vec<SocketAddr>,
+    address: Option<SocketAddr>,
 }
 
 impl Builder {
@@ -307,3 +281,4 @@ impl Drop for Threads {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod run;
+mod setters;

@@ -115,10 +115,13 @@ pub fn deadline_stops_a_connect() {
     // TEST-NET-1: routed nowhere, so the connect waits.
     let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
     let credentials = Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new");
-    let mut b = Builder::new("bucket.objects.test", "us-test-1", credentials);
-    (b.port, b.address) = (nowhere.port(), Some(nowhere));
-    (b.connections, b.buffers, b.operations) = (1, 1, 1);
-    b.buffer_size = 64 * 1024;
+    let b = Builder::new("bucket.objects.test", "us-test-1", credentials)
+        .port(nowhere.port())
+        .address(Some(nowhere))
+        .connections(1)
+        .buffers(1)
+        .operations(1)
+        .buffer_size(64 * 1024);
     let client = b.build().or_die("client");
     let body = client.buffer_blocking();
     let started = Instant::now();

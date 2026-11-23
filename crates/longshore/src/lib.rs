@@ -60,19 +60,22 @@
 //!
 //! ## Building a client
 //!
-//! A [`client::Builder`] holds the settings. Fill in the fields that differ
-//! from the defaults and call `build`, which starts the I/O threads.
+//! A [`client::Builder`] holds the settings. Change the ones that differ
+//! from the defaults with its setters, which are named after the settings
+//! and chain, then call `build`, which checks them and starts the I/O
+//! threads.
 //!
 //! ```no_run
 //! use longshore::client::Builder;
 //! use longshore::store::creds::Credentials;
 //!
 //! let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-//! let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
-//! settings.tls = true;
-//! settings.port = 443;
-//! settings.threads = 4; // four independent I/O threads
-//! let client = settings.build().unwrap();
+//! let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+//!     .tls(true)
+//!     .port(443)
+//!     .threads(4) // four independent I/O threads
+//!     .build()
+//!     .unwrap();
 //! ```
 //!
 //! A store that expects the bucket in the path takes the endpoint as the
@@ -82,8 +85,8 @@
 //! # use longshore::client::Builder;
 //! # use longshore::store::creds::Credentials;
 //! # let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-//! let mut settings = Builder::new("objects.example.com", "us-east-1", credentials);
-//! settings.bucket_in_path = Some("my-bucket".into());
+//! let settings = Builder::new("objects.example.com", "us-east-1", credentials)
+//!     .bucket_in_path(Some("my-bucket".into()));
 //! ```
 //!
 //! ## Storing and fetching
@@ -205,9 +208,9 @@
 //! # use longshore::client::Builder;
 //! # use longshore::store::creds::Credentials;
 //! # let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-//! let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
-//! settings.credentials_file = Some("/run/secrets/s3-credentials".into());
-//! settings.credentials_reread_secs = 60;
+//! let settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+//!     .credentials_file(Some("/run/secrets/s3-credentials".into()))
+//!     .credentials_reread_secs(60);
 //! ```
 //!
 //! ## Memory

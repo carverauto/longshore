@@ -83,11 +83,12 @@ use longshore::client::Builder;
 use longshore::store::creds::Credentials;
 
 let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
-let mut settings = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials);
-settings.tls = true;
-settings.port = 443;
-settings.threads = 4; // four independent I/O threads
-let client = settings.build().unwrap();
+let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+    .tls(true)
+    .port(443)
+    .threads(4) // four independent I/O threads
+    .build()
+    .unwrap();
 
 // A body lives in a registered buffer borrowed from the client, so the
 // client never copies it. The operation takes the buffer and hands it back.
@@ -120,7 +121,7 @@ loss and fault injection. TLS is a Cargo feature that is on by default.
 ## Requirements
 
 - Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when
-  `Builder::portable` is set), or macOS for the portable `kqueue` backend
+  `Builder::portable(true)` is set), or macOS for the portable `kqueue` backend
   (without core pinning). Other targets build the crate and run the simulator,
   while `client::Builder::build` returns `BuildError::Unsupported`.
 - A recent stable Rust toolchain.

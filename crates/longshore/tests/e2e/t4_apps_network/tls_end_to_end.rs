@@ -250,19 +250,16 @@ fn t4_08_tls_http_store_and_client_handshake_and_reuse() {
         "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     )
     .unwrap();
-    let mut b = Builder::new("localhost", "us-east-1", creds);
-    b.tls = true;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.bucket_in_path = Some("tls-bucket".into());
-    b.buffers = 4;
-    b.buffer_size = 16 * 1024;
-    b.connections = 4;
-    b.operations = 8;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    let b = Builder::new("localhost", "us-east-1", creds)
+        .tls(true)
+        .port(store.port())
+        .address(Some(store.addr()))
+        .bucket_in_path(Some("tls-bucket".into()))
+        .buffers(4)
+        .buffer_size(16 * 1024)
+        .connections(4)
+        .operations(8)
+        .portable(true);
     // Note: Builder::build verifies against public root CAs unless configured;
     // when custom self-signed cert is served, client connect attempts TLS 1.3 handshake
     // cleanly and surfaces Fatal TLS/Untrusted error without panicking.

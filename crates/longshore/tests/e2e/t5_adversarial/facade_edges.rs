@@ -85,12 +85,11 @@ fn facade_non_optional_reexports_send_alert_plain_and_builder_errors_without_sim
 
     // Builder error paths (Setting / NoNameserver).
     let creds = Credentials::new("AKIDEXAMPLE", "secret").unwrap();
-    let mut b_bad = Builder::new("bucket example.com", "us-east-1", creds);
-    b_bad.nameservers = vec!["192.0.2.53:53".parse().unwrap()];
+    let b_bad = Builder::new("bucket example.com", "us-east-1", creds)
+        .nameservers(vec!["192.0.2.53:53".parse().unwrap()]);
     assert!(matches!(b_bad.build(), Err(BuildError::Setting(_))));
 
-    let mut b_no_ns = Builder::new("bucket.s3.example.com", "us-east-1", creds);
-    b_no_ns.nameservers = Vec::new();
+    let b_no_ns = Builder::new("bucket.s3.example.com", "us-east-1", creds).nameservers(Vec::new());
     let res = b_no_ns.build();
     assert!(res.is_ok() || matches!(res, Err(BuildError::NoNameserver | BuildError::Setting(_))));
 }
@@ -99,20 +98,17 @@ fn facade_non_optional_reexports_send_alert_plain_and_builder_errors_without_sim
 fn facade_builder_tls_false_selects_plain_http_even_when_tls_feature_enabled() {
     let store = HttpStoreServer::start_plain().unwrap();
     let creds = Credentials::new("AKIDEXAMPLE", "secret").unwrap();
-    let mut b = Builder::new("127.0.0.1", "us-east-1", creds);
-    b.bucket_in_path = Some("plain-explicit".into());
-    b.tls = false;
-    b.port = store.port();
-    b.address = Some(store.addr());
-    b.threads = 1;
-    b.buffers = 2;
-    b.buffer_size = 8192;
-    b.connections = 2;
-    b.operations = 4;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
+    let b = Builder::new("127.0.0.1", "us-east-1", creds)
+        .bucket_in_path(Some("plain-explicit".into()))
+        .tls(false)
+        .port(store.port())
+        .address(Some(store.addr()))
+        .threads(1)
+        .buffers(2)
+        .buffer_size(8192)
+        .connections(2)
+        .operations(4)
+        .portable(true);
     let client = b.build().expect("plain client when tls = false");
     let mut buf = client.buffer_blocking();
     buf.as_mut_slice()[..5].copy_from_slice(b"hello");

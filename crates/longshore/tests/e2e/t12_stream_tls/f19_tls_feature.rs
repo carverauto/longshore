@@ -50,22 +50,19 @@ fn describe_tls_err(err: TlsError) -> &'static str {
 fn t1_f19_1_default_feature_enables_tls_module_and_https_store() {
     let ident = make_tls_identity(&["127.0.0.1", "localhost"]);
     let srv = HttpStoreServer::start_tls(ident.server_setup()).expect("start tls store");
-    let mut b = Builder::new(
+    let b = Builder::new(
         "localhost",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = true;
-    b.port = srv.port();
-    b.address = Some(srv.addr());
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.buffers = 2;
-    b.buffer_size = 256 * 1024;
-    b.connections = 2;
-    b.operations = 2;
+    )
+    .tls(true)
+    .port(srv.port())
+    .address(Some(srv.addr()))
+    .portable(true)
+    .buffers(2)
+    .buffer_size(256 * 1024)
+    .connections(2)
+    .operations(2);
     let client = b.build().expect("tls enabled builder succeeds");
     assert_eq!(client.buffer_size(), 256 * 1024);
 }
@@ -122,22 +119,19 @@ fn t1_f19_2_plain_stream_and_tls_error_compile_with_or_without_tls_feature() {
 #[test]
 fn t1_f19_3_plain_s3_client_store_fetch_erase_without_tls() {
     let srv = HttpStoreServer::start_plain().expect("start plain store");
-    let mut b = Builder::new(
+    let b = Builder::new(
         "127.0.0.1",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = false;
-    b.port = srv.port();
-    b.address = Some(srv.addr());
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
-    b.buffers = 2;
-    b.buffer_size = 16 * 1024;
-    b.connections = 2;
-    b.operations = 4;
+    )
+    .tls(false)
+    .port(srv.port())
+    .address(Some(srv.addr()))
+    .portable(true)
+    .buffers(2)
+    .buffer_size(16 * 1024)
+    .connections(2)
+    .operations(4);
     let client = b.build().expect("plain client build");
     let mut buf = client.buffer_blocking();
     let payload = b"plain-http-e2e-body";
@@ -224,14 +218,14 @@ fn t1_f19_5_cargo_tree_default_includes_tls_and_plain_sim_excludes_it() {
 #[cfg(not(feature = "tls"))]
 #[test]
 fn t2_f19_1_plain_build_rejects_tls_builder_naming_tls() {
-    let mut b = Builder::new(
+    let b = Builder::new(
         "example.com",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = true;
-    b.port = 443;
-    b.address = Some("127.0.0.1:443".parse().unwrap());
+    )
+    .tls(true)
+    .port(443)
+    .address(Some("127.0.0.1:443".parse().unwrap()));
     let err = match b.build() {
         Ok(_) => panic!("expected BuildError::Setting when tls=true without tls feature"),
         Err(e) => e,
@@ -253,13 +247,13 @@ fn t2_f19_2_plain_build_stream_has_no_tls_and_builder_rejects_before_io() {
     assert!(!s.is_tls());
     assert_eq!(s.records(), 0);
     s.reset();
-    let mut b = Builder::new(
+    let b = Builder::new(
         "127.0.0.1",
         "us-east-1",
         Credentials::new("K", "S").unwrap(),
-    );
-    b.tls = true;
-    b.address = Some("127.0.0.1:1".parse().unwrap());
+    )
+    .tls(true)
+    .address(Some("127.0.0.1:1".parse().unwrap()));
     let Err(BuildError::Setting(msg)) = b.build() else {
         panic!("expected BuildError::Setting");
     };

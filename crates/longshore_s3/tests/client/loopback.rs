@@ -65,20 +65,16 @@ impl ServerThread {
     /// A client builder for this server with `connections` connections of
     /// `buffer_size` buffers, on the portable backend on Linux too.
     pub fn builder(&self, connections: u32, buffer_size: u32) -> Builder {
-        let mut b = Builder::new(
+        Builder::new(
             "bucket.objects.test",
             "us-test-1",
             Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
-        );
-        b.port = self.addr.port();
-        b.address = Some(self.addr);
-        b.connections = connections;
-        b.buffer_size = buffer_size;
-        #[cfg(target_os = "linux")]
-        {
-            b.portable = true;
-        }
-        b
+        )
+        .port(self.addr.port())
+        .address(Some(self.addr))
+        .connections(connections)
+        .buffer_size(buffer_size)
+        .portable(true)
     }
 }
 

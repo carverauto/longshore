@@ -74,11 +74,14 @@ mod linux {
         } else {
             format!("{}.{}", env("S3_BUCKET"), env("S3_ENDPOINT"))
         };
-        let mut b = Builder::new(&host, &env("S3_REGION"), credentials);
-        b.bucket_in_path = path_style.then(|| env("S3_BUCKET"));
-        (b.tls, b.port) = (tls, if tls { 443 } else { 80 });
-        (b.connections, b.buffers, b.operations) = (2, 2, 2);
-        b.buffer_size = 1 << 20;
+        let b = Builder::new(&host, &env("S3_REGION"), credentials)
+            .bucket_in_path(path_style.then(|| env("S3_BUCKET")))
+            .tls(tls)
+            .port(if tls { 443 } else { 80 })
+            .connections(2)
+            .buffers(2)
+            .operations(2)
+            .buffer_size(1 << 20);
         b.build().unwrap_or_else(|e| die(&e.to_string()))
     }
 
