@@ -89,6 +89,8 @@ expect_used = "deny"
 panic = "deny"
 # A function fits on one screen: at most 70 lines, set in clippy.toml.
 too_many_lines = "deny"
+# A struct does not mix public and private fields: they are private, behind getters.
+partial_pub_fields = "deny"
 
 [profile.release]
 opt-level = 3
