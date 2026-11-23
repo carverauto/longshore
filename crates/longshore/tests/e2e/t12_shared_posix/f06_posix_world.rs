@@ -61,6 +61,30 @@ fn t1_f06_1_posix_loopback_echo_300kb() {
     assert!(stats.sends > 0 && stats.recvs > 0 && stats.ticks > 0);
 }
 
+/// How long a Send must stay pending before the test treats the socket as full.
+#[cfg(unix)]
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Ticks without blocking until a completion arrives or `window` passes.
+#[cfg(unix)]
+fn completion_within<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    window: std::time::Duration,
+) -> Option<longshore::io::Completion> {
+    let start = std::time::Instant::now();
+    loop {
+        io.tick(false, out).unwrap();
+        if let Some(c) = out.pop() {
+            return Some(c);
+        }
+        if start.elapsed() >= window {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
@@ -76,6 +100,10 @@ fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
     connect_pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
 
     // Fill Sock(2)'s send buffer until an Op::Send blocks waiting for writability.
+    // One tick without a completion is not enough: on macOS the loopback socket
+    // turns writable again within a fraction of a millisecond, several times,
+    // while the kernel moves data into the peer's receive buffer and grows both
+    // buffers. A Send counts as stalled only when it stays pending for `SETTLE`.
     io.buf(BufId(0)).fill(0x55);
     let mut stalled_send_tok = None;
     for step in 0..256u64 {
@@ -91,8 +119,8 @@ fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
             },
         )
         .unwrap();
-        io.tick(false, &mut out).unwrap();
-        if let Some(c) = out.pop() {
+        if let Some(c) = completion_within(&mut io, &mut out, SETTLE) {
+            assert_eq!(c.token, tok);
             assert!(c.result > 0, "send failed: {}", c.result);
         } else {
             stalled_send_tok = Some(tok);
@@ -112,10 +140,13 @@ fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
         },
     )
     .unwrap();
-    io.tick(false, &mut out).unwrap();
-    assert!(out.is_empty());
+    assert!(
+        completion_within(&mut io, &mut out, SETTLE).is_none(),
+        "a Send and a Recv must both be pending on Sock(2)"
+    );
 
-    // Peer Sock(1) sends 5 bytes -> Sock(2)'s Recv must complete while Send stays pending.
+    // Peer Sock(1) sends 5 bytes -> Sock(2)'s Recv must complete although a Send
+    // on the same socket is pending.
     write_pool_bytes(&mut io, BufId(2), 0, b"reply");
     io.submit(
         Token(501),
@@ -134,14 +165,17 @@ fn t1_f06_2_posix_bidirectional_send_and_recv_wait() {
     .expect("recv completes");
     assert!(cs.iter().any(|c| c.token == Token(500) && c.result == 5));
     assert_eq!(&io.buf(BufId(1))[..5], b"reply");
-    assert!(
-        !cs.iter().any(|c| c.token == send_tok),
-        "blocked Send must still be waiting until peer drains"
-    );
+    // The stalled Send may complete here too, without Sock(1) reading: the
+    // segment carrying the reply can also carry an acknowledgement that frees
+    // room in Sock(2)'s send buffer. On macOS loopback that happened in about
+    // 1 run in 40, so the test does not require the Send to still be pending.
+    let mut send_done = cs.iter().any(|c| c.token == send_tok && c.result > 0);
 
     // Drain Sock(1) until Sock(2)'s stalled Send completes.
-    let mut send_done = false;
     for k in 0..256u64 {
+        if send_done {
+            break;
+        }
         io.submit(
             Token(600 + k),
             Op::Recv {
