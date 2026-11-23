@@ -33,9 +33,9 @@ fn string_from(tc: &TestCase, alphabet: &[u8], max: usize) -> String {
 fn parsing_arbitrary_bytes_is_safe(tc: TestCase) {
     let data = tc.draw(gs::binary().max_size(600));
     if let Ok(Some(h)) = parse_response(&data, LIMIT) {
-        assert!(h.fields.head_len() <= data.len());
-        assert!(data[..h.fields.head_len()].ends_with(b"\r\n\r\n"));
-        let _: Option<&[u8]> = h.fields.header(&data, "content-length");
+        assert!(h.fields().head_len() <= data.len());
+        assert!(data[..h.fields().head_len()].ends_with(b"\r\n\r\n"));
+        let _: Option<&[u8]> = h.fields().header(&data, "content-length");
     }
     if let Ok(Some(h)) = parse_request(&data, LIMIT) {
         assert!(h.fields().head_len() <= data.len());
@@ -204,12 +204,12 @@ fn written_response_heads_parse_back(tc: TestCase) {
     let head = parse_response(&buf[..n], LIMIT)
         .expect("what the writer wrote is well formed")
         .expect("and complete");
-    assert_eq!(head.status, status);
-    assert_eq!(head.fields.head_len(), n);
-    assert_eq!(head.fields.content_length(), Some(length));
+    assert_eq!(head.status(), status);
+    assert_eq!(head.fields().head_len(), n);
+    assert_eq!(head.fields().content_length(), Some(length));
     for (name, value) in names.iter().zip(&values) {
         assert_eq!(
-            head.fields.header(&buf[..n], &name.to_ascii_uppercase()),
+            head.fields().header(&buf[..n], &name.to_ascii_uppercase()),
             Some(value.as_bytes()),
             "{name}"
         );

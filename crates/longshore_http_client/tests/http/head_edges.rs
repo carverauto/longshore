@@ -19,7 +19,7 @@ fn response(headers: &str) -> Vec<u8> {
 #[cfg(test)]
 fn status_of(line: &str) -> Result<u16, HttpError> {
     parse_response(format!("{line}\r\n\r\n").as_bytes(), LIMIT)
-        .map(|h| h.expect("a complete head").status)
+        .map(|h| h.expect("a complete head").status())
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn the_size_limit_is_exact() {
         let fits = head(limit);
         assert_eq!(fits.len(), limit);
         let parsed = parse_response(&fits, limit).unwrap().unwrap();
-        assert_eq!(parsed.fields.head_len(), limit);
+        assert_eq!(parsed.fields().head_len(), limit);
         assert_eq!(
             parse_response(&head(limit + 1), limit),
             Err(HttpError::HeadTooLarge),
@@ -58,7 +58,7 @@ fn the_size_limit_is_exact() {
 
 #[test]
 fn framing_headers_are_refused_in_every_ambiguous_form() {
-    let p = |h: &str| parse_response(&response(h), LIMIT).map(|h| h.unwrap().fields);
+    let p = |h: &str| parse_response(&response(h), LIMIT).map(|h| h.unwrap().fields());
     for bad in [
         "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked",
         "Transfer-Encoding: gzip, chunked",
@@ -102,7 +102,7 @@ fn connection_tokens_are_matched_whole() {
         parse_response(format!("{version} 200 OK\r\n{h}\r\n\r\n").as_bytes(), LIMIT)
             .unwrap()
             .unwrap()
-            .fields
+            .fields()
             .close()
     };
     for not_close in [
@@ -134,7 +134,7 @@ fn connection_tokens_are_matched_whole() {
 #[test]
 fn header_names_and_values_at_their_edges() {
     let buf = response("A:\tv\t\r\nEmpty:\r\nDup: first\r\nDUP: second\r\nSpaces:   \r\nB: a b");
-    let f = parse_response(&buf, LIMIT).unwrap().unwrap().fields;
+    let f = parse_response(&buf, LIMIT).unwrap().unwrap().fields();
     assert_eq!(f.header(&buf, "a"), Some(&b"v"[..]));
     assert_eq!(f.header(&buf, "empty"), Some(&b""[..]));
     assert_eq!(f.header(&buf, "spaces"), Some(&b""[..]));

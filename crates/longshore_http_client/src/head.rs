@@ -106,8 +106,22 @@ impl Fields {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResponseHead {
-    pub status: u16,
-    pub fields: Fields,
+    pub(crate) status: u16,
+    pub(crate) fields: Fields,
+}
+
+impl ResponseHead {
+    /// The status code.
+    #[inline]
+    pub const fn status(self) -> u16 {
+        self.status
+    }
+
+    /// The header fields.
+    #[inline]
+    pub const fn fields(self) -> Fields {
+        self.fields
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

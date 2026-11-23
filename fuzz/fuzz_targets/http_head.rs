@@ -24,8 +24,8 @@ fuzz_target!(|data: &[u8]| {
     let limit = 4096;
     let whole = parse_response(data, limit);
     if let Ok(Some(h)) = whole {
-        assert!(h.fields.head_len() <= data.len());
-        let _ = h.fields.header(data, "content-length");
+        assert!(h.fields().head_len() <= data.len());
+        let _ = h.fields().header(data, "content-length");
     }
     // Split point taken from the input itself.
     let cut = data.first().map_or(0, |b| *b as usize * data.len() / 256);

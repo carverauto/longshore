@@ -25,7 +25,7 @@ fn bench(c: &mut Criterion) {
     let _: &mut BenchmarkGroup<'_, WallTime> =
         g.throughput(Throughput::Bytes(RESPONSE.len() as u64));
     assert!(
-        matches!(parse_response(RESPONSE, 4096), Ok(Some(h)) if h.fields.header(RESPONSE, "etag").is_some())
+        matches!(parse_response(RESPONSE, 4096), Ok(Some(h)) if h.fields().header(RESPONSE, "etag").is_some())
     );
     let _: &mut BenchmarkGroup<'_, WallTime> = g.bench_function("parse_response", |b| {
         b.iter(|| parse_response(black_box(RESPONSE), 4096))
@@ -36,7 +36,7 @@ fn bench(c: &mut Criterion) {
                 let h = parse_response(black_box(RESPONSE), 4096);
                 h.ok()
                     .flatten()
-                    .and_then(|h| h.fields.header(RESPONSE, "etag"))
+                    .and_then(|h| h.fields().header(RESPONSE, "etag"))
                     .map(|v| v.len())
             })
         });
