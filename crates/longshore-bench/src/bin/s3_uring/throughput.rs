@@ -39,6 +39,75 @@ pub(super) struct Placement {
     pub cpu_step: usize,
 }
 
+/// Store one object of `size` bytes at each key, from the buffers from
+/// `first` on, so that a GET run has something to fetch.
+fn seed(
+    io: &mut UringIo,
+    s3: &mut S3,
+    out: &mut Completions,
+    keys: &[String],
+    first: u32,
+    size: u32,
+) {
+    for (i, key) in (0u32..).zip(keys) {
+        s3.store(
+            io,
+            u64::from(i),
+            key,
+            BufId(first + i),
+            size,
+            Checksum::None,
+        )
+        .or_die("store");
+    }
+    for _ in keys {
+        if wait(io, s3, out).outcome != Outcome::Stored {
+            die("could not create objects to fetch");
+        }
+    }
+}
+
+/// The measured window: restart each request as it finishes until
+/// `deadline`. Returns the bytes, requests and attempts it saw.
+fn measure(
+    io: &mut UringIo,
+    s3: &mut S3,
+    out: &mut Completions,
+    deadline: u64,
+    size: u32,
+    start_one: impl Fn(&mut S3, &mut UringIo, u32),
+) -> (u64, u64, u64) {
+    sealed(|| {
+        let (mut bytes, mut requests, mut attempts) = (0u64, 0u64, 0u64);
+        while io.now_ns() < deadline {
+            turn(io, s3, out);
+            while let Some(d) = s3.poll() {
+                match d.outcome {
+                    Outcome::Stored | Outcome::Fetched { .. } => {
+                        bytes += u64::from(size);
+                        requests += 1;
+                        attempts += u64::from(d.attempts);
+                        start_one(s3, io, d.token as u32);
+                    }
+                    Outcome::AlreadyExists { .. }
+                    | Outcome::Listed { .. }
+                    | Outcome::NotFound
+                    | Outcome::Erased
+                    | Outcome::Begun { .. }
+                    | Outcome::PartStored { .. }
+                    | Outcome::Aborted
+                    | Outcome::Stat(_)
+                    | Outcome::Copied
+                    | Outcome::ErasedMany { .. }
+                    | Outcome::Report(_)
+                    | Outcome::Fatal(_) => std::process::exit(3),
+                }
+            }
+        }
+        (bytes, requests, attempts)
+    })
+}
+
 /// One complete client on the calling thread: its own ring, connections,
 /// buffers and resolver. `start` is passed once the client is ready, so
 /// every thread measures the same window.
@@ -50,11 +119,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
         secs,
         checksum,
     } = job;
-    if let Some(cpu) = cpu {
-        let mut mask = [0u64; 16];
-        mask[cpu / 64] |= 1 << (cpu % 64);
-        let _: i32 = unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
-    }
+    pin(cpu);
     let (mut io, mut s3, first) = setup(conns, conns, size, conns);
     let mut out = Completions::new(64);
     let keys: Vec<String> = (0..conns)
@@ -62,26 +127,9 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
         .collect();
     // For GET, the objects must exist first.
     if !put {
-        for i in 0..conns {
-            s3.store(
-                &mut io,
-                u64::from(i),
-                &keys[i as usize],
-                BufId(first + i),
-                size,
-                Checksum::None,
-            )
-            .or_die("store");
-        }
-        for _ in 0..conns {
-            if wait(&mut io, &mut s3, &mut out).outcome != Outcome::Stored {
-                die("could not create objects to fetch");
-            }
-        }
+        seed(&mut io, &mut s3, &mut out, &keys, first, size);
     }
-    while !s3.ready() {
-        turn(&mut io, &mut s3, &mut out);
-    }
+    settle(&mut io, &mut s3, &mut out);
     let start_one = |client: &mut S3, ring: &mut UringIo, i: u32| {
         let r = if put {
             client.store(
@@ -111,35 +159,8 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
     }
     let (t0, cpu0, enters0) = (io.now_ns(), thread_cpu_secs(), io.enters());
     let deadline = t0 + secs * 1000 * MS;
-    let (bytes, requests, attempts) = sealed(|| {
-        let (mut bytes, mut requests, mut attempts) = (0u64, 0u64, 0u64);
-        while io.now_ns() < deadline {
-            turn(&mut io, &mut s3, &mut out);
-            while let Some(d) = s3.poll() {
-                match d.outcome {
-                    Outcome::Stored | Outcome::Fetched { .. } => {
-                        bytes += u64::from(size);
-                        requests += 1;
-                        attempts += u64::from(d.attempts);
-                        start_one(&mut s3, &mut io, d.token as u32);
-                    }
-                    Outcome::AlreadyExists { .. }
-                    | Outcome::Listed { .. }
-                    | Outcome::NotFound
-                    | Outcome::Erased
-                    | Outcome::Begun { .. }
-                    | Outcome::PartStored { .. }
-                    | Outcome::Aborted
-                    | Outcome::Stat(_)
-                    | Outcome::Copied
-                    | Outcome::ErasedMany { .. }
-                    | Outcome::Report(_)
-                    | Outcome::Fatal(_) => std::process::exit(3),
-                }
-            }
-        }
-        (bytes, requests, attempts)
-    });
+    let (bytes, requests, attempts) =
+        measure(&mut io, &mut s3, &mut out, deadline, size, start_one);
     Run {
         bytes,
         requests,
