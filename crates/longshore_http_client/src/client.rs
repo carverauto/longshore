@@ -16,211 +16,14 @@
 //! [`Client::tick`] at its own pace to enforce request timeouts.
 
 use crate::chunked::Chunked;
-use crate::head::{parse_response, Fields, HeadWriter, HttpError, ResponseHead};
+use crate::head::{parse_response, HeadWriter, HttpError, ResponseHead};
 #[cfg(feature = "tls")]
 use longshore_common::io::ECANCELED;
 use longshore_common::io::{BufId, Completion, Io, Op, Segment, Sock, Token};
-use longshore_stream::{IdleCheck, Step, Stream, TlsError};
+use longshore_stream::{IdleCheck, Step, Stream};
 #[cfg(feature = "tls")]
 use longshore_tls::handshake::{ClientSetup, Handshake};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-
-#[derive(Clone, Copy, Debug)]
-pub struct Config {
-    pub connections_max: u32,
-    /// Socket slots `first_sock..first_sock + connections_max`.
-    pub first_sock: u32,
-    /// One head buffer per connection: `first_buf..first_buf + connections_max`.
-    pub first_buf: u32,
-    /// Largest request or response head, at most the pool buffer size and 65535.
-    pub head_max: u32,
-    /// Size of a pool buffer; response bodies must fit in one.
-    pub buffer_size: u32,
-    /// An idle connection older than this is replaced before reuse.
-    pub max_age_ns: u64,
-    /// A connection is replaced after this many requests.
-    pub max_requests: u32,
-    /// A request taking longer than this is cancelled and fails.
-    pub request_timeout_ns: u64,
-    /// Request bodies at least this large are sent zero-copy. The kernel
-    /// copies small zero-copy sends anyway, so this should be large.
-    pub zero_copy_min: u32,
-    /// Tokens used are `token_base..token_base + connections_max * 8`.
-    pub token_base: u64,
-    /// With TLS, the most ciphertext sealed before each send. See
-    /// `Stream::with_tls_buffers`.
-    pub tls_batch: u32,
-    /// With TLS, a connection that has protected this many records in either
-    /// direction is closed after its current request, so traffic keys are
-    /// replaced long before they wear out. At most, and normally exactly,
-    /// [`TLS_RECORDS_MAX`].
-    pub tls_records_max: u64,
-    /// Before an idle connection carries another request, look at it without
-    /// waiting. Bytes the last response did not declare, or a connection the
-    /// peer has closed, mean the request goes out on a new connection.
-    /// Costs one extra operation per reused connection.
-    pub check_idle: bool,
-}
-
-/// The default and largest `tls_records_max`.
-pub const TLS_RECORDS_MAX: u64 = longshore_stream::KEY_RECORDS_RETIRE;
-
-pub struct Request<'a> {
-    pub method: &'a str,
-    /// Origin-form target, already percent-encoded: `/bucket/key?query`.
-    pub target: &'a str,
-    /// Value of the Host header.
-    pub host: &'a str,
-    /// Connections are reused only for the same `host_id`.
-    pub host_id: u16,
-    /// Address to connect to if a new connection is needed.
-    pub addr: SocketAddr,
-    pub headers: &'a [(&'a str, &'a [u8])],
-    /// Request body: a pool buffer and the number of bytes to send from it.
-    pub body: Option<(BufId, u32)>,
-    /// Where to receive the response body. Required if the response has one.
-    pub response_buf: Option<BufId>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Response {
-    pub status: u16,
-    /// Length of the response body. If no response buffer was given the
-    /// body was read and discarded.
-    pub body_len: u32,
-    /// Connection that served it; pass to [`Client::header`].
-    pub conn: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Error {
-    /// Every connection is in use.
-    Busy,
-    /// The request head is invalid or does not fit.
-    BadRequest,
-    /// The response head is malformed or too large.
-    Head(HttpError),
-    /// A socket operation failed with this errno.
-    Io(i32),
-    /// The peer closed mid-exchange. `reused` is true when the connection had
-    /// served earlier requests, the usual sign of a stale keep-alive.
-    Closed {
-        reused: bool,
-    },
-    Timeout,
-    /// The response body does not fit the buffer, or it is too large to
-    /// discard when no buffer was given.
-    BodyTooLarge,
-    /// A response body with neither a length nor chunked encoding (it would
-    /// end only when the connection closes) is not supported.
-    UnsupportedFraming,
-    /// The TLS handshake failed or a record did not authenticate.
-    Tls(TlsError),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Done {
-    pub token: u64,
-    pub result: Result<Response, Error>,
-    /// The request head was handed to the `Io` for sending. False means no
-    /// byte of the request left this client, so the server cannot have
-    /// acted on it. True does not prove the server received it.
-    pub sent: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Handled {
-    /// The completion does not belong to this client.
-    NotMine,
-    /// Consumed; the request is still in progress.
-    Pending,
-    Done(Done),
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum State {
-    Closed,
-    /// Closing an old connection; a loaded request connects afterwards.
-    Closing {
-        then_connect: bool,
-    },
-    Connecting,
-    /// An idle connection is being looked at before it is used again; the
-    /// request's head is already in the head buffer.
-    CheckIdle,
-    /// TCP is up; the TLS handshake is in progress.
-    #[cfg(feature = "tls")]
-    TlsHandshake,
-    SendHead {
-        off: u32,
-    },
-    SendBody {
-        off: u32,
-    },
-    RecvHead {
-        have: u32,
-    },
-    RecvBody {
-        have: u32,
-    },
-    /// Reading and discarding a body the caller gave no buffer for (an
-    /// error document, typically), through the spare room in the head buffer.
-    Drain {
-        have: u32,
-    },
-    /// Receiving a chunked body; `decoded` is the offset in the body's
-    /// buffer where decoded bytes end and newly received bytes go.
-    RecvChunked {
-        decoded: u32,
-    },
-    /// The chunked body filled the caller's buffer exactly; only the end of
-    /// the framing is still to come, read into the space after the head.
-    RecvChunkedTail,
-    Idle,
-}
-
-#[derive(Clone, Copy)]
-struct Conn {
-    state: State,
-    host_id: u16,
-    addr: SocketAddr,
-    opened_at: u64,
-    uses: u32,
-    /// Maximum segment size measured when the connection opened, or 0.
-    segment: u32,
-    /// Not to be reused: replaced the next time it would be picked.
-    retired: bool,
-    // Current request.
-    token: u64,
-    started_at: u64,
-    head_len: u32,
-    body: Option<(BufId, u32)>,
-    response_buf: Option<BufId>,
-    is_head: bool,
-    timed_out: bool,
-    /// The head of the current request was handed to the `Io` for sending.
-    sent: bool,
-    status: u16,
-    body_len: u32,
-    fields: Option<Fields>,
-    /// Chunked decoding state, and where the body starts in its buffer.
-    chunked: Chunked,
-    body_base: u32,
-    /// Server name for TLS, copied from the request's host.
-    #[cfg(feature = "tls")]
-    name: [u8; 253],
-    #[cfg(feature = "tls")]
-    name_len: u8,
-}
-
-/// Largest body the client will read and discard for a caller with no buffer.
-const DRAIN_MAX: u64 = 256 * 1024;
-
-const K_CONNECT: u64 = 0;
-const K_SEND: u64 = 1;
-const K_RECV: u64 = 2;
-const K_CLOSE: u64 = 3;
-const K_CANCEL: u64 = 4;
+use std::net::SocketAddr;
 
 pub struct Client {
     cfg: Config,
@@ -244,11 +47,31 @@ pub struct Client {
 }
 
 mod chunked_body;
+mod client_config;
+mod conn;
+mod consts;
+mod done;
+mod error;
 mod events;
+mod handled;
 mod plain;
+mod receive;
 mod request;
 mod response;
 mod retire;
+mod start;
+mod state;
+
+pub use client_config::Config;
+use conn::Conn;
+pub use consts::TLS_RECORDS_MAX;
+use consts::{DRAIN_MAX, K_CANCEL, K_CLOSE, K_CONNECT, K_RECV, K_SEND};
+pub use done::Done;
+pub use error::Error;
+pub use handled::Handled;
+pub use request::Request;
+pub use response::Response;
+use state::State;
 
 impl Client {
     /// A client that speaks plain HTTP.
@@ -293,32 +116,7 @@ impl Client {
             cfg.tls_records_max <= TLS_RECORDS_MAX,
             "tls_records_max must not exceed TLS_RECORDS_MAX"
         );
-        let conn = Conn {
-            state: State::Closed,
-            host_id: 0,
-            addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-            opened_at: 0,
-            uses: 0,
-            segment: 0,
-            retired: false,
-            token: 0,
-            started_at: 0,
-            head_len: 0,
-            body: None,
-            response_buf: None,
-            is_head: false,
-            timed_out: false,
-            sent: false,
-            status: 0,
-            body_len: 0,
-            fields: None,
-            chunked: Chunked::new(),
-            body_base: 0,
-            #[cfg(feature = "tls")]
-            name: [0; 253],
-            #[cfg(feature = "tls")]
-            name_len: 0,
-        };
+        let conn = Conn::new();
         #[cfg(feature = "tls")]
         let tls = tls.flatten();
         #[cfg(feature = "tls")]
