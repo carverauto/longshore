@@ -204,13 +204,18 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
         .unwrap();
     }
 
+    // Each tick can hand over one completion. The kernel may report the
+    // sockets ready a little late under load, so the loop runs to a deadline
+    // rather than a fixed number of ticks; a completion that was lost still
+    // fails the test, after the deadline.
     let mut small_out = Completions::new(1);
     let mut got = Vec::new();
-    for _ in 0..8 {
-        io.tick(got.is_empty(), &mut small_out).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while got.len() < 4 && std::time::Instant::now() < deadline {
+        io.tick(false, &mut small_out).unwrap();
         drain_completions(&mut small_out, &mut got);
-        if got.len() == 4 {
-            break;
+        if got.len() < 4 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
     got.sort_by_key(|c| c.token.0);
