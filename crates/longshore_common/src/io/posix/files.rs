@@ -111,48 +111,10 @@ impl Posix {
                 file_off,
                 len,
             } => Some(self.file_punch(slot, file_off, len)),
-            Op::FileStatus {
-                path_buf,
-                path_off,
-                path_len,
-                out_buf,
-                out_off,
-            } => {
-                let pr = limits.range(path_buf, path_off, path_len);
-                let or = limits.range(out_buf, out_off, STATX_SIZE as u32);
-                Some(Self::file_status(pool, pr, or))
-            }
-            Op::FileRename {
-                old_buf,
-                old_off,
-                old_len,
-                new_buf,
-                new_off,
-                new_len,
-            } => {
-                let r1 = limits.range(old_buf, old_off, old_len);
-                let r2 = limits.range(new_buf, new_off, new_len);
-                Some(Self::file_rename(
-                    pool[r1].as_ptr().cast(),
-                    pool[r2].as_ptr().cast(),
-                ))
-            }
-            Op::FileUnlink {
-                path_buf,
-                path_off,
-                path_len,
-            } => {
-                let r = limits.range(path_buf, path_off, path_len);
-                Some(Self::file_unlink(pool[r].as_ptr().cast()))
-            }
-            Op::FileMkdir {
-                path_buf,
-                path_off,
-                path_len,
-            } => {
-                let r = limits.range(path_buf, path_off, path_len);
-                Some(Self::file_mkdir(pool[r].as_ptr().cast()))
-            }
+            Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => Some(Self::attempt_path_op(op, pool, limits)),
             Op::Connect { .. }
             | Op::ConnectUnix { .. }
             | Op::ConnectUdp { .. }
@@ -167,6 +129,72 @@ impl Posix {
             | Op::ReadFile { .. }
             | Op::Timeout { .. }
             | Op::Cancel { .. } => unreachable!("non-file op"),
+        }
+    }
+
+    /// Runs a file operation that names paths rather than an open slot.
+    fn attempt_path_op(op: &Op, pool: &mut [u8], limits: &Limits) -> i32 {
+        match *op {
+            Op::FileStatus {
+                path_buf,
+                path_off,
+                path_len,
+                out_buf,
+                out_off,
+            } => {
+                let pr = limits.range(path_buf, path_off, path_len);
+                let or = limits.range(out_buf, out_off, STATX_SIZE as u32);
+                Self::file_status(pool, pr, or)
+            }
+            Op::FileRename {
+                old_buf,
+                old_off,
+                old_len,
+                new_buf,
+                new_off,
+                new_len,
+            } => {
+                let r1 = limits.range(old_buf, old_off, old_len);
+                let r2 = limits.range(new_buf, new_off, new_len);
+                Self::file_rename(pool[r1].as_ptr().cast(), pool[r2].as_ptr().cast())
+            }
+            Op::FileUnlink {
+                path_buf,
+                path_off,
+                path_len,
+            } => {
+                let r = limits.range(path_buf, path_off, path_len);
+                Self::file_unlink(pool[r].as_ptr().cast())
+            }
+            Op::FileMkdir {
+                path_buf,
+                path_off,
+                path_len,
+            } => {
+                let r = limits.range(path_buf, path_off, path_len);
+                Self::file_mkdir(pool[r].as_ptr().cast())
+            }
+            Op::Connect { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. } => unreachable!("not a path op"),
         }
     }
 

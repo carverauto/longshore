@@ -147,82 +147,51 @@ impl<W: World> Engine<W> {
                     self.resolve_or_attempt(&p)
                 }
             };
-            match ready {
-                Some(Attempt { result, more, buf }) => {
-                    let c = Completion {
-                        token: p.token,
-                        result,
-                        more,
-                        buf,
-                    };
-                    if more {
-                        self.pending[idx].last_delivered_step = self.step_seq;
-                        self.record_trace(c);
-                        out.push(c);
-                        i = idx + 1;
-                    } else {
-                        let _: Pending = self.pending.swap_remove(idx);
-                        self.finish_op(p, result);
-                        self.record_trace(c);
-                        out.push(c);
-                        // `swap_remove` moved another entry into `idx`; visit it next.
-                    }
-                }
-                None => {
-                    if self.world.claimed(&p.op) {
-                        self.pending[idx].attached = true;
-                    }
-                    i = idx + 1;
-                }
+            if self.deliver(idx, p, ready, out) {
+                i = idx + 1;
             }
+            // Otherwise `swap_remove` moved another entry into `idx`; visit it next.
         }
+    }
+
+    /// Delivers the outcome of visiting pending `idx`. Returns whether the
+    /// scan moves past `idx`: false when the operation finished and
+    /// `swap_remove` moved another entry into its place.
+    fn deliver(
+        &mut self,
+        idx: usize,
+        p: Pending,
+        ready: Option<Attempt>,
+        out: &mut Completions,
+    ) -> bool {
+        let Some(Attempt { result, more, buf }) = ready else {
+            if self.world.claimed(&p.op) {
+                self.pending[idx].attached = true;
+            }
+            return true;
+        };
+        let c = Completion {
+            token: p.token,
+            result,
+            more,
+            buf,
+        };
+        if more {
+            self.pending[idx].last_delivered_step = self.step_seq;
+            self.record_trace(c);
+            out.push(c);
+            return true;
+        }
+        let _: Pending = self.pending.swap_remove(idx);
+        self.finish_op(p, result);
+        self.record_trace(c);
+        out.push(c);
+        false
     }
 
     fn finish_op(&mut self, p: Pending, result: i32) {
         match p.op {
-            Op::Close { sock } if !p.cancelled => {
-                self.world.closed(sock);
-                for q in self.pending.iter_mut() {
-                    let on_sock = match q.op {
-                        Op::Connect { sock: s, .. }
-                        | Op::ConnectUnix { sock: s, .. }
-                        | Op::ConnectUdp { sock: s, .. }
-                        | Op::Accept { listener: s, .. }
-                        | Op::ArmedAccept { listener: s }
-                        | Op::Send { sock: s, .. }
-                        | Op::Recv { sock: s, .. }
-                        | Op::RecvNow { sock: s, .. }
-                        | Op::ArmedRecv { sock: s } => s == sock,
-                        Op::Close { .. }
-                        | Op::AwaitWake
-                        | Op::ReadFile { .. }
-                        | Op::Timeout { .. }
-                        | Op::Cancel { .. }
-                        | Op::FileOpen { .. }
-                        | Op::FileClose { .. }
-                        | Op::FileRead { .. }
-                        | Op::FileWrite { .. }
-                        | Op::FileSync { .. }
-                        | Op::FileReserve { .. }
-                        | Op::FilePunch { .. }
-                        | Op::FileStatus { .. }
-                        | Op::FileRename { .. }
-                        | Op::FileUnlink { .. }
-                        | Op::FileMkdir { .. } => false,
-                    };
-                    if on_sock {
-                        if q.attached {
-                            self.world.release(&q.op);
-                            q.attached = false;
-                        }
-                        if !q.cancelled {
-                            q.cancelled = true;
-                            let op = q.op;
-                            self.world.on_cancel(&op);
-                        }
-                    }
-                }
-            }
+            Op::Close { sock } if !p.cancelled => self.cancel_ops_on(sock),
             Op::FileOpen { slot, flags, .. } => {
                 self.files.on_open_done(slot, result >= 0, flags.direct)
             }
@@ -252,46 +221,107 @@ impl<W: World> Engine<W> {
             | Op::FileMkdir { .. } => {}
         }
         if p.chain_id != 0 {
-            let short_rw = match p.op {
-                Op::FileRead { len, .. } | Op::FileWrite { len, .. } => {
-                    u32::try_from(result).is_ok_and(|done| done < len)
+            self.advance_chain(p, result);
+        }
+    }
+
+    /// A completed close cancels every operation still pending on its socket.
+    fn cancel_ops_on(&mut self, sock: Sock) {
+        self.world.closed(sock);
+        for q in self.pending.iter_mut() {
+            if op_socket(&q.op) != Some(sock) {
+                continue;
+            }
+            if q.attached {
+                self.world.release(&q.op);
+                q.attached = false;
+            }
+            if !q.cancelled {
+                q.cancelled = true;
+                let op = q.op;
+                self.world.on_cancel(&op);
+            }
+        }
+    }
+
+    /// Activates the next link of `p`'s chain, aborting the rest of the
+    /// chain when `p` failed or read or wrote short.
+    fn advance_chain(&mut self, p: Pending, result: i32) {
+        let abort_tail = result < 0 || is_short_rw(&p.op, result);
+        for q in self.pending.iter_mut() {
+            if q.chain_id == p.chain_id && q.chain_pos > p.chain_pos {
+                if abort_tail {
+                    q.chain_aborted = true;
                 }
-                Op::Connect { .. }
-                | Op::ConnectUnix { .. }
-                | Op::ConnectUdp { .. }
-                | Op::Accept { .. }
-                | Op::ArmedAccept { .. }
-                | Op::ArmedRecv { .. }
-                | Op::Send { .. }
-                | Op::Recv { .. }
-                | Op::RecvNow { .. }
-                | Op::Close { .. }
-                | Op::AwaitWake
-                | Op::ReadFile { .. }
-                | Op::Timeout { .. }
-                | Op::Cancel { .. }
-                | Op::FileOpen { .. }
-                | Op::FileClose { .. }
-                | Op::FileSync { .. }
-                | Op::FileReserve { .. }
-                | Op::FilePunch { .. }
-                | Op::FileStatus { .. }
-                | Op::FileRename { .. }
-                | Op::FileUnlink { .. }
-                | Op::FileMkdir { .. } => false,
-            };
-            let abort_tail = result < 0 || short_rw;
-            for q in self.pending.iter_mut() {
-                if q.chain_id == p.chain_id && q.chain_pos > p.chain_pos {
-                    if abort_tail {
-                        q.chain_aborted = true;
-                    }
-                    if q.chain_pos == p.chain_pos + 1 {
-                        q.chain_active = true;
-                        q.fresh = true;
-                    }
+                if q.chain_pos == p.chain_pos + 1 {
+                    q.chain_active = true;
+                    q.fresh = true;
                 }
             }
         }
+    }
+}
+
+/// The socket a socket operation runs on; `None` for a close and every
+/// non-socket operation.
+fn op_socket(op: &Op) -> Option<Sock> {
+    match *op {
+        Op::Connect { sock: s, .. }
+        | Op::ConnectUnix { sock: s, .. }
+        | Op::ConnectUdp { sock: s, .. }
+        | Op::Accept { listener: s, .. }
+        | Op::ArmedAccept { listener: s }
+        | Op::Send { sock: s, .. }
+        | Op::Recv { sock: s, .. }
+        | Op::RecvNow { sock: s, .. }
+        | Op::ArmedRecv { sock: s } => Some(s),
+        Op::Close { .. }
+        | Op::AwaitWake
+        | Op::ReadFile { .. }
+        | Op::Timeout { .. }
+        | Op::Cancel { .. }
+        | Op::FileOpen { .. }
+        | Op::FileClose { .. }
+        | Op::FileRead { .. }
+        | Op::FileWrite { .. }
+        | Op::FileSync { .. }
+        | Op::FileReserve { .. }
+        | Op::FilePunch { .. }
+        | Op::FileStatus { .. }
+        | Op::FileRename { .. }
+        | Op::FileUnlink { .. }
+        | Op::FileMkdir { .. } => None,
+    }
+}
+
+/// Whether a file read or write moved fewer bytes than it asked for.
+fn is_short_rw(op: &Op, result: i32) -> bool {
+    match *op {
+        Op::FileRead { len, .. } | Op::FileWrite { len, .. } => {
+            u32::try_from(result).is_ok_and(|done| done < len)
+        }
+        Op::Connect { .. }
+        | Op::ConnectUnix { .. }
+        | Op::ConnectUdp { .. }
+        | Op::Accept { .. }
+        | Op::ArmedAccept { .. }
+        | Op::ArmedRecv { .. }
+        | Op::Send { .. }
+        | Op::Recv { .. }
+        | Op::RecvNow { .. }
+        | Op::Close { .. }
+        | Op::AwaitWake
+        | Op::ReadFile { .. }
+        | Op::Timeout { .. }
+        | Op::Cancel { .. }
+        | Op::FileOpen { .. }
+        | Op::FileClose { .. }
+        | Op::FileSync { .. }
+        | Op::FileReserve { .. }
+        | Op::FilePunch { .. }
+        | Op::FileStatus { .. }
+        | Op::FileRename { .. }
+        | Op::FileUnlink { .. }
+        | Op::FileMkdir { .. } => false,
     }
 }

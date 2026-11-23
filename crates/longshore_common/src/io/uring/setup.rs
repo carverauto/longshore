@@ -133,6 +133,31 @@ pub(super) fn check_features(features: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// An operation slot that holds nothing.
+fn idle_slot() -> Slot {
+    Slot {
+        cancel_requested: false,
+        token: 0,
+        state: State::Free,
+        result: 0,
+        sock: 0,
+        is_stream: false,
+        file_slot: FileSlot(0),
+        file_direct: false,
+        op_sock: None,
+        sock_closed: false,
+        fd: -1,
+        file_addr: 0,
+        file_len: 0,
+        phase: 0,
+        addr: sockaddr_any::default(),
+        addr_len: 0,
+        probe_fd: -1,
+        ts: timespec::default(),
+        wake_count: 0,
+    }
+}
+
 impl UringIo {
     /// Allocates and registers everything. Call on the thread that will use it.
     pub fn new(limits: Limits) -> io::Result<UringIo> {
@@ -170,27 +195,7 @@ impl UringIo {
             None
         };
         let ring_in_ring = vec![true; limits.ring_buffers as usize].into_boxed_slice();
-        let slot = Slot {
-            cancel_requested: false,
-            token: 0,
-            state: State::Free,
-            result: 0,
-            sock: 0,
-            is_stream: false,
-            file_slot: FileSlot(0),
-            file_direct: false,
-            op_sock: None,
-            sock_closed: false,
-            fd: -1,
-            file_addr: 0,
-            file_len: 0,
-            phase: 0,
-            addr: sockaddr_any::default(),
-            addr_len: 0,
-            probe_fd: -1,
-            ts: timespec::default(),
-            wake_count: 0,
-        };
+        let slot = idle_slot();
         Ok(UringIo {
             ring: ManuallyDrop::new(ring),
             limits,

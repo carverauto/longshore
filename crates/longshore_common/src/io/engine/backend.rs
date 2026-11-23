@@ -74,141 +74,15 @@ impl<W: World> Io for Engine<W> {
                 return Ok(());
             }
         }
-        let (unix_path, unix_len) = match op {
-            Op::ArmedAccept { listener } => {
-                assert!(
-                    listener.0 < self.limits.sockets_max,
-                    "socket slot out of range"
-                );
-                if self.limits.accept_range_len == 0 {
-                    self.ready.push(Completion::new(token, -ENFILE));
-                    return Ok(());
-                }
-                ([0u8; 108], 0)
+        let (unix_path, unix_len) = match self.socket_precheck(&op) {
+            Ok(path) => path,
+            Err(errno) => {
+                self.ready.push(Completion::new(token, errno));
+                return Ok(());
             }
-            Op::ArmedRecv { sock } => {
-                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-                if self.limits.ring_buffers == 0 {
-                    self.ready.push(Completion::new(token, -ENOBUFS));
-                    return Ok(());
-                }
-                ([0u8; 108], 0)
-            }
-            Op::ConnectUnix {
-                sock,
-                path_buf,
-                path_off,
-                path_len,
-            } => {
-                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-                let pool = &self.bufs[self.pool_base..];
-                match crate::io::files::check_unix_path(
-                    pool,
-                    &self.limits,
-                    path_buf,
-                    path_off,
-                    path_len,
-                    108,
-                ) {
-                    Ok(slice) => {
-                        let mut buf = [0u8; 108];
-                        buf[..slice.len()].copy_from_slice(slice);
-                        (buf, slice.len() as u8)
-                    }
-                    Err(errno) => {
-                        self.ready.push(Completion::new(token, errno));
-                        return Ok(());
-                    }
-                }
-            }
-            Op::Connect { .. }
-            | Op::ConnectUdp { .. }
-            | Op::Accept { .. }
-            | Op::Send { .. }
-            | Op::Recv { .. }
-            | Op::RecvNow { .. }
-            | Op::Close { .. }
-            | Op::AwaitWake
-            | Op::ReadFile { .. }
-            | Op::Timeout { .. }
-            | Op::Cancel { .. }
-            | Op::FileOpen { .. }
-            | Op::FileClose { .. }
-            | Op::FileRead { .. }
-            | Op::FileWrite { .. }
-            | Op::FileSync { .. }
-            | Op::FileReserve { .. }
-            | Op::FilePunch { .. }
-            | Op::FileStatus { .. }
-            | Op::FileRename { .. }
-            | Op::FileUnlink { .. }
-            | Op::FileMkdir { .. } => ([0u8; 108], 0),
         };
-        let deadline = match op {
-            Op::Timeout { nanos } => self.world.now_ns().saturating_add(nanos),
-            Op::Connect { .. }
-            | Op::ConnectUnix { .. }
-            | Op::ConnectUdp { .. }
-            | Op::Accept { .. }
-            | Op::ArmedAccept { .. }
-            | Op::ArmedRecv { .. }
-            | Op::Send { .. }
-            | Op::Recv { .. }
-            | Op::RecvNow { .. }
-            | Op::Close { .. }
-            | Op::AwaitWake
-            | Op::ReadFile { .. }
-            | Op::Cancel { .. }
-            | Op::FileOpen { .. }
-            | Op::FileClose { .. }
-            | Op::FileRead { .. }
-            | Op::FileWrite { .. }
-            | Op::FileSync { .. }
-            | Op::FileReserve { .. }
-            | Op::FilePunch { .. }
-            | Op::FileStatus { .. }
-            | Op::FileRename { .. }
-            | Op::FileUnlink { .. }
-            | Op::FileMkdir { .. } => 0,
-        };
-        let cancel_target = match op {
-            Op::Cancel { target } => self
-                .pending
-                .iter()
-                .find(|q| {
-                    q.token == target
-                        && (q.chain_id == 0 || q.chain_active)
-                        && !matches!(
-                            q.op,
-                            Op::Cancel { .. } | Op::Close { .. } | Op::FileClose { .. }
-                        )
-                })
-                .map(|q| q.id),
-            Op::Connect { .. }
-            | Op::ConnectUnix { .. }
-            | Op::ConnectUdp { .. }
-            | Op::Accept { .. }
-            | Op::ArmedAccept { .. }
-            | Op::ArmedRecv { .. }
-            | Op::Send { .. }
-            | Op::Recv { .. }
-            | Op::RecvNow { .. }
-            | Op::Close { .. }
-            | Op::AwaitWake
-            | Op::ReadFile { .. }
-            | Op::Timeout { .. }
-            | Op::FileOpen { .. }
-            | Op::FileClose { .. }
-            | Op::FileRead { .. }
-            | Op::FileWrite { .. }
-            | Op::FileSync { .. }
-            | Op::FileReserve { .. }
-            | Op::FilePunch { .. }
-            | Op::FileStatus { .. }
-            | Op::FileRename { .. }
-            | Op::FileUnlink { .. }
-            | Op::FileMkdir { .. } => None,
-        };
+        let deadline = self.deadline_of(&op);
+        let cancel_target = self.cancel_target_of(&op);
         self.next_op_id += 1;
         let world_tag = self.world.on_submit(&op);
         self.pending.push(Pending {

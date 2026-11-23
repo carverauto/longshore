@@ -20,6 +20,7 @@ mod disk;
 pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
 mod ops;
 mod ops_armed;
+mod ops_net;
 mod world;
 
 /// Fault probabilities, in parts per million, evaluated per attempt.

@@ -107,72 +107,10 @@ impl Io for UringIo {
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy> {
         let i = self.free.pop().ok_or(Busy)?;
         self.init_slot(i, token);
-        if op.is_file_op() {
-            let pool = &self.bufs[self.pool_base..];
-            if let Err(errno) = self.files_table.check_op(&op, pool, &self.limits) {
-                self.slots[i as usize].state = State::Free;
-                self.ready.push(i, Completion::new(token, errno));
-                return Ok(());
-            }
-        }
-        match op {
-            Op::ArmedAccept { listener } => {
-                assert!(
-                    listener.0 < self.limits.sockets_max,
-                    "socket slot out of range"
-                );
-                if self.limits.accept_range_len == 0 {
-                    self.slots[i as usize].state = State::Free;
-                    self.ready.push(i, Completion::new(token, -ENFILE));
-                    return Ok(());
-                }
-            }
-            Op::ArmedRecv { sock } => {
-                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-                if self.limits.ring_buffers == 0 {
-                    self.slots[i as usize].state = State::Free;
-                    self.ready.push(i, Completion::new(token, -ENOBUFS));
-                    return Ok(());
-                }
-            }
-            Op::ConnectUnix {
-                sock,
-                path_buf,
-                path_off,
-                path_len,
-            } => {
-                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-                let pool = &self.bufs[self.pool_base..];
-                if let Err(errno) =
-                    check_unix_path(pool, &self.limits, path_buf, path_off, path_len, 108)
-                {
-                    self.slots[i as usize].state = State::Free;
-                    self.ready.push(i, Completion::new(token, errno));
-                    return Ok(());
-                }
-            }
-            Op::Connect { .. }
-            | Op::ConnectUdp { .. }
-            | Op::Accept { .. }
-            | Op::Send { .. }
-            | Op::Recv { .. }
-            | Op::RecvNow { .. }
-            | Op::Close { .. }
-            | Op::AwaitWake
-            | Op::ReadFile { .. }
-            | Op::Timeout { .. }
-            | Op::Cancel { .. }
-            | Op::FileOpen { .. }
-            | Op::FileClose { .. }
-            | Op::FileRead { .. }
-            | Op::FileWrite { .. }
-            | Op::FileSync { .. }
-            | Op::FileReserve { .. }
-            | Op::FilePunch { .. }
-            | Op::FileStatus { .. }
-            | Op::FileRename { .. }
-            | Op::FileUnlink { .. }
-            | Op::FileMkdir { .. } => {}
+        if let Err(errno) = self.precheck(&op) {
+            self.slots[i as usize].state = State::Free;
+            self.ready.push(i, Completion::new(token, errno));
+            return Ok(());
         }
         if let Some(mut sqe) = self.prepare_sqe(i, op, token) {
             sqe.user_data |= u64::from(i);
@@ -373,4 +311,67 @@ pub(super) fn read_tcp_options(fd: c_int) -> (bool, bool) {
         read_one(IPPROTO_TCP, TCP_NODELAY),
         read_one(SOL_SOCKET, SO_KEEPALIVE),
     )
+}
+
+impl UringIo {
+    /// Checks an operation's arguments before it takes a submission entry;
+    /// `Err` carries the errno it completes with at once.
+    #[inline]
+    fn precheck(&mut self, op: &Op) -> Result<(), i32> {
+        if op.is_file_op() {
+            let pool = &self.bufs[self.pool_base..];
+            self.files_table.check_op(op, pool, &self.limits)?;
+        }
+        match *op {
+            Op::ArmedAccept { listener } => {
+                assert!(
+                    listener.0 < self.limits.sockets_max,
+                    "socket slot out of range"
+                );
+                if self.limits.accept_range_len == 0 {
+                    return Err(-ENFILE);
+                }
+            }
+            Op::ArmedRecv { sock } => {
+                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                if self.limits.ring_buffers == 0 {
+                    return Err(-ENOBUFS);
+                }
+            }
+            Op::ConnectUnix {
+                sock,
+                path_buf,
+                path_off,
+                path_len,
+            } => {
+                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                let pool = &self.bufs[self.pool_base..];
+                let _: &[u8] =
+                    check_unix_path(pool, &self.limits, path_buf, path_off, path_len, 108)?;
+            }
+            Op::Connect { .. }
+            | Op::ConnectUdp { .. }
+            | Op::Accept { .. }
+            | Op::Send { .. }
+            | Op::Recv { .. }
+            | Op::RecvNow { .. }
+            | Op::Close { .. }
+            | Op::AwaitWake
+            | Op::ReadFile { .. }
+            | Op::Timeout { .. }
+            | Op::Cancel { .. }
+            | Op::FileOpen { .. }
+            | Op::FileClose { .. }
+            | Op::FileRead { .. }
+            | Op::FileWrite { .. }
+            | Op::FileSync { .. }
+            | Op::FileReserve { .. }
+            | Op::FilePunch { .. }
+            | Op::FileStatus { .. }
+            | Op::FileRename { .. }
+            | Op::FileUnlink { .. }
+            | Op::FileMkdir { .. } => {}
+        }
+        Ok(())
+    }
 }
