@@ -5,6 +5,7 @@
 
 //! Tier 5 adversarial HTTP/HTTPS client tests (`GAP-H1`).
 
+#[cfg(test)]
 mod common;
 use common::*;
 

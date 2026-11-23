@@ -19,6 +19,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
@@ -51,7 +55,7 @@ fn main() {
                     .and_then(|v| v.parse().ok())
                     .expect("--chunk BYTES")
             }
-            _ => panic!("unknown flag {k}"),
+            _ => die::die(format_args!("unknown flag {k}")),
         }
     }
     let limits = Limits {
@@ -174,7 +178,7 @@ fn main() {
                 done |= 1 << c.token.0;
                 match c.token.0 {
                     1 => connect = Some(c.result),
-                    3 => panic!("a cancelled connect was still running after 3 s"),
+                    3 => die::die("a cancelled connect was still running after 3 s"),
                     _ => {}
                 }
             }
@@ -312,7 +316,7 @@ fn main() {
             },
         );
         let segment = longshore::io::Segment::decode(size)
-            .unwrap_or_else(|| panic!("measured connect returned {size}"));
+            .unwrap_or_else(|| die::die(format_args!("measured connect returned {size}")));
         // Loopback's MTU is 65536, so its segments are far above Ethernet's.
         assert!(
             segment.size > 16_000 && segment.path_limit > 60_000,

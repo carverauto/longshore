@@ -20,6 +20,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 #[path = "client_uring/exact.rs"]
 mod exact;
 
@@ -59,7 +63,7 @@ fn main() {
                     .and_then(|v| v.parse().ok())
                     .expect("--threads N")
             }
-            _ => panic!("unknown flag {k}"),
+            _ => die::die(format_args!("unknown flag {k}")),
         }
     }
     let conns_per_thread = 4;
@@ -176,7 +180,7 @@ fn main() {
                     accepted_in_a_row = 0;
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
-                Err(other) => panic!("unexpected {other:?}"),
+                Err(other) => die::die(format_args!("unexpected {other:?}")),
             }
         }
         assert!(refused > 0, "the first keys were supposed to be refused");

@@ -28,6 +28,7 @@ const CLIENT: Sock = Sock(2);
 const UDP_SRV: Sock = Sock(3);
 const UDP_CLI: Sock = Sock(4);
 
+#[cfg(test)]
 fn drain(io: &mut SimIo, out: &mut Completions, expected: usize) -> Vec<(u64, i32)> {
     let mut got = Vec::with_capacity(expected);
     while got.len() < expected {
@@ -39,6 +40,7 @@ fn drain(io: &mut SimIo, out: &mut Completions, expected: usize) -> Vec<(u64, i3
     got
 }
 
+#[cfg(test)]
 fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let mut out = Completions::new(8);

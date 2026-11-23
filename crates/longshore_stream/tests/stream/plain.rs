@@ -41,6 +41,7 @@ const LIMITS: Limits = Limits {
     ..Limits::BASE
 };
 
+#[cfg(test)]
 fn connect_pair(seed: u64, faults: Faults) -> (SimIo, Stream, Stream) {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let _: SocketAddr = io.listen(LISTENER, ADDR).unwrap();

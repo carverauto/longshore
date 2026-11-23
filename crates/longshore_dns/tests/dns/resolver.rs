@@ -5,6 +5,7 @@
 
 //! Resolver against a simulated DNS server, with allocation sealed while running.
 
+#[cfg(test)]
 mod common;
 use common::*;
 

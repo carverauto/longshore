@@ -118,6 +118,7 @@ fn child() {
 }
 
 /// Run `case` in a child, with the test harness capturing its output or not.
+#[cfg(test)]
 fn run(case: &str, capture: bool) -> (Output, String) {
     let mut cmd = Command::new(std::env::current_exe().unwrap());
     let _: &mut Command = cmd.args(["--exact", "child", "--test-threads", "1"]);

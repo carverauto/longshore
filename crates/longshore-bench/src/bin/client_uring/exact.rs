@@ -28,7 +28,7 @@ fn answered(report: &Result<Report, longshore::client::Error>, status: u16) -> A
     match report.expect("a request was sent").end {
         End::Answered(answer) if answer.status == status => answer,
         other @ (End::NotSent(_) | End::Answered(_) | End::Unknown(_)) => {
-            panic!("expected an answer of {status}: {other:?}")
+            crate::die::die(format_args!("expected an answer of {status}: {other:?}"))
         }
     }
 }

@@ -20,6 +20,7 @@ struct Identity {
     key: Vec<u8>,
 }
 
+#[cfg(test)]
 fn identity(name: &str) -> Identity {
     let k = rcgen::generate_simple_self_signed(vec![name.to_string()]).unwrap();
     Identity {
@@ -35,6 +36,7 @@ fn run(client: &mut Handshake, server: &mut Handshake, step: usize) -> Result<Ve
 }
 
 /// As [`run`], with `room` bytes offered to each `Handshake::write`.
+#[cfg(test)]
 fn run_writing(
     client: &mut Handshake,
     server: &mut Handshake,
@@ -66,6 +68,7 @@ fn run_writing(
     panic!("handshake did not finish");
 }
 
+#[cfg(test)]
 fn established(step: usize) -> (Direction, Direction, Direction, Direction, Vec<u8>) {
     let id = identity(NAME);
     let cs = ClientSetup::with_roots(&[&id.cert]).unwrap();

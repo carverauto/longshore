@@ -8,6 +8,7 @@
 //! presigned URLs. Against the in-tree HTTP server on one simulated `Io`,
 //! with heap allocation forbidden while operations run.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_s3::erase::{write_manifest, Failure, Failures};
@@ -17,6 +18,7 @@ use longshore_s3::stat::{header_in, Stat};
 
 const LEN: u32 = 5000;
 
+#[cfg(test)]
 fn described() -> Options {
     Options::new()
         .content_type("text/plain")
@@ -25,6 +27,7 @@ fn described() -> Options {
         .unwrap()
 }
 
+#[cfg(test)]
 impl World {
     fn stat(&mut self, token: u64, key: &str, into: Option<BufId>) -> Outcome {
         self.s3.stat(&mut self.io, token, key, into).unwrap();

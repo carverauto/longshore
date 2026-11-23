@@ -16,6 +16,7 @@ fn response(headers: &str) -> Vec<u8> {
     format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n").into_bytes()
 }
 
+#[cfg(test)]
 fn status_of(line: &str) -> Result<u16, HttpError> {
     parse_response(format!("{line}\r\n\r\n").as_bytes(), LIMIT)
         .map(|h| h.expect("a complete head").status)

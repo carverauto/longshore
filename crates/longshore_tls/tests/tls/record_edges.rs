@@ -18,12 +18,14 @@ const IV: [u8; 12] = [
     0x5b, 0x78, 0x92, 0x3d, 0xee, 0x08, 0x57, 0x90, 0x33, 0xe5, 0x23, 0xd9,
 ];
 
+#[cfg(test)]
 fn direction(seq: u64) -> Direction {
     let mut d = Direction::new();
     d.set_keys(Suite::Aes128Gcm, &KEY, &IV, seq).unwrap();
     d
 }
 
+#[cfg(test)]
 fn sealed(content_type: u8, content: &[u8], seq: u64) -> Vec<u8> {
     let mut rec = vec![0u8; content.len() + OVERHEAD];
     let n = direction(seq)

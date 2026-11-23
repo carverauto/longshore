@@ -6,6 +6,7 @@
 //! The S3 store with the bucket addressed in the path, against a server that
 //! expects it there.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_http_client::head::Fields;
@@ -27,6 +28,7 @@ fn world_for_bucket(seed: u64, bucket: &'static str) -> World {
 }
 
 /// A server listening on `ADDR` that serves `bucket` from its path.
+#[cfg(test)]
 fn path_server(mut io: SimIo, bucket: &'static str) -> (SimIo, Server) {
     let mut server = Server::new(server::Config {
         listener: Sock(0),
@@ -59,6 +61,7 @@ fn store_config(bucket: &str, second: bool) -> Config {
 }
 
 /// Run `w` and a second store `other` until `n` operations have finished in total.
+#[cfg(test)]
 fn run_both(w: &mut World, other: &mut S3, n: usize) {
     let World {
         io,
@@ -85,6 +88,7 @@ fn run_both(w: &mut World, other: &mut S3, n: usize) {
     }
 }
 
+#[cfg(test)]
 fn put(w: &mut World, token: u64, key: &str) {
     w.fill_tx(LEN, token as u8);
     w.s3.store(&mut w.io, token, key, TX, LEN, Checksum::None)

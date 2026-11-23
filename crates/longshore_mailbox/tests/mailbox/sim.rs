@@ -29,6 +29,7 @@ struct RunResult {
     hash_b: u64,
 }
 
+#[cfg(test)]
 fn run_two_cores(seed_a: u64, seed_b: u64, tick_order: &[usize], faults: Faults) -> RunResult {
     let limits = Limits {
         ops_max: 4,

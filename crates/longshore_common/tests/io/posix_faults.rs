@@ -23,6 +23,7 @@ fn v4() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
 }
 
+#[cfg(test)]
 fn connect_pair(
     io: &mut PosixIo,
     out: &mut Completions,

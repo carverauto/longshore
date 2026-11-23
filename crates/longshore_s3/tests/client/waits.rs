@@ -6,8 +6,10 @@
 //! Waiting for buffers and operation slots, and what callers see when an
 //! I/O lane fails.
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
+#[cfg(test)]
 mod rig;
 use longshore_s3::client::{Buffer, Error};
 use rig::*;

@@ -17,8 +17,10 @@
 
 #![cfg(longshore_model)]
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
+#[cfg(test)]
 #[path = "model/machine.rs"]
 mod machine;
 

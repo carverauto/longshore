@@ -6,6 +6,7 @@
 //! HTTP client against the in-tree server on one simulated `Io`, with heap
 //! allocation forbidden while requests run.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_http_client::head::HttpError;

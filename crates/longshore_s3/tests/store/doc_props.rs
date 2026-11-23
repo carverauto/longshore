@@ -23,6 +23,7 @@ fn inside(part: &[u8], whole: &[u8]) -> bool {
     part.is_empty() || (w.start <= p.start && p.end <= w.end)
 }
 
+#[cfg(test)]
 fn unescaped(raw: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; raw.len()];
     let n = unescape(raw, &mut out).expect("references this crate wrote");
@@ -31,6 +32,7 @@ fn unescaped(raw: &[u8]) -> Vec<u8> {
 }
 
 /// The texts between each `open` and the `close` after it.
+#[cfg(test)]
 fn between<'a>(doc: &'a str, open: &str, close: &str) -> Vec<&'a str> {
     doc.split(open)
         .skip(1)

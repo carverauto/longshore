@@ -7,10 +7,12 @@
 //! Every other crate's tests lean on this server, and the client never
 //! sends it a malformed request, so nothing else reaches these answers.
 
+#[cfg(test)]
 mod common;
 use common::*;
 
 /// Send `request` on a new connection and return the head of the answer.
+#[cfg(test)]
 fn answer_to(request: &[u8]) -> String {
     const SOCK: Sock = Sock(1 + CONNS * 2);
     const CONNECT: u64 = 3 << 40;

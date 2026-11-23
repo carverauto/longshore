@@ -6,6 +6,7 @@
 //! The S3 store against the in-tree HTTP server on one simulated `Io`, with
 //! heap allocation forbidden while operations run.
 
+#[cfg(test)]
 mod common;
 use common::*;
 
@@ -20,6 +21,7 @@ const KEYS: [&str; 6] = [
     "zz top",
 ];
 
+#[cfg(test)]
 fn list_page(
     w: &mut World,
     prefix: &str,
@@ -117,6 +119,7 @@ fn list_is_retried_like_any_other_request() {
 
 /// One page of a delimiter listing: its keys, its common prefixes, and the
 /// token to resume it with if it was cut short.
+#[cfg(test)]
 fn delimited_page(
     w: &mut World,
     token: Option<&str>,

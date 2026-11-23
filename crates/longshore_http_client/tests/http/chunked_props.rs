@@ -23,6 +23,7 @@ struct Decoded {
 /// Feed `raw` in pieces of the sizes in `steps` (repeated as needed), the
 /// way the client does: each piece is placed right after the body decoded
 /// so far. Checks the decoder's own promises on every call.
+#[cfg(test)]
 fn decode(raw: &[u8], steps: &[usize]) -> Result<Decoded, HttpError> {
     let mut buf = vec![0u8; raw.len() + 16];
     let (mut d, mut decoded, mut fed) = (Chunked::new(), 0usize, 0usize);

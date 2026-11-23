@@ -8,6 +8,7 @@
 //! lossy-network tests never show the resolver one. Here the nameserver
 //! sends them on purpose.
 
+#[cfg(test)]
 mod common;
 use common::*;
 

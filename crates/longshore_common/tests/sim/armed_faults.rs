@@ -27,6 +27,7 @@ fn send_op(sock: Sock, len: u32) -> Op {
     }
 }
 
+#[cfg(test)]
 fn drain_until(
     sim: &mut SimIo,
     out: &mut Completions,

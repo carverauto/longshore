@@ -11,10 +11,12 @@ use longshore_tls::handshake::{ClientSetup, Handshake, ServerSetup, TlsError};
 
 const NAME: &str = "objects.test";
 
+#[cfg(test)]
 fn client() -> Handshake {
     Handshake::client(&ClientSetup::with_public_roots(), NAME).unwrap()
 }
 
+#[cfg(test)]
 fn identity() -> (Vec<u8>, Vec<u8>) {
     let k = rcgen::generate_simple_self_signed(vec![NAME.to_string()]).unwrap();
     (k.cert.der().to_vec(), k.signing_key.serialize_der())

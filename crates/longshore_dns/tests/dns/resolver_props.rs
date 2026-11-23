@@ -7,6 +7,7 @@
 //! segments: whatever has been measured, in whatever order, a host with
 //! addresses always has one to hand out.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use hegel::generators as gs;

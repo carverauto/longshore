@@ -6,6 +6,7 @@
 //! The resolver's address families: AAAA records, the preference between
 //! families, and moving to the other family when connections fail.
 
+#[cfg(test)]
 mod common;
 use common::*;
 

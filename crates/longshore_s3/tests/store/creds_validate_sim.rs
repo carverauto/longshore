@@ -6,6 +6,7 @@
 //! The request that proves new credentials before they are adopted: a
 //! listing of the whole bucket, of a prefix, or nothing.
 
+#[cfg(test)]
 mod creds_world;
 use creds_world::*;
 use longshore_common::io::alloc_guard::Guard;

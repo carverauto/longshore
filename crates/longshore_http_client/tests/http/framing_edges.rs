@@ -7,6 +7,7 @@
 //! response, responses the client must refuse, timeouts in every state that
 //! waits for the peer, and the request bytes themselves.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_http_client::head::HttpError;

@@ -37,7 +37,7 @@ pub(super) fn check_rlimit_nofile() {
         ..Limits::BASE
     };
     let err = match UringIo::new(limits) {
-        Ok(_) => panic!("expected RLIMIT_NOFILE failure"),
+        Ok(_) => crate::die::die("expected RLIMIT_NOFILE failure"),
         Err(e) => e,
     };
     let msg = err.to_string();
@@ -108,7 +108,9 @@ pub(super) fn run_memlock_child() {
         ..Limits::BASE
     };
     let err = match UringIo::new(limits) {
-        Ok(_) => panic!("expected RLIMIT_MEMLOCK OutOfMemory for cap={cap}"),
+        Ok(_) => crate::die::die(format_args!(
+            "expected RLIMIT_MEMLOCK OutOfMemory for cap={cap}"
+        )),
         Err(e) => e,
     };
     assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);

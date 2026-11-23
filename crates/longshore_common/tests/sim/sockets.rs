@@ -37,6 +37,7 @@ struct World {
     out: Completions,
 }
 
+#[cfg(test)]
 impl World {
     fn new(seed: u64) -> World {
         World {

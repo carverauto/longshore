@@ -24,6 +24,7 @@ fn v4() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
 }
 
+#[cfg(test)]
 fn drain_n(io: &mut PosixIo, out: &mut Completions, want: usize) -> Vec<(u64, i32)> {
     let mut got = Vec::with_capacity(want);
     while got.len() < want {
@@ -35,6 +36,7 @@ fn drain_n(io: &mut PosixIo, out: &mut Completions, want: usize) -> Vec<(u64, i3
     got
 }
 
+#[cfg(test)]
 fn pair(io: &mut PosixIo, out: &mut Completions, listener: Sock, server: Sock, client: Sock) {
     let bound = io.listen(listener, v4()).unwrap();
     io.submit(
@@ -62,6 +64,7 @@ fn pair(io: &mut PosixIo, out: &mut Completions, listener: Sock, server: Sock, c
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Ticks without blocking until a completion arrives or `window` passes.
+#[cfg(test)]
 fn completion_within(
     io: &mut PosixIo,
     out: &mut Completions,

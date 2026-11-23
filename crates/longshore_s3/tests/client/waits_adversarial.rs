@@ -6,12 +6,14 @@
 //! Tier 5 adversarial waiter, lane-close retry, buffer-drop, and `Budget`
 //! abandon tests for `longshore_s3::client` (`GAP-C1`).
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
 #[expect(
     dead_code,
     reason = "these tests poll each operation by hand with `Rig::pump` and never fill a body, so `Rig::run`, `fill` and `LEN` go unused in this binary"
 )]
+#[cfg(test)]
 mod rig;
 use longshore_s3::client::{Budget, Error};
 use longshore_s3::report::{Cause, End, Expect, Put};

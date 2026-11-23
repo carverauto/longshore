@@ -6,6 +6,7 @@
 //! Multipart upload against the in-tree HTTP server on one simulated `Io`,
 //! with heap allocation forbidden while operations run.
 
+#[cfg(test)]
 mod common;
 use common::parts::*;
 use common::*;

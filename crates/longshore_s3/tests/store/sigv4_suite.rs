@@ -13,6 +13,7 @@ use longshore_s3::time::amz_date;
 
 const SECRET: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
 
+#[cfg(test)]
 fn case(name: &str) -> (String, String, bool) {
     let dir = format!("{}/tests/store/sigv4/{name}", env!("CARGO_MANIFEST_DIR"));
     let read = |f: &str| {
@@ -30,6 +31,7 @@ fn case(name: &str) -> (String, String, bool) {
 }
 
 /// The signed header names of a case, as its canonical request lists them.
+#[cfg(test)]
 fn signed_headers(name: &str) -> String {
     let path = format!(
         "{}/tests/store/sigv4/{name}/header-canonical-request.txt",
@@ -41,6 +43,7 @@ fn signed_headers(name: &str) -> String {
 }
 
 /// Sign the request in `request.txt` the way a caller would.
+#[cfg(test)]
 fn sign(request: &str, sign_body: bool) -> (String, String) {
     let mut lines = request.lines();
     let start = lines.next().unwrap();

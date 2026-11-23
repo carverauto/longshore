@@ -7,6 +7,7 @@
 //! file, validates new credentials against the server, and only then uses
 //! them. Allocation is forbidden while operations run.
 
+#[cfg(test)]
 mod creds_world;
 use creds_world::*;
 use longshore_common::io::alloc_guard::Guard;

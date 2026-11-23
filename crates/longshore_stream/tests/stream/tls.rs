@@ -13,6 +13,7 @@ use longshore_stream::{IdleCheck, Step, Stream, TlsError};
 use longshore_tls::handshake::{ClientSetup, Handshake, ServerSetup};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+#[cfg(test)]
 #[path = "tls/adversarial.rs"]
 mod adversarial;
 
@@ -56,6 +57,7 @@ struct Identity {
     key: Vec<u8>,
 }
 
+#[cfg(test)]
 fn identity(name: &str) -> Identity {
     let k = rcgen::generate_simple_self_signed(vec![name.to_string()]).unwrap();
     Identity {
@@ -64,6 +66,7 @@ fn identity(name: &str) -> Identity {
     }
 }
 
+#[cfg(test)]
 fn setup_streams(
     seed: u64,
     faults: Faults,
@@ -150,6 +153,7 @@ fn fill_pattern(buf: &mut [u8], seed: u8) {
     }
 }
 
+#[cfg(test)]
 fn drain_recv(
     io: &mut SimIo,
     stream: &mut Stream,
@@ -176,6 +180,7 @@ fn drain_recv(
     }
 }
 
+#[cfg(test)]
 fn round_trip(
     io: &mut SimIo,
     client: &mut Stream,

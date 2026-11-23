@@ -6,6 +6,7 @@
 //! The resolver's preference for addresses whose connections have large
 //! TCP segments.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_common::io::Segment;
@@ -46,6 +47,7 @@ fn resolved(keep: Option<usize>) -> (SimIo, Resolver, Server, Completions) {
 }
 
 /// The distinct addresses the next `n` lookups return, sorted.
+#[cfg(test)]
 fn handed_out(r: &mut Resolver, n: usize) -> Vec<IpAddr> {
     let mut seen: Vec<IpAddr> = (0..n).map(|_| r.lookup(0).unwrap()).collect();
     seen.sort();

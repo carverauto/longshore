@@ -7,6 +7,7 @@
 //! `Io`: what they report when the store answers, refuses, falls silent or
 //! runs out of time, with heap allocation forbidden while they run.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_s3::crypto::{hex, sha256};
@@ -37,6 +38,7 @@ fn strict_world(seed: u64) -> World {
     w
 }
 
+#[cfg(test)]
 fn report(w: &mut World) -> Report {
     match w.last().outcome {
         Outcome::Report(report) => report,
@@ -56,6 +58,7 @@ fn report(w: &mut World) -> Report {
     }
 }
 
+#[cfg(test)]
 fn answer(w: &mut World) -> Answer {
     match report(w).end {
         End::Answered(answer) => answer,

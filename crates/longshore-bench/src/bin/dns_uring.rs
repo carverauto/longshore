@@ -15,6 +15,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
@@ -45,7 +49,9 @@ fn main() {
         Ok("6") => Family::V6,
         Ok("prefer6") => Family::PreferV6,
         Ok("prefer4") => Family::PreferV4,
-        Ok(other) => panic!("DNS_FAMILY={other}: expected 4, 6, prefer6 or prefer4"),
+        Ok(other) => die::die(format_args!(
+            "DNS_FAMILY={other}: expected 4, 6, prefer6 or prefer4"
+        )),
     };
     println!("nameservers: {servers:?}");
 

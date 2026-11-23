@@ -81,6 +81,7 @@ pub(crate) fn encode_record(buf: &mut [u8], rec_bytes: usize, seed: u64, seq: u6
     buf[16..20].copy_from_slice(&(!crc).to_le_bytes());
 }
 
+#[cfg(test)]
 pub(crate) fn verify_record(buf: &[u8], rec_bytes: usize, seed: u64, expected_seq: u64) -> bool {
     if buf.len() < rec_bytes {
         return false;
@@ -216,6 +217,7 @@ fn drive(sim: &mut SimIo, out: &mut Completions, tok: &mut u64, op: Op) -> i32 {
     drive_one(sim, out, tok, op)
 }
 
+#[cfg(test)]
 pub(crate) fn drive_one(sim: &mut SimIo, out: &mut Completions, tok: &mut u64, op: Op) -> i32 {
     let t = Token(*tok);
     *tok += 1;
@@ -231,6 +233,7 @@ pub(crate) fn drive_one(sim: &mut SimIo, out: &mut Completions, tok: &mut u64, o
     panic!("timed out on wal op");
 }
 
+#[cfg(test)]
 pub(crate) fn wal_append(
     sim: &mut SimIo,
     out: &mut Completions,

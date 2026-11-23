@@ -71,6 +71,7 @@ pub(crate) fn put_path(sim: &mut SimIo, buf: BufId, path: &str) -> u32 {
     (b.len() + 1) as u32
 }
 
+#[cfg(test)]
 pub(crate) fn drive(sim: &mut SimIo, out: &mut Completions, tok: u64, op: Op) -> i32 {
     sim.submit(Token(tok), op).unwrap();
     for _ in 0..10_000 {

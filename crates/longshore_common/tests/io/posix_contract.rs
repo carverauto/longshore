@@ -31,6 +31,7 @@ fn v6() -> SocketAddr {
     SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
 }
 
+#[cfg(test)]
 fn drain_n(io: &mut PosixIo, out: &mut Completions, want: usize) -> Vec<(u64, i32)> {
     let mut got = Vec::with_capacity(want);
     while got.len() < want {

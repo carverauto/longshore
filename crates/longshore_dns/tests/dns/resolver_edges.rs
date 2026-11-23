@@ -8,6 +8,7 @@
 //! it, nameservers that are all dead or cannot be reached at all, tokens at
 //! the ends of its range, and configurations it refuses.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_common::io::Completion;

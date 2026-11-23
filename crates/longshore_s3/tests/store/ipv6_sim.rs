@@ -6,6 +6,7 @@
 //! The store over IPv6: a fixed IPv6 endpoint, a name with only AAAA
 //! records, and a name with both families where one cannot be reached.
 
+#[cfg(test)]
 mod common;
 use common::names::*;
 use common::*;

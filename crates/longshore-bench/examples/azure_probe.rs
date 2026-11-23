@@ -22,6 +22,8 @@ const KEY: &str =
     "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 const VERSION: &str = "2021-08-06";
 
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 struct Reply {
     status: u16,
     head: String,
@@ -51,7 +53,7 @@ fn call(
     if_none_match: &str,
     range: &str,
     body: &[u8],
-) -> Reply {
+) -> Result<Reply> {
     let mut key = [0u8; KEY_MAX];
     let k = decode_key(KEY, &mut key).expect("development key");
     let date = http_date(
@@ -100,7 +102,7 @@ fn call(
         }
     }
     request += "\r\n";
-    let mut s = TcpStream::connect(addr).unwrap_or_else(|e| panic!("{addr}: {e}"));
+    let mut s = TcpStream::connect(addr).map_err(|e| format!("{addr}: {e}"))?;
     s.write_all(request.as_bytes()).unwrap();
     s.write_all(body).unwrap();
     let mut raw = Vec::new();
@@ -115,11 +117,11 @@ fn call(
         .nth(1)
         .and_then(|v| v.parse().ok())
         .expect("a status");
-    Reply {
+    Ok(Reply {
         status,
         head,
         body: raw[split + 4..].to_vec(),
-    }
+    })
 }
 
 fn show(what: &str, r: &Reply, want: u16) -> bool {
@@ -144,7 +146,7 @@ fn show(what: &str, r: &Reply, want: u16) -> bool {
     ok
 }
 
-fn main() {
+fn main() -> Result<()> {
     let addr = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:10000".into());
@@ -173,10 +175,10 @@ fn main() {
             "",
             "",
             b"",
-        ),
+        )?,
         201,
     );
-    let stored = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
+    let stored = call(addr, "PUT", &blob, &[], &[block], "*", "", &body)?;
     ok &= show("store if absent", &stored, 201);
     let returned = stored
         .header("x-ms-content-crc64")
@@ -193,7 +195,7 @@ fn main() {
     );
     // The reference documents 412 for an unmet If-None-Match on a write;
     // the emulator answers 409 BlobAlreadyExists. The client must take both.
-    let again = call(addr, "PUT", &blob, &[], &[block], "*", "", &body);
+    let again = call(addr, "PUT", &blob, &[], &[block], "*", "", &body)?;
     ok &= show("store if absent, again", &again, again.status) && matches!(again.status, 409 | 412);
     ok &= show(
         "store with checksum, least significant first",
@@ -206,7 +208,7 @@ fn main() {
             "",
             "",
             &body,
-        ),
+        )?,
         201,
     );
     ok &= show(
@@ -220,7 +222,7 @@ fn main() {
             "",
             "",
             &body,
-        ),
+        )?,
         400,
     );
     ok &= show(
@@ -234,14 +236,14 @@ fn main() {
             "",
             "",
             &body,
-        ),
+        )?,
         400,
     );
-    let fetched = call(addr, "GET", &blob, &[], &[], "", "", b"");
+    let fetched = call(addr, "GET", &blob, &[], &[], "", "", b"")?;
     ok &= show("fetch", &fetched, 200) && fetched.body == body;
-    let ranged = call(addr, "GET", &blob, &[], &[], "", "bytes=100-199", b"");
+    let ranged = call(addr, "GET", &blob, &[], &[], "", "bytes=100-199", b"")?;
     ok &= show("fetch a range", &ranged, 206) && ranged.body == body[100..200];
-    let props = call(addr, "HEAD", &blob, &[], &[], "", "", b"");
+    let props = call(addr, "HEAD", &blob, &[], &[], "", "", b"")?;
     ok &= show("properties", &props, 200);
     println!(
         "  properties x-ms-content-crc64: {}   content-md5: {}",
@@ -261,7 +263,7 @@ fn main() {
         "",
         "",
         b"",
-    );
+    )?;
     ok &= show("list with a prefix", &listed, 200);
     println!(
         "  listing: {}",
@@ -273,12 +275,12 @@ fn main() {
     );
     ok &= show(
         "erase",
-        &call(addr, "DELETE", &blob, &[], &[], "", "", b""),
+        &call(addr, "DELETE", &blob, &[], &[], "", "", b"")?,
         202,
     );
     ok &= show(
         "fetch after erase",
-        &call(addr, "GET", &blob, &[], &[], "", "", b""),
+        &call(addr, "GET", &blob, &[], &[], "", "", b"")?,
         404,
     );
     ok &= show(
@@ -292,7 +294,7 @@ fn main() {
             "",
             "",
             b"",
-        ),
+        )?,
         202,
     );
     println!("{}", if ok { "probe ok" } else { "probe FAILED" });

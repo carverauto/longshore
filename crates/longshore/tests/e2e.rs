@@ -6,5 +6,6 @@
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
+#[cfg(test)]
 #[path = "e2e/mod.rs"]
 mod e2e;

@@ -26,6 +26,7 @@ const CHUNK: u32 = 4096;
 /// Sends or receives it takes to move `TOTAL` bytes a chunk at a time.
 const CHUNKS: u64 = TOTAL.div_ceil(CHUNK as u64);
 
+#[cfg(test)]
 fn run(seed: u64, faults: Faults) -> EchoStats {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let mut out = Completions::new(8);

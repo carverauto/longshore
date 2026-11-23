@@ -19,6 +19,7 @@ static ALLOC: Guard = Guard;
 
 struct TempDir(PathBuf);
 
+#[cfg(test)]
 impl TempDir {
     fn new(tag: &str) -> Self {
         let p = std::env::temp_dir().join(format!(

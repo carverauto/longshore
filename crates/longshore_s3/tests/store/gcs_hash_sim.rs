@@ -12,6 +12,7 @@
     unused_imports,
     reason = "`gcs_world` also serves the token-rotation and failure tests in gcs_sim.rs; these hash tests use only its world and server, so the rest goes unused here"
 )]
+#[cfg(test)]
 mod gcs_world;
 use gcs_world::*;
 
@@ -26,6 +27,7 @@ const SCRIPTED: &[u8] = b"the body of the scripted response";
 /// A well-formed MD5 value. Nothing reads it.
 const MD5: &str = "md5=AAAAAAAAAAAAAAAAAAAAAA==";
 
+#[cfg(test)]
 fn crc_of(body: &[u8]) -> String {
     let value = longshore_crc::crc32c_header_value(longshore_crc::crc32c(body));
     format!("crc32c={}", core::str::from_utf8(&value).unwrap())
@@ -33,6 +35,7 @@ fn crc_of(body: &[u8]) -> String {
 
 /// Fetch a key whose first response is `SCRIPTED` under these header lines.
 /// Returns how the fetch ended and whether the caller got the scripted body.
+#[cfg(test)]
 fn fetch_with(hash_lines: &[String]) -> (Done, bool) {
     let mut w = world(1, Faults::default(), 3);
     w.io.buf(TX)[..STORED.len()].copy_from_slice(STORED);

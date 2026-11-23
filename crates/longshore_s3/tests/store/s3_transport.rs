@@ -8,6 +8,7 @@
 //! HTTP server on one simulated `Io`, with heap allocation forbidden while
 //! operations run.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_http_client::client::Error;
@@ -15,6 +16,7 @@ use longshore_http_client::client::Error;
 const LEN: u32 = 6000;
 
 /// A world holding one object at `k`, and the bytes of that object.
+#[cfg(test)]
 fn world_with_object(seed: u64, attempts_max: u32, enforce: bool) -> (World, Vec<u8>) {
     let mut w = world_with(seed, Faults::default(), attempts_max, enforce);
     w.fill_tx(LEN, seed as u8);

@@ -6,8 +6,10 @@
 //! Multipart upload through the shareable client, against the in-tree
 //! server in the simulator.
 
+#[cfg(test)]
 #[path = "../store/common/mod.rs"]
 mod common;
+#[cfg(test)]
 mod rig;
 use longshore_s3::client::Error;
 use longshore_s3::multipart::{Part, PartTag};
@@ -18,6 +20,7 @@ use std::task::{Context, Poll, Waker};
 
 /// Begin an upload, store two parts that are in flight together, and
 /// complete it. Returns the bytes the object should hold.
+#[cfg(test)]
 fn upload(r: &mut Rig, client: &longshore_s3::client::Client, key: &str) -> (Vec<u8>, Vec<Part>) {
     let id = r.run(client.upload_begin(key)).expect("begin");
     let (mut first, mut second) = (r.buffer(), r.buffer());

@@ -48,6 +48,7 @@ struct Identity {
     key: Vec<u8>,
 }
 
+#[cfg(test)]
 fn identity(name: &str) -> Identity {
     let k = rcgen::generate_simple_self_signed(vec![name.to_string()]).unwrap();
     Identity {
@@ -106,6 +107,7 @@ fn world_with(
     world_cfg(seed, faults, client_cfg(), client_tls, server_tls)
 }
 
+#[cfg(test)]
 fn world_cfg(
     seed: u64,
     faults: Faults,
@@ -134,6 +136,7 @@ fn world_cfg(
     }
 }
 
+#[cfg(test)]
 fn world(seed: u64, faults: Faults) -> World {
     let id = identity(NAME);
     world_with(
@@ -144,6 +147,7 @@ fn world(seed: u64, faults: Faults) -> World {
     )
 }
 
+#[cfg(test)]
 impl World {
     fn run_until_done(&mut self, n: usize) {
         let World {
@@ -235,6 +239,7 @@ impl World {
     }
 }
 
+#[cfg(test)]
 fn ok(status: u16, body_len: u32) -> impl Fn(Result<Response, Error>) {
     move |r| match r {
         Ok(resp) => assert_eq!((resp.status, resp.body_len), (status, body_len)),

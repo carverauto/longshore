@@ -7,11 +7,13 @@
 //! it will close, more than one host, retiring connections, and what a
 //! failure on a first use reports.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use longshore_http_client::head::HttpError;
 use longshore_http_client::server::Behavior;
 
+#[cfg(test)]
 fn request_to(w: &mut World, host_id: u16, host: &str, method: &str, target: &str) -> Response {
     let req = Request {
         method,

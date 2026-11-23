@@ -7,6 +7,7 @@
 //! CRC-32C in `x-goog-hash`, and `x-goog-if-generation-match: 0`.
 //! Allocation is forbidden while operations run.
 
+#[cfg(test)]
 mod gcs_world;
 use gcs_world::*;
 

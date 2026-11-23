@@ -108,6 +108,7 @@ fn borrowed(pairs: &[(String, String)]) -> Vec<(&str, &str)> {
         .collect()
 }
 
+#[cfg(test)]
 fn sign(method: &str, headers: &[(String, String)], query: &[(String, String)]) -> String {
     let (h, q) = (borrowed(headers), borrowed(query));
     let req = Request {

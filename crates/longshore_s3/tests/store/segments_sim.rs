@@ -6,6 +6,7 @@
 //! The store with a preference for large TCP segments, against a name
 //! whose addresses differ in the segment size their connections get.
 
+#[cfg(test)]
 mod common;
 use common::names::*;
 use common::*;
@@ -38,6 +39,7 @@ fn world_of_fronts(prefer: Option<usize>, sizes: [u32; 3]) -> (World, Nameserver
 }
 
 /// Store three objects at once, which opens a connection to each address.
+#[cfg(test)]
 fn store_three_at_once(w: &mut World, ns: &Nameserver) {
     w.fill_tx(100, 0);
     for (token, key) in [(1, "a"), (2, "b"), (3, "c")] {

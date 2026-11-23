@@ -15,6 +15,10 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
+#[path = "../die.rs"]
+mod die;
+
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
@@ -71,7 +75,7 @@ fn run_backend<IO: longshore::io::Io>(
         let mut io = make(limits);
         let mut out = Completions::new(8);
         let stats = sealed(|| echo(&mut io, addr, 300_000, 4096, false, &mut out))
-            .unwrap_or_else(|e| panic!("sealed echo failed: {e:?}"));
+            .unwrap_or_else(|e| crate::die::die(format_args!("sealed echo failed: {e:?}")));
         assert!(stats.sends > 0 && stats.recvs > 0);
     }
 }
@@ -88,7 +92,7 @@ fn main() {
         match a.as_str() {
             "--v6" => v6 = true,
             "--posix" => posix = true,
-            other => panic!("unknown flag {other}"),
+            other => die::die(format_args!("unknown flag {other}")),
         }
     }
     let ip = if v6 {

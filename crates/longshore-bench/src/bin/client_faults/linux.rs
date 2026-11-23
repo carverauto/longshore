@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::die::die;
 use longshore::client::{Builder, Client, Error};
 use longshore::http::server::{self, Server};
 use longshore::io::uring::{Fault, UringIo};
@@ -40,7 +41,7 @@ pub fn main() {
             let fault = match args.get(1).map(String::as_str) {
                 Some("tick") => Fault::TickFails,
                 Some("ring") => Fault::RingLost,
-                _ => panic!("break tick|ring"),
+                _ => die("break tick|ring"),
             };
             break_threads(fault, number("--threads", 2));
         }
@@ -48,9 +49,7 @@ pub fn main() {
             number("--rounds", 2000),
             !args.iter().any(|a| a == "--any-memory"),
         ),
-        _ => panic!(
-            "client_faults break tick|ring [--threads N] | churn [--rounds N] [--any-memory]"
-        ),
+        _ => die("client_faults break tick|ring [--threads N] | churn [--rounds N] [--any-memory]"),
     }
 }
 
@@ -175,7 +174,7 @@ fn caller(client: &Client, n: usize, stop: &AtomicBool, seen: &Seen) {
                 let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
-            Err(other) => panic!("caller {n}: store ended {other:?}"),
+            Err(other) => die(format_args!("caller {n}: store ended {other:?}")),
         }
         let (fetched, body) = client.fetch(&key, body).wait();
         match fetched {
@@ -192,7 +191,7 @@ fn caller(client: &Client, n: usize, stop: &AtomicBool, seen: &Seen) {
             Err(Error::Closed) => {
                 let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
             }
-            other => panic!("caller {n}: fetch ended {other:?}"),
+            other => die(format_args!("caller {n}: fetch ended {other:?}")),
         }
     }
 }

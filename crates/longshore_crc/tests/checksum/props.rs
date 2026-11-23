@@ -60,6 +60,7 @@ fn a_flipped_bit_is_detected(tc: TestCase) {
 }
 
 /// A standard base64 decoder, written for the test.
+#[cfg(test)]
 fn base64_decode(text: &[u8]) -> Vec<u8> {
     let value = |c: u8| match c {
         b'A'..=b'Z' => c - b'A',

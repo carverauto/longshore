@@ -23,12 +23,14 @@ use std::sync::Arc;
 
 const NAME: &str = "objects.test";
 
+#[cfg(test)]
 fn identity() -> (Vec<u8>, Vec<u8>) {
     let k = rcgen::generate_simple_self_signed(vec![NAME.to_string()]).unwrap();
     (k.cert.der().to_vec(), k.signing_key.serialize_der())
 }
 
 /// A rustls server that offers `suite` and nothing else.
+#[cfg(test)]
 fn rustls_server(cert: &[u8], key: &[u8], suite: CipherSuite) -> Connection {
     let mut provider = default_provider();
     provider.cipher_suites.retain(|s| s.suite() == suite);
@@ -46,6 +48,7 @@ fn rustls_server(cert: &[u8], key: &[u8], suite: CipherSuite) -> Connection {
 }
 
 /// A rustls client with its own defaults, trusting `cert`.
+#[cfg(test)]
 fn rustls_client(cert: &[u8]) -> Connection {
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from(cert.to_vec())).unwrap();
@@ -61,6 +64,7 @@ fn rustls_client(cert: &[u8]) -> Connection {
 }
 
 /// Give `bytes` to rustls, all of them.
+#[cfg(test)]
 fn feed(peer: &mut Connection, mut bytes: &[u8]) {
     while !bytes.is_empty() {
         let _: usize = peer.read_tls(&mut bytes).unwrap();
@@ -69,6 +73,7 @@ fn feed(peer: &mut Connection, mut bytes: &[u8]) {
 }
 
 /// Everything rustls has to send.
+#[cfg(test)]
 fn drain(peer: &mut Connection, out: &mut Vec<u8>) {
     while peer.wants_write() {
         let _: usize = peer.write_tls(out).unwrap();
@@ -77,6 +82,7 @@ fn drain(peer: &mut Connection, out: &mut Vec<u8>) {
 
 /// Run the handshake to completion. Returns what rustls sent that the
 /// wrapper left for the record layer.
+#[cfg(test)]
 fn handshake(ours: &mut Handshake, peer: &mut Connection) -> Vec<u8> {
     let mut to_us = Vec::new();
     let mut buf = vec![0u8; 65536];
@@ -94,6 +100,7 @@ fn handshake(ours: &mut Handshake, peer: &mut Connection) -> Vec<u8> {
 }
 
 /// Open every record in `bytes` with `rx`: (content type, content) of each.
+#[cfg(test)]
 fn open_all(rx: &mut Direction, mut bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
     let mut opened = Vec::new();
     let mut out = vec![0u8; 20_000];
@@ -108,6 +115,7 @@ fn open_all(rx: &mut Direction, mut bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
     opened
 }
 
+#[cfg(test)]
 fn suite_of(peer: &Connection) -> CipherSuite {
     peer.negotiated_cipher_suite().unwrap().suite()
 }

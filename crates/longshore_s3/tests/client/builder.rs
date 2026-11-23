@@ -10,6 +10,7 @@ use longshore_s3::client::{BuildError, Builder};
 use longshore_s3::creds::Credentials;
 use std::net::SocketAddr;
 
+#[cfg(test)]
 fn settings(host: &str) -> Builder {
     let credentials = Credentials::new("AKIDEXAMPLE", "secret").unwrap();
     let mut b = Builder::new(host, "us-east-1", credentials);

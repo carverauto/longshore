@@ -7,6 +7,7 @@
 //! retryable failures a store meets, it ends as the budget says it must,
 //! having waited as long as the backoff says and no longer.
 
+#[cfg(test)]
 mod common;
 use common::*;
 use hegel::generators as gs;

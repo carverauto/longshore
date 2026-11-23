@@ -53,7 +53,7 @@ fn caller(client: &Client, n: usize, way: Way) {
             match stored {
                 Ok(()) if !void => {}
                 Err(Error::Closed) if way == Way::Fail => return,
-                other => panic!("{way:?}: store ended {other:?}"),
+                other => crate::die::die(format_args!("{way:?}: store ended {other:?}")),
             }
             let (fetched, body) = client.fetch(&key, body).wait();
             match fetched {
@@ -62,7 +62,7 @@ fn caller(client: &Client, n: usize, way: Way) {
                     assert!(body.as_slice().iter().all(|b| *b == n as u8));
                 }
                 Err(Error::Closed) if way == Way::Fail => {}
-                other => panic!("{way:?}: fetch ended {other:?}"),
+                other => crate::die::die(format_args!("{way:?}: fetch ended {other:?}")),
             }
         }
     }

@@ -21,12 +21,14 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 #[expect(
     clippy::wildcard_enum_match_arm,
     reason = "ConnectionTrafficSecrets is foreign and non_exhaustive: only AES-GCM suites are offered"
 )]
-fn keys(s: &ConnectionTrafficSecrets) -> (Suite, Vec<u8>, [u8; 12]) {
-    match s {
+fn keys(s: &ConnectionTrafficSecrets) -> Result<(Suite, Vec<u8>, [u8; 12])> {
+    Ok(match s {
         ConnectionTrafficSecrets::Aes128Gcm { key, iv } => (
             Suite::Aes128Gcm,
             key.as_ref().to_vec(),
@@ -37,11 +39,11 @@ fn keys(s: &ConnectionTrafficSecrets) -> (Suite, Vec<u8>, [u8; 12]) {
             key.as_ref().to_vec(),
             iv.as_ref().try_into().unwrap(),
         ),
-        _ => panic!("only AES-GCM suites are offered"),
-    }
+        _ => return Err("only AES-GCM suites are offered".into()),
+    })
 }
 
-fn main() {
+fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let host = args.next().expect("usage: tls_probe HOST [PATH]");
     let path = args.next().unwrap_or_else(|| "/".into());
@@ -81,9 +83,9 @@ fn main() {
     let secrets = conn.dangerous_extract_secrets().expect("extract secrets");
     let ((tx_seq, tx_secret), (rx_seq, rx_secret)) = (secrets.tx, secrets.rx);
     let (mut tx, mut rx) = (Direction::new(), Direction::new());
-    let (tx_suite, tx_key, tx_iv) = keys(&tx_secret);
+    let (tx_suite, tx_key, tx_iv) = keys(&tx_secret)?;
     tx.set_keys(tx_suite, &tx_key, &tx_iv, tx_seq).unwrap();
-    let (rx_suite, rx_key, rx_iv) = keys(&rx_secret);
+    let (rx_suite, rx_key, rx_iv) = keys(&rx_secret)?;
     rx.set_keys(rx_suite, &rx_key, &rx_iv, rx_seq).unwrap();
     println!("keys extracted");
 
@@ -117,7 +119,7 @@ fn main() {
                     counts[2] += 1;
                     break 'read;
                 }
-                other => panic!("unexpected content type {other}"),
+                other => return Err(format!("unexpected content type {other}").into()),
             }
         }
         match sock.read(&mut chunk) {
@@ -137,4 +139,5 @@ fn main() {
         "no HTTP response came through our record layer"
     );
     println!("ok: handshake by rustls, every record after it by longshore::tls");
+    Ok(())
 }
