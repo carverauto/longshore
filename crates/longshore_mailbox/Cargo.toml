@@ -29,6 +29,10 @@ name = "mailbox_slots"
 path = "tests/mailbox/slots.rs"
 
 [[test]]
+name = "mailbox_full_queue"
+path = "tests/mailbox/full_queue.rs"
+
+[[test]]
 name = "mailbox_alloc"
 path = "tests/mailbox/alloc.rs"
 
