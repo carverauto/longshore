@@ -162,8 +162,10 @@ fn t1_f04_3_close_listener_cancels_inflight_accept_and_frees_slot() {
         );
         assert_eq!((cs[1].token, cs[1].result), (Token(21), 0));
 
-        // Slot 0 is reusable for another listener.
-        let rebound = io.listen(Sock(0), bound).expect("relisten on freed slot");
+        // Slot 0 is reusable for another listener. It listens on the address
+        // the test started from, not on `bound`: with tests running in
+        // parallel, another test can be handed the port just freed.
+        let rebound = io.listen(Sock(0), addr).expect("relisten on freed slot");
         assert_eq!(rebound.ip(), bound.ip());
         close_all(&mut *io, &mut out, &[Sock(0)]);
     });
