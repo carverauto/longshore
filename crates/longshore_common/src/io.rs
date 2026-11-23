@@ -24,6 +24,7 @@ pub mod engine;
 pub mod files;
 pub use files::{file_size, FileSlot, OpenFlags};
 pub mod limits;
+mod must;
 pub use limits::Limits;
 #[cfg(unix)]
 pub mod posix;

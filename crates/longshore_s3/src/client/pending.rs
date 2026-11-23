@@ -157,6 +157,10 @@ impl<T: Output> Pending<T> {
                 self.lane.sender.pool().give(op);
                 false
             }
+            #[expect(
+                clippy::panic,
+                reason = "the lane's queue holds one message per operation slot (Worker::new sets capacity = slots), so it cannot be full while this slot is held"
+            )]
             Err(TrySendError::Full(_)) => {
                 let _: u32 = self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
                 self.lane.sender.pool().give(op);
@@ -257,6 +261,10 @@ impl<T: Output> Future for Pending<T> {
                 Poll::Pending => Poll::Pending,
             },
             Stage::Slot => unreachable!("a slot was taken or the lane closed"),
+            #[expect(
+                clippy::panic,
+                reason = "polling a future after it returned Ready breaks the Future contract"
+            )]
             Stage::Taken => panic!("polled after it returned its result"),
         }
     }

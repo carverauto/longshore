@@ -5,6 +5,7 @@
 
 //! Shared [`Io`] contract checks executable against any backend (`SimIo`, `PosixIo`, `UringIo`).
 
+use crate::io::must::fail;
 use crate::io::scenario::echo;
 use crate::io::{BufId, Busy, Completions, Io, Limits, Op, Sock, Token, EAGAIN, ECANCELED};
 use std::net::SocketAddr;
@@ -118,7 +119,7 @@ pub fn one_completion_and_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr
         assert!(out.is_empty(), "extra completion delivered");
 
         let stats = echo(&mut io, addr, 64 * 1024, 4096, zc, &mut out)
-            .unwrap_or_else(|e| panic!("echo(zc={zc}) failed: {e:?}"));
+            .unwrap_or_else(|e| fail(format_args!("echo(zc={zc}) failed: {e:?}")));
         assert!(stats.sends > 0 && stats.recvs > 0 && stats.ticks > 0);
     }
 }

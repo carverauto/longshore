@@ -6,6 +6,7 @@
 //! Generic `IO: Io` contract suite for [`Io::submit_chain`].
 
 use crate::io::contract_files::{base_limits, close_file, drive_one, open_file, write_path};
+use crate::io::must::fail;
 use crate::io::{
     BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ECANCELED, ENOENT,
 };
@@ -30,7 +31,7 @@ pub(super) fn collect_chain<const N: usize>(
             return got;
         }
     }
-    panic!("timed out collecting chain");
+    fail(format_args!("timed out collecting chain"));
 }
 
 /// Run all 7 linked-chain contract tests against any [`Io`] backend.

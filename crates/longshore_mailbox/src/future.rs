@@ -126,6 +126,10 @@ impl<'a, M: Copy, A, F: FnOnce(u32) -> M> CallFuture<'a, M, A, F> {
                         self.stage = Stage::Done;
                         Poll::Ready(Some(closed))
                     }
+                    #[expect(
+                        clippy::panic,
+                        reason = "full while a slot is held only if Config::capacity < slots, a misconfiguration with no answer to return"
+                    )]
                     Err(TrySendError::Full(_)) => {
                         self.sender.pool().give(slot);
                         panic!(
@@ -171,6 +175,10 @@ impl<M: Copy, A, F: FnOnce(u32) -> M> Future for CallFuture<'_, M, A, F> {
                 Poll::Pending => Poll::Pending,
             },
             Stage::Slot { .. } => unreachable!("slot already acquired"),
+            #[expect(
+                clippy::panic,
+                reason = "polling a future after it returned Ready breaks the Future contract"
+            )]
             Stage::Done => panic!("polled CallFuture after completion"),
         }
     }

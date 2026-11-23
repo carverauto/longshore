@@ -6,6 +6,7 @@
 //! Shared armed-accept contract checks.
 
 use super::{close_socks, drain_one, drain_until, net_limits, send_all};
+use crate::io::must::fail;
 use crate::io::{
     BufId, Completion, Completions, Io, Limits, Op, Sock, Token, ECANCELED, EMFILE, ENFILE,
 };
@@ -248,7 +249,7 @@ fn accept_range_len_zero_returns_enfile<IO: Io>(
                 assert_eq!(c, Completion::new(Token(2), 0));
                 connect_done = true;
             }
-            other => panic!("unexpected completion token {other}"),
+            other => fail(format_args!("unexpected completion token {other}")),
         }
     }
     assert_eq!(got_accept, Some(Completion::new(Token(3), -ENFILE)));

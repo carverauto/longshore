@@ -125,8 +125,10 @@ impl Resolver {
             .hosts
             .iter()
             .map(|h| {
-                let _: usize = encode_query_for(h, 0, preferred, &mut probe)
-                    .unwrap_or_else(|_| panic!("invalid hostname {h:?}"));
+                assert!(
+                    encode_query_for(h, 0, preferred, &mut probe).is_ok(),
+                    "invalid hostname {h:?}"
+                );
                 Host {
                     name: h.clone(),
                     sets: [Set::EMPTY; 2],

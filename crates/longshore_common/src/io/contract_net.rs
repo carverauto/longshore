@@ -5,6 +5,7 @@
 
 //! Shared networking contract suite for armed accept/recv, buffer ring, socket options, and Unix sockets.
 
+use crate::io::must::fail;
 use crate::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token};
 use std::net::SocketAddr;
 
@@ -41,7 +42,7 @@ pub(crate) fn drain_until<IO: Io>(
             }
         }
     }
-    panic!("timed out waiting for completions");
+    fail(format_args!("timed out waiting for completions"));
 }
 
 pub(crate) fn drain_one<IO: Io>(io: &mut IO, out: &mut Completions, tok: u64) -> Completion {

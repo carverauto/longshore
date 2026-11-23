@@ -5,6 +5,7 @@
 
 //! Generic `IO: Io` contract suite for all 11 file operations and shared refusals.
 
+use crate::io::must::fail;
 use crate::io::{
     file_size, BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ENOENT,
 };
@@ -46,7 +47,7 @@ pub(crate) fn drive_one(io: &mut impl Io, out: &mut Completions, token: Token, o
             }
         }
     }
-    panic!("timed out waiting for {token:?}");
+    fail(format_args!("timed out waiting for {token:?}"));
 }
 
 pub(crate) fn drive_many<const N: usize>(
@@ -66,7 +67,7 @@ pub(crate) fn drive_many<const N: usize>(
             return found.map(Option::unwrap);
         }
     }
-    panic!("timed out waiting for completions");
+    fail(format_args!("timed out waiting for completions"));
 }
 
 pub(crate) fn open_file(
