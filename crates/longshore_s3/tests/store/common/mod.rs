@@ -143,23 +143,23 @@ impl World {
     }
 }
 
+/// The HTTP client configuration [`s3_config`] uses, with its sockets,
+/// head buffers and tokens starting where the caller says.
+pub fn http_config(first_sock: u32, first_buf: u32, token_base: u64) -> client::ClientConfig {
+    client::ClientConfig::builder(CONNS, first_sock, first_buf, BUF, token_base)
+        .head_max(HEAD_MAX)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(1_000 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(256 * 1024)
+        .build()
+        .unwrap()
+}
+
 /// The store configuration [`world_with`] uses.
 pub fn s3_config(attempts_max: u32, enforce: bool) -> Config {
-    let http = client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: LIMITS.buffers,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 1_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    };
+    let http = http_config(1, LIMITS.buffers, 1 << 40);
     Config {
         vendor: longshore_s3::s3::Vendor::S3,
         host: "bucket.objects.test".into(),

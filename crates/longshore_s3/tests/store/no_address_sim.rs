@@ -80,21 +80,15 @@ fn s3_behind_a_silent_nameserver() -> S3 {
         token_base: 3 << 40,
     })
     .expect("resolver config");
-    let http = client::Config {
-        connections_max: 1,
-        first_sock: 0,
-        first_buf: LIMITS.small(0).0,
-        head_max: 2048,
-        buffer_size: 4096,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 500 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    };
+    let http = client::ClientConfig::builder(1, 0, LIMITS.small(0).0, 4096, 1 << 40)
+        .head_max(2048)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(500 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(256 * 1024)
+        .build()
+        .unwrap();
     S3::new(Config {
         vendor: Vendor::S3,
         host: "bucket.objects.test".into(),

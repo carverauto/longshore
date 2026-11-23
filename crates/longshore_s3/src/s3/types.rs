@@ -73,7 +73,7 @@ pub struct Config {
     /// fetch. A response without a well-formed one is then treated as
     /// damaged and fetched again, instead of being accepted unverified.
     pub require_checksums: bool,
-    pub http: client::Config,
+    pub http: client::ClientConfig,
     /// With `Some`, connections use TLS: the handshake setup, and the first
     /// of the `2 * http.connections_max` pool buffers the record layer uses.
     #[cfg(feature = "tls")]

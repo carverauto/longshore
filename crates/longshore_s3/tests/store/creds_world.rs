@@ -65,21 +65,15 @@ pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate
     let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[KEY_A]);
     let creds = io.register_file("/etc/store/credentials").unwrap();
-    let http = client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: 0,
-        head_max: 2048,
-        buffer_size: buf,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 1_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 1 << 20,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    };
+    let http = client::ClientConfig::builder(CONNS, 1, 0, buf, 1 << 40)
+        .head_max(2048)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(1_000 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(1 << 20)
+        .build()
+        .unwrap();
     let mut s3 = S3::new(Config {
         vendor: longshore_s3::s3::Vendor::S3,
         host: "bucket.objects.test".into(),

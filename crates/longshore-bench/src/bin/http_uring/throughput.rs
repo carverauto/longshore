@@ -32,7 +32,7 @@ fn addrs(list: &str) -> Vec<SocketAddr> {
 
 /// The client: plain, or with --tls-cert speaking TLS to a server that
 /// presents the certificate in that file.
-fn client(a: &Args, cfg: client::Config) -> Client {
+fn client(a: &Args, cfg: client::ClientConfig) -> Client {
     match &a.trust_file {
         None => Client::new(cfg),
         Some(path) => {
@@ -196,9 +196,10 @@ pub(super) fn bench(a: &Args, put: bool) {
         ..Limits::BASE
     };
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
-    let mut cfg = client_cfg(n, limits.buffer_size, 0);
-    cfg.first_buf = limits.small(0).0;
-    cfg.tls_batch = a.batch;
+    let cfg = client_cfg(n, limits.buffer_size, 0, limits.small(0).0)
+        .tls_batch(a.batch)
+        .build()
+        .or_die("the client configuration");
     let host = if a.trust_file.is_some() {
         "bench.test"
     } else {

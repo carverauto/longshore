@@ -84,7 +84,7 @@ impl S3 {
         let waits_max = (self
             .cfg
             .http
-            .request_timeout_ns
+            .request_timeout_ns()
             .saturating_mul(u64::from(self.cfg.attempts_max))
             / self.cfg.backoff_ns.max(1))
         .max(1);

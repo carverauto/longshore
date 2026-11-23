@@ -42,10 +42,7 @@ fn a_connection_the_server_said_it_will_close_is_not_reused() {
             let mut w = world_with(
                 40,
                 Faults::default(),
-                client::Config {
-                    check_idle,
-                    ..client_cfg()
-                },
+                client_builder().check_idle(check_idle).build().unwrap(),
             );
             w.server.script(behavior);
             ok(200, body)(w.request("GET", "/k", None));

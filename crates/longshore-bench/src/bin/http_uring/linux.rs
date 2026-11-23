@@ -125,20 +125,19 @@ pub fn main() {
     }
 }
 
-fn client_cfg(conns: u32, buffer_size: u32, first_sock: u32) -> client::Config {
-    client::Config {
-        connections_max: conns,
-        first_sock,
-        first_buf: 0,
-        head_max: 4096,
-        buffer_size,
-        max_age_ns: 3_600_000 * MS,
-        max_requests: u32::MAX,
-        request_timeout_ns: 30_000 * MS,
-        zero_copy_min: 64 * 1024,
-        token_base: 1 << 40,
-        tls_batch: 1 << 20,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    }
+/// The client's configuration before the caller changes any of it: `conns`
+/// connections from `first_sock`, their heads from `first_buf`.
+fn client_cfg(
+    conns: u32,
+    buffer_size: u32,
+    first_sock: u32,
+    first_buf: u32,
+) -> client::ClientConfigBuilder {
+    client::ClientConfig::builder(conns, first_sock, first_buf, buffer_size, 1 << 40)
+        .head_max(4096)
+        .max_age_ns(3_600_000 * MS)
+        .max_requests(u32::MAX)
+        .request_timeout_ns(30_000 * MS)
+        .zero_copy_min(64 * 1024)
+        .tls_batch(1 << 20)
 }

@@ -49,9 +49,7 @@ fn store_config(bucket: &str, second: bool) -> Config {
     cfg.host = "objects.test".into();
     cfg.bucket_in_path = Some(bucket.into());
     if second {
-        cfg.http.first_sock = 1 + 2 * CONNS;
-        cfg.http.first_buf = LIMITS.buffers + CONNS;
-        cfg.http.token_base = 3 << 40;
+        cfg.http = http_config(1 + 2 * CONNS, LIMITS.buffers + CONNS, 3 << 40);
     }
     cfg
 }

@@ -65,22 +65,20 @@ struct World {
     done: Vec<Done>,
 }
 
-fn client_cfg() -> client::Config {
-    client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: 0,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 2_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    }
+/// The test client's configuration, for a test to change before building it.
+fn client_builder() -> client::ClientConfigBuilder {
+    client::ClientConfig::builder(CONNS, 1, 0, BUF, 1 << 40)
+        .head_max(HEAD_MAX)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(2_000 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(256 * 1024)
+}
+
+#[cfg(test)]
+fn client_cfg() -> client::ClientConfig {
+    client_builder().build().unwrap()
 }
 
 #[cfg(test)]
@@ -106,7 +104,7 @@ fn world_with(
 fn world_cfg(
     seed: u64,
     faults: Faults,
-    cfg: client::Config,
+    cfg: client::ClientConfig,
     client_tls: Option<ClientSetup>,
     server_tls: Option<ServerSetup>,
 ) -> World {
@@ -481,10 +479,7 @@ fn chunked_responses_work_over_tls() {
 #[test]
 fn a_connection_is_replaced_before_its_keys_wear_out() {
     let id = identity(NAME);
-    let cfg = client::Config {
-        tls_records_max: 12,
-        ..client_cfg()
-    };
+    let cfg = client_builder().tls_records_max(12).build().unwrap();
     let mut w = world_cfg(
         21,
         Faults::default(),

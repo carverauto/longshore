@@ -51,8 +51,8 @@ impl Client {
 
     /// Whether a connection opened by now may carry another request.
     fn fresh(&self, c: &Conn, now: u64) -> bool {
-        now.saturating_sub(c.opened_at) < self.cfg.max_age_ns
-            && c.uses < self.cfg.max_requests
+        now.saturating_sub(c.opened_at) < self.cfg.max_age_ns()
+            && c.uses < self.cfg.max_requests()
             && !c.retired
     }
 
@@ -76,7 +76,7 @@ impl Client {
 
     /// Write the request head into connection `pick`'s buffer; returns its length.
     fn write_head<IO: Io>(&self, io: &mut IO, pick: usize, req: &Request) -> Result<u32, Error> {
-        let buf = &mut io.buf(self.head_buf(pick))[..self.cfg.head_max as usize];
+        let buf = &mut io.buf(self.head_buf(pick))[..self.cfg.head_max() as usize];
         let mut w = HeadWriter::request(buf, req.method, req.target);
         let _: &mut HeadWriter<'_> = w.header("Host", req.host.as_bytes());
         if req.body.is_some() || matches!(req.method, "PUT" | "POST") {
@@ -100,7 +100,7 @@ impl Client {
         let head_len = c.head_len;
         // The check reads into the free space after the request head. A
         // head that fills the buffer leaves none, and goes unchecked.
-        if self.cfg.check_idle && head_len < self.cfg.head_max {
+        if self.cfg.check_idle() && head_len < self.cfg.head_max() {
             c.state = State::CheckIdle;
             let found = self.streams[pick].check_idle(io, self.head_buf(pick), head_len);
             self.after_idle_check(io, pick, found);
@@ -184,6 +184,6 @@ impl Client {
             .body
             .expect("send_body is only reached with a body");
         self.conns[i].state = State::SendBody { off };
-        self.streams[i].send(io, buf, off, len - off, self.cfg.zero_copy_min);
+        self.streams[i].send(io, buf, off, len - off, self.cfg.zero_copy_min());
     }
 }

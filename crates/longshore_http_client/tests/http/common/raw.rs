@@ -35,7 +35,7 @@ const IN_MAX: u32 = 4096;
 /// in-tree server it shares no parsing code with the client, so what it
 /// records is an independent view of the client's bytes.
 pub fn raw_exchange(
-    cfg: client::Config,
+    cfg: client::ClientConfig,
     method: &str,
     headers: &[(&str, &[u8])],
     response_buf: Option<BufId>,
@@ -157,7 +157,7 @@ impl RawPeer {
 /// One GET to a hand-driven peer that answers the request with `reply`
 /// and then waits for the client to close. The peer reads into the same
 /// 1 KiB at the start of `TX` each time.
-pub fn raw_reply_with(cfg: client::Config, reply: &'static [u8]) -> Result<Response, Error> {
+pub fn raw_reply_with(cfg: client::ClientConfig, reply: &'static [u8]) -> Result<Response, Error> {
     let mut w = world_with(12, Faults::default(), cfg);
     let _: SocketAddr = w.io.listen(LISTEN, RAW_PEER).unwrap();
     w.io.submit(

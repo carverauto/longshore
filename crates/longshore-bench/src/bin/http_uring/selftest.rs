@@ -85,10 +85,11 @@ pub(super) fn selftest() {
     let addr = server
         .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap_or_else(|e| die(e));
-    let mut client = Client::new(client::Config {
-        first_buf: limits.small(0).0,
-        ..client_cfg(1, SIZE, 1)
-    });
+    let mut client = Client::new(
+        client_cfg(1, SIZE, 1, limits.small(0).0)
+            .build()
+            .or_die("the client configuration"),
+    );
     let (tx, rx) = (BufId(2), BufId(3));
     for (i, b) in io.buf(tx).iter_mut().enumerate() {
         *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[2];

@@ -72,21 +72,15 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
     let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[TOKEN_A]);
     let token_file = io.register_file("/var/run/token").unwrap();
-    let http = client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: LIMITS.buffers,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        max_age_ns: 60_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 1_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    };
+    let http = client::ClientConfig::builder(CONNS, 1, LIMITS.buffers, BUF, 1 << 40)
+        .head_max(HEAD_MAX)
+        .max_age_ns(60_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(1_000 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(256 * 1024)
+        .build()
+        .unwrap();
     let mut s3 = S3::new(Config {
         vendor: Vendor::Gcs,
         host: "bucket.storage.test".into(),

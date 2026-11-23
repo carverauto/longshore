@@ -33,10 +33,7 @@ fn connections_are_replaced_after_max_requests_even_with_free_slots() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_requests: 2,
-            ..client_cfg()
-        },
+        client_builder().max_requests(2).build().unwrap(),
     );
     w.fill_tx(10, 0);
     for round in 1..=3u64 {
@@ -53,11 +50,11 @@ fn connections_are_replaced_after_max_requests_or_max_age() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_requests: 2,
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder()
+            .max_requests(2)
+            .max_age_ns(500 * MS)
+            .build()
+            .unwrap(),
     );
     w.fill_tx(10, 0);
     for _ in 0..4 {
@@ -87,10 +84,7 @@ fn an_aged_connection_is_replaced_before_a_free_slot_is_used() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder().max_age_ns(500 * MS).build().unwrap(),
     );
     w.fill_tx(10, 0);
     ok(200, 0)(w.request("PUT", "/k", Some(10)));
@@ -130,10 +124,7 @@ fn idle_connections_are_closed_once_they_pass_their_maximum_age() {
     let mut w = world_with(
         3,
         Faults::default(),
-        client::Config {
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder().max_age_ns(500 * MS).build().unwrap(),
     );
     w.fill_tx(10, 0);
     ok(200, 0)(w.request("PUT", "/k", Some(10)));
@@ -161,10 +152,7 @@ fn idle_connections_past_max_age_are_closed_without_a_request() {
     let mut w = world_with(
         11,
         Faults::default(),
-        client::Config {
-            max_age_ns: 500 * MS,
-            ..client_cfg()
-        },
+        client_builder().max_age_ns(500 * MS).build().unwrap(),
     );
     ok(404, 0)(w.request("GET", "/k", None));
     w.settle(100);
@@ -259,10 +247,7 @@ fn a_connection_closed_while_idle_is_replaced_before_it_is_used() {
     let mut unchecked = world_with(
         31,
         Faults::default(),
-        client::Config {
-            check_idle: false,
-            ..client_cfg()
-        },
+        client_builder().check_idle(false).build().unwrap(),
     );
     unchecked.server.script(Behavior::Raw(REPLY));
     ok(200, 2)(unchecked.request("GET", "/k", None));

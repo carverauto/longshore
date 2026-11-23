@@ -20,7 +20,7 @@ impl Client {
 
     pub(super) fn recv_head<IO: Io>(&mut self, io: &mut IO, i: usize, have: u32) -> Handled {
         self.conns[i].state = State::RecvHead { have };
-        let step = self.streams[i].recv(io, self.head_buf(i), have, self.cfg.head_max - have);
+        let step = self.streams[i].recv(io, self.head_buf(i), have, self.cfg.head_max() - have);
         self.after_recv(io, i, step)
     }
 
@@ -40,7 +40,7 @@ impl Client {
     /// Read more of a body that is being discarded, over the bytes after the head.
     pub(super) fn drain<IO: Io>(&mut self, io: &mut IO, i: usize, have: u32) -> Handled {
         let c = &self.conns[i];
-        let room = self.cfg.head_max - c.head_len;
+        let room = self.cfg.head_max() - c.head_len;
         // Fill the room after the head in order; once it is full, later
         // bytes overwrite it. A body that fits stays readable afterwards.
         let used = have.min(room);
@@ -93,7 +93,7 @@ impl Client {
         // Close when the server asked to, and when the traffic keys have done
         // enough work: the next request gets a new connection and new keys.
         if c.fields.is_some_and(|f| f.close)
-            || self.streams[i].records() >= self.cfg.tls_records_max
+            || self.streams[i].records() >= self.cfg.tls_records_max()
         {
             c.state = State::Closing {
                 then_connect: false,
@@ -116,7 +116,7 @@ impl Client {
         loop {
             let parsed = parse_response(
                 &io.buf(self.head_buf(i))[..have as usize],
-                self.cfg.head_max as usize,
+                self.cfg.head_max() as usize,
             );
             let head = match parsed {
                 Err(e) => return self.fail(io, i, Error::Head(e)),
@@ -184,7 +184,7 @@ impl Client {
         }
         let Some(dst) = c.response_buf else {
             // No buffer: discard the body so the connection stays usable.
-            let room = self.cfg.head_max - head_len;
+            let room = self.cfg.head_max() - head_len;
             if body_len > DRAIN_MAX || room == 0 {
                 return self.fail(io, i, Error::BodyTooLarge);
             }
@@ -194,7 +194,7 @@ impl Client {
             }
             return self.drain(io, i, extra);
         };
-        if body_len > u64::from(self.cfg.buffer_size) {
+        if body_len > u64::from(self.cfg.buffer_size()) {
             return self.fail(io, i, Error::BodyTooLarge);
         }
         c.body_len = body_len as u32;

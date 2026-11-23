@@ -260,10 +260,7 @@ fn switching_protocols_is_not_skipped_as_an_interim_response() {
 #[test]
 fn a_chunked_body_that_exactly_fills_the_buffer_is_accepted() {
     const CAP: u32 = 8192;
-    let cfg = client::Config {
-        buffer_size: CAP,
-        ..client_cfg()
-    };
+    let cfg = client_builder_with(CONNS, CAP).build().unwrap();
     let chunked = |len: usize| -> &'static [u8] {
         let mut reply = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
         let half = len / 2;
@@ -310,10 +307,7 @@ fn bytes_after_a_response_in_a_later_read_are_not_taken_for_the_next_response() 
     let mut unchecked = world_with(
         32,
         Faults::default(),
-        client::Config {
-            check_idle: false,
-            ..client_cfg()
-        },
+        client_builder().check_idle(false).build().unwrap(),
     );
     unchecked.server.script(Behavior::Raw(reply));
     ok(200, body_len as u32)(unchecked.request("GET", "/k", None));

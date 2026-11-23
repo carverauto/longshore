@@ -10,7 +10,7 @@ use super::*;
 impl S3 {
     /// How many bytes a credentials read asks for.
     pub(super) fn credentials_read_len(&self) -> u32 {
-        self.cfg.http.buffer_size.min(CREDENTIALS_FILE_MAX)
+        self.cfg.http.buffer_size().min(CREDENTIALS_FILE_MAX)
     }
 
     /// The credentials file was read (or not): decide whether to try what it holds.

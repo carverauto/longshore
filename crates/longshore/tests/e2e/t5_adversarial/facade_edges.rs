@@ -11,7 +11,7 @@ use longshore::checksum::{crc64_header_value, crc64_nvme};
 use longshore::client::{BuildError, Builder};
 use longshore::crypto::sha256;
 use longshore::dns::Resolver;
-use longshore::http::client::Config as HttpConfig;
+use longshore::http::client::ClientConfig as HttpConfig;
 use longshore::io::posix::PosixIo;
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 use longshore::mailbox::{queue_parked, TryRecv};

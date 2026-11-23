@@ -130,25 +130,21 @@ fn resolver(
 
 /// The HTTP client's configuration: `conns` connections on the first
 /// sockets, their heads in the first small buffers.
-fn http(conns: u32, limits: &Limits, buffer_size: u32) -> client::Config {
-    client::Config {
-        connections_max: conns,
-        first_sock: 0,
-        first_buf: limits.small(0).0,
-        head_max: 8192,
-        buffer_size,
-        max_age_ns: 300_000 * MS,
-        max_requests: 100_000,
-        request_timeout_ns: 60_000 * MS,
-        zero_copy_min: 64 * 1024,
-        token_base: 1 << 40,
-        tls_batch: std::env::var("S3_TLS_BATCH")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3 << 20),
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    }
+fn http(conns: u32, limits: &Limits, buffer_size: u32) -> client::ClientConfig {
+    client::ClientConfig::builder(conns, 0, limits.small(0).0, buffer_size, 1 << 40)
+        .head_max(8192)
+        .max_age_ns(300_000 * MS)
+        .max_requests(100_000)
+        .request_timeout_ns(60_000 * MS)
+        .zero_copy_min(64 * 1024)
+        .tls_batch(
+            std::env::var("S3_TLS_BATCH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3 << 20),
+        )
+        .build()
+        .or_die("the HTTP client configuration")
 }
 
 /// S3_BEARER_TOKEN on Google Cloud Storage; otherwise S3_ACCESS_KEY and

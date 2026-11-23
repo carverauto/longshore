@@ -26,7 +26,7 @@ use longshore_tls::handshake::{ClientSetup, Handshake};
 use std::net::SocketAddr;
 
 pub struct Client {
-    cfg: Config,
+    cfg: ClientConfig,
     conns: Box<[Conn]>,
     streams: Box<[Stream]>,
     /// Present when connections use TLS.
@@ -48,6 +48,8 @@ pub struct Client {
 
 mod chunked_body;
 mod client_config;
+mod client_config_builder;
+mod client_config_error;
 mod conn;
 mod consts;
 mod done;
@@ -62,7 +64,12 @@ mod retire;
 mod start;
 mod state;
 
-pub use client_config::Config;
+pub use client_config::ClientConfig;
+pub use client_config_builder::{
+    ClientConfigBuilder, HEAD_MAX_DEFAULT, MAX_AGE_NS_DEFAULT, MAX_REQUESTS_DEFAULT,
+    REQUEST_TIMEOUT_NS_DEFAULT, TLS_BATCH_DEFAULT_MAX, ZERO_COPY_MIN_DEFAULT,
+};
+pub use client_config_error::ClientConfigError;
 use conn::Conn;
 pub use consts::TLS_RECORDS_MAX;
 use consts::{DRAIN_MAX, K_CANCEL, K_CLOSE, K_CONNECT, K_RECV, K_SEND};
@@ -75,7 +82,7 @@ use state::State;
 
 impl Client {
     /// A client that speaks plain HTTP.
-    pub fn new(cfg: Config) -> Client {
+    pub fn new(cfg: ClientConfig) -> Client {
         #[cfg(feature = "tls")]
         {
             Self::build(cfg, None)
@@ -90,49 +97,42 @@ impl Client {
     /// pool buffers, for sealed records going out and coming in, starting at
     /// `first_tls_buf`: `first_tls_buf..first_tls_buf + 2 * connections_max`.
     #[cfg(feature = "tls")]
-    pub fn with_tls(cfg: Config, setup: ClientSetup, first_tls_buf: u32) -> Client {
+    pub fn with_tls(cfg: ClientConfig, setup: ClientSetup, first_tls_buf: u32) -> Client {
         Self::build(cfg, Some((setup, first_tls_buf)))
     }
 
     #[cfg(feature = "tls")]
-    fn build(cfg: Config, tls: Option<(ClientSetup, u32)>) -> Client {
+    fn build(cfg: ClientConfig, tls: Option<(ClientSetup, u32)>) -> Client {
         Self::build_inner(cfg, Some(tls))
     }
 
     #[cfg(not(feature = "tls"))]
-    fn build(cfg: Config) -> Client {
+    fn build(cfg: ClientConfig) -> Client {
         Self::build_inner(cfg)
     }
 
     fn build_inner(
-        cfg: Config,
+        cfg: ClientConfig,
         #[cfg(feature = "tls")] tls: Option<Option<(ClientSetup, u32)>>,
     ) -> Client {
-        assert!(
-            cfg.head_max <= cfg.buffer_size && cfg.head_max <= u32::from(u16::MAX),
-            "head_max must fit a pool buffer and 16 bits"
-        );
-        assert!(
-            cfg.tls_records_max <= TLS_RECORDS_MAX,
-            "tls_records_max must not exceed TLS_RECORDS_MAX"
-        );
+        // `ClientConfig::build` has checked the slot, token and head limits.
         let conn = Conn::new();
         #[cfg(feature = "tls")]
         let tls = tls.flatten();
         #[cfg(feature = "tls")]
         let first_tls_buf = tls.as_ref().map(|t| t.1);
-        let streams = (0..cfg.connections_max)
+        let streams = (0..cfg.connections_max())
             .map(|i| {
-                let token = |kind| Token(cfg.token_base + u64::from(i) * 8 + kind);
-                let s = Stream::new(Sock(cfg.first_sock + i), token(K_SEND), token(K_RECV));
+                let token = |kind| Token(cfg.token_base() + u64::from(i) * 8 + kind);
+                let s = Stream::new(Sock(cfg.first_sock() + i), token(K_SEND), token(K_RECV));
                 #[cfg(feature = "tls")]
                 let s = match first_tls_buf {
                     Some(first) => s.with_tls_buffers(
                         BufId(first + 2 * i),
                         BufId(first + 2 * i + 1),
-                        cfg.buffer_size,
-                        cfg.tls_batch,
-                        cfg.zero_copy_min,
+                        cfg.buffer_size(),
+                        cfg.tls_batch(),
+                        cfg.zero_copy_min(),
                     ),
                     None => s,
                 };
@@ -141,7 +141,7 @@ impl Client {
             .collect();
         Client {
             cfg,
-            conns: vec![conn; cfg.connections_max as usize].into_boxed_slice(),
+            conns: vec![conn; cfg.connections_max() as usize].into_boxed_slice(),
             streams,
             #[cfg(feature = "tls")]
             tls: tls.map(|t| t.0),
@@ -156,20 +156,20 @@ impl Client {
     /// Operations the client can have in flight: one per connection plus up
     /// to two cancels for each (a TLS handshake may have either a send or a
     /// receive outstanding).
-    pub fn ops_in_flight_max(cfg: &Config) -> u32 {
-        cfg.connections_max * 3
+    pub fn ops_in_flight_max(cfg: &ClientConfig) -> u32 {
+        cfg.connections_max() * 3
     }
 
     fn sock(&self, i: usize) -> Sock {
-        Sock(self.cfg.first_sock + i as u32)
+        Sock(self.cfg.first_sock() + i as u32)
     }
 
     fn head_buf(&self, i: usize) -> BufId {
-        BufId(self.cfg.first_buf + i as u32)
+        BufId(self.cfg.first_buf() + i as u32)
     }
 
     fn token(&self, i: usize, kind: u64) -> Token {
-        Token(self.cfg.token_base + i as u64 * 8 + kind)
+        Token(self.cfg.token_base() + i as u64 * 8 + kind)
     }
 
     #[expect(
@@ -260,7 +260,7 @@ impl Client {
     /// connection starts another request.
     pub fn discarded_body<'a, IO: Io>(&self, io: &'a mut IO, conn: u32) -> &'a [u8] {
         let c = &self.conns[conn as usize];
-        let room = self.cfg.head_max - c.head_len;
+        let room = self.cfg.head_max() - c.head_len;
         if c.fields.is_none() || c.response_buf.is_some() || c.body_len > room {
             return &[];
         }

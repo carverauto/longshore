@@ -128,7 +128,7 @@ fn start_slow_request(w: &mut World) -> u64 {
 /// the request ended.
 #[cfg(test)]
 fn run_with_slow_peer(w: &mut World, t0: u64) -> (bool, bool, Option<Done>) {
-    let timeout = client_cfg().request_timeout_ns;
+    let timeout = client_cfg().request_timeout_ns();
     let (mut sent, mut peer_eof, mut result) = (false, false, None);
     let World {
         io,

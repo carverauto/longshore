@@ -31,10 +31,7 @@ fn cancel_in_closing_then_connect_and_host_len_over_253() {
     let mut w1 = world_with(
         99,
         Faults::default(),
-        client::Config {
-            connections_max: 1,
-            ..client_cfg()
-        },
+        client_builder_with(1, BUF).build().unwrap(),
     );
     ok(404, 0)(w1.request("GET", "/missing", None));
     let req2 = Request {
@@ -68,11 +65,11 @@ fn cancel_in_closing_then_connect_and_host_len_over_253() {
 #[test]
 fn head_len_equals_head_max_skips_idle_check_on_reuse() {
     // Request head of exact size head_max skips check_idle=true and reuses connection cleanly.
-    let small_head_cfg = client::Config {
-        head_max: 128,
-        check_idle: true,
-        ..client_cfg()
-    };
+    let small_head_cfg = client_builder()
+        .head_max(128)
+        .check_idle(true)
+        .build()
+        .unwrap();
     let mut w = world_with(101, Faults::default(), small_head_cfg);
     ok(404, 0)(w.request("GET", "/a", None));
 
@@ -119,11 +116,8 @@ mod tls_cases {
             .unwrap()
     }
 
-    fn tls_cli_cfg() -> client::Config {
-        client::Config {
-            buffer_size: TLS_BUF,
-            ..client_cfg()
-        }
+    fn tls_cli_cfg() -> client::ClientConfig {
+        client_builder_with(CONNS, TLS_BUF).build().unwrap()
     }
 
     fn get_k(host: &str) -> Request<'_> {

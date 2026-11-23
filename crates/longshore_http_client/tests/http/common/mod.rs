@@ -56,25 +56,27 @@ pub struct World {
     pub done: Vec<Done>,
 }
 
-pub fn client_cfg() -> client::Config {
-    client::Config {
-        connections_max: CONNS,
-        first_sock: 1,
-        first_buf: 0,
-        head_max: HEAD_MAX,
-        buffer_size: BUF,
-        max_age_ns: 10_000 * MS,
-        max_requests: 1000,
-        request_timeout_ns: 2_000 * MS,
-        zero_copy_min: 4096,
-        token_base: 1 << 40,
-        tls_batch: 256 * 1024,
-        tls_records_max: client::TLS_RECORDS_MAX,
-        check_idle: true,
-    }
+/// The test client's configuration, for a test to change before building it.
+pub fn client_builder() -> client::ClientConfigBuilder {
+    client_builder_with(CONNS, BUF)
 }
 
-pub fn world_with(seed: u64, faults: Faults, cfg: client::Config) -> World {
+/// As [`client_builder`], with another number of connections or buffer size.
+pub fn client_builder_with(connections_max: u32, buffer_size: u32) -> client::ClientConfigBuilder {
+    client::ClientConfig::builder(connections_max, 1, 0, buffer_size, 1 << 40)
+        .head_max(HEAD_MAX)
+        .max_age_ns(10_000 * MS)
+        .max_requests(1000)
+        .request_timeout_ns(2_000 * MS)
+        .zero_copy_min(4096)
+        .tls_batch(256 * 1024)
+}
+
+pub fn client_cfg() -> client::ClientConfig {
+    client_builder().build().unwrap()
+}
+
+pub fn world_with(seed: u64, faults: Faults, cfg: client::ClientConfig) -> World {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let mut server = Server::new(
         server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, CONNS, BUF, 2 << 40)

@@ -54,10 +54,7 @@ fn bytes_after_a_complete_response_in_the_same_read_are_refused() {
 #[test]
 fn bytes_after_a_chunked_body_that_fills_the_buffer_are_refused() {
     const CAP: usize = 8192;
-    let cfg = client::Config {
-        buffer_size: CAP as u32,
-        ..client_cfg()
-    };
+    let cfg = client_builder_with(CONNS, CAP as u32).build().unwrap();
     let reply = |tail: &str| {
         let mut r = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
         r.extend(format!("{CAP:x}\r\n").into_bytes());
@@ -155,10 +152,7 @@ fn a_peer_that_stops_mid_response_is_timed_out_in_every_state() {
     assert_eq!(get(flood.as_bytes()), TIMEOUT, "interim responses only");
     // A chunked body that fills the buffer, its end never sent.
     const CAP: usize = 8192;
-    let cfg = client::Config {
-        buffer_size: CAP as u32,
-        ..client_cfg()
-    };
+    let cfg = client_builder_with(CONNS, CAP as u32).build().unwrap();
     let mut reply =
         format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{CAP:x}\r\n").into_bytes();
     reply.extend(std::iter::repeat_n(b'c', CAP));

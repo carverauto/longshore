@@ -58,8 +58,10 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
         ..Limits::BASE
     })
     .unwrap_or_else(|e| die(e));
-    let mut cfg = client_cfg(1, SIZE, 0);
-    cfg.request_timeout_ns = 10_000 * MS;
+    let cfg = client_cfg(1, SIZE, 0, 0)
+        .request_timeout_ns(10_000 * MS)
+        .build()
+        .or_die("the client configuration");
     let mut client = Client::with_tls(
         cfg,
         longshore::tls::handshake::ClientSetup::with_public_roots(),

@@ -14,8 +14,8 @@ impl Client {
         let Some(rel) = c
             .token
             .0
-            .checked_sub(self.cfg.token_base)
-            .filter(|r| *r < u64::from(self.cfg.connections_max) * 8)
+            .checked_sub(self.cfg.token_base())
+            .filter(|r| *r < u64::from(self.cfg.connections_max()) * 8)
         else {
             return Handled::NotMine;
         };
@@ -80,7 +80,7 @@ impl Client {
             // Aged connections are closed on our own schedule, whether or
             // not a request happens to need the slot.
             if self.conns[i].state == State::Idle
-                && now.saturating_sub(self.conns[i].opened_at) >= self.cfg.max_age_ns
+                && now.saturating_sub(self.conns[i].opened_at) >= self.cfg.max_age_ns()
             {
                 self.conns[i].state = State::Closing {
                     then_connect: false,
@@ -93,7 +93,7 @@ impl Client {
             if matches!(c.state, State::Closed | State::Idle | State::Closing { .. }) {
                 continue;
             }
-            if c.timed_out || now.saturating_sub(c.started_at) < self.cfg.request_timeout_ns {
+            if c.timed_out || now.saturating_sub(c.started_at) < self.cfg.request_timeout_ns() {
                 continue;
             }
             self.cancel_ops(io, i);

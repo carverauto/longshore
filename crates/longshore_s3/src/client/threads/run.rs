@@ -138,7 +138,7 @@ fn setup<B: Backend>(b: &Builder) -> std::io::Result<(B, Worker, Arc<Lane>)> {
     io.measure_segment_sizes(b.prefer_large_segments.is_some());
     let credentials_file = credentials_file(b, &mut io, limits)?;
     let endpoint = endpoint(b, limits)?;
-    let mut config = store_config(b, limits, endpoint);
+    let mut config = store_config(b, limits, endpoint)?;
     config.credentials_file = credentials_file;
     let s3 = S3::new(config);
     let layout = Layout {
@@ -230,9 +230,19 @@ fn endpoint(b: &Builder, limits: Limits) -> std::io::Result<Endpoint> {
 }
 
 /// The store's configuration for this thread, without the credentials file.
-fn store_config(b: &Builder, limits: Limits, endpoint: Endpoint) -> Config {
-    let buffer_size = limits.buffer_size;
-    Config {
+/// A connection count or buffer size the HTTP client cannot work with is
+/// refused here, as for any other start-up failure.
+fn store_config(b: &Builder, limits: Limits, endpoint: Endpoint) -> std::io::Result<Config> {
+    let http = http::ClientConfig::builder(
+        b.connections,
+        0,
+        limits.small(0).0,
+        limits.buffer_size,
+        1 << 40,
+    )
+    .build()
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    Ok(Config {
         vendor: Vendor::S3,
         host: b.host.clone(),
         bucket_in_path: b.bucket_in_path.clone(),
@@ -245,23 +255,9 @@ fn store_config(b: &Builder, limits: Limits, endpoint: Endpoint) -> Config {
         backoff_ns: 200 * MS,
         backoff_max_ns: 5_000 * MS,
         require_checksums: false,
-        http: http::Config {
-            connections_max: b.connections,
-            first_sock: 0,
-            first_buf: limits.small(0).0,
-            head_max: 8192,
-            buffer_size,
-            max_age_ns: 300_000 * MS,
-            max_requests: 100_000,
-            request_timeout_ns: 60_000 * MS,
-            zero_copy_min: 64 * 1024,
-            token_base: 1 << 40,
-            tls_batch: buffer_size.min(3 << 20),
-            tls_records_max: http::TLS_RECORDS_MAX,
-            check_idle: true,
-        },
+        http,
         #[cfg(feature = "tls")]
         tls: b.tls.then(|| (ClientSetup::with_public_roots(), 0)),
         endpoint,
-    }
+    })
 }
