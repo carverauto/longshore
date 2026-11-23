@@ -15,9 +15,9 @@
 //! does not depend on object size.
 
 use crate::creds::{Credentials, TOKEN_MAX};
-use crate::multipart::{self, PartTag, UploadId, PART_NUMBER_MAX, UPLOAD_ID_MAX};
+use crate::multipart::{self, PartTag, UploadId, PART_NUMBER_MAX};
 use crate::options::{Options, NAME_MAX, OPTIONS_MAX};
-use crate::report::{Report, VERSION_ID_MAX};
+use crate::report::Report;
 use crate::retry::{classify, Class, STATUS_PRECONDITION_FAILED};
 use crate::sigv4::{self, authorization, uri_encode, EMPTY_SHA256, UNSIGNED_PAYLOAD};
 use crate::stat::Stat;
@@ -25,125 +25,6 @@ use crate::time::{amz_date, parse_http_date};
 use longshore_common::io::{BufId, Completion, Io, Op, Token};
 use longshore_http_client::client::{self, Client, Error, Handled, Request};
 use std::net::SocketAddr;
-
-pub const KEY_ENCODED_MAX: usize = 512;
-/// A bucket name's longest length.
-pub const BUCKET_MAX: usize = 63;
-/// A request path: the bucket when it is addressed there, then the key.
-const PATH_MAX: usize = 1 + BUCKET_MAX + KEY_ENCODED_MAX;
-/// The longest continuation token a listing can be resumed with, once
-/// percent-encoded.
-pub const LIST_TOKEN_ENCODED_MAX: usize = 1024;
-/// A slot's request target: a path, or a listing's query with a token.
-const TARGET_MAX: usize = PATH_MAX + b"continuation-token=&".len() + LIST_TOKEN_ENCODED_MAX;
-/// Room for a slot's query: `partNumber=10000&uploadId=` and an upload id,
-/// or `versionId=` and a version id, with every byte percent-encoded.
-const QUERY_MAX: usize = {
-    let multipart = 32 + 3 * UPLOAD_ID_MAX;
-    let version = b"versionId=".len() + 3 * VERSION_ID_MAX;
-    if multipart > version {
-        multipart
-    } else {
-        version
-    }
-};
-/// A credentials file must be smaller than this and than the HTTP buffer
-/// size; a larger one is refused rather than read in part.
-pub const CREDENTIALS_FILE_MAX: u32 = 8192;
-
-const CHECKSUM_HEADER: &str = "x-amz-checksum-crc64nvme";
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Provider {
-    /// Waiting to reread at this time.
-    Idle {
-        at: u64,
-    },
-    Reading,
-    /// A validation listing signed with the candidate is in progress.
-    Validating,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Kind {
-    Store {
-        no_clobber: bool,
-    },
-    Fetch {
-        range: Option<(u64, u64)>,
-    },
-    Erase,
-    List,
-    /// Begin a multipart upload, asking for whole-object checksums if set.
-    Begin {
-        checksums: bool,
-    },
-    /// Store one part; its number is in the slot's query.
-    Part,
-    Complete,
-    Abort,
-    /// Ask about an object without fetching it.
-    Stat,
-    /// Copy inside the store; the source is in the slot's query field.
-    Copy,
-    /// Erase the keys named in the body.
-    EraseMany,
-}
-
-impl Kind {
-    /// The request carries the caller's bytes as an object or part of one.
-    fn stores_bytes(self) -> bool {
-        matches!(self, Kind::Store { .. } | Kind::Part)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum State {
-    Free,
-    InFlight,
-    /// Waiting to (re)try at this time.
-    Waiting {
-        until: u64,
-    },
-    /// Finished; the slot's `outcome` is waiting to be collected.
-    Finished,
-}
-
-#[derive(Clone, Copy)]
-struct Slot {
-    state: State,
-    /// The result, once `state` is `Finished`.
-    outcome: Outcome,
-    token: u64,
-    kind: Kind,
-    path: [u8; TARGET_MAX],
-    path_len: usize,
-    /// Encoded query of a multipart request, in the sorted order signing
-    /// requires. For a copy, the source as its header carries it. Empty
-    /// for every other kind.
-    query: [u8; QUERY_MAX],
-    query_len: usize,
-    /// Optional headers of a store or of beginning an upload.
-    options: Options,
-    body: Option<(BufId, u32)>,
-    response_buf: Option<BufId>,
-    attempts: u32,
-    delays: u32,
-    /// Times this operation waited for an address without starting an attempt.
-    address_waits: u32,
-    /// Sign with the candidate credentials (the validation request only).
-    candidate: bool,
-    /// A retried conditional store was refused as already existing: this
-    /// attempt asks for the stored object's checksum to see whether an
-    /// earlier attempt of the same operation is what created it.
-    comparing: bool,
-    /// CRC-64/NVME of the body, computed once and reused by every attempt.
-    crc: Option<u64>,
-    /// The caller's SHA-256 of the body, sent instead of a CRC-64/NVME.
-    sha256: Option<[u8; 32]>,
-    /// Set for `put`, `head` and `get`, which end with a [`Report`].
-    exact: Option<exact::Exact>,
-}
 
 pub struct S3 {
     /// What every request path starts with: empty, or `/bucket` when the
@@ -184,15 +65,27 @@ impl S3 {
 
 mod attempt;
 mod checksum;
+mod consts;
 mod exact;
 mod head;
+mod kind;
 mod multipart_ops;
 mod object_ops;
 mod outcome;
+mod provider;
 mod rotation;
+mod slot;
+mod state;
 mod submit;
 mod types;
 pub use types::*;
+
+pub use consts::{BUCKET_MAX, CREDENTIALS_FILE_MAX, KEY_ENCODED_MAX, LIST_TOKEN_ENCODED_MAX};
+use consts::{CHECKSUM_HEADER, PATH_MAX, QUERY_MAX, TARGET_MAX};
+use kind::Kind;
+use provider::Provider;
+use slot::Slot;
+use state::State;
 
 impl S3 {
     pub fn new(cfg: Config) -> S3 {
