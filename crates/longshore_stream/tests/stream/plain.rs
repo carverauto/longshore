@@ -6,7 +6,7 @@
 //! Simulator tests for plain `Stream` (runs with and without the `tls` feature).
 
 use longshore_common::io::alloc_guard::{sealed, Guard};
-use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
+use longshore_common::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_stream::{IdleCheck, Step, Stream, TlsError, KEY_RECORDS_RETIRE};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -85,6 +85,90 @@ fn connect_pair(seed: u64, faults: Faults) -> (SimIo, Stream, Stream) {
     )
 }
 
+/// Progress of an echo: the client sends `total` bytes, the server reads
+/// them all and sends them back.
+#[cfg(test)]
+struct Echo {
+    total: u32,
+    c_sent: u32,
+    c_recvd: u32,
+    s_recvd: u32,
+    s_sent: u32,
+}
+
+#[cfg(test)]
+impl Echo {
+    fn new(total: u32) -> Self {
+        Echo {
+            total,
+            c_sent: 0,
+            c_recvd: 0,
+            s_recvd: 0,
+            s_sent: 0,
+        }
+    }
+
+    fn on(&mut self, io: &mut SimIo, client: &mut Stream, server: &mut Stream, c: Completion) {
+        let total = self.total;
+        match c.token {
+            C_SEND => {
+                self.c_sent += sent(client.on_send(io, c.result));
+                if self.c_sent < total {
+                    client.send(io, C_TX, self.c_sent, total - self.c_sent, u32::MAX);
+                }
+            }
+            S_RECV => {
+                self.s_recvd += received(server.on_recv(io, c.result));
+                if self.s_recvd < total {
+                    assert_eq!(
+                        server.recv(io, S_BUF, self.s_recvd, total - self.s_recvd),
+                        Step::Pending
+                    );
+                } else {
+                    server.send(io, S_BUF, 0, total, 1024);
+                    assert_eq!(client.recv(io, C_RX, 0, total), Step::Pending);
+                }
+            }
+            S_SEND => {
+                self.s_sent += sent(server.on_send(io, c.result));
+                if self.s_sent < total {
+                    server.send(io, S_BUF, self.s_sent, total - self.s_sent, 1024);
+                }
+            }
+            C_RECV => {
+                self.c_recvd += received(client.on_recv(io, c.result));
+                if self.c_recvd < total {
+                    assert_eq!(
+                        client.recv(io, C_RX, self.c_recvd, total - self.c_recvd),
+                        Step::Pending
+                    );
+                }
+            }
+            other => panic!("unexpected token {other:?}"),
+        }
+    }
+}
+
+/// The bytes a plain send moved; a plain send completes at once.
+#[cfg(test)]
+fn sent(step: Step) -> u32 {
+    let Step::Done(n) = step else {
+        panic!("plain send must complete immediately");
+    };
+    assert!(n > 0);
+    u32::try_from(n).unwrap()
+}
+
+/// The bytes a plain recv moved; a plain recv completes at once.
+#[cfg(test)]
+fn received(step: Step) -> u32 {
+    let Step::Done(n) = step else {
+        panic!("plain recv must complete immediately");
+    };
+    assert!(n > 0);
+    u32::try_from(n).unwrap()
+}
+
 #[test]
 fn plain_stream_echo_survives_short_writes_and_partial_reads() {
     let faults = Faults {
@@ -103,70 +187,14 @@ fn plain_stream_echo_survives_short_writes_and_partial_reads() {
 
     let mut out = Completions::new(8);
     sealed(|| {
-        let mut c_sent = 0u32;
-        let mut c_recvd = 0u32;
-        let mut s_recvd = 0u32;
-        let mut s_sent = 0u32;
-        let total = payload.len() as u32;
+        let mut echo = Echo::new(payload.len() as u32);
+        client.send(&mut io, C_TX, 0, echo.total, u32::MAX);
+        assert_eq!(server.recv(&mut io, S_BUF, 0, echo.total), Step::Pending);
 
-        client.send(&mut io, C_TX, 0, total, u32::MAX);
-        assert_eq!(server.recv(&mut io, S_BUF, 0, total), Step::Pending);
-
-        while c_recvd < total {
+        while echo.c_recvd < echo.total {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                match c.token {
-                    C_SEND => {
-                        let Step::Done(n) = client.on_send(&mut io, c.result) else {
-                            panic!("plain send must complete immediately");
-                        };
-                        assert!(n > 0);
-                        c_sent += u32::try_from(n).unwrap();
-                        if c_sent < total {
-                            client.send(&mut io, C_TX, c_sent, total - c_sent, u32::MAX);
-                        }
-                    }
-                    S_RECV => {
-                        let Step::Done(n) = server.on_recv(&mut io, c.result) else {
-                            panic!("plain recv must complete immediately");
-                        };
-                        assert!(n > 0);
-                        s_recvd += u32::try_from(n).unwrap();
-                        if s_recvd < total {
-                            assert_eq!(
-                                server.recv(&mut io, S_BUF, s_recvd, total - s_recvd),
-                                Step::Pending
-                            );
-                        } else {
-                            server.send(&mut io, S_BUF, 0, total, 1024);
-                            assert_eq!(client.recv(&mut io, C_RX, 0, total), Step::Pending);
-                        }
-                    }
-                    S_SEND => {
-                        let Step::Done(n) = server.on_send(&mut io, c.result) else {
-                            panic!("plain send must complete immediately");
-                        };
-                        assert!(n > 0);
-                        s_sent += u32::try_from(n).unwrap();
-                        if s_sent < total {
-                            server.send(&mut io, S_BUF, s_sent, total - s_sent, 1024);
-                        }
-                    }
-                    C_RECV => {
-                        let Step::Done(n) = client.on_recv(&mut io, c.result) else {
-                            panic!("plain recv must complete immediately");
-                        };
-                        assert!(n > 0);
-                        c_recvd += u32::try_from(n).unwrap();
-                        if c_recvd < total {
-                            assert_eq!(
-                                client.recv(&mut io, C_RX, c_recvd, total - c_recvd),
-                                Step::Pending
-                            );
-                        }
-                    }
-                    other => panic!("unexpected token {other:?}"),
-                }
+                echo.on(&mut io, &mut client, &mut server, c);
             }
         }
     });

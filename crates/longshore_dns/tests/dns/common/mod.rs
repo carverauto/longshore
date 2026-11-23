@@ -104,16 +104,7 @@ const S_SEND: u64 = 2;
 impl Server {
     pub fn start(io: &mut SimIo, addr: SocketAddr) -> Server {
         io.bind_udp(S_SOCK, addr);
-        io.submit(
-            Token(S_RECV),
-            Op::Recv {
-                sock: S_SOCK,
-                buf: S_BUF,
-                off: 0,
-                len: 512,
-            },
-        )
-        .unwrap();
+        io.submit(Token(S_RECV), RECV).unwrap();
         Server {
             answering: true,
             v4: true,
@@ -127,44 +118,53 @@ impl Server {
     }
 
     pub fn on(&mut self, io: &mut SimIo, token: u64, result: i32) {
-        let recv = Op::Recv {
-            sock: S_SOCK,
-            buf: S_BUF,
-            off: 0,
-            len: 512,
-        };
         if token == S_SEND {
-            let Some(len) = self.resend.take() else {
-                return io.submit(Token(S_RECV), recv).unwrap();
-            };
-            // The forged response has gone; now the true one.
-            self.forge.apply(io.buf(S_BUF));
-            let send = Op::Send {
-                sock: S_SOCK,
-                buf: S_BUF,
-                off: 0,
-                len,
-                zero_copy: false,
-            };
-            return io.submit(Token(S_SEND), send).unwrap();
+            return self.on_sent(io);
         }
         self.queries += 1;
         let n = usize::try_from(result).unwrap();
-        let ttl = self.ttl.to_be_bytes();
-        let m = io.buf(S_BUF);
-        // The question name runs from byte 12 to 5 bytes before the end.
-        let entry = ZONE.iter().find(|(name, _, _)| {
-            let mut at = 12;
-            name.split('.').all(|l| {
-                let ok = m[at] as usize == l.len()
-                    && m[at + 1..at + 1 + l.len()].eq_ignore_ascii_case(l.as_bytes());
-                at += 1 + l.len();
-                ok
-            })
-        });
         if !self.answering {
-            return io.submit(Token(S_RECV), recv).unwrap();
+            return io.submit(Token(S_RECV), RECV).unwrap();
         }
+        let m = io.buf(S_BUF);
+        let at = self.answer(m, n);
+        self.forge.apply(m);
+        if self.then_true && self.forge != Forge::Nothing {
+            self.resend = Some(at as u32);
+        }
+        let send = Op::Send {
+            sock: S_SOCK,
+            buf: S_BUF,
+            off: 0,
+            len: self.forge.len(at),
+            zero_copy: false,
+        };
+        io.submit(Token(S_SEND), send).unwrap();
+    }
+
+    /// A response has gone: listen again, or send the true response
+    /// after a forged one.
+    fn on_sent(&mut self, io: &mut SimIo) {
+        let Some(len) = self.resend.take() else {
+            return io.submit(Token(S_RECV), RECV).unwrap();
+        };
+        // The forged response has gone; now the true one.
+        self.forge.apply(io.buf(S_BUF));
+        let send = Op::Send {
+            sock: S_SOCK,
+            buf: S_BUF,
+            off: 0,
+            len,
+            zero_copy: false,
+        };
+        io.submit(Token(S_SEND), send).unwrap();
+    }
+
+    /// Turns the `n`-byte query in `m` into its answer in place. Returns
+    /// the answer's length.
+    fn answer(&self, m: &mut [u8], n: usize) -> usize {
+        let ttl = self.ttl.to_be_bytes();
+        let entry = zone_entry(m);
         // The question's type: 1 for A, 28 for AAAA.
         let aaaa = m[n - 3] == 28;
         m[2] = 0x81;
@@ -192,22 +192,29 @@ impl Server {
             }
         }
         m[7] = count;
-        self.forge.apply(m);
-        if self.then_true && self.forge != Forge::Nothing {
-            self.resend = Some(at as u32);
-        }
-        io.submit(
-            Token(S_SEND),
-            Op::Send {
-                sock: S_SOCK,
-                buf: S_BUF,
-                off: 0,
-                len: self.forge.len(at),
-                zero_copy: false,
-            },
-        )
-        .unwrap();
+        at
     }
+}
+
+const RECV: Op = Op::Recv {
+    sock: S_SOCK,
+    buf: S_BUF,
+    off: 0,
+    len: 512,
+};
+
+/// The zone entry the query in `m` asks about. The question name runs
+/// from byte 12 to 5 bytes before the end.
+fn zone_entry(m: &[u8]) -> Option<&'static Entry> {
+    ZONE.iter().find(|(name, _, _)| {
+        let mut at = 12;
+        name.split('.').all(|l| {
+            let ok = m[at] as usize == l.len()
+                && m[at + 1..at + 1 + l.len()].eq_ignore_ascii_case(l.as_bytes());
+            at += 1 + l.len();
+            ok
+        })
+    })
 }
 
 fn zone_v6(tail: u16) -> Ipv6Addr {

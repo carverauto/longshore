@@ -16,6 +16,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(test)]
 #[path = "tls/adversarial.rs"]
 mod adversarial;
+#[cfg(test)]
+#[path = "tls/adversarial_records.rs"]
+mod adversarial_records;
 
 #[global_allocator]
 static ALLOC: Guard = Guard;

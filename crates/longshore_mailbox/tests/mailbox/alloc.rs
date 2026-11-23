@@ -11,9 +11,11 @@ use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 use longshore_common::io::alloc_guard::{sealed, Guard};
-use longshore_common::io::Token;
+use longshore_common::io::{Completions, Io, Limits, Token};
+use longshore_common::sim::{Faults, SimIo};
 use longshore_mailbox::{
-    block_on, mailbox_parked, queue_parked, Config, Recv, SlotWaiter, TryRecv, TrySendError,
+    block_on, mailbox, mailbox_parked, queue_parked, Config, Receiver, Recv, Sender, SlotWaiter,
+    TryRecv, TrySendError,
 };
 
 #[global_allocator]
@@ -117,12 +119,10 @@ fn waiters_within_prealloc_and_warmed_block_on_allocate_nothing() {
     });
 }
 
+type Tx = Sender<u32, u32>;
+
 #[test]
 fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
-    use longshore_common::io::{Completions, Io, Limits};
-    use longshore_common::sim::{Faults, SimIo};
-    use longshore_mailbox::mailbox;
-
     let limits = Limits {
         ops_max: 4,
         ..Limits::BASE
@@ -141,43 +141,9 @@ fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
     rx_b.arm(&mut sim_b).unwrap();
     let mut out_a = Completions::new(8);
     let mut cx = Context::from_waker(Waker::noop());
-    let mut w_many = SlotWaiter::new();
 
     sealed(|| {
-        let Poll::Ready(Some(sa)) =
-            SlotWaiter::new().poll_one(tx_a.pool(), || !tx_a.is_closed(), &mut cx)
-        else {
-            panic!("slot a")
-        };
-        let Poll::Ready(Some((1, sb))) = w_many.poll_many(
-            &[&tx_a, &tx_b],
-            0,
-            |s| s.pool(),
-            |s| !s.is_closed(),
-            false,
-            &mut cx,
-        ) else {
-            panic!("slot b")
-        };
-        tx_b.pool().give(sb);
-
-        let Poll::Ready(Some(sb2)) =
-            SlotWaiter::new().poll_one(tx_b.pool(), || !tx_b.is_closed(), &mut cx)
-        else {
-            panic!("slot b2")
-        };
-        assert_eq!(
-            w_many.poll_many(
-                &[&tx_a, &tx_b],
-                0,
-                |s| s.pool(),
-                |s| !s.is_closed(),
-                false,
-                &mut cx,
-            ),
-            Poll::Pending
-        );
-        w_many.forget_many(&[&tx_a, &tx_b], |s| s.pool());
+        let (sa, sb2) = take_both_slots_then_forget_many(&tx_a, &tx_b, &mut cx);
 
         // CallFuture dropped in Stage::Slot (queued in Pool::waiters).
         {
@@ -187,26 +153,79 @@ fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
         tx_a.pool().give(sa);
         tx_b.pool().give(sb2);
 
-        // CallFuture dropped in Stage::Sent (detach) then answered under sealed.
-        {
-            let mut fut = pin!(tx_a.call(|s| s, 0));
-            assert_eq!(fut.as_mut().poll(&mut cx), Poll::Pending);
-        }
-        sim_a.tick(false, &mut out_a).expect("tick");
-        while let Some(c) = out_a.pop() {
-            let _: bool = rx_a.on_completion(&mut sim_a, c).expect("re-arm the wake");
-        }
-        let mut got_slot = None;
-        let _: bool = rx_a.drain(|item| {
-            if let Recv::Message(s) = item {
-                got_slot = Some(s);
-            }
-        });
-        if let Some(s) = got_slot {
-            let _: Option<u32> = rx_a.answer(s, 1);
-        }
+        drop_sent_call_then_answer(&tx_a, &mut rx_a, &mut sim_a, &mut out_a, &mut cx);
         rx_a.begin_close(|_| {});
         rx_a.finish_close(|| 0, |_| {});
         rx_b.close(|_| {}, || 0, |_| {});
     });
+}
+
+/// Takes the one slot of each mailbox (`b`'s through `poll_many`, given
+/// back and taken again), then queues a `poll_many` waiter on both and
+/// forgets it. Returns the slots held.
+#[cfg(test)]
+fn take_both_slots_then_forget_many(tx_a: &Tx, tx_b: &Tx, cx: &mut Context<'_>) -> (u32, u32) {
+    let mut w_many = SlotWaiter::new();
+    let Poll::Ready(Some(sa)) = SlotWaiter::new().poll_one(tx_a.pool(), || !tx_a.is_closed(), cx)
+    else {
+        panic!("slot a")
+    };
+    let Poll::Ready(Some((1, sb))) = w_many.poll_many(
+        &[tx_a, tx_b],
+        0,
+        |s| s.pool(),
+        |s| !s.is_closed(),
+        false,
+        cx,
+    ) else {
+        panic!("slot b")
+    };
+    tx_b.pool().give(sb);
+
+    let Poll::Ready(Some(sb2)) = SlotWaiter::new().poll_one(tx_b.pool(), || !tx_b.is_closed(), cx)
+    else {
+        panic!("slot b2")
+    };
+    assert_eq!(
+        w_many.poll_many(
+            &[tx_a, tx_b],
+            0,
+            |s| s.pool(),
+            |s| !s.is_closed(),
+            false,
+            cx,
+        ),
+        Poll::Pending
+    );
+    w_many.forget_many(&[tx_a, tx_b], |s| s.pool());
+    (sa, sb2)
+}
+
+/// A CallFuture dropped in Stage::Sent (detach), then the receiver takes
+/// the message and answers it.
+#[cfg(test)]
+fn drop_sent_call_then_answer(
+    tx: &Tx,
+    rx: &mut Receiver<u32, u32>,
+    sim: &mut SimIo,
+    out: &mut Completions,
+    cx: &mut Context<'_>,
+) {
+    {
+        let mut fut = pin!(tx.call(|s| s, 0));
+        assert_eq!(fut.as_mut().poll(cx), Poll::Pending);
+    }
+    sim.tick(false, out).expect("tick");
+    while let Some(c) = out.pop() {
+        let _: bool = rx.on_completion(sim, c).expect("re-arm the wake");
+    }
+    let mut got_slot = None;
+    let _: bool = rx.drain(|item| {
+        if let Recv::Message(s) = item {
+            got_slot = Some(s);
+        }
+    });
+    if let Some(s) = got_slot {
+        let _: Option<u32> = rx.answer(s, 1);
+    }
 }
