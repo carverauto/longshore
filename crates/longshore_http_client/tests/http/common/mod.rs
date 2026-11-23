@@ -4,14 +4,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared by the test files in this directory: the simulated world and its helpers.
-#![allow(dead_code, unused_imports)]
+#![expect(
+    dead_code,
+    reason = "shared by the test binaries in this directory; each binary uses only part of it"
+)]
 
 pub use longshore_common::io::alloc_guard::{sealed, Guard};
 pub use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
 pub use longshore_common::sim::{Faults, SimIo};
 pub use longshore_http_client::client::{self, Client, Done, Error, Handled, Request, Response};
-pub use longshore_http_client::head::HttpError;
-pub use longshore_http_client::server::{self, Behavior, Server};
+pub use longshore_http_client::server::{self, Server};
 pub use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]

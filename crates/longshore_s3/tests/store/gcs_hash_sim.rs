@@ -7,6 +7,11 @@
 //! CRC-32C and the MD5 of an object as two values, which may share one
 //! header line or have a line each, in either order.
 
+#[expect(
+    dead_code,
+    unused_imports,
+    reason = "`gcs_world` also serves the token-rotation and failure tests in gcs_sim.rs; these hash tests use only its world and server, so the rest goes unused here"
+)]
 mod gcs_world;
 use gcs_world::*;
 

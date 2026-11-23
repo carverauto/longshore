@@ -8,6 +8,8 @@
 
 mod common;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
 /// One GET against a hand-driven peer that answers the request with `reply`
 /// and then waits for the client to close.

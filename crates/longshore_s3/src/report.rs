@@ -111,9 +111,10 @@ pub struct Report {
     pub unanswered: u32,
 }
 
-// A report is held in a slot that exists whether or not it is used, so
-// boxing the large variant would only add an allocation.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a report is held in a slot that exists whether or not it is used, so boxing the large variant would only add an allocation"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum End {
     /// Nothing was sent. The store cannot have acted.

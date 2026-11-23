@@ -74,6 +74,8 @@ trivially_copy_pass_by_ref = "deny"
 needless_pass_by_value = "deny"
 large_types_passed_by_value = "deny"
 let_underscore_must_use = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
 
 [profile.release]
 opt-level = 3

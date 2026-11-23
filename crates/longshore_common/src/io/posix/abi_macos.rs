@@ -6,7 +6,6 @@
 //! Hand-declared macOS system calls, structs, and constants for `io::posix`.
 
 #![cfg(target_os = "macos")]
-#![allow(non_camel_case_types, dead_code)]
 
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::{align_of, offset_of, size_of};
@@ -60,12 +59,9 @@ pub const EVFILT_WRITE: i16 = -2;
 pub const EVFILT_USER: i16 = -10;
 
 pub const EV_ADD: u16 = 0x0001;
-pub const EV_DELETE: u16 = 0x0002;
 pub const EV_ENABLE: u16 = 0x0004;
 pub const EV_ONESHOT: u16 = 0x0010;
 pub const EV_CLEAR: u16 = 0x0020;
-pub const EV_ERROR: u16 = 0x4000;
-pub const EV_EOF: u16 = 0x8000;
 
 pub const NOTE_TRIGGER: u32 = 0x0100_0000;
 

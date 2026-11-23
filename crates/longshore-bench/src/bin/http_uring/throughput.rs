@@ -29,7 +29,6 @@ pub(super) fn bench(a: &Args, put: bool) {
     let n = a.conns;
     // Large buffers: one body buffer per connection, then two record
     // buffers per connection for TLS. Small buffers: one head per connection.
-    #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: n,
         buffers: n * 3,

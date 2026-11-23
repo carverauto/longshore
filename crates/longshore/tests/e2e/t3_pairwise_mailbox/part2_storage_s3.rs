@@ -7,11 +7,8 @@
 //! `submit_chain` over mailbox, `power_loss` closing mailbox, and S3 client
 //! plain vs `--no-default-features` TLS rejection.
 
-#[allow(unused_imports)]
 use super::WriteCmd;
-#[allow(unused_imports)]
 use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
-#[allow(unused_imports)]
 use longshore::mailbox::{block_on, mailbox, Config, TryRecv, TrySendError};
 
 #[cfg(feature = "sim")]

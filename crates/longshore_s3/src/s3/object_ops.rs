@@ -42,7 +42,10 @@ impl S3 {
     }
 
     /// [`S3::store`] with optional headers: content type, metadata and so on.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn store_with<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -67,7 +70,10 @@ impl S3 {
     }
 
     /// [`S3::store_no_clobber`] with optional headers.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn store_no_clobber_with<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -115,7 +121,10 @@ impl S3 {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "`prepare`'s arguments plus the optional headers that the `_with` methods pass through"
+    )]
     fn submit_with<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -232,7 +241,10 @@ impl S3 {
     /// returned. Paging by `start_after` does not work with a delimiter when
     /// a page ends on a common prefix: no key skips everything under a
     /// prefix, so the prefix would be reported again.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn list_with<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -260,7 +272,10 @@ impl S3 {
     /// `max_keys` and `delimiter` must be what the listing was started with.
     /// A token longer than [`LIST_TOKEN_ENCODED_MAX`] once encoded is
     /// refused as [`SubmitError::BadKey`].
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn list_continue<IO: Io>(
         &mut self,
         io: &mut IO,

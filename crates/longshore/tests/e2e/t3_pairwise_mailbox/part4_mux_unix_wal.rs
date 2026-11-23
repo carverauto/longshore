@@ -7,9 +7,7 @@
 //! Unix-socket `Sender::stop()` shutdown-before-close, and `alloc_guard`-sealed WAL over mailbox.
 
 use super::PingMsg;
-#[allow(unused_imports)]
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
-#[allow(unused_imports)]
 use longshore::mailbox::{mailbox, queue, Config, TryRecv};
 
 #[cfg(unix)]

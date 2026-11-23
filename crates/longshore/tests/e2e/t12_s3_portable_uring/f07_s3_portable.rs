@@ -18,7 +18,6 @@ fn test_creds() -> Credentials {
 }
 
 fn portable_builder(server: &HttpStoreServer) -> Builder {
-    #[allow(unused_mut)]
     let mut b = Builder::new("127.0.0.1", "us-east-1", test_creds());
     b.port = server.port();
     b.address = Some(server.addr());

@@ -98,9 +98,10 @@ pub struct CredentialsFile {
 }
 
 /// The request that proves new credentials before they are adopted.
-// The prefix is held inline so the setting stays `Copy` and allocates
-// nothing. There is one per store.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the prefix is held inline so the setting stays `Copy` and allocates nothing; there is one per store"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Validate {
     /// List one key under this prefix. The credentials must be allowed to
@@ -144,17 +145,19 @@ impl KeyPrefix {
     }
 }
 
-// One per store, built once and never moved while it runs, so the size
-// difference between the variants costs nothing.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per store, built once and never moved while it runs, so the size difference between the variants costs nothing"
+)]
 pub enum Endpoint {
     Fixed(SocketAddr),
     Resolved(Resolver),
 }
 
-// Held in slots that exist whether or not they are used, and passed by
-// value: boxing the large variant would allocate on every operation.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "held in slots that exist whether or not they are used, and passed by value: boxing the large variant would allocate on every operation"
+)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Outcome {
     Stored,

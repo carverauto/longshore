@@ -82,7 +82,10 @@ impl Server {
         self.send_from(io, i, self.head_buf(i), 0, head_len as u32);
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "writes one response head from its parts: the connection, the status line, the two lengths and whether to close"
+    )]
     pub(super) fn status<IO: Io>(
         &mut self,
         io: &mut IO,

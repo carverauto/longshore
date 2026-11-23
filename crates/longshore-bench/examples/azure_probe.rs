@@ -38,7 +38,10 @@ impl Reply {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the probe builds each request by hand; every argument is one part of the request line, a header or the body"
+)]
 fn call(
     addr: &str,
     method: &str,

@@ -13,9 +13,30 @@ use longshore_s3::client::{Buffer, Error};
 use rig::*;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::mpsc;
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
+
+/// A waker that counts how often it was woken.
+fn counted() -> (Arc<Count>, Waker) {
+    let count = Arc::new(Count(AtomicUsize::new(0)));
+    (count.clone(), Waker::from(count))
+}
+
+struct Count(AtomicUsize);
+
+impl Count {
+    fn get(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Count {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
 
 #[test]
 fn a_waiter_polled_twice_leaves_the_next_buffer_to_the_other_waiter() {

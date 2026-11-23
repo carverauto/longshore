@@ -6,13 +6,10 @@
 //! Tier 3 pairwise scenarios `T3-13`–`T3-15`: portable `Client` + `Stream` server,
 //! 4-buffer-class isolation under CQ bursts, and Unix-domain armed `Recv` + file chain.
 
-#[allow(unused_imports)]
 use super::super::harness::{
     drive_until, read_pool_bytes, submit_and_wait_one, write_nul_path, write_pool_bytes, TempDir,
 };
-#[allow(unused_imports)]
 use super::net_limits;
-#[allow(unused_imports)]
 use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token};
 
 #[test]
@@ -89,7 +86,10 @@ fn t3_13_s3_client_portable_with_stream_server_plain_and_tls() {
 
 #[test]
 fn t3_14_four_buffer_classes_isolation_and_cq_burst() {
-    #[allow(clippy::needless_update)]
+    #[expect(
+        clippy::needless_update,
+        reason = "every `Limits` literal ends in `..Limits::BASE` (t1_f01_5 checks it), even one that names each field"
+    )]
     let limits = Limits {
         sockets_max: 32,
         buffers: 2,
@@ -212,7 +212,6 @@ fn t3_15_unix_domain_armed_recv_and_chained_file_persist() {
     let dir = TempDir::new("t3_15").unwrap();
     let sock_p = dir.socket_path("rpc.sock");
     let data_p = dir.file_path("persist.bin");
-    #[allow(clippy::needless_update)]
     let limits = Limits {
         files_max: 4,
         aligned_buffers: 2,

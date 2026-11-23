@@ -20,7 +20,6 @@ static ALLOC: Guard = Guard;
 const MS: u64 = 1_000_000;
 const HEARTBEAT: u64 = 1 << 50;
 // Large buffers: user tx 0. Small buffers: one HTTP head, three for name resolution.
-#[allow(clippy::needless_update)]
 const LIMITS: Limits = Limits {
     sockets_max: 3,
     buffers: 1,

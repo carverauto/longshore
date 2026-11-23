@@ -6,15 +6,11 @@
 //! Lanes driven by hand in the simulator, one simulated machine each with
 //! its own store and server, and a client over them.
 
-#![allow(dead_code)]
-
 use crate::common::*;
 use longshore_s3::client::{Buffer, Client, Layout, Output, Pending, Worker};
 use std::future::Future;
 use std::pin::pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 const WIDE: Limits = Limits {
     ops_max: LIMITS.ops_max + 2,
@@ -129,25 +125,5 @@ impl Rig {
 pub fn fill(buf: &mut Buffer, pattern: u8) {
     for (i, b) in buf.as_mut_slice()[..LEN].iter_mut().enumerate() {
         *b = (i as u8).wrapping_mul(31) ^ pattern;
-    }
-}
-
-/// A waker that counts how often it was woken.
-pub fn counted() -> (Arc<Count>, Waker) {
-    let count = Arc::new(Count(AtomicUsize::new(0)));
-    (count.clone(), Waker::from(count))
-}
-
-pub struct Count(AtomicUsize);
-
-impl Count {
-    pub fn get(&self) -> usize {
-        self.0.load(Ordering::SeqCst)
-    }
-}
-
-impl Wake for Count {
-    fn wake(self: Arc<Self>) {
-        self.0.fetch_add(1, Ordering::SeqCst);
     }
 }

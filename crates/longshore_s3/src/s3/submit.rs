@@ -27,7 +27,10 @@ pub(super) enum ListFrom<'a> {
 
 impl S3 {
     /// Take a slot and fill it in, without sending anything yet.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "fills a request slot from the parts every request method passes through; each argument is one of those parts"
+    )]
     pub(super) fn prepare<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -86,7 +89,10 @@ impl S3 {
         Ok(i)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "`prepare` followed by the first attempt, so it takes exactly `prepare`'s arguments"
+    )]
     pub(super) fn submit<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -193,7 +199,10 @@ impl S3 {
         self.list_in_slot(io, i, token, prefix, from, max_keys, None, into)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "builds the listing query that the list methods share; each argument is one part of that query or the slot it goes in"
+    )]
     pub(super) fn list_in_slot<IO: Io>(
         &mut self,
         io: &mut IO,

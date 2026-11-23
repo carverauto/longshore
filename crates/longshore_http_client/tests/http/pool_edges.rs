@@ -9,6 +9,8 @@
 
 mod common;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
 fn request_to(w: &mut World, host_id: u16, host: &str, method: &str, target: &str) -> Response {
     let req = Request {

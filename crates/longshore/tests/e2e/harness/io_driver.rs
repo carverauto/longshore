@@ -225,7 +225,7 @@ impl TempDir {
     }
 
     /// Creates a unique directory under `LONGSHORE_TEST_DIR` (falling back to `std::env::temp_dir()`).
-    #[allow(dead_code)]
+    #[cfg(target_os = "linux")]
     pub fn new_in_test_dir(prefix: &str) -> io::Result<Self> {
         let base = std::env::var_os("LONGSHORE_TEST_DIR")
             .map(PathBuf::from)
@@ -294,13 +294,6 @@ fn unused_tcp_addr(bind: &str) -> io::Result<SocketAddr> {
 /// child process inherited the listening descriptor before returning.
 pub fn unused_loopback_addr() -> io::Result<SocketAddr> {
     unused_tcp_addr("127.0.0.1:0")
-}
-
-/// Reserves and returns an unused IPv6 loopback socket address, verifying no
-/// child process inherited the listening descriptor before returning.
-#[allow(dead_code)]
-pub fn unused_loopback_v6_addr() -> io::Result<SocketAddr> {
-    unused_tcp_addr("[::1]:0")
 }
 
 /// Returns the workspace root, honoring `LONGSHORE_REPO_ROOT` when running a

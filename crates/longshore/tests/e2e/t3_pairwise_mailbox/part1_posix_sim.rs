@@ -7,9 +7,7 @@
 //! 100 messages, and 2-core `Engine<Virtual>` `Pool`/`Future` replay parity.
 
 use super::PingMsg;
-#[allow(unused_imports)]
 use longshore::io::{Completions, Io, Limits, Token};
-#[allow(unused_imports)]
 use longshore::mailbox::{mailbox, queue, Config, TryRecv, TrySendError};
 
 #[cfg(unix)]

@@ -6,17 +6,13 @@
 //! A store that rereads a credentials file, beside the in-tree server on
 //! one simulated `Io`, shared by the credential tests.
 
-#![allow(dead_code)]
-
 use longshore_common::io::alloc_guard::sealed;
 use longshore_common::io::{BufId, Completions, FileId, Io, Limits, Op, Sock, Token};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_http_client::client;
 use longshore_http_client::server::{self, Server};
 use longshore_s3::creds::Credentials;
-use longshore_s3::s3::{
-    Checksum, Config, CredentialsFile, Done, Endpoint, KeyPrefix, Validate, S3,
-};
+use longshore_s3::s3::{Checksum, Config, CredentialsFile, Done, Endpoint, Validate, S3};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 pub const CONNS: u32 = 3;
@@ -55,14 +51,6 @@ pub struct World {
     pub out: Completions,
     pub done: Vec<Done>,
     pub creds: FileId,
-}
-
-pub fn world(seed: u64, faults: Faults) -> World {
-    world_with_buffers(seed, faults, BUF)
-}
-
-pub fn world_with_buffers(seed: u64, faults: Faults, buf: u32) -> World {
-    world_validating(seed, faults, buf, &Validate::List(KeyPrefix::EMPTY))
 }
 
 pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate) -> World {

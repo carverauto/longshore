@@ -96,7 +96,6 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
     } else {
         8192
     });
-    #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: conns + 2,
         buffers: tls_buffers + b.buffers,

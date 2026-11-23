@@ -59,7 +59,10 @@ impl S3 {
     /// Store `len` bytes of `body` as part `number` (1 to 10000) of an
     /// upload. The outcome is [`Outcome::PartStored`]. Storing the same
     /// number again replaces the part.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn multipart_store_part<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -106,7 +109,10 @@ impl S3 {
     /// S3. With it the store verifies the assembled object, and a completion
     /// whose response was lost can be confirmed instead of reported as a
     /// failure. It needs an upload begun with `checksums`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn multipart_complete<IO: Io>(
         &mut self,
         io: &mut IO,

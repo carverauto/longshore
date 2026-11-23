@@ -9,8 +9,6 @@
 //! declared here directly. Values are transcribed from the uapi header and are
 //! identical on x86-64 and AArch64 (io_uring syscalls use the unified numbers).
 
-#![allow(non_camel_case_types)]
-
 use core::ffi::{c_int, c_long, c_uint, c_void};
 use core::mem::{offset_of, size_of};
 

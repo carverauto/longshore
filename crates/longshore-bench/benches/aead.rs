@@ -76,9 +76,10 @@ impl Sealer for AwsLcCopy {
 
 struct RustCryptoCopy(aes_gcm::Aes128Gcm);
 impl Sealer for RustCryptoCopy {
-    // The in-place trait is deprecated in favour of an in/out one; in-place is
-    // what this candidate is here to measure.
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "the in-place trait is deprecated in favour of an in/out one; in-place is what this candidate is here to measure"
+    )]
     fn seal(&self, seq: u64, src: &[u8], dst: &mut [u8]) {
         use aes_gcm::aead::AeadInPlace;
         let (body, tag) = dst.split_at_mut(RECORD + 1);

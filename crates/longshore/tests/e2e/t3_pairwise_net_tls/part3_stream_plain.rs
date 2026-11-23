@@ -6,11 +6,8 @@
 //! Tier 3 pairwise scenarios `T3-16`–`T3-17`: `longshore_stream` plain/TLS
 //! over armed buffer ring, and `--no-default-features` sockopts + TCP/Unix echo.
 
-#[allow(unused_imports)]
 use super::super::harness::{drive_until, read_pool_bytes, write_nul_path, write_pool_bytes};
-#[allow(unused_imports)]
 use super::net_limits;
-#[allow(unused_imports)]
 use longshore::io::{BufId, Completions, Io, Op, Sock, Token};
 use longshore::stream::{Stream, TlsError};
 

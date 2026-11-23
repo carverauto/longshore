@@ -4,7 +4,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared by the test files in this directory: the simulated world and its helpers.
-#![allow(dead_code, unused_imports)]
+#![expect(
+    dead_code,
+    unused_imports,
+    reason = "a prelude and helpers shared by the store and client test binaries; each binary uses only part of it"
+)]
 
 pub use longshore_common::io::alloc_guard::{sealed, Guard};
 pub use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
@@ -40,7 +44,6 @@ pub const RX: BufId = BufId(7);
 
 pub const HEAD_MAX: u32 = 8192;
 
-#[allow(clippy::needless_update)]
 pub const LIMITS: Limits = Limits {
     sockets_max: 1 + CONNS * 2,
     buffers: 8,

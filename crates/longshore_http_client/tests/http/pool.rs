@@ -8,6 +8,7 @@
 
 mod common;
 use common::*;
+use longshore_http_client::server::Behavior;
 
 #[test]
 fn one_connection_is_reused_across_requests() {

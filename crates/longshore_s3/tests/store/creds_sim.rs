@@ -11,10 +11,18 @@ mod creds_world;
 use creds_world::*;
 use longshore_common::io::alloc_guard::Guard;
 use longshore_common::sim::Faults;
-use longshore_s3::s3::Outcome;
+use longshore_s3::s3::{KeyPrefix, Outcome, Validate};
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
+
+fn world(seed: u64, faults: Faults) -> World {
+    world_with_buffers(seed, faults, BUF)
+}
+
+fn world_with_buffers(seed: u64, faults: Faults, buf: u32) -> World {
+    world_validating(seed, faults, buf, &Validate::List(KeyPrefix::EMPTY))
+}
 
 #[test]
 fn new_credentials_are_adopted_only_after_the_store_accepts_them() {

@@ -8,6 +8,7 @@
 
 mod common;
 use common::*;
+use longshore_http_client::server::Behavior;
 
 #[test]
 fn put_then_get_round_trips_the_bytes() {

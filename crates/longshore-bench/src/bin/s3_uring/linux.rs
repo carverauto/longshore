@@ -93,7 +93,6 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
     // TLS record buffers must hold at least two records.
     // Also never smaller than a request or response head.
     let buffer_size = size.max(if tls { 256 * 1024 } else { 8192 });
-    #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: conns + 2,
         buffers: 2 * conns + user,

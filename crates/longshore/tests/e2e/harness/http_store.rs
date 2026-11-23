@@ -19,7 +19,7 @@ use longshore::tls::handshake::{Handshake, ServerSetup};
 use longshore::tls::record::{
     record_len, Direction, CONTENT_ALERT, CONTENT_APPLICATION_DATA, FRAGMENT_MAX, RECORD_MAX,
 };
-use s3::{dispatch_s3, store_put};
+use s3::dispatch_s3;
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -94,23 +94,12 @@ impl HttpStoreServer {
     pub fn port(&self) -> u16 {
         self.addr.port()
     }
-    #[allow(dead_code)]
-    pub fn insert_object(&self, key: &str, data: Vec<u8>) {
-        let mut st = self.state.lock().expect("lock");
-        store_put(&mut st, key.trim_start_matches('/'), data);
-    }
     pub fn get_object(&self, key: &str) -> Option<StoreObject> {
         let st = self.state.lock().expect("lock");
         st.objects.get(key.trim_start_matches('/')).cloned()
     }
     pub fn request_count(&self) -> usize {
         self.state.lock().expect("lock").requests
-    }
-    #[allow(dead_code)]
-    pub fn clear(&self) {
-        let mut st = self.state.lock().expect("lock");
-        st.objects.clear();
-        st.uploads.clear();
     }
 }
 

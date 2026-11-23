@@ -5,7 +5,10 @@
 
 //! Shared by the resolver tests: a simulated nameserver with A and AAAA
 //! records, and the loop that drives it with allocation sealed.
-#![allow(dead_code)]
+#![expect(
+    dead_code,
+    reason = "shared by the resolver test binaries; each binary uses only part of it"
+)]
 
 pub use longshore_common::io::alloc_guard::{sealed, Guard};
 pub use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};

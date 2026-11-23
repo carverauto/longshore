@@ -5,7 +5,6 @@
 
 //! Shared by the Google Cloud Storage test files: the simulated world, with
 //! a server that speaks that dialect and a token file to rotate.
-#![allow(dead_code, unused_imports)]
 
 pub use longshore_common::io::alloc_guard::{sealed, Guard};
 pub use longshore_common::io::{BufId, Completions, FileId, Io, Limits, Op, Sock, Token};
@@ -29,7 +28,6 @@ pub const REREAD_MS: u64 = 200;
 pub const TX: BufId = BufId(6);
 pub const RX: BufId = BufId(7);
 pub const TOKEN_BUF: BufId = BufId(8);
-#[allow(clippy::needless_update)]
 pub const LIMITS: Limits = Limits {
     sockets_max: 1 + CONNS * 2,
     buffers: 9,

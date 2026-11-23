@@ -8,6 +8,8 @@
 
 mod common;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
 #[test]
 fn server_failures_surface_as_errors_and_the_pool_recovers() {

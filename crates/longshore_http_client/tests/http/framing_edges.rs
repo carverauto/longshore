@@ -9,6 +9,8 @@
 
 mod common;
 use common::*;
+use longshore_http_client::head::HttpError;
+use longshore_http_client::server::Behavior;
 
 fn get(reply: &[u8]) -> Result<Response, Error> {
     raw_exchange(client_cfg(), "GET", &[], Some(RX), reply).result

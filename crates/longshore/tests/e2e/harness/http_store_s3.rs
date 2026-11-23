@@ -9,7 +9,7 @@ use super::{StoreObject, StoreState};
 use longshore::checksum::{crc64_header_value, crc64_nvme};
 use std::collections::BTreeMap;
 
-pub(super) fn store_put(st: &mut StoreState, key: &str, data: Vec<u8>) -> StoreObject {
+fn store_put(st: &mut StoreState, key: &str, data: Vec<u8>) -> StoreObject {
     let crc = crc64_nvme(&data);
     let (etag, crc64_b64) = (format!("\"{crc:016x}\""), crc64_header_value(crc));
     let obj = StoreObject {

@@ -6,11 +6,8 @@
 //! Tier 3 pairwise scenarios `T3-26`–`T3-27`: portable `Client` waiter
 //! saturation + `Drop` stop, and armed `Accept`/`Recv` frontend + mailbox backend.
 
-#[allow(unused_imports)]
 use super::PingMsg;
-#[allow(unused_imports)]
 use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
-#[allow(unused_imports)]
 use longshore::mailbox::{mailbox, Config, TryRecv};
 
 #[test]

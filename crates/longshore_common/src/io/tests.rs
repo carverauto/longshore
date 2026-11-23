@@ -5,7 +5,6 @@
 
 use super::*;
 
-#[allow(clippy::needless_update)]
 const LIMITS: Limits = Limits {
     sockets_max: 1,
     buffers: 2,

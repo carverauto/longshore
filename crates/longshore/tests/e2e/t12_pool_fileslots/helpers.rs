@@ -14,8 +14,6 @@ use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Tok
 #[cfg(feature = "sim")]
 use longshore::sim::{Faults, SimIo};
 
-#[allow(dead_code)]
-pub const LINUX_EEXIST: i32 = 17;
 pub const LINUX_EBUSY: i32 = 16;
 pub const LINUX_EINVAL: i32 = 22;
 

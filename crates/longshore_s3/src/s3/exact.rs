@@ -55,7 +55,10 @@ impl S3 {
     /// Nothing is decided here: a refusal because the object exists is a
     /// report whose answer has status 412, and the comparison that
     /// [`S3::store_no_clobber`] makes after a refused retry is not made.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn put<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -124,7 +127,10 @@ impl S3 {
     /// [`Outcome::Report`]. A ranged fetch that the store answers with the
     /// whole object is an answer with status 200, and the range a store
     /// did serve is in the answer for the caller to compare.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every `S3` request method takes the `Io`, the caller's token and the key, then this request's own parts as plain arguments, with no options struct to build per call"
+    )]
     pub fn get<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -157,7 +163,10 @@ impl S3 {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the one path behind `put`, `head` and `get`, which pass their request's parts through to it unchanged"
+    )]
     fn submit_exact<IO: Io>(
         &mut self,
         io: &mut IO,

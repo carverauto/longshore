@@ -193,7 +193,7 @@ mod types;
 pub use types::*;
 
 impl S3 {
-    pub fn new(#[allow(unused_mut)] mut cfg: Config) -> S3 {
+    pub fn new(cfg: Config) -> S3 {
         assert!(cfg.attempts_max >= 1 && cfg.requests_max >= 1);
         // The signature's fixed buffers hold a region of this length with room to spare.
         assert!(cfg.region.len() <= 64, "region is longer than 64 bytes");
@@ -209,6 +209,9 @@ impl S3 {
             }
             None => String::new(),
         };
+        // Only the TLS build takes its setup out of `cfg`.
+        #[cfg(feature = "tls")]
+        let mut cfg = cfg;
         #[cfg(feature = "tls")]
         let (secure, client) = (
             cfg.tls.is_some(),

@@ -11,7 +11,6 @@ use super::*;
 /// body 1, user tx 2, user rx 3. Small buffers: the client head.
 pub(super) fn selftest() {
     const SIZE: u32 = 8 << 20;
-    #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: 3,
         buffers: 4,

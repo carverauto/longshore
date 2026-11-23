@@ -295,7 +295,6 @@ fn main() {
             }
         });
         for round in 0..REPEATS {
-            #[allow(clippy::needless_update)]
             let limits = Limits {
                 sockets_max: SOCKS + 1,
                 buffers: 1,
