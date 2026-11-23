@@ -7,7 +7,7 @@ publish = false
 license.workspace = true
 
 [dependencies]
-longshore = { workspace = true, features = ["sim"] }
+longshore = { workspace = true, features = ["sim", "tls"] }
 # For the benchmark sink's TLS mode. This is a tool crate; nothing ships from it.
 rustls.workspace = true
 rcgen.workspace = true
@@ -18,6 +18,10 @@ fault-injection = ["longshore/fault-injection"]
 
 [[bin]]
 name = "client_faults"
+required-features = ["fault-injection"]
+
+[[bin]]
+name = "uring_faults"
 required-features = ["fault-injection"]
 
 [dev-dependencies]

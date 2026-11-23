@@ -19,9 +19,11 @@
 # longshore
 
 longshore is an object storage client written in Rust. It is built to move a
-lot of data with little CPU: one thread on Linux `io_uring`, all memory
+lot of data with little CPU: one thread per core on Linux `io_uring`, all memory
 allocated at start-up, and no copy of an upload's body made by the client,
-which hands large sends to the kernel as zero-copy sends.
+which hands large sends to the kernel as zero-copy sends. On macOS (`kqueue`)
+and on Linux hosts without `io_uring` (`epoll`), it also runs on a portable
+POSIX readiness backend for development, tests, and non-ring environments.
 
 It talks to:
 
@@ -40,17 +42,17 @@ API will change between releases.
 
 ## Performance
 
-One client thread against Amazon S3, 8 MiB objects, from instances in the
-same region as the bucket. Medians of five runs, and of eight for HTTPS PUT.
-GB means 10^9 bytes.
+These figures are for the Linux `io_uring` backend (not the portable POSIX
+backend). One client thread against Amazon S3, 8 MiB objects, from instances in
+the same region as the bucket. Medians of five runs. GB means 10^9 bytes.
 
 | Request | Graviton4, 300 Gbit/s card | AMD Zen 5, 200 Gbit/s card |
 |---|---|---|
-| PUT, plain HTTP | 36.7 GB/s | 22.4 GB/s |
-| PUT with a CRC-64 checksum on every body | 16.4 GB/s | 13.3 GB/s |
-| GET | 4.4 GB/s | 7.9 GB/s |
-| HTTPS PUT, 3 MiB send batch | 5.2 GB/s | 7.3 GB/s |
-| HTTPS GET | 2.7 GB/s | 5.1 GB/s |
+| PUT, plain HTTP | 36.4 GB/s | 23.9 GB/s |
+| PUT with a CRC-64 checksum on every body | 16.7 GB/s | 14.1 GB/s |
+| GET | 4.6 GB/s | 7.9 GB/s |
+| HTTPS PUT | 5.1 GB/s | 7.6 GB/s |
+| HTTPS GET | 2.8 GB/s | 5.2 GB/s |
 
 Plain PUT fills the 300 Gbit/s card with half of the client's thread idle.
 Every row below it is bound by the one core the client runs on, and grows
@@ -67,7 +69,7 @@ runs between two machines. Every measurement is in
 
 ```toml
 [dependencies]
-longshore = "0.1"
+longshore = "0.2"
 ```
 
 The API documentation is on [docs.rs](https://docs.rs/longshore), and for
@@ -106,18 +108,26 @@ how it is tested. The store's own API is lower level:
 [Building, testing and running against a store][testing] shows how
 to drive it.
 
+## The I/O layer
+
+The client is built on `longshore::io`, a single-threaded operation queue
+that other storage code can use directly. It has direct file I/O with linked
+chains, server-side networking with armed accept and receive over a buffer
+ring, lock-free mailboxes between cores, and a simulated disk with power
+loss and fault injection. TLS is a Cargo feature that is on by default.
+[The I/O layer][io] describes each part.
+
 ## Requirements
 
-- Linux 6.1 or later, on x86-64 or AArch64.
+- Linux 6.1 or later (x86-64 or AArch64) for `io_uring` (and `epoll` when
+  `Builder::portable` is set), or macOS for the portable `kqueue` backend
+  (without core pinning). Other targets build the crate and run the simulator,
+  while `client::Builder::build` returns `BuildError::Unsupported`.
 - A recent stable Rust toolchain.
 
-The code builds on macOS and the simulator tests run there. Anything that
-uses `io_uring` has to be cross-compiled and run on a Linux host.
-
-```sh
-cargo test --workspace          # unit, simulation and property tests
-./scripts/test.sh               # those, the model checks, then the real-kernel checks
-```
+[Building, testing and running against a store][testing] has the test
+commands and how to run the real-kernel checks on a Linux host.
+[The I/O layer][io] lists the resource limits and the platform notes.
 
 In a container, `io_uring` needs a seccomp profile that allows it and a
 locked-memory limit large enough for the client's buffers. Both are set on
@@ -129,6 +139,7 @@ the node. See [Running in containers][containers].
 |---|---|
 | [Status][status] | What works, and against which stores |
 | [How it works][design] | The design, and the crates in this repository |
+| [The I/O layer][io] | File operations, serving, the buffer ring, mailboxes, the simulated disk |
 | [The shareable client][client] | The handle other threads use: operations, settings, failure behaviour |
 | [Building, testing and running against a store][testing] | The test scripts, and `s3_uring` against a real bucket |
 | [Running in containers][containers] | The seccomp profile and the locked-memory limit |
@@ -145,6 +156,7 @@ Apache License 2.0. See `LICENSE`.
 [client]: https://github.com/carverauto/longshore/blob/main/docs/client.md
 [containers]: https://github.com/carverauto/longshore/blob/main/docs/containers.md
 [design]: https://github.com/carverauto/longshore/blob/main/docs/design.md
+[io]: https://github.com/carverauto/longshore/blob/main/docs/io.md
 [limits]: https://github.com/carverauto/longshore/blob/main/docs/limits.md
 [results]: https://github.com/carverauto/longshore/tree/main/bench/results
 [status]: https://github.com/carverauto/longshore/blob/main/docs/status.md

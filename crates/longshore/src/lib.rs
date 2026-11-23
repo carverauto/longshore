@@ -3,12 +3,13 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! An object storage client for Linux `io_uring`.
+//! An object storage client for Linux `io_uring` and portable POSIX backends.
 //!
 //! longshore moves a lot of data with little CPU. One thread drives
-//! everything from `io_uring` completions. Buffers, connection slots and
-//! operation slots are allocated when the client is built, and the client
-//! makes no copy of an upload's body.
+//! everything from one completion queue (`io_uring` on Linux, or the
+//! portable `kqueue`/`epoll` engine elsewhere). Buffers, connection slots
+//! and operation slots are allocated when the client is built, and the
+//! client makes no copy of an upload's body.
 //!
 //! # Highlights
 //!
@@ -40,10 +41,12 @@
 //!
 //! # Platform
 //!
-//! Linux 6.1 or later, on x86-64 or AArch64. The crate builds on other
-//! systems, and the simulator runs there, but [`client::Builder::build`]
-//! returns [`client::BuildError::Unsupported`] because there is no
-//! `io_uring` to run on.
+//! Linux 6.1 or later, on x86-64 or AArch64, uses `io_uring` by default and
+//! can select the portable `epoll` backend via [`client::Builder::portable`].
+//! macOS runs on the portable `kqueue` backend (requesting CPU pinning via
+//! [`client::Builder::pin`] returns [`client::BuildError::Setting`]). The
+//! crate builds on other systems and the simulator runs there, while
+//! [`client::Builder::build`] returns [`client::BuildError::Unsupported`].
 //!
 //! In a container two things have to be set on the node. The runtime's
 //! default seccomp profile refuses the `io_uring` system calls, so the
@@ -229,6 +232,8 @@
 //!
 //! # Features
 //!
+//! - `tls` (default): TLS 1.3 via `longshore_tls`. Without it `longshore`
+//!   depends on neither `longshore_tls` nor `aws-lc-sys`.
 //! - `sim`: the deterministic simulator, for tests.
 //! - `fault-injection`: lets a test break a running client's ring. Off
 //!   everywhere else.
@@ -239,9 +244,14 @@
 //! under one name:
 //!
 //! - [`io`], from `longshore_common`: the [`io::Io`] trait every layer is
-//!   written against, and the `io_uring` backend.
-//! - [`dns`], [`http`], [`tls`]: the protocols, from `longshore_dns`,
-//!   `longshore_http_client` and `longshore_tls`.
+//!   written against, the `io_uring` backend, and the portable POSIX
+//!   (`kqueue`/`epoll`) backend.
+//! - [`mailbox`], from `longshore_mailbox`: bounded lock-free mailboxes
+//!   between I/O cores and caller waiter slots.
+//! - [`dns`], [`stream`], [`http`]: the protocols, from `longshore_dns`,
+//!   `longshore_stream` and `longshore_http_client`.
+//! - `tls` (feature `tls`), from `longshore_tls`: TLS 1.3 handshake and
+//!   record layer.
 //! - [`checksum`], from `longshore_crc`.
 //! - [`store`], from `longshore_s3`: the object store API: operations,
 //!   signing, retries, listing and credentials.
@@ -257,6 +267,9 @@ pub use longshore_common::sim;
 pub use longshore_crc as checksum;
 pub use longshore_dns as dns;
 pub use longshore_http_client as http;
+pub use longshore_mailbox as mailbox;
 pub use longshore_s3 as store;
 pub use longshore_s3::{client, crypto};
+pub use longshore_stream as stream;
+#[cfg(feature = "tls")]
 pub use longshore_tls as tls;

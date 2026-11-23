@@ -17,9 +17,12 @@
 
 use crate::chunked::Chunked;
 use crate::head::{parse_response, Fields, HeadWriter, HttpError};
-use crate::stream::{IdleCheck, Step, Stream};
-use longshore_common::io::{BufId, Completion, Io, Op, Segment, Sock, Token, ECANCELED};
-use longshore_tls::handshake::{ClientSetup, Handshake, TlsError};
+#[cfg(feature = "tls")]
+use longshore_common::io::ECANCELED;
+use longshore_common::io::{BufId, Completion, Io, Op, Segment, Sock, Token};
+use longshore_stream::{IdleCheck, Step, Stream, TlsError};
+#[cfg(feature = "tls")]
+use longshore_tls::handshake::{ClientSetup, Handshake};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[derive(Clone, Copy, Debug)]
@@ -60,7 +63,7 @@ pub struct Config {
 }
 
 /// The default and largest `tls_records_max`.
-pub const TLS_RECORDS_MAX: u64 = longshore_tls::record::KEY_RECORDS_RETIRE;
+pub const TLS_RECORDS_MAX: u64 = longshore_stream::KEY_RECORDS_RETIRE;
 
 pub struct Request<'a> {
     pub method: &'a str,
@@ -146,6 +149,7 @@ enum State {
     /// request's head is already in the head buffer.
     CheckIdle,
     /// TCP is up; the TLS handshake is in progress.
+    #[cfg(feature = "tls")]
     TlsHandshake,
     SendHead {
         off: u32,
@@ -203,7 +207,9 @@ struct Conn {
     chunked: Chunked,
     body_base: u32,
     /// Server name for TLS, copied from the request's host.
+    #[cfg(feature = "tls")]
     name: [u8; 253],
+    #[cfg(feature = "tls")]
     name_len: u8,
 }
 
@@ -221,6 +227,7 @@ pub struct Client {
     conns: Box<[Conn]>,
     streams: Box<[Stream]>,
     /// Present when connections use TLS.
+    #[cfg(feature = "tls")]
     tls: Option<ClientSetup>,
     /// Connections opened so far.
     pub connects: u64,
@@ -245,17 +252,38 @@ mod retire;
 impl Client {
     /// A client that speaks plain HTTP.
     pub fn new(cfg: Config) -> Client {
-        Self::build(cfg, None)
+        #[cfg(feature = "tls")]
+        {
+            Self::build(cfg, None)
+        }
+        #[cfg(not(feature = "tls"))]
+        {
+            Self::build(cfg)
+        }
     }
 
     /// A client that speaks HTTPS. Each connection additionally uses two
     /// pool buffers, for sealed records going out and coming in, starting at
     /// `first_tls_buf`: `first_tls_buf..first_tls_buf + 2 * connections_max`.
+    #[cfg(feature = "tls")]
     pub fn with_tls(cfg: Config, setup: ClientSetup, first_tls_buf: u32) -> Client {
         Self::build(cfg, Some((setup, first_tls_buf)))
     }
 
+    #[cfg(feature = "tls")]
     fn build(cfg: Config, tls: Option<(ClientSetup, u32)>) -> Client {
+        Self::build_inner(cfg, Some(tls))
+    }
+
+    #[cfg(not(feature = "tls"))]
+    fn build(cfg: Config) -> Client {
+        Self::build_inner(cfg)
+    }
+
+    fn build_inner(
+        cfg: Config,
+        #[cfg(feature = "tls")] tls: Option<Option<(ClientSetup, u32)>>,
+    ) -> Client {
         assert!(
             cfg.head_max <= cfg.buffer_size && cfg.head_max <= u16::MAX as u32,
             "head_max must fit a pool buffer and 16 bits"
@@ -285,15 +313,21 @@ impl Client {
             fields: None,
             chunked: Chunked::new(),
             body_base: 0,
+            #[cfg(feature = "tls")]
             name: [0; 253],
+            #[cfg(feature = "tls")]
             name_len: 0,
         };
+        #[cfg(feature = "tls")]
+        let tls = tls.flatten();
+        #[cfg(feature = "tls")]
         let first_tls_buf = tls.as_ref().map(|t| t.1);
         let streams = (0..cfg.connections_max)
             .map(|i| {
                 let token = |kind| Token(cfg.token_base + i as u64 * 8 + kind);
                 let s = Stream::new(Sock(cfg.first_sock + i), token(K_SEND), token(K_RECV));
-                match first_tls_buf {
+                #[cfg(feature = "tls")]
+                let s = match first_tls_buf {
                     Some(first) => s.with_tls_buffers(
                         BufId(first + 2 * i),
                         BufId(first + 2 * i + 1),
@@ -302,13 +336,15 @@ impl Client {
                         cfg.zero_copy_min,
                     ),
                     None => s,
-                }
+                };
+                s
             })
             .collect();
         Client {
             cfg,
             conns: vec![conn; cfg.connections_max as usize].into_boxed_slice(),
             streams,
+            #[cfg(feature = "tls")]
             tls: tls.map(|t| t.0),
             connects: 0,
             idle_closed: 0,

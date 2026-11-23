@@ -16,6 +16,18 @@ use std::io;
 use std::net::SocketAddr;
 
 pub mod alloc_guard;
+pub mod contract;
+pub mod contract_chains;
+pub mod contract_files;
+pub mod contract_net;
+pub mod engine;
+pub mod files;
+pub use files::{file_size, FileSlot, OpenFlags};
+pub mod limits;
+pub use limits::Limits;
+#[cfg(unix)]
+pub mod posix;
+pub mod scenario;
 pub mod segment;
 pub use segment::Segment;
 #[cfg(target_os = "linux")]
@@ -47,21 +59,34 @@ pub enum Op {
     /// leaves the slot free; the caller need not close it. A connect that
     /// succeeds completes with 0, or with what [`Segment::decode`] reads
     /// when the backend was asked to measure segment sizes.
-    Connect {
+    Connect { sock: Sock, addr: SocketAddr },
+    /// Open a Unix-domain stream socket in slot `sock` and connect it to the
+    /// NUL-terminated path in `path_buf[path_off..path_off + path_len]`, copied
+    /// at submission time. A connect that fails leaves the slot free.
+    ConnectUnix {
         sock: Sock,
-        addr: SocketAddr,
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
     },
     /// Open a UDP socket in slot `sock` connected to `addr`. `Send` and `Recv`
     /// then carry whole datagrams.
-    ConnectUdp {
-        sock: Sock,
-        addr: SocketAddr,
-    },
+    ConnectUdp { sock: Sock, addr: SocketAddr },
     /// Accept one connection from `listener` into slot `sock`.
-    Accept {
-        listener: Sock,
-        sock: Sock,
-    },
+    Accept { listener: Sock, sock: Sock },
+    /// Accept connections on `listener`, placing each into a free slot of
+    /// `Limits::accept_range_start..accept_range_start + accept_range_len` and
+    /// reporting the slot index as `result` with `more: true`. Ends with
+    /// `-ENFILE` or `-EMFILE` (`more: false`) when the range is full. Counts
+    /// toward `Limits::ops_max` until its final completion.
+    ArmedAccept { listener: Sock },
+    /// Receive bytes on `sock`, taking a buffer from the registered buffer
+    /// ring only when bytes arrive. Each completion with bytes carries
+    /// `buf: Some(id)` and `result > 0` and remains owned by the caller until
+    /// [`Io::give_back`]. Ends with `-ENOBUFS` when the ring is empty or `0`
+    /// (`buf: None`) on peer EOF. Counts toward `Limits::ops_max` until its
+    /// final completion.
+    ArmedRecv { sock: Sock },
     /// Send `len` bytes of buffer `buf` starting at `off`. May complete short.
     Send {
         sock: Sock,
@@ -86,9 +111,12 @@ pub enum Op {
         off: u32,
         len: u32,
     },
-    Close {
-        sock: Sock,
-    },
+    /// Close socket slot `sock`. Gives every other operation in flight on
+    /// `sock` (including an [`Op::Accept`] waiting on a closed listener) its
+    /// final completion without waiting for the peer, in no fixed order
+    /// relative to the close's own completion. Closing a slot that holds no
+    /// socket still completes once.
+    Close { sock: Sock },
     /// Wait until the backend's waker has been signalled from any thread.
     /// Completes with 0. Signals that arrive while no `AwaitWake` is in
     /// flight are kept, so the next one completes at once. Requires
@@ -104,15 +132,84 @@ pub enum Op {
         len: u32,
     },
     /// Completes with 0 after `nanos`.
-    Timeout {
-        nanos: u64,
+    Timeout { nanos: u64 },
+    /// Ask for the in-flight operation submitted with `target` at the moment
+    /// this cancel is submitted to stop. An operation submitted later under
+    /// the same token or already finished is not matched. The target then
+    /// completes once, normally with `-ECANCELED`, or with its real result if
+    /// it finished first. The cancel itself completes with 0 if found, or a
+    /// negative errno if no such operation was in flight.
+    Cancel { target: Token },
+    /// Open the NUL-terminated path in `path_buf[path_off..path_off + path_len]`
+    /// into fixed file slot `slot`. Completes with 0 or a negative errno.
+    FileOpen {
+        slot: FileSlot,
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+        flags: OpenFlags,
     },
-    /// Ask for the in-flight operation submitted with `target` to stop. That
-    /// operation then completes, normally with `-ECANCELED`, or with its real
-    /// result if it finished first. The cancel itself completes with 0, or a
-    /// negated errno if no such operation was found.
-    Cancel {
-        target: Token,
+    /// Close the file in `slot`, freeing the slot on completion.
+    FileClose { slot: FileSlot },
+    /// Read up to `len` bytes at `file_off` from `slot` into `buf[off..off + len]`.
+    FileRead {
+        slot: FileSlot,
+        buf: BufId,
+        off: u32,
+        len: u32,
+        file_off: u64,
+    },
+    /// Write up to `len` bytes from `buf[off..off + len]` to `slot` at `file_off`.
+    FileWrite {
+        slot: FileSlot,
+        buf: BufId,
+        off: u32,
+        len: u32,
+        file_off: u64,
+    },
+    /// Flush dirty data (and metadata unless `datasync`) for `slot`.
+    FileSync { slot: FileSlot, datasync: bool },
+    /// Reserve space for `[file_off, file_off + len)` on `slot`.
+    FileReserve {
+        slot: FileSlot,
+        file_off: u64,
+        len: u64,
+        keep_size: bool,
+    },
+    /// Deallocate `[file_off, file_off + len)` on `slot`, leaving file size unchanged.
+    FilePunch {
+        slot: FileSlot,
+        file_off: u64,
+        len: u64,
+    },
+    /// Read file status by path into `out_buf[out_off..]` in 256-byte Linux `statx` layout.
+    FileStatus {
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+        out_buf: BufId,
+        out_off: u32,
+    },
+    /// Rename a path (overwriting an existing non-directory target).
+    FileRename {
+        old_buf: BufId,
+        old_off: u32,
+        old_len: u32,
+        new_buf: BufId,
+        new_off: u32,
+        new_len: u32,
+    },
+    /// Unlink a non-directory path.
+    FileUnlink {
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
+    },
+    /// Create a directory at the given path.
+    FileMkdir {
+        path_buf: BufId,
+        path_off: u32,
+        path_len: u32,
     },
 }
 
@@ -121,6 +218,22 @@ pub enum Op {
 pub struct Completion {
     pub token: Token,
     pub result: i32,
+    /// Whether more completions will follow for `token`.
+    pub more: bool,
+    /// Buffer selected for this completion by an armed receive, if any.
+    pub buf: Option<BufId>,
+}
+
+impl Completion {
+    /// A single final completion carrying no selected buffer.
+    pub const fn new(token: Token, result: i32) -> Self {
+        Self {
+            token,
+            result,
+            more: false,
+            buf: None,
+        }
+    }
 }
 
 pub const ECONNRESET: i32 = 104;
@@ -129,7 +242,14 @@ pub const EPIPE: i32 = 32;
 pub const ETIME: i32 = 62;
 pub const ECANCELED: i32 = 125;
 pub const ENOENT: i32 = 2;
+pub const EBADF: i32 = 9;
 pub const EAGAIN: i32 = 11;
+pub const EBUSY: i32 = 16;
+pub const EINVAL: i32 = 22;
+pub const ENFILE: i32 = 23;
+pub const EMFILE: i32 = 24;
+pub const ENAMETOOLONG: i32 = 36;
+pub const ENOBUFS: i32 = 105;
 
 /// Fixed-capacity completion buffer; `tick` never delivers more than fit.
 pub struct Completions {
@@ -140,14 +260,7 @@ pub struct Completions {
 impl Completions {
     pub fn new(capacity: usize) -> Completions {
         Completions {
-            items: vec![
-                Completion {
-                    token: Token(0),
-                    result: 0
-                };
-                capacity
-            ]
-            .into_boxed_slice(),
+            items: vec![Completion::new(Token(0), 0); capacity].into_boxed_slice(),
             len: 0,
         }
     }
@@ -159,6 +272,10 @@ impl Completions {
     }
     pub fn len(&self) -> usize {
         self.len
+    }
+    #[cfg(any(test, feature = "sim"))]
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
     }
     /// Caller must check `is_full` first.
     pub fn push(&mut self, c: Completion) {
@@ -183,80 +300,6 @@ pub trait Wake: Send + Sync {
     fn wake(&self);
 }
 
-/// Everything the I/O layer allocates is sized from these, once.
-#[derive(Clone, Copy, Debug)]
-pub struct Limits {
-    pub sockets_max: u32,
-    /// Large buffers, sized for object bodies: ids `0..buffers`.
-    pub buffers: u32,
-    pub buffer_size: u32,
-    /// Small buffers, sized for request and response heads and datagrams:
-    /// ids `buffers..buffers + small_buffers`. May be zero.
-    pub small_buffers: u32,
-    pub small_buffer_size: u32,
-    /// Maximum operations in flight.
-    pub ops_max: u32,
-}
-
-impl Limits {
-    /// Buffers of both sizes.
-    pub fn buffer_count(&self) -> u32 {
-        self.buffers + self.small_buffers
-    }
-
-    /// The id of small buffer `i`.
-    pub fn small(&self, i: u32) -> BufId {
-        assert!(i < self.small_buffers, "small buffer out of range");
-        BufId(self.buffers + i)
-    }
-
-    /// Bytes in the one pool that holds every buffer, large ones first.
-    pub fn pool_bytes(&self) -> usize {
-        self.buffers as usize * self.buffer_size as usize
-            + self.small_buffers as usize * self.small_buffer_size as usize
-    }
-
-    /// Where buffer `id` lies in the pool: its offset and its length.
-    pub fn span(&self, id: BufId) -> (usize, usize) {
-        assert!(id.0 < self.buffer_count(), "buffer out of range");
-        if id.0 < self.buffers {
-            (
-                id.0 as usize * self.buffer_size as usize,
-                self.buffer_size as usize,
-            )
-        } else {
-            let large = self.buffers as usize * self.buffer_size as usize;
-            (
-                large + (id.0 - self.buffers) as usize * self.small_buffer_size as usize,
-                self.small_buffer_size as usize,
-            )
-        }
-    }
-
-    /// Like [`Limits::span`] for the range `off..off + len` of the buffer.
-    pub fn range(&self, id: BufId, off: u32, len: u32) -> core::ops::Range<usize> {
-        let (base, size) = self.span(id);
-        assert!(
-            off as u64 + len as u64 <= size as u64,
-            "buffer range out of bounds"
-        );
-        base + off as usize..base + off as usize + len as usize
-    }
-
-    /// Two distinct buffers of the pool, borrowed at once.
-    pub fn pair<'a>(&self, pool: &'a mut [u8], a: BufId, b: BufId) -> (&'a mut [u8], &'a mut [u8]) {
-        assert!(a != b, "buf_pair needs two distinct pool buffers");
-        let ((a_at, a_len), (b_at, b_len)) = (self.span(a), self.span(b));
-        if a_at < b_at {
-            let (left, right) = pool.split_at_mut(b_at);
-            (&mut left[a_at..a_at + a_len], &mut right[..b_len])
-        } else {
-            let (left, right) = pool.split_at_mut(a_at);
-            (&mut right[..a_len], &mut left[b_at..b_at + b_len])
-        }
-    }
-}
-
 /// All operation slots are in use.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Busy;
@@ -279,6 +322,18 @@ pub trait Io {
     /// Bind and listen in slot `sock`. Initialization-time only; may block.
     /// Returns the bound address (useful with port 0).
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// Bind and listen on a Unix-domain stream socket at `path` in slot
+    /// `sock`. Initialization-time only; may block.
+    fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
+    /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected
+    /// from now on. Ignored for UDP and Unix-domain sockets.
+    fn no_delay(&mut self, _on: bool) {}
+    /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected
+    /// from now on. Ignored for UDP and Unix-domain sockets.
+    fn keep_alive(&mut self, _on: bool) {}
+    /// Return a buffer-ring buffer named in an [`Op::ArmedRecv`] completion
+    /// back to the backend's ring without submitting an operation.
+    fn give_back(&mut self, id: BufId);
     /// Ask for the segment sizes of each TCP connection opened from now on:
     /// a connect that succeeds then completes with an encoded [`Segment`]
     /// in place of 0. May be changed at any time. A backend that cannot measure
@@ -293,6 +348,9 @@ pub trait Io {
     }
     /// Queue an operation. Performs no system call.
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy>;
+    /// Queue a linked chain of file operations atomically. Refuses with
+    /// [`Busy`] if fewer than `ops.len()` operation slots are free.
+    fn submit_chain(&mut self, ops: &[(Token, Op)]) -> Result<(), Busy>;
     /// Hand queued operations to the kernel and collect completions, in one
     /// system call. With `wait`, blocks until at least one completion.
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()>;

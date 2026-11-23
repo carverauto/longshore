@@ -1,0 +1,45 @@
+[package]
+name = "longshore_mailbox"
+description = "Bounded lock-free mailboxes between I/O cores and caller waiter slots"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+readme = "README.md"
+autotests = false
+
+[dependencies]
+longshore_common.workspace = true
+
+[target.'cfg(longshore_model)'.dependencies]
+loom.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(longshore_model)'] }
+
+[dev-dependencies]
+longshore_common = { workspace = true, features = ["sim"] }
+
+[[test]]
+name = "mailbox_queue"
+path = "tests/mailbox/queue.rs"
+
+[[test]]
+name = "mailbox_slots"
+path = "tests/mailbox/slots.rs"
+
+[[test]]
+name = "mailbox_alloc"
+path = "tests/mailbox/alloc.rs"
+
+[[test]]
+name = "mailbox_sim"
+path = "tests/mailbox/sim.rs"
+
+[[test]]
+name = "mailbox_model"
+path = "tests/mailbox/model.rs"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]

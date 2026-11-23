@@ -38,6 +38,7 @@ impl Client {
         }
         // Sends and receives go through the stream, which turns TLS records
         // into plaintext results.
+        #[cfg(feature = "tls")]
         if state == State::TlsHandshake {
             return match self.streams[i].on_handshake(io, kind == K_SEND, c.result) {
                 Step::Pending => Handled::Pending,
@@ -78,10 +79,7 @@ impl Client {
         kind: u64,
         result: i32,
     ) -> Handled {
-        let c = Completion {
-            token: self.token(i, kind),
-            result,
-        };
+        let c = Completion::new(self.token(i, kind), result);
         let state = self.conns[i].state;
         let reused = self.conns[i].uses > 0;
         let io_error = |r: i32| Error::Io(-r);
@@ -116,20 +114,29 @@ impl Client {
                 if let Some(segment) = segment {
                     self.connected = Some((self.conns[i].addr, segment));
                 }
-                let Some(setup) = &self.tls else {
+                #[cfg(not(feature = "tls"))]
+                {
                     self.send_head(io, i, 0);
-                    return Handled::Pending;
-                };
-                let conn = &self.conns[i];
-                let name = core::str::from_utf8(&conn.name[..conn.name_len as usize]).unwrap_or("");
-                let handshake = match Handshake::client(setup, name) {
-                    Ok(h) => h,
-                    Err(e) => return self.fail(io, i, Error::Tls(e)),
-                };
-                self.conns[i].state = State::TlsHandshake;
-                match self.streams[i].start_handshake(io, handshake) {
-                    Step::Tls(e) => self.fail(io, i, Error::Tls(e)),
-                    _ => Handled::Pending,
+                    Handled::Pending
+                }
+                #[cfg(feature = "tls")]
+                {
+                    let Some(setup) = &self.tls else {
+                        self.send_head(io, i, 0);
+                        return Handled::Pending;
+                    };
+                    let conn = &self.conns[i];
+                    let name =
+                        core::str::from_utf8(&conn.name[..conn.name_len as usize]).unwrap_or("");
+                    let handshake = match Handshake::client(setup, name) {
+                        Ok(h) => h,
+                        Err(e) => return self.fail(io, i, Error::Tls(e.into())),
+                    };
+                    self.conns[i].state = State::TlsHandshake;
+                    match self.streams[i].start_handshake(io, handshake) {
+                        Step::Tls(e) => self.fail(io, i, Error::Tls(e)),
+                        _ => Handled::Pending,
+                    }
                 }
             }
             (K_SEND, State::SendHead { off }) => {
@@ -255,6 +262,7 @@ impl Client {
             State::Connecting => &[K_CONNECT],
             State::SendHead { .. } | State::SendBody { .. } => &[K_SEND],
             // Either may be outstanding; cancelling the other finds nothing.
+            #[cfg(feature = "tls")]
             State::TlsHandshake => &[K_SEND, K_RECV],
             _ => &[K_RECV],
         };

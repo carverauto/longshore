@@ -6,7 +6,7 @@
 //! The I/O threads behind a [`Client`]: building them, and stopping them
 //! when the last handle, buffer and operation are gone.
 
-use super::lane::{Kind, Lane, Request, KEY_MAX};
+use super::lane::Lane;
 use super::Client;
 use crate::creds::Credentials;
 use crate::s3::{KeyPrefix, Validate};
@@ -18,20 +18,20 @@ use std::thread::JoinHandle;
 /// Why a client could not be built.
 #[derive(Debug)]
 pub enum BuildError {
-    /// Only Linux has the I/O this client is built on.
+    /// This platform has no supported I/O backend (Linux and macOS are supported).
     Unsupported,
     /// A setting is out of range. The text says which.
     Setting(&'static str),
     /// No nameserver was given and none was found in `/etc/resolv.conf`.
     NoNameserver,
-    /// An I/O thread could not set up its ring.
+    /// An I/O thread could not set up its backend.
     Io(std::io::Error),
 }
 
 impl std::fmt::Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuildError::Unsupported => write!(f, "this client runs on Linux only"),
+            BuildError::Unsupported => write!(f, "this client runs on Linux and macOS only"),
             BuildError::Setting(what) => write!(f, "{what}"),
             BuildError::NoNameserver => write!(f, "no nameserver configured or found"),
             BuildError::Io(e) => write!(f, "I/O thread set-up failed: {e}"),
@@ -85,8 +85,11 @@ pub struct Builder {
     /// HTTPS and downloads, which one core bounds.
     pub threads: u32,
     /// Pin thread `n` to CPU `first + n * step`. On a machine with several
-    /// NUMA nodes, choose CPUs on the network card's node.
+    /// NUMA nodes, choose CPUs on the network card's node. Refused on macOS.
     pub pin: Option<(usize, usize)>,
+    /// Use the portable readiness backend (`epoll` on Linux) instead of
+    /// `io_uring`. On macOS the portable backend (`kqueue`) is always used.
+    pub portable: bool,
     /// The limits below are per thread.
     pub connections: u32,
     /// Buffers lent to callers. An operation holds one while it runs.
@@ -95,6 +98,9 @@ pub struct Builder {
     pub buffer_size: u32,
     /// Operations in progress at most. Others wait.
     pub operations: u32,
+    /// Waiters preallocated per pool on each thread. Waiting beyond this
+    /// grows the queue rather than refusing callers.
+    pub waiters: u32,
     pub family: Family,
     /// See [`longshore_dns::Config::prefer_large_segments`].
     pub prefer_large_segments: Option<usize>,
@@ -121,10 +127,12 @@ impl Builder {
             tls: false,
             threads: 1,
             pin: None,
+            portable: false,
             connections: 64,
             buffers: 64,
             buffer_size: 8 << 20,
             operations: 64,
+            waiters: 256,
             family: Family::V4,
             prefer_large_segments: None,
             nameservers: Vec::new(),
@@ -134,11 +142,19 @@ impl Builder {
 
     fn check(&self) -> Result<(), BuildError> {
         let bad = |what| Err(BuildError::Setting(what));
+        #[cfg(not(feature = "tls"))]
+        if self.tls {
+            return bad("TLS requires the `tls` feature");
+        }
+        #[cfg(target_os = "macos")]
+        if self.pin.is_some() {
+            return bad("pinning threads to cores is not supported on macOS");
+        }
         if self.threads == 0 || self.threads > 1024 {
             return bad("threads must be 1 to 1024");
         }
-        if self.connections == 0 || self.buffers == 0 || self.operations == 0 {
-            return bad("connections, buffers and operations must be at least 1");
+        if self.connections == 0 || self.buffers == 0 || self.operations == 0 || self.waiters == 0 {
+            return bad("connections, buffers, operations and waiters must be at least 1");
         }
         if self.buffer_size < 8192 {
             return bad("buffer_size must be at least 8192");
@@ -195,20 +211,33 @@ impl Builder {
         self.start()
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     fn start(self) -> Result<Client, BuildError> {
         Err(BuildError::Unsupported)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn start(self) -> Result<Client, BuildError> {
+        use longshore_common::io::posix::PosixIo;
+        #[cfg(target_os = "linux")]
+        use longshore_common::io::uring::UringIo;
+
         let (ready, started) = std::sync::mpsc::channel();
         let mut joins = Vec::new();
         for n in 0..self.threads {
             let (settings, report) = (self.clone(), ready.clone());
             let spawned = std::thread::Builder::new()
                 .name(format!("longshore-io-{n}"))
-                .spawn(move || linux::run(settings, n, report));
+                .spawn(move || {
+                    #[cfg(target_os = "linux")]
+                    if settings.portable {
+                        run::run::<PosixIo>(settings, n, report);
+                    } else {
+                        run::run::<UringIo>(settings, n, report);
+                    }
+                    #[cfg(target_os = "macos")]
+                    run::run::<PosixIo>(settings, n, report);
+                });
             match spawned {
                 Ok(j) => joins.push(j),
                 Err(e) => {
@@ -258,7 +287,7 @@ pub(super) struct Threads {
 }
 
 impl Threads {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn new(lanes: Vec<Arc<Lane>>, joins: Vec<JoinHandle<()>>) -> Threads {
         Threads {
             lanes,
@@ -270,20 +299,7 @@ impl Threads {
 impl Drop for Threads {
     fn drop(&mut self) {
         for lane in &self.lanes {
-            // The queue keeps one place beyond the operation slots for this.
-            let _ = lane.requests.try_send(Request {
-                op: 0,
-                kind: Kind::Shutdown,
-                key: [0; KEY_MAX],
-                key_len: 0,
-                buf: 0,
-                len: 0,
-                upload: None,
-                number: 0,
-                expect: Default::default(),
-                budget: super::Budget::UNLIMITED,
-            });
-            lane.wake.wake();
+            lane.sender.stop();
         }
         for j in self.joins.lock().expect("joins lock").drain(..) {
             let _ = j.join();
@@ -291,5 +307,5 @@ impl Drop for Threads {
     }
 }
 
-#[cfg(target_os = "linux")]
-mod linux;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod run;

@@ -1,0 +1,9 @@
+longshore
+Copyright 2026 Carver Automation Corporation.
+
+This product includes simulated storage model rules adapted from
+UltraGraphDB (ultragraphdb_transactions_log::SimStorage,
+Copyright (c) 2026 Marvin Hansen, Apache License 2.0), which followed
+Apache Iggy's simulated storage (Apache Software Foundation,
+Apache License 2.0). The implementation in longshore_common::sim is
+written anew against longshore_common::io::Io.

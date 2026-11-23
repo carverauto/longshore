@@ -29,6 +29,7 @@ pub(super) fn bench(a: &Args, put: bool) {
     let n = a.conns;
     // Large buffers: one body buffer per connection, then two record
     // buffers per connection for TLS. Small buffers: one head per connection.
+    #[allow(clippy::needless_update)]
     let limits = Limits {
         sockets_max: n,
         buffers: n * 3,
@@ -36,6 +37,7 @@ pub(super) fn bench(a: &Args, put: bool) {
         small_buffers: n,
         small_buffer_size: 4096,
         ops_max: n * 3 + 1,
+        ..Limits::BASE
     };
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(&e.to_string()));
     let mut cfg = client_cfg(n, limits.buffer_size, 0);

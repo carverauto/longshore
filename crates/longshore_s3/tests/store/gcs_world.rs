@@ -29,6 +29,7 @@ pub const REREAD_MS: u64 = 200;
 pub const TX: BufId = BufId(6);
 pub const RX: BufId = BufId(7);
 pub const TOKEN_BUF: BufId = BufId(8);
+#[allow(clippy::needless_update)]
 pub const LIMITS: Limits = Limits {
     sockets_max: 1 + CONNS * 2,
     buffers: 9,
@@ -36,6 +37,7 @@ pub const LIMITS: Limits = Limits {
     small_buffers: CONNS,
     small_buffer_size: HEAD_MAX,
     ops_max: CONNS * 3 + CONNS + 1 + 2,
+    ..Limits::BASE
 };
 
 pub const TOKEN_A: &str = "ya29.first-token_0123456789abcdefghijklmnopqrstuvwxyz";
@@ -110,6 +112,7 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
         backoff_max_ns: 400 * MS,
         require_checksums: true,
         http,
+        #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Fixed(ADDR),
     });

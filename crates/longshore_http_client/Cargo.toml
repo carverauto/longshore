@@ -8,9 +8,14 @@ repository = "https://github.com/carverauto/longshore"
 readme = "README.md"
 autotests = false
 
+[features]
+default = ["tls"]
+tls = ["longshore_stream/tls", "dep:longshore_tls"]
+
 [dependencies]
 longshore_common.workspace = true
-longshore_tls.workspace = true
+longshore_stream.workspace = true
+longshore_tls = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Turns the simulator on for this crate's own tests.
@@ -62,3 +67,7 @@ path = "tests/http/pool_edges.rs"
 [[test]]
 name = "http_server_refusals"
 path = "tests/http/server_refusals.rs"
+
+[[test]]
+name = "http_adversarial"
+path = "tests/http/adversarial.rs"

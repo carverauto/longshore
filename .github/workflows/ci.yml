@@ -49,7 +49,18 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --exclude longshore-bench --all-targets --no-default-features -- -D warnings
+          cargo clippy -p longshore_common --all-targets --features fault-injection -- -D warnings
+      - name: Plain build excludes TLS and AWS-LC
+        run: |
+          tree=$(cargo tree -p longshore --no-default-features -e normal)
+          echo "$tree"
+          if echo "$tree" | grep -Eq '(^|[[:space:]])(longshore_tls|aws-lc-sys)[[:space:]]'; then
+            echo "ERROR: longshore --no-default-features depends on longshore_tls or aws-lc-sys" >&2
+            exit 1
+          fi
       - name: Documentation
         # What docs.rs would build. A broken link or a doc example that no
         # longer compiles fails here, not after a release.
@@ -57,9 +68,39 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --exclude longshore-bench --features longshore/sim
       - name: Test
-        run: cargo test --workspace
+        run: |
+          # Real-kernel io_uring E2E tests in `longshore --test e2e` run in the
+          # `uring` job on a full Linux VM; container pods can restrict io_uring
+          # registration opcodes (such as IORING_REGISTER_PBUF_RING).
+          cargo test --workspace --exclude longshore
+          cargo test -p longshore --lib
+          cargo test -p longshore --doc
+          cargo test --workspace --exclude longshore-bench --exclude longshore --no-default-features
+          cargo test -p longshore --lib --no-default-features
+          cargo test -p longshore --doc --no-default-features
+          cargo test -p longshore_common --features fault-injection
       - name: Model-checked client hand-offs
         run: ./scripts/test-model.sh
+
+  macos:
+    name: Portable backend on macOS
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy
+          rustup default "${RUST_VERSION}"
+      - name: Lint
+        run: |
+          cargo clippy -p longshore_common -p longshore_s3 --all-targets -- -D warnings
+          cargo clippy -p longshore_common --all-targets --features fault-injection -- -D warnings
+      - name: Test
+        run: |
+          cargo test -p longshore_common
+          cargo test -p longshore_common --features fault-injection
+          cargo test -p longshore_s3 --test client_portable
 
   uring:
     name: Real io_uring checks
@@ -77,20 +118,32 @@ jobs:
         run: |
           # http_uring registers buffers, which are pinned and count against RLIMIT_MEMLOCK (small on hosted runners).
           sudo prlimit --pid $$ --memlock=unlimited:unlimited
-          cargo build --release -p longshore-bench --bin echo_uring --bin http_uring
+          cargo build --release -p longshore-bench --bin contract_uring --bin server_uring --bin file_uring --bin echo_uring --bin http_uring
           cd target/release
+          timeout 60 ./contract_uring
+          timeout 60 ./contract_uring --posix
+          timeout 60 ./server_uring
+          timeout 60 ./server_uring --posix
+          timeout 60 ./file_uring
+          timeout 60 ./file_uring --posix
           timeout 60 ./echo_uring
           timeout 60 ./echo_uring --zc
           timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc
           timeout 60 ./http_uring selftest
+      - name: E2E suite (real io_uring, POSIX, simulator)
+        run: |
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          cargo test -p longshore --test e2e
+          cargo test -p longshore --test e2e --no-default-features
       - name: Client I/O threads failing and torn down under load
         run: |
           sudo prlimit --pid $$ --memlock=unlimited:unlimited
-          cargo build --release -p longshore-bench --features fault-injection --bin client_faults
+          cargo build --release -p longshore-bench --features fault-injection --bin client_faults --bin uring_faults
           cd target/release
           timeout 250 ./client_faults break tick
           timeout 250 ./client_faults break ring
           timeout 250 ./client_faults churn
+          timeout 60 ./uring_faults
 
   sanitizers:
     name: Client teardown under the address and thread sanitizers

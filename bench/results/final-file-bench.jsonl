@@ -1,0 +1,4 @@
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":1892.8,"p95_us":5163.3,"p99_us":6517.3,"mean_us":2354.3}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":1450.5,"p95_us":2424.9,"p99_us":3315.4,"mean_us":1561.8}
+{"mode":"two_ops","iters":200,"enters_per_op":2.00,"p50_us":303.8,"p95_us":928.6,"p99_us":1197.6,"mean_us":428.6}
+{"mode":"chain","iters":200,"enters_per_op":2.00,"p50_us":277.8,"p95_us":910.3,"p99_us":3410.8,"mean_us":443.8}

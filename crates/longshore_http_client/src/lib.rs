@@ -16,4 +16,3 @@ pub mod chunked;
 pub mod client;
 pub mod head;
 pub mod server;
-pub mod stream;

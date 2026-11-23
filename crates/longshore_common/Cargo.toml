@@ -29,6 +29,34 @@ name = "io_props"
 path = "tests/io/props.rs"
 
 [[test]]
+name = "io_engine_adversarial"
+path = "tests/io/engine_adversarial.rs"
+
+[[test]]
+name = "io_posix_adversarial"
+path = "tests/io/posix_adversarial.rs"
+
+[[test]]
+name = "io_posix"
+path = "tests/io/posix.rs"
+
+[[test]]
+name = "io_posix_contract"
+path = "tests/io/posix_contract.rs"
+
+[[test]]
+name = "io_posix_faults"
+path = "tests/io/posix_faults.rs"
+
+[[test]]
+name = "io_posix_alloc"
+path = "tests/io/posix_alloc.rs"
+
+[[test]]
+name = "io_posix_files"
+path = "tests/io/posix_files.rs"
+
+[[test]]
 name = "guard_death"
 path = "tests/guard/death.rs"
 
@@ -41,8 +69,40 @@ name = "sim_faults"
 path = "tests/sim/faults.rs"
 
 [[test]]
+name = "sim_armed_faults"
+path = "tests/sim/armed_faults.rs"
+
+[[test]]
 name = "sim_sockets"
 path = "tests/sim/sockets.rs"
+
+[[test]]
+name = "sim_traces"
+path = "tests/sim/traces.rs"
+
+[[test]]
+name = "sim_contract"
+path = "tests/sim/contract.rs"
+
+[[test]]
+name = "sim_files"
+path = "tests/sim/files.rs"
+
+[[test]]
+name = "sim_chains"
+path = "tests/sim/chains.rs"
+
+[[test]]
+name = "sim_disk"
+path = "tests/sim/disk.rs"
+
+[[test]]
+name = "sim_storage"
+path = "tests/sim/storage.rs"
+
+[[test]]
+name = "sim_wal"
+path = "tests/sim/wal.rs"
 
 [package.metadata.docs.rs]
 # io_uring is Linux only, and the simulator is part of the documented API.

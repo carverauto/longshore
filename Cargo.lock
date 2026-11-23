@@ -628,19 +628,23 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "longshore"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
+ "longshore",
  "longshore_common",
  "longshore_crc",
  "longshore_dns",
  "longshore_http_client",
+ "longshore_mailbox",
  "longshore_s3",
+ "longshore_stream",
  "longshore_tls",
+ "rcgen",
 ]
 
 [[package]]
 name = "longshore-bench"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -659,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_common"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -667,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_crc"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -675,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "longshore_dns"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "hegeltest",
  "longshore_common",
@@ -683,23 +687,34 @@ dependencies = [
 
 [[package]]
 name = "longshore_http_client"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "hegeltest",
  "longshore_common",
+ "longshore_stream",
  "longshore_tls",
  "rcgen",
 ]
 
 [[package]]
+name = "longshore_mailbox"
+version = "0.2.0"
+dependencies = [
+ "longshore_common",
+ "loom",
+]
+
+[[package]]
 name = "longshore_s3"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "hegeltest",
  "longshore_common",
  "longshore_crc",
  "longshore_dns",
  "longshore_http_client",
+ "longshore_mailbox",
+ "longshore_stream",
  "longshore_tls",
  "loom",
  "rcgen",
@@ -707,8 +722,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "longshore_stream"
+version = "0.2.0"
+dependencies = [
+ "longshore_common",
+ "longshore_tls",
+ "rcgen",
+]
+
+[[package]]
 name = "longshore_tls"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "aws-lc-sys",
  "hegeltest",

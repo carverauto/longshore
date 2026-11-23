@@ -1,0 +1,10 @@
+{"mode":"seq_write","run":1,"size":34359738368,"block":1048576,"depth":32,"secs":10.200,"gb_per_s":3.37,"thread_cpu":0.01}
+{"mode":"seq_read","run":1,"size":34359738368,"block":1048576,"depth":32,"secs":6.672,"gb_per_s":5.15,"thread_cpu":0.07}
+{"mode":"seq_write","run":2,"size":34359738368,"block":1048576,"depth":32,"secs":9.201,"gb_per_s":3.73,"thread_cpu":0.01}
+{"mode":"seq_read","run":2,"size":34359738368,"block":1048576,"depth":32,"secs":7.053,"gb_per_s":4.87,"thread_cpu":0.07}
+{"mode":"seq_write","run":3,"size":34359738368,"block":1048576,"depth":32,"secs":8.688,"gb_per_s":3.95,"thread_cpu":0.01}
+{"mode":"seq_read","run":3,"size":34359738368,"block":1048576,"depth":32,"secs":7.053,"gb_per_s":4.87,"thread_cpu":0.07}
+{"mode":"seq_write","run":4,"size":34359738368,"block":1048576,"depth":32,"secs":9.201,"gb_per_s":3.73,"thread_cpu":0.01}
+{"mode":"seq_read","run":4,"size":34359738368,"block":1048576,"depth":32,"secs":7.053,"gb_per_s":4.87,"thread_cpu":0.07}
+{"mode":"seq_write","run":5,"size":34359738368,"block":1048576,"depth":32,"secs":8.691,"gb_per_s":3.95,"thread_cpu":0.01}
+{"mode":"seq_read","run":5,"size":34359738368,"block":1048576,"depth":32,"secs":7.053,"gb_per_s":4.87,"thread_cpu":0.07}

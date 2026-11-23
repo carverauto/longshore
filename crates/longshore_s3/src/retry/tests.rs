@@ -107,12 +107,7 @@ fn every_transport_error_has_a_class() {
         // An alert after the handshake is a property of that connection.
         (Error::Tls(TlsError::Alert(20)), Class::Retry),
         (Error::Tls(TlsError::Alert(80)), Class::Retry),
-        (
-            Error::Tls(TlsError::Record(
-                longshore_tls::record::RecordError::BadRecord,
-            )),
-            Class::Retry,
-        ),
+        (Error::Tls(TlsError::Record), Class::Retry),
     ] {
         assert_eq!(classify(&Err(e)), expected, "{e:?}");
     }

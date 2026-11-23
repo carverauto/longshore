@@ -5,13 +5,13 @@
 
 //! An operation in progress: a future, with a blocking wait as well.
 
-use super::buffer::AnyLane;
-use super::lane::{block_on, waiter_id, Finished, Kind, Lane, Request};
+use super::buffer::NO_INDEX;
+use super::lane::{Finished, Kind, Lane, Request};
 use super::{least_busy, open, request, Alive, Buffer, Error};
+use longshore_mailbox::{block_on, SlotWaiter, TrySendError};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::TrySendError;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -48,13 +48,13 @@ impl<R> Output for (Result<R, Error>, Buffer) {
 #[must_use = "an operation's result, and the buffer it borrowed, come back through this"]
 pub struct Pending<T: Output> {
     lane: Arc<Lane>,
-    /// For an operation with no lent buffer: a wait for a slot on every
-    /// lane, starting at the open one with the fewest in flight.
-    any: Option<AnyLane>,
+    /// For an operation with no lent buffer: lanes to wait across, starting at
+    /// the open one with the fewest in flight.
+    any: Option<Arc<[Arc<Lane>]>>,
     alive: Alive,
     stage: Stage,
-    /// This operation's name while it waits for a slot.
-    waiter: u64,
+    /// This operation's waiter state while it waits for a slot.
+    waiter: SlotWaiter,
     /// The request, until it is sent.
     request: Option<Request>,
     /// The lent buffer the operation holds, as an index in the lane.
@@ -98,7 +98,7 @@ impl<T: Output> Pending<T> {
             any: None,
             alive,
             stage,
-            waiter: waiter_id(),
+            waiter: SlotWaiter::new(),
             request,
             buf,
             map,
@@ -127,7 +127,7 @@ impl<T: Output> Pending<T> {
 
     /// Let the operation run on whichever of `lanes` is open when it is sent.
     pub(super) fn on_any(mut self, lanes: Arc<[Arc<Lane>]>) -> Self {
-        self.any = Some(AnyLane::new(lanes, |l| &l.ops));
+        self.any = Some(lanes);
         self
     }
 
@@ -140,39 +140,32 @@ impl<T: Output> Pending<T> {
     }
 
     /// Hand the request to the I/O thread under slot `op`. False, with the
-    /// slot given back and the lane marked closed, if its thread is gone.
+    /// slot given back, if its thread is closed.
     fn send(&mut self, op: u32) -> bool {
         let mut r = self.request.take().expect("sent once");
         r.op = op;
-        self.lane.cells[op as usize]
-            .state
-            .lock()
-            .expect("cell lock")
-            .buf = self.buf;
         self.lane.in_flight.fetch_add(1, Ordering::Relaxed);
-        // The queue holds one request per slot, so it has room.
-        if let Err(TrySendError::Full(r) | TrySendError::Disconnected(r)) =
-            self.lane.requests.try_send(r)
-        {
-            self.request = Some(r);
-            self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
-            self.lane.cells[op as usize]
-                .state
-                .lock()
-                .expect("cell lock")
-                .buf = None;
-            self.lane.ops.give(op);
-            self.lane.close();
-            return false;
+        let tag = self.buf.filter(|&b| b != NO_INDEX);
+        match self.lane.sender.send_slot(op, tag, r) {
+            Ok(()) => {
+                self.stage = Stage::Sent(op);
+                true
+            }
+            Err(TrySendError::Closed(r)) => {
+                self.request = Some(r);
+                self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                self.lane.sender.pool().give(op);
+                false
+            }
+            Err(TrySendError::Full(_)) => {
+                self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                self.lane.sender.pool().give(op);
+                panic!("mailbox queue full while holding an operation slot");
+            }
         }
-        self.stage = Stage::Sent(op);
-        self.lane.wake.wake();
-        true
     }
 
-    /// Take the result of slot `op` and free the slot.
-    fn take(&mut self, op: u32, finished: Finished) -> T {
-        self.lane.ops.give(op);
+    fn finish(&mut self, finished: Finished) -> T {
         self.stage = Stage::Taken;
         let buffer = self.buffer();
         T::build((self.map)(finished, self.number), buffer)
@@ -191,18 +184,20 @@ impl<T: Output> Pending<T> {
             return Poll::Ready(());
         }
         loop {
-            let op = match &mut self.any {
-                Some(any) => {
-                    let first = least_busy(&any.lanes);
-                    match core::task::ready!(any.poll(first, cx)) {
-                        Some((lane, op)) if open(&lane) => {
-                            self.lane = lane;
+            let op = match &self.any {
+                Some(lanes) => {
+                    let first = least_busy(lanes);
+                    match core::task::ready!(self.waiter.poll_many(
+                        lanes,
+                        first,
+                        |l| l.sender.pool(),
+                        |l| open(l),
+                        false,
+                        cx,
+                    )) {
+                        Some((idx, op)) => {
+                            self.lane = lanes[idx].clone();
                             op
-                        }
-                        Some((lane, op)) => {
-                            lane.ops.give(op);
-                            self.stage = Stage::Early(Error::Closed);
-                            return Poll::Ready(());
                         }
                         None => {
                             self.stage = Stage::Early(Error::Closed);
@@ -210,24 +205,23 @@ impl<T: Output> Pending<T> {
                         }
                     }
                 }
-                None => {
-                    if !open(&self.lane) {
-                        self.lane.ops.forget(self.waiter);
+                None => match core::task::ready!(self.waiter.poll_one(
+                    self.lane.sender.pool(),
+                    || open(&self.lane),
+                    cx,
+                )) {
+                    Some(op) => op,
+                    None => {
                         self.stage = Stage::Early(Error::Closed);
                         return Poll::Ready(());
                     }
-                    match self.lane.ops.poll_take(self.waiter, cx) {
-                        Poll::Ready(op) if open(&self.lane) => op,
-                        Poll::Ready(op) => {
-                            self.lane.ops.give(op);
-                            continue;
-                        }
-                        Poll::Pending if open(&self.lane) => return Poll::Pending,
-                        Poll::Pending => continue,
-                    }
-                }
+                },
             };
             if self.send(op) {
+                return Poll::Ready(());
+            }
+            if self.any.is_none() {
+                self.stage = Stage::Early(Error::Closed);
                 return Poll::Ready(());
             }
         }
@@ -239,18 +233,8 @@ impl<T: Output> Pending<T> {
         match self.stage {
             Stage::Early(e) => self.early(e),
             Stage::Sent(op) => {
-                let lane = self.lane.clone();
-                let cell = &lane.cells[op as usize];
-                let mut s = cell.state.lock().expect("cell lock");
-                let finished = loop {
-                    if let Some(f) = s.finished.take() {
-                        break f;
-                    }
-                    s = cell.done.wait(s).expect("cell lock");
-                };
-                s.buf = None;
-                drop(s);
-                self.take(op, finished)
+                let finished = self.lane.sender.wait_answer(op);
+                self.finish(finished)
             }
             Stage::Slot | Stage::Taken => unreachable!("a result is taken once"),
         }
@@ -268,22 +252,10 @@ impl<T: Output> Future for Pending<T> {
         }
         match me.stage {
             Stage::Early(e) => Poll::Ready(me.early(e)),
-            Stage::Sent(op) => {
-                let lane = me.lane.clone();
-                let mut s = lane.cells[op as usize].state.lock().expect("cell lock");
-                match s.finished.take() {
-                    Some(finished) => {
-                        s.buf = None;
-                        s.waker = None;
-                        drop(s);
-                        Poll::Ready(me.take(op, finished))
-                    }
-                    None => {
-                        s.waker = Some(cx.waker().clone());
-                        Poll::Pending
-                    }
-                }
-            }
+            Stage::Sent(op) => match me.lane.sender.poll_answer(op, cx) {
+                Poll::Ready(finished) => Poll::Ready(me.finish(finished)),
+                Poll::Pending => Poll::Pending,
+            },
             Stage::Slot => unreachable!("a slot was taken or the lane closed"),
             Stage::Taken => panic!("polled after it returned its result"),
         }
@@ -293,24 +265,15 @@ impl<T: Output> Future for Pending<T> {
 impl<T: Output> Drop for Pending<T> {
     fn drop(&mut self) {
         if self.stage == Stage::Slot {
-            self.lane.ops.forget(self.waiter);
+            match &self.any {
+                Some(lanes) => self.waiter.forget_many(lanes, |l| l.sender.pool()),
+                None => self.waiter.forget_one(self.lane.sender.pool()),
+            }
         }
         if let Stage::Sent(op) = self.stage {
-            let mut s = self.lane.cells[op as usize]
-                .state
-                .lock()
-                .expect("cell lock");
-            if s.finished.take().is_some() {
-                // It ended and nobody took the result: free the slot here.
-                s.buf = None;
-                s.waker = None;
-                drop(s);
-                self.lane.ops.give(op);
-            } else {
-                // Still running: the I/O thread frees the slot and the
-                // buffer when it ends.
-                s.detached = true;
-                s.waker = None;
+            if self.lane.sender.detach(op).is_none() {
+                // Still running: the I/O thread frees the slot first and then
+                // returns the buffer tag to the lane's pool.
                 self.buf = None;
             }
         }

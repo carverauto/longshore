@@ -193,7 +193,7 @@ mod types;
 pub use types::*;
 
 impl S3 {
-    pub fn new(mut cfg: Config) -> S3 {
+    pub fn new(#[allow(unused_mut)] mut cfg: Config) -> S3 {
         assert!(cfg.attempts_max >= 1 && cfg.requests_max >= 1);
         // The signature's fixed buffers hold a region of this length with room to spare.
         assert!(cfg.region.len() <= 64, "region is longer than 64 bytes");
@@ -209,11 +209,16 @@ impl S3 {
             }
             None => String::new(),
         };
-        let secure = cfg.tls.is_some();
-        let client = match cfg.tls.take() {
-            Some((setup, first_buf)) => Client::with_tls(cfg.http, setup, first_buf),
-            None => Client::new(cfg.http),
-        };
+        #[cfg(feature = "tls")]
+        let (secure, client) = (
+            cfg.tls.is_some(),
+            match cfg.tls.take() {
+                Some((setup, first_buf)) => Client::with_tls(cfg.http, setup, first_buf),
+                None => Client::new(cfg.http),
+            },
+        );
+        #[cfg(not(feature = "tls"))]
+        let (secure, client) = (false, Client::new(cfg.http));
         let slot = Slot {
             state: State::Free,
             outcome: Outcome::Erased,
