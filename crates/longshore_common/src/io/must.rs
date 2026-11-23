@@ -35,6 +35,26 @@ pub(crate) fn must<T>(value: Option<T>, what: &str) -> T {
     }
 }
 
+/// The byte count a completion returned, or fail the check on a negative
+/// (error) result.
+#[track_caller]
+pub(crate) fn must_len(result: i32) -> usize {
+    match usize::try_from(result) {
+        Ok(n) => n,
+        Err(_) => fail(format_args!("a byte count: {result}")),
+    }
+}
+
+/// The socket an accept completed with, or fail the check on a negative
+/// (error) result.
+#[track_caller]
+pub(crate) fn must_sock(result: i32) -> Sock {
+    match u32::try_from(result) {
+        Ok(slot) => Sock(slot),
+        Err(_) => fail(format_args!("an accepted socket: {result}")),
+    }
+}
+
 /// [`Io`] calls that fail the running check when they are refused.
 pub(crate) trait Must: Io {
     fn must_submit(&mut self, token: Token, op: Op);

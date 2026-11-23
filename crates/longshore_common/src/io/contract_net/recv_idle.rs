@@ -6,7 +6,7 @@
 //! Shared armed-receive cancellation, close-with-armed, idle-connection, and small-buffer checks.
 
 use super::{close_socks, connect_one, drain_one, drain_until, net_limits};
-use crate::io::must::Must;
+use crate::io::must::{must, must_len, must_sock, Must};
 use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ECANCELED};
 use std::net::SocketAddr;
 
@@ -19,11 +19,10 @@ fn cancel_and_close_armed_recv<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr
     let mut io = make(limits);
     let mut out = Completions::new(8);
     let srv = connect_one(&mut io, &mut out, addr, Sock(0), Sock(1));
-    io.submit(Token(10), Op::ArmedRecv { sock: srv }).unwrap();
-    io.tick(false, &mut out).unwrap();
+    io.must_submit(Token(10), Op::ArmedRecv { sock: srv });
+    io.must_tick(false, &mut out);
     assert!(out.is_empty());
-    io.submit(Token(11), Op::Cancel { target: Token(10) })
-        .unwrap();
+    io.must_submit(Token(11), Op::Cancel { target: Token(10) });
     let (mut r_done, mut c_done) = (false, false);
     drain_until(&mut io, &mut out, |_, c| {
         if c.token.0 == 10 {
@@ -35,14 +34,14 @@ fn cancel_and_close_armed_recv<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr
         }
         r_done && c_done
     });
-    io.tick(false, &mut out).unwrap();
+    io.must_tick(false, &mut out);
     assert!(out.is_empty());
 
     // Re-arm and close socket with receive armed; peer sees EOF (0).
-    io.submit(Token(12), Op::ArmedRecv { sock: srv }).unwrap();
-    io.tick(false, &mut out).unwrap();
+    io.must_submit(Token(12), Op::ArmedRecv { sock: srv });
+    io.must_tick(false, &mut out);
     assert!(out.is_empty());
-    io.submit(Token(13), Op::Close { sock: srv }).unwrap();
+    io.must_submit(Token(13), Op::Close { sock: srv });
     let (mut r2, mut cl) = (false, false);
     drain_until(&mut io, &mut out, |_, c| {
         if c.token.0 == 12 {
@@ -54,7 +53,7 @@ fn cancel_and_close_armed_recv<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr
         }
         r2 && cl
     });
-    io.submit(
+    io.must_submit(
         Token(14),
         Op::Recv {
             sock: Sock(1),
@@ -62,8 +61,7 @@ fn cancel_and_close_armed_recv<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr
             off: 0,
             len: 32,
         },
-    )
-    .unwrap();
+    );
     let peer_eof = drain_one(&mut io, &mut out, 14);
     assert_eq!(
         (peer_eof.result, peer_eof.more, peer_eof.buf),
@@ -91,32 +89,29 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
     let mut io = make(limits);
     let mut out = Completions::new(1);
     let bound = io.must_listen(Sock(0), addr);
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io.must_submit(Token(1), Op::ArmedAccept { listener: Sock(0) });
     for k in 0..N {
-        io.submit(
+        io.must_submit(
             Token(100 + u64::from(k)),
             Op::Connect {
                 sock: Sock(1 + N + k),
                 addr: bound,
             },
-        )
-        .unwrap();
+        );
     }
     let mut accepted = Vec::new();
     let mut conns = 0u32;
     let mut accept_armed = true;
     while accepted.len() < N as usize || conns < N {
         if !accept_armed && accepted.len() < N as usize {
-            io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-                .unwrap();
+            io.must_submit(Token(1), Op::ArmedAccept { listener: Sock(0) });
             accept_armed = true;
         }
         drain_until(&mut io, &mut out, |_, c| {
             if c.token.0 == 1 {
                 accept_armed = c.more;
                 if c.result >= 0 {
-                    accepted.push(Sock(u32::try_from(c.result).unwrap()));
+                    accepted.push(must_sock(c.result));
                 }
             } else {
                 assert_eq!(c.result, 0);
@@ -126,16 +121,14 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
         });
     }
     if accept_armed {
-        io.submit(Token(2), Op::Cancel { target: Token(1) })
-            .unwrap();
+        io.must_submit(Token(2), Op::Cancel { target: Token(1) });
         drain_until(&mut io, &mut out, |_, c| c.token.0 == 1 && !c.more);
     }
 
     for (k, &s) in accepted.iter().enumerate() {
-        io.submit(Token(200 + k as u64), Op::ArmedRecv { sock: s })
-            .unwrap();
+        io.must_submit(Token(200 + k as u64), Op::ArmedRecv { sock: s });
     }
-    io.tick(false, &mut out).unwrap();
+    io.must_tick(false, &mut out);
     assert!(out.is_empty(), "idle connections must hold 0 ring buffers");
 
     // Multi-turn Completions::new(1) burst across connections (accept order may vary).
@@ -153,7 +146,7 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
                 let t = tok;
                 tok += 1;
                 cur_tok = Some(t);
-                io.submit(
+                io.must_submit(
                     Token(t),
                     Op::Send {
                         sock: cli_socks[idx],
@@ -162,31 +155,28 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
                         len: rem.len() as u32,
                         zero_copy: false,
                     },
-                )
-                .unwrap();
+                );
             }
             let mut send_done = cur_tok.is_none();
             drain_until(&mut io, &mut out, |io, c| {
                 if (200..200 + u64::from(N)).contains(&c.token.0) {
                     let pos = (c.token.0 - 200) as usize;
                     if c.result > 0 {
-                        let b = c.buf.unwrap();
-                        got[pos]
-                            .extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
+                        let b = must(c.buf, "buffer of a receive that returned bytes");
+                        got[pos].extend_from_slice(&io.buf(b)[..must_len(c.result)]);
                         io.give_back(b);
                     }
                     if !c.more && got[pos].len() < wants[idx].len() {
-                        io.submit(
+                        io.must_submit(
                             Token(c.token.0),
                             Op::ArmedRecv {
                                 sock: accepted[pos],
                             },
-                        )
-                        .unwrap();
+                        );
                     }
                 } else if Some(c.token.0) == cur_tok {
                     assert!(c.result > 0, "burst send: {c:?}");
-                    sent[idx] += usize::try_from(c.result).unwrap();
+                    sent[idx] += must_len(c.result);
                     send_done = true;
                 }
                 send_done && (sent[idx] < wants[idx].len() || got.iter().any(|g| g == wants[idx]))

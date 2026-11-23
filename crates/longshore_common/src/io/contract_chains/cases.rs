@@ -9,6 +9,7 @@ use super::collect_chain;
 use crate::io::contract_files::{
     base_limits, close_file, drive_many, drive_one, open_file, write_path,
 };
+use crate::io::must::Must;
 use crate::io::{
     file_size, BufId, Busy, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock,
     Token, EBADF, ECANCELED, EINVAL, ENOENT,
@@ -97,10 +98,8 @@ fn atomic_busy_on_full_slots<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: 
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p, rw),
         0
     );
-    io.submit(Token(10), Op::Timeout { nanos: 100_000 })
-        .unwrap();
-    io.submit(Token(11), Op::Timeout { nanos: 100_000 })
-        .unwrap();
+    io.must_submit(Token(10), Op::Timeout { nanos: 100_000 });
+    io.must_submit(Token(11), Op::Timeout { nanos: 100_000 });
     let chain = [
         (
             Token(20),
@@ -138,8 +137,8 @@ fn chain_among_other_ops<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str
     let mut out = Completions::new(16);
     let missing = format!("{root}c_absent.dat");
     let plen = write_path(&mut io, BufId(0), 0, &missing);
-    io.submit(Token(1), Op::Timeout { nanos: 100_000 }).unwrap();
-    io.submit_chain(&[
+    io.must_submit(Token(1), Op::Timeout { nanos: 100_000 });
+    io.must_submit_chain(&[
         (
             Token(10),
             Op::FileOpen {
@@ -154,9 +153,8 @@ fn chain_among_other_ops<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str
             },
         ),
         (Token(11), Op::FileClose { slot: FileSlot(0) }),
-    ])
-    .unwrap();
-    io.submit(Token(2), Op::Timeout { nanos: 200_000 }).unwrap();
+    ]);
+    io.must_submit(Token(2), Op::Timeout { nanos: 200_000 });
     let cs = drive_many(
         &mut io,
         &mut out,
@@ -174,7 +172,7 @@ fn cancel_unstarted_member<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &s
     let p = format!("{root}c_cancel.dat");
     let plen = write_path(&mut io, BufId(0), 0, &p);
     io.buf(BufId(1))[..8].copy_from_slice(b"12345678");
-    io.submit_chain(&[
+    io.must_submit_chain(&[
         (
             Token(10),
             Op::FileOpen {
@@ -207,10 +205,8 @@ fn cancel_unstarted_member<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &s
                 datasync: true,
             },
         ),
-    ])
-    .unwrap();
-    io.submit(Token(99), Op::Cancel { target: Token(12) })
-        .unwrap();
+    ]);
+    io.must_submit(Token(99), Op::Cancel { target: Token(12) });
     let cs = drive_many(
         &mut io,
         &mut out,
@@ -246,7 +242,7 @@ fn pipelined_open_fail_then_close_open_chain<IO: Io>(
         ..Default::default()
     };
 
-    io.submit(
+    io.must_submit(
         Token(100),
         Op::FileOpen {
             slot: FileSlot(0),
@@ -255,9 +251,8 @@ fn pipelined_open_fail_then_close_open_chain<IO: Io>(
             path_len: mlen,
             flags: ro,
         },
-    )
-    .unwrap();
-    io.submit_chain(&[
+    );
+    io.must_submit_chain(&[
         (Token(101), Op::FileClose { slot: FileSlot(0) }),
         (
             Token(102),
@@ -269,8 +264,7 @@ fn pipelined_open_fail_then_close_open_chain<IO: Io>(
                 flags: rw,
             },
         ),
-    ])
-    .unwrap();
+    ]);
 
     let cs = drive_many(&mut io, &mut out, [Token(100), Token(101), Token(102)]);
     assert_eq!(cs[0].result, -ENOENT);

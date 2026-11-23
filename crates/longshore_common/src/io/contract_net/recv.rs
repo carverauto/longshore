@@ -6,6 +6,7 @@
 //! Shared armed-receive and buffer-ring contract checks.
 
 use super::{close_socks, connect_one, drain_until, echo_armed, net_limits};
+use crate::io::must::{must, must_len, Must};
 use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ENOBUFS};
 use std::net::SocketAddr;
 
@@ -34,8 +35,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     assert_eq!(got1, b"first");
 
     if armed50 {
-        io.submit(Token(tok), Op::Cancel { target: Token(50) })
-            .unwrap();
+        io.must_submit(Token(tok), Op::Cancel { target: Token(50) });
         let (mut c_ok, mut r_end) = (false, false);
         drain_until(&mut io, &mut out, |_, c| {
             if c.token.0 == tok {
@@ -50,7 +50,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     }
     let _: bool = armed50;
 
-    io.submit(Token(51), Op::ArmedRecv { sock: srv }).unwrap();
+    io.must_submit(Token(51), Op::ArmedRecv { sock: srv });
     let mut armed51 = true;
     // Send "hold" and wait for both Send and first ArmedRecv completion (hold the buffer!).
     let mut held = None;
@@ -65,7 +65,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
             let t = tok;
             tok += 1;
             cur_tok = Some(t);
-            io.submit(
+            io.must_submit(
                 Token(t),
                 Op::Send {
                     sock: Sock(1),
@@ -74,22 +74,21 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
                     len: rem as u32,
                     zero_copy: false,
                 },
-            )
-            .unwrap();
+            );
         }
         let mut send_done = cur_tok.is_none();
         drain_until(&mut io, &mut out, |io, c| {
             if c.token.0 == 51 && held.is_none() {
                 assert!(c.result > 0, "hold recv: {c:?}");
                 armed51 = c.more;
-                let b = c.buf.unwrap();
+                let b = must(c.buf, "buffer of a receive that returned bytes");
                 assert_eq!(b, limits.ring(0));
-                held_bytes.extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
+                held_bytes.extend_from_slice(&io.buf(b)[..must_len(c.result)]);
                 held = Some(b);
                 send_done
             } else if Some(c.token.0) == cur_tok {
                 assert!(c.result > 0, "hold send: {c:?}");
-                send_off += usize::try_from(c.result).unwrap();
+                send_off += must_len(c.result);
                 send_done = true;
                 held.is_some()
             } else {
@@ -97,7 +96,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
             }
         });
     }
-    let held = held.unwrap();
+    let held = must(held, "held buffer");
 
     // Now send "next" while `held` is NOT returned -> ArmedRecv ends with -ENOBUFS.
     let next_msg = b"next";
@@ -105,7 +104,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     let mut nobufs = false;
     while !nobufs || next_off < next_msg.len() {
         if !armed51 {
-            io.submit(Token(51), Op::ArmedRecv { sock: srv }).unwrap();
+            io.must_submit(Token(51), Op::ArmedRecv { sock: srv });
             armed51 = true;
         }
         let mut cur_tok = None;
@@ -115,7 +114,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
             let t = tok;
             tok += 1;
             cur_tok = Some(t);
-            io.submit(
+            io.must_submit(
                 Token(t),
                 Op::Send {
                     sock: Sock(1),
@@ -124,8 +123,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
                     len: rem as u32,
                     zero_copy: false,
                 },
-            )
-            .unwrap();
+            );
         }
         let mut send_done = cur_tok.is_none();
         drain_until(&mut io, &mut out, |_, c| {
@@ -135,7 +133,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
                 nobufs = true;
             } else if Some(c.token.0) == cur_tok {
                 assert!(c.result > 0, "next send: {c:?}");
-                next_off += usize::try_from(c.result).unwrap();
+                next_off += must_len(c.result);
                 send_done = true;
             }
             send_done && nobufs
@@ -144,11 +142,11 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     assert_eq!(&io.buf(held)[..held_bytes.len()], held_bytes.as_slice());
     io.give_back(held);
 
-    io.submit(Token(52), Op::ArmedRecv { sock: srv }).unwrap();
+    io.must_submit(Token(52), Op::ArmedRecv { sock: srv });
     let mut armed52 = true;
     while held_bytes.len() < 8 {
         if !armed52 {
-            io.submit(Token(52), Op::ArmedRecv { sock: srv }).unwrap();
+            io.must_submit(Token(52), Op::ArmedRecv { sock: srv });
             armed52 = true;
         }
         let mut got_chunk = false;
@@ -156,9 +154,9 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
             if c.token.0 == 52 {
                 armed52 = c.more;
                 if c.result > 0 {
-                    let b = c.buf.unwrap();
+                    let b = must(c.buf, "buffer of a receive that returned bytes");
                     assert_eq!(b, limits.ring(0));
-                    held_bytes.extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
+                    held_bytes.extend_from_slice(&io.buf(b)[..must_len(c.result)]);
                     io.give_back(b);
                     got_chunk = true;
                 }
@@ -168,8 +166,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     }
     assert_eq!(held_bytes, b"holdnext");
     if armed52 {
-        io.submit(Token(tok), Op::Cancel { target: Token(52) })
-            .unwrap();
+        io.must_submit(Token(tok), Op::Cancel { target: Token(52) });
         let (mut c_ok, mut r_end) = (false, false);
         drain_until(&mut io, &mut out, |_, c| {
             if c.token.0 == tok {
@@ -183,8 +180,8 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     }
 
     // Peer closes -> 0, more: false, buf: None, no buffer leaked.
-    io.submit(Token(53), Op::ArmedRecv { sock: srv }).unwrap();
-    io.submit(Token(tok), Op::Close { sock: Sock(1) }).unwrap();
+    io.must_submit(Token(53), Op::ArmedRecv { sock: srv });
+    io.must_submit(Token(tok), Op::Close { sock: Sock(1) });
     let (mut closed_cli, mut got_eof) = (false, false);
     drain_until(&mut io, &mut out, |_, c| {
         if c.token.0 == tok {
@@ -212,8 +209,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     );
     assert_eq!(got_ok, b"ok");
     if armed54 {
-        io.submit(Token(tok), Op::Cancel { target: Token(54) })
-            .unwrap();
+        io.must_submit(Token(tok), Op::Cancel { target: Token(54) });
         let (mut c_ok, mut r_end) = (false, false);
         drain_until(&mut io, &mut out, |_, c| {
             if c.token.0 == tok {

@@ -43,7 +43,7 @@ fn slot_busy_and_free_refusals<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
     // Concurrent FileOpen into an Opening slot -> -EBUSY.
     let l1 = write_path(&mut io, BufId(0), 0, &p1);
     let l2 = write_path(&mut io, BufId(1), 0, &p2);
-    io.submit(
+    io.must_submit(
         Token(4),
         Op::FileOpen {
             slot: FileSlot(0),
@@ -52,9 +52,8 @@ fn slot_busy_and_free_refusals<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
             path_len: l1,
             flags: rw,
         },
-    )
-    .unwrap();
-    io.submit(
+    );
+    io.must_submit(
         Token(5),
         Op::FileOpen {
             slot: FileSlot(0),
@@ -63,8 +62,7 @@ fn slot_busy_and_free_refusals<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
             path_len: l2,
             flags: rw,
         },
-    )
-    .unwrap();
+    );
     let cs = drive_many(&mut io, &mut out, [Token(4), Token(5)]);
     assert_eq!(cs[0].result, 0);
     assert_eq!(cs[1].result, -EBUSY);
@@ -192,7 +190,7 @@ fn direct_alignment_and_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
         ..Default::default()
     };
     // Misaligned write behind an Opening direct FileOpen -> -EINVAL.
-    io.submit(
+    io.must_submit(
         Token(1),
         Op::FileOpen {
             slot: FileSlot(0),
@@ -201,9 +199,8 @@ fn direct_alignment_and_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
             path_len: plen,
             flags: df,
         },
-    )
-    .unwrap();
-    io.submit(
+    );
+    io.must_submit(
         Token(2),
         Op::FileWrite {
             slot: FileSlot(0),
@@ -212,8 +209,7 @@ fn direct_alignment_and_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
             len: 512,
             file_off: 0,
         },
-    )
-    .unwrap();
+    );
     let cs = drive_many(&mut io, &mut out, [Token(1), Token(2)]);
     assert_eq!(cs[1].result, -EINVAL);
     if cs[0].result == 0 {
@@ -268,14 +264,13 @@ fn direct_alignment_and_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
 fn ready_list_drains_behind_timer<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     let mut io = make(base_limits());
     let mut out = Completions::new(8);
-    io.submit(
+    io.must_submit(
         Token(1),
         Op::Timeout {
             nanos: 5_000_000_000,
         },
-    )
-    .unwrap();
-    io.submit(
+    );
+    io.must_submit(
         Token(2),
         Op::FileRead {
             slot: FileSlot(0),
@@ -284,14 +279,12 @@ fn ready_list_drains_behind_timer<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
             len: 16,
             file_off: 0,
         },
-    )
-    .unwrap();
+    );
     let t0 = std::time::Instant::now();
     io.must_tick(true, &mut out);
     assert!(t0.elapsed() < std::time::Duration::from_secs(1));
     let c = must(out.pop(), "ready completion");
     assert_eq!((c.token, c.result), (Token(2), -EBADF));
-    io.submit(Token(3), Op::Cancel { target: Token(1) })
-        .unwrap();
+    io.must_submit(Token(3), Op::Cancel { target: Token(1) });
     let _: [Completion; 1] = drive_many(&mut io, &mut out, [Token(1)]);
 }

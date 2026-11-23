@@ -5,7 +5,7 @@
 
 //! Shared networking contract suite for armed accept/recv, buffer ring, socket options, and Unix sockets.
 
-use crate::io::must::{fail, Must};
+use crate::io::must::{fail, must, must_len, must_sock, Must};
 use crate::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token};
 use std::net::SocketAddr;
 
@@ -54,7 +54,7 @@ pub(crate) fn drain_one<IO: Io>(io: &mut IO, out: &mut Completions, tok: u64) ->
         }
         false
     });
-    got.unwrap()
+    must(got, "completion")
 }
 
 pub(crate) fn echo_armed<IO: Io>(
@@ -66,8 +66,7 @@ pub(crate) fn echo_armed<IO: Io>(
     rx_tok: u64,
     tx_tok: &mut u64,
 ) -> (Vec<u8>, bool) {
-    io.submit(Token(rx_tok), Op::ArmedRecv { sock: rx })
-        .unwrap();
+    io.must_submit(Token(rx_tok), Op::ArmedRecv { sock: rx });
     let mut armed = true;
     let mut sent = 0usize;
     let mut got = Vec::with_capacity(payload.len());
@@ -81,7 +80,7 @@ pub(crate) fn echo_armed<IO: Io>(
             io.buf(tx_buf)[..chunk].copy_from_slice(&payload[sent..sent + chunk]);
             cur_tok = *tx_tok;
             *tx_tok += 1;
-            io.submit(
+            io.must_submit(
                 Token(cur_tok),
                 Op::Send {
                     sock: tx,
@@ -90,27 +89,25 @@ pub(crate) fn echo_armed<IO: Io>(
                     len: chunk as u32,
                     zero_copy: false,
                 },
-            )
-            .unwrap();
+            );
             send_in_flight = true;
         }
         drain_until(io, out, |io, c| {
             if c.token.0 == rx_tok {
                 armed = c.more;
                 if c.result > 0 {
-                    let b = c.buf.unwrap();
-                    got.extend_from_slice(&io.buf(b)[..usize::try_from(c.result).unwrap()]);
+                    let b = must(c.buf, "buffer of a receive that returned bytes");
+                    got.extend_from_slice(&io.buf(b)[..must_len(c.result)]);
                     io.give_back(b);
                 }
                 if !armed && got.len() < payload.len() {
-                    io.submit(Token(rx_tok), Op::ArmedRecv { sock: rx })
-                        .unwrap();
+                    io.must_submit(Token(rx_tok), Op::ArmedRecv { sock: rx });
                     armed = true;
                 }
                 true
             } else if send_in_flight && c.token.0 == cur_tok {
                 assert!(c.result > 0 && !c.more && c.buf.is_none(), "send: {c:?}");
-                sent += usize::try_from(c.result).unwrap();
+                sent += must_len(c.result);
                 send_in_flight = false;
                 true
             } else {
@@ -140,7 +137,7 @@ pub(crate) fn send_all<IO: Io>(
         io.buf(buf)[..chunk].copy_from_slice(&data[sent..sent + chunk]);
         let t = *tok;
         *tok += 1;
-        io.submit(
+        io.must_submit(
             Token(t),
             Op::Send {
                 sock,
@@ -149,19 +146,17 @@ pub(crate) fn send_all<IO: Io>(
                 len: chunk as u32,
                 zero_copy: false,
             },
-        )
-        .unwrap();
+        );
         let c = drain_one(io, out, t);
         assert!(c.result > 0 && !c.more && c.buf.is_none(), "send: {c:?}");
-        sent += usize::try_from(c.result).unwrap();
+        sent += must_len(c.result);
     }
 }
 
 pub(crate) fn close_socks<IO: Io>(io: &mut IO, out: &mut Completions, socks: &[Sock]) {
     let mut pending = socks.len();
     for (k, &sock) in socks.iter().enumerate() {
-        io.submit(Token(9_000 + k as u64), Op::Close { sock })
-            .unwrap();
+        io.must_submit(Token(9_000 + k as u64), Op::Close { sock });
     }
     if pending == 0 {
         return;
@@ -183,22 +178,21 @@ pub(crate) fn connect_one<IO: Io>(
     client: Sock,
 ) -> Sock {
     let bound = io.must_listen(listener, addr);
-    io.submit(Token(1), Op::ArmedAccept { listener }).unwrap();
-    io.submit(
+    io.must_submit(Token(1), Op::ArmedAccept { listener });
+    io.must_submit(
         Token(2),
         Op::Connect {
             sock: client,
             addr: bound,
         },
-    )
-    .unwrap();
+    );
     let mut accepted = None;
     let mut accept_armed = true;
     let mut connected = false;
     drain_until(io, out, |_, c| {
         if c.token.0 == 1 {
             assert!(c.result >= 0 && c.buf.is_none(), "accept: {c:?}");
-            accepted = Some(Sock(u32::try_from(c.result).unwrap()));
+            accepted = Some(must_sock(c.result));
             accept_armed = c.more;
         } else if c.token.0 == 2 {
             assert_eq!(c.result, 0);
@@ -207,8 +201,7 @@ pub(crate) fn connect_one<IO: Io>(
         accepted.is_some() && connected
     });
     if accept_armed {
-        io.submit(Token(3), Op::Cancel { target: Token(1) })
-            .unwrap();
+        io.must_submit(Token(3), Op::Cancel { target: Token(1) });
         let (mut c_done, mut a_done) = (false, false);
         drain_until(io, out, |_, c| {
             if c.token.0 == 3 {
@@ -219,7 +212,7 @@ pub(crate) fn connect_one<IO: Io>(
             c_done && a_done
         });
     }
-    accepted.unwrap()
+    must(accepted, "accepted socket")
 }
 
 /// Run the full shared server-networking contract suite against `IO`.
