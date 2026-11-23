@@ -343,16 +343,8 @@ fn t3_30_sealed_wal_append_over_mailbox_within_prealloc_waiters() {
         .with_block_size(4096)
         .with_ops_max(8);
     let (mut sim, mut out) = sim_with_open_wal_segment(limits);
-    let (tx, mut io_rx) = mailbox::<PingMsg, (i32, i32), _>(
-        &mut sim,
-        Config {
-            capacity: 8,
-            slots: 4,
-            waiters_prealloc: 8,
-            wake_token: Token::new(900),
-        },
-    )
-    .unwrap();
+    let (tx, mut io_rx) =
+        mailbox::<PingMsg, (i32, i32), _>(&mut sim, Config::new(8, 4, 8, Token::new(900))).unwrap();
     io_rx.arm(&mut sim).unwrap();
     let payload = [0xD3u8; 64];
     let write_buf = limits.aligned(0);

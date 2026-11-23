@@ -276,12 +276,7 @@ fn full_queue_refuses<IO: Io>(io: &mut IO) {
 /// A one-slot pool with one preallocated waiter serves three more waiting
 /// callers, growing its waiter queue.
 fn pool_waiters_grow() {
-    let (tx_p, mut rx_p) = mailbox_parked::<(u32, u32), u32>(Config {
-        capacity: 8,
-        slots: 1,
-        waiters_prealloc: 1,
-        wake_token: Token::new(0),
-    });
+    let (tx_p, mut rx_p) = mailbox_parked::<(u32, u32), u32>(Config::new(8, 1, 1, Token::new(0)));
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
     let mut f0 = pin!(tx_p.call(|slot| (slot, 99u32), 0));

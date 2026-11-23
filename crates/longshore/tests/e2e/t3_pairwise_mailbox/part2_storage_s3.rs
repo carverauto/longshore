@@ -54,12 +54,7 @@ fn open_slot0(core: &mut SimIo, out: &mut Completions, limits: Limits, path: &st
 /// The mailbox both storage-core scenarios hand write commands through.
 #[cfg(feature = "sim")]
 fn write_mailbox_config() -> Config {
-    Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token::new(10),
-    }
+    Config::new(4, 2, 4, Token::new(10))
 }
 
 /// Submits the aligned write-then-datasync chain that serves `cmd`.

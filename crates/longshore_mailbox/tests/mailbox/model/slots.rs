@@ -18,12 +18,7 @@ use longshore_mailbox::{block_on, mailbox_parked, Config, Recv, SlotWaiter};
 #[test]
 fn slots_two_waiters_on_one_slot() {
     model(2, || {
-        let cfg = Config {
-            capacity: 1,
-            slots: 1,
-            waiters_prealloc: 2,
-            wake_token: Token::new(1),
-        };
+        let cfg = Config::new(1, 1, 2, Token::new(1));
         let (tx1, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let tx2 = tx1.clone();
 
@@ -42,12 +37,7 @@ fn slots_two_waiters_on_one_slot() {
 #[test]
 fn slots_future_and_blocking_caller() {
     model(2, || {
-        let cfg = Config {
-            capacity: 1,
-            slots: 1,
-            waiters_prealloc: 2,
-            wake_token: Token::new(1),
-        };
+        let cfg = Config::new(1, 1, 2, Token::new(1));
         let (tx1, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let tx2 = tx1.clone();
 
@@ -66,12 +56,7 @@ fn slots_future_and_blocking_caller() {
 #[test]
 fn slots_detach_frees_slot_before_returning_tag() {
     model(2, || {
-        let cfg = Config {
-            capacity: 1,
-            slots: 1,
-            waiters_prealloc: 2,
-            wake_token: Token::new(1),
-        };
+        let cfg = Config::new(1, 1, 2, Token::new(1));
         let (tx1, mut rx) = mailbox_parked::<(u32, u32), u32>(cfg);
         let tx2 = tx1.clone();
 
@@ -128,12 +113,7 @@ fn slots_detach_frees_slot_before_returning_tag() {
 #[test]
 fn slots_close_answers_first_then_unanswered_without_overwriting() {
     model(1, || {
-        let cfg = Config {
-            capacity: 4,
-            slots: 4,
-            waiters_prealloc: 4,
-            wake_token: Token::new(1),
-        };
+        let cfg = Config::new(4, 4, 4, Token::new(1));
         let (tx1, mut rx) = mailbox_parked::<(u32, u32), Result<u32, ()>>(cfg);
         let tx2 = tx1.clone();
 
@@ -197,12 +177,7 @@ fn slots_close_answers_first_then_unanswered_without_overwriting() {
 #[test]
 fn slots_poll_many_races_give_and_stop() {
     model(2, || {
-        let cfg = Config {
-            capacity: 1,
-            slots: 1,
-            waiters_prealloc: 2,
-            wake_token: Token::new(1),
-        };
+        let cfg = Config::new(1, 1, 2, Token::new(1));
         let (tx0, mut rx0) = mailbox_parked::<u32, u32>(cfg);
         let (tx1, mut rx1) = mailbox_parked::<u32, u32>(cfg);
 
@@ -260,12 +235,7 @@ fn slots_poll_many_races_give_and_stop() {
 #[test]
 fn slots_poll_one_races_stop_and_give() {
     model(2, || {
-        let cfg = Config {
-            capacity: 1,
-            slots: 1,
-            waiters_prealloc: 2,
-            wake_token: Token::new(1),
-        };
+        let cfg = Config::new(1, 1, 2, Token::new(1));
         let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let mut cx = Context::from_waker(Waker::noop());
         let mut w_init = SlotWaiter::new();
@@ -298,12 +268,7 @@ fn slots_poll_one_races_stop_and_give() {
 #[test]
 fn slots_call_future_drop_detach_races_answer_and_close() {
     model(2, || {
-        let cfg = Config {
-            capacity: 1,
-            slots: 1,
-            waiters_prealloc: 2,
-            wake_token: Token::new(1),
-        };
+        let cfg = Config::new(1, 1, 2, Token::new(1));
         let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let tx2 = tx.clone();
         let h = loom::thread::spawn(move || {

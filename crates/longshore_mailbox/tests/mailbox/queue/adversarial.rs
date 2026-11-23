@@ -57,12 +57,7 @@ fn two_phase_begin_finish_close_repeated_stop_and_spurious_wake_in_wait_stop() {
     assert_eq!(rx_s.try_recv(), TryRecv::Stop);
     assert_eq!(rx_s.try_recv(), TryRecv::Closed);
 
-    let cfg = Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token::new(1),
-    };
+    let cfg = Config::new(4, 2, 4, Token::new(1));
     let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
     let mut w = SlotWaiter::new();
     let mut cx = Context::from_waker(Waker::noop());

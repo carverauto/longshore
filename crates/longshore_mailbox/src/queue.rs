@@ -31,6 +31,10 @@ const PARK_RECV: u8 = 2;
 
 /// Building a mailbox failed because the `Io` backend provided no waker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a unit struct has no fields to make private"
+)]
 pub struct NoWaker;
 
 impl fmt::Display for NoWaker {

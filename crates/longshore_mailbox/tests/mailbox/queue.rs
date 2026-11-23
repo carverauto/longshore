@@ -62,12 +62,7 @@ fn build_fails_when_io_has_no_waker() {
         queue::<u32, _>(&mut io, 4, Token::new(1)),
         Err(NoWaker)
     ));
-    let cfg = longshore_mailbox::Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token::new(1),
-    };
+    let cfg = longshore_mailbox::Config::new(4, 2, 4, Token::new(1));
     assert!(matches!(mailbox::<u32, u32, _>(&mut io, cfg), Err(NoWaker)));
 }
 

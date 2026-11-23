@@ -73,16 +73,9 @@ impl DiskCore {
     pub(super) fn new(seed: u64) -> (Self, Sender<DiskReq, DiskResp>) {
         let mut disk = setup_disk_sim(seed);
         let lim = disk_limits();
-        let (tx, io_rx) = mailbox::<DiskReq, DiskResp, _>(
-            &mut disk,
-            Config {
-                capacity: 8,
-                slots: 8,
-                waiters_prealloc: 8,
-                wake_token: Token::new(900),
-            },
-        )
-        .expect("mailbox");
+        let (tx, io_rx) =
+            mailbox::<DiskReq, DiskResp, _>(&mut disk, Config::new(8, 8, 8, Token::new(900)))
+                .expect("mailbox");
         let core = Self {
             disk,
             lim,

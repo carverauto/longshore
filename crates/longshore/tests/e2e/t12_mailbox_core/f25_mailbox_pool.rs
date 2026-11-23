@@ -39,12 +39,7 @@ fn counting_waker() -> (Arc<CountWake>, Waker) {
 
 #[test]
 fn t1_f25_1_blocking_caller_sends_request_and_receives_answer() {
-    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token::new(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config::new(4, 2, 4, Token::new(1)));
 
     let worker = thread::spawn(move || {
         if let Recv::Message(slot) = rx.recv_parked() {
@@ -59,12 +54,7 @@ fn t1_f25_1_blocking_caller_sends_request_and_receives_answer() {
 
 #[test]
 fn t1_f25_2_future_caller_woken_and_yields_answer_via_block_on() {
-    let (tx, mut rx) = mailbox_parked::<u32, &'static str>(Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token::new(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, &'static str>(Config::new(4, 2, 4, Token::new(1)));
 
     let (wakes, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);
@@ -173,12 +163,7 @@ fn t1_f25_5_mailbox_block_on_drives_both_mailbox_and_s3_client_pending() {
 
 #[test]
 fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
-    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config {
-        capacity: 4,
-        slots: 1,
-        waiters_prealloc: 2,
-        wake_token: Token::new(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u64>(Config::new(4, 1, 2, Token::new(1)));
     let (_c, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);
 
@@ -213,12 +198,7 @@ fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
 
 #[test]
 fn t2_f25_2_waiters_exceeding_slots_and_preallocated_grow_and_complete() {
-    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config {
-        capacity: 8,
-        slots: 1,
-        waiters_prealloc: 2,
-        wake_token: Token::new(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config::new(8, 1, 2, Token::new(1)));
 
     let receiver = thread::spawn(move || {
         for _ in 0..5 {
@@ -243,12 +223,7 @@ fn t2_f25_2_waiters_exceeding_slots_and_preallocated_grow_and_complete() {
 
 #[test]
 fn t2_f25_3_close_delivers_answered_slot_and_closed_to_unanswered() {
-    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token::new(1),
-    });
+    let (tx, mut rx) = mailbox_parked::<u32, u32>(Config::new(4, 2, 4, Token::new(1)));
     let (_c, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);
 

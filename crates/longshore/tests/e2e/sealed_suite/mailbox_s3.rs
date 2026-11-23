@@ -31,16 +31,9 @@ pub fn run_mailbox_queue_and_waiters_sealed() {
         .with_ops_max(4);
     let mut sim = SimIo::new(limits, 9003, Faults::default());
     let mut out = Completions::new(8);
-    let (tx, mut io_rx) = mailbox::<SealedMsg, u64, _>(
-        &mut sim,
-        Config {
-            capacity: 8,
-            slots: 2,
-            waiters_prealloc: 8,
-            wake_token: Token::new(1),
-        },
-    )
-    .expect("mailbox");
+    let (tx, mut io_rx) =
+        mailbox::<SealedMsg, u64, _>(&mut sim, Config::new(8, 2, 8, Token::new(1)))
+            .expect("mailbox");
     io_rx.arm(&mut sim).expect("arm");
     let waker = Waker::noop();
 

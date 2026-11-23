@@ -118,16 +118,8 @@ fn spawn_posix_receiver(
 
     let handle = thread::spawn(move || {
         let mut io = posix_backend(lim).unwrap();
-        let (tx, mut io_rx) = mailbox::<Job, u32, _>(
-            &mut io,
-            Config {
-                capacity: 16,
-                slots: 4,
-                waiters_prealloc: 16,
-                wake_token: Token::new(1),
-            },
-        )
-        .unwrap();
+        let (tx, mut io_rx) =
+            mailbox::<Job, u32, _>(&mut io, Config::new(16, 4, 16, Token::new(1))).unwrap();
         tx_ready.send(tx).unwrap();
         let mut out = Completions::new(8);
         io_rx.arm(&mut io).unwrap();

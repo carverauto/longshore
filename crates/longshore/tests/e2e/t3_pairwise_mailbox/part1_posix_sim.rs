@@ -84,16 +84,8 @@ fn t3_22_two_virtual_engines_mailbox_pool_future_trace_parity() {
             .with_ops_max(4);
         let mut core_a = SimIo::new(limits, seed_a, Faults::default());
         let mut core_b = SimIo::new(limits, seed_b, Faults::default());
-        let (tx_b, mut io_rx_b) = mailbox::<PingMsg, u64, _>(
-            &mut core_b,
-            Config {
-                capacity: 8,
-                slots: 4,
-                waiters_prealloc: 8,
-                wake_token: Token::new(1),
-            },
-        )
-        .unwrap();
+        let (tx_b, mut io_rx_b) =
+            mailbox::<PingMsg, u64, _>(&mut core_b, Config::new(8, 4, 8, Token::new(1))).unwrap();
         io_rx_b.arm(&mut core_b).unwrap();
         let mut out_a = Completions::new(4);
         let mut out_b = Completions::new(4);

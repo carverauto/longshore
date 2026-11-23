@@ -64,16 +64,8 @@ fn spawn_ping_backend(be_limits: Limits) -> (Sender<PingMsg, u64>, std::thread::
     let (tx_ready, rx_ready) = std::sync::mpsc::sync_channel(1);
     let be_handle = std::thread::spawn(move || {
         let mut be = posix_backend(be_limits).unwrap();
-        let (tx_be, mut io_rx_be) = mailbox::<PingMsg, u64, _>(
-            &mut be,
-            Config {
-                capacity: 8,
-                slots: 4,
-                waiters_prealloc: 4,
-                wake_token: Token::new(1),
-            },
-        )
-        .unwrap();
+        let (tx_be, mut io_rx_be) =
+            mailbox::<PingMsg, u64, _>(&mut be, Config::new(8, 4, 4, Token::new(1))).unwrap();
         io_rx_be.arm(&mut be).unwrap();
         tx_ready.send(tx_be).unwrap();
 

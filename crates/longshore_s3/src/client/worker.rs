@@ -79,12 +79,12 @@ impl Worker {
                 "lent buffers must be contiguous and of one size"
             );
         }
-        let config = Config {
-            capacity: layout.operations as usize,
-            slots: layout.operations,
+        let config = Config::new(
+            layout.operations as usize,
+            layout.operations,
             waiters_prealloc,
-            wake_token: Token::new(layout.token_base),
-        };
+            Token::new(layout.token_base),
+        );
         let (sender, rx) = longshore_mailbox::mailbox(io, config)?;
         let lane = Arc::new(Lane {
             sender,

@@ -109,12 +109,7 @@ fn multi_pool_wait_respects_open_flags_and_take_closed() {
 
 #[test]
 fn call_future_await_wait_and_detach_tag_order() {
-    let cfg = Config {
-        capacity: 4,
-        slots: 2,
-        waiters_prealloc: 4,
-        wake_token: Token::new(1),
-    };
+    let cfg = Config::new(4, 2, 4, Token::new(1));
     let (tx, mut rx) = mailbox_parked::<(u32, u32), Result<u32, ()>>(cfg);
 
     // Future path with waker notification.

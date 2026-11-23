@@ -33,12 +33,7 @@ fn counted_waker() -> (Arc<CountWaker>, Waker) {
 
 #[test]
 fn a_call_waits_for_room_when_other_messages_fill_the_queue() {
-    let cfg = Config {
-        capacity: 1,
-        slots: 2,
-        waiters_prealloc: 2,
-        wake_token: Token::new(1),
-    };
+    let cfg = Config::new(1, 2, 2, Token::new(1));
     let (tx, mut rx) = mailbox_parked::<(u32, u32), Result<u32, ()>>(cfg);
     let (cnt, w) = counted_waker();
     let mut cx = Context::from_waker(&w);
