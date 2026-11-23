@@ -6,6 +6,7 @@
 //! Real-kernel `getsockopt` readback checks (`TCP_NODELAY` and `SO_KEEPALIVE`).
 
 use super::checks::close_batch;
+use crate::die::OrDie;
 use longshore::io::posix::PosixIo;
 use longshore::io::uring::UringIo;
 use longshore::io::{Completions, Io, Limits, Op, Sock, Token};
@@ -21,14 +22,14 @@ pub(super) fn check_uring_getsockopt(addr: SocketAddr) {
         ops_max: 8,
         ..Limits::BASE
     };
-    let mut io = UringIo::new(limits).unwrap();
+    let mut io = UringIo::new(limits).or_die("UringIo::new");
     io.no_delay(true);
     io.keep_alive(true);
     let mut out = Completions::new(8);
-    let bound = io.listen(Sock(0), addr).unwrap();
+    let bound = io.listen(Sock(0), addr).or_die("listen");
     assert_eq!(io.last_listen_tcp_options(), Some((true, true)));
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+        .or_die("submit");
     io.submit(
         Token(2),
         Op::Connect {
@@ -36,16 +37,16 @@ pub(super) fn check_uring_getsockopt(addr: SocketAddr) {
             addr: bound,
         },
     )
-    .unwrap();
+    .or_die("submit");
     let mut accepted = None;
     let mut accept_armed = true;
     let mut connected = false;
     while accepted.is_none() || !connected {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, &mut out).or_die("tick");
         while let Some(c) = out.pop() {
             if c.token.0 == 1 {
                 accept_armed = c.more;
-                accepted = Some(Sock(u32::try_from(c.result).unwrap()));
+                accepted = Some(Sock(u32::try_from(c.result).or_die("accepted socket")));
             } else if c.token.0 == 2 {
                 assert_eq!(c.result, 0);
                 connected = true;
@@ -55,10 +56,10 @@ pub(super) fn check_uring_getsockopt(addr: SocketAddr) {
     assert_eq!(io.last_connect_tcp_options(), Some((true, true)));
     if accept_armed {
         io.submit(Token(3), Op::Cancel { target: Token(1) })
-            .unwrap();
+            .or_die("submit");
         let (mut c_done, mut a_done) = (false, false);
         while !(c_done && a_done) {
-            io.tick(true, &mut out).unwrap();
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 if c.token.0 == 3 {
                     c_done = true;
@@ -68,10 +69,17 @@ pub(super) fn check_uring_getsockopt(addr: SocketAddr) {
             }
         }
     }
-    if let Some(opts) = io.probe_tcp_options(accepted.unwrap()).unwrap() {
+    if let Some(opts) = io
+        .probe_tcp_options(accepted.or_die("an accepted socket"))
+        .or_die("probe_tcp_options")
+    {
         assert_eq!(opts, (true, true));
     }
-    close_batch(&mut io, &mut out, &[Sock(0), Sock(3), accepted.unwrap()]);
+    close_batch(
+        &mut io,
+        &mut out,
+        &[Sock(0), Sock(3), accepted.or_die("an accepted socket")],
+    );
 }
 
 pub(super) fn check_posix_getsockopt(addr: SocketAddr) {
@@ -84,13 +92,13 @@ pub(super) fn check_posix_getsockopt(addr: SocketAddr) {
         ops_max: 8,
         ..Limits::BASE
     };
-    let mut io = PosixIo::new(limits).unwrap();
+    let mut io = PosixIo::new(limits).or_die("PosixIo::new");
     io.no_delay(true);
     io.keep_alive(true);
     let mut out = Completions::new(8);
-    let bound = io.listen(Sock(0), addr).unwrap();
+    let bound = io.listen(Sock(0), addr).or_die("listen");
     io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+        .or_die("submit");
     io.submit(
         Token(2),
         Op::Connect {
@@ -98,30 +106,34 @@ pub(super) fn check_posix_getsockopt(addr: SocketAddr) {
             addr: bound,
         },
     )
-    .unwrap();
+    .or_die("submit");
     let mut accepted = None;
     let mut accept_armed = true;
     let mut connected = false;
     while accepted.is_none() || !connected {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, &mut out).or_die("tick");
         while let Some(c) = out.pop() {
             if c.token.0 == 1 {
                 accept_armed = c.more;
-                accepted = Some(Sock(u32::try_from(c.result).unwrap()));
+                accepted = Some(Sock(u32::try_from(c.result).or_die("accepted socket")));
             } else if c.token.0 == 2 {
                 assert_eq!(c.result, 0);
                 connected = true;
             }
         }
     }
-    assert_eq!(io.tcp_options(accepted.unwrap()).unwrap(), (true, true));
-    assert_eq!(io.tcp_options(Sock(3)).unwrap(), (true, true));
+    assert_eq!(
+        io.tcp_options(accepted.or_die("an accepted socket"))
+            .or_die("tcp_options"),
+        (true, true)
+    );
+    assert_eq!(io.tcp_options(Sock(3)).or_die("tcp_options"), (true, true));
     if accept_armed {
         io.submit(Token(3), Op::Cancel { target: Token(1) })
-            .unwrap();
+            .or_die("submit");
         let (mut c_done, mut a_done) = (false, false);
         while !(c_done && a_done) {
-            io.tick(true, &mut out).unwrap();
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 if c.token.0 == 3 {
                     c_done = true;
@@ -131,5 +143,9 @@ pub(super) fn check_posix_getsockopt(addr: SocketAddr) {
             }
         }
     }
-    close_batch(&mut io, &mut out, &[Sock(0), Sock(3), accepted.unwrap()]);
+    close_batch(
+        &mut io,
+        &mut out,
+        &[Sock(0), Sock(3), accepted.or_die("an accepted socket")],
+    );
 }

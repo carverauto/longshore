@@ -111,7 +111,7 @@ pub(super) fn bench(a: &Args, put: bool) {
     // close completes, so a restart can see Busy; retry it after the next tick.
     let mut waiting = vec![false; n as usize];
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
-        .unwrap();
+        .or_die("submit");
 
     let deadline = io.now_ns() + a.secs * 1000 * MS;
     let (t0, cpu0, core0, enters0) = (
@@ -137,7 +137,7 @@ pub(super) fn bench(a: &Args, put: bool) {
                 if c.token.0 == HEARTBEAT {
                     client.tick(&mut io);
                     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
-                        .unwrap();
+                        .or_die("submit");
                     continue;
                 }
                 if let Handled::Done(d) = client.on_completion(&mut io, c) {

@@ -160,12 +160,16 @@ mod linux {
         };
         let mut cfg = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
             .with_protocol_versions(versions)
-            .unwrap()
+            .unwrap_or_else(|e| die(&format!("protocol versions: {e}")))
             .with_root_certificates(roots)
             .with_no_client_auth();
         cfg.enable_secret_extraction = true;
-        let mut conn =
-            rustls::ClientConnection::new(Arc::new(cfg), "bench.test".try_into().unwrap()).unwrap();
+        let mut conn = rustls::ClientConnection::new(
+            Arc::new(cfg),
+            rustls::pki_types::ServerName::try_from("bench.test")
+                .unwrap_or_else(|e| die(&format!("server name: {e}"))),
+        )
+        .unwrap_or_else(|e| die(&format!("client: {e}")));
         let mut sock = TcpStream::connect(addr).unwrap_or_else(|e| die(&format!("{addr}: {e}")));
         let _: Option<()> = sock.set_nodelay(true).ok();
         while conn.is_handshaking() {

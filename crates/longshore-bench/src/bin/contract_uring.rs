@@ -54,7 +54,7 @@ fn run_backend<IO: longshore::io::Io>(
         let mut io = make(limits);
         let mut out = Completions::new(4);
         let waker = io.waker().or_die("waker");
-        io.submit(Token(1), Op::AwaitWake).unwrap();
+        io.submit(Token(1), Op::AwaitWake).or_die("submit");
         let h = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(15));
             waker.wake();
@@ -62,7 +62,7 @@ fn run_backend<IO: longshore::io::Io>(
         io.tick(true, &mut out).or_die("tick");
         let c = out.pop().or_die("wake completion");
         assert_eq!((c.token.0, c.result), (1, 0));
-        h.join().unwrap();
+        h.join().or_die("join");
     }
 
     // Sealed zero-allocation echo check.

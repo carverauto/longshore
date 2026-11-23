@@ -46,7 +46,7 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
         .start(&mut io, 1, &req)
         .unwrap_or_else(|e| die(format_args!("start: {e:?}")));
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
-        .unwrap();
+        .or_die("submit");
     let t0 = io.now_ns();
     let mut completions = 0u32;
     // Read before sealing: looking up an environment variable allocates.
@@ -57,7 +57,7 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
             if c.token.0 == HEARTBEAT {
                 client.tick(&mut io);
                 io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
-                    .unwrap();
+                    .or_die("submit");
                 continue;
             }
             completions += 1;

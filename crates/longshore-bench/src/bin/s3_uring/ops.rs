@@ -6,6 +6,7 @@
 //! Request-rate benchmarks for operations where bytes per second is not the point.
 
 use super::*;
+use crate::die::OrDie;
 
 /// Request-rate benchmarks for the operations where bytes per second is
 /// not the point: a conditional store of a new key (`put-new`), a ranged
@@ -98,7 +99,7 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
                 client.store_no_clobber(
                     ring,
                     u64::from(i),
-                    core::str::from_utf8(&key[..n]).unwrap(),
+                    core::str::from_utf8(&key[..n]).or_die("UTF-8"),
                     buf,
                     size,
                     Checksum::None,
@@ -109,7 +110,7 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
                 client.fetch(
                     ring,
                     u64::from(i),
-                    core::str::from_utf8(&key[..n]).unwrap(),
+                    core::str::from_utf8(&key[..n]).or_die("UTF-8"),
                     Some((0, RANGE.min(u64::from(size)) - 1)),
                     buf,
                 )
@@ -117,7 +118,11 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
             "erase" => {
                 seq += 1;
                 let n = key_for(1_000_000_000 + seq, &mut key);
-                client.erase(ring, u64::from(i), core::str::from_utf8(&key[..n]).unwrap())
+                client.erase(
+                    ring,
+                    u64::from(i),
+                    core::str::from_utf8(&key[..n]).or_die("UTF-8"),
+                )
             }
             _ => client.list(ring, u64::from(i), &list_prefix, None, 1000, buf),
         };

@@ -6,6 +6,7 @@
 //! Correctness commands: the self-test, the wrong-checksum probe, and listing or erasing a prefix.
 
 use super::*;
+use crate::die::OrDie;
 
 /// List everything under `prefix`, a page at a time, optionally erasing
 /// each key. Erasing shrinks the listing, so a clean always re-lists from
@@ -98,11 +99,11 @@ pub(super) fn bad_checksum(size: u32) {
     );
     let mut out = Completions::new(32);
     s3.store(&mut io, 0, &key, tx, size, Checksum::Provided(1))
-        .unwrap();
+        .or_die("store");
     let stored = wait(&mut io, &mut s3, &mut out);
-    s3.fetch(&mut io, 1, &key, None, rx).unwrap();
+    s3.fetch(&mut io, 1, &key, None, rx).or_die("fetch");
     let fetched = wait(&mut io, &mut s3, &mut out);
-    s3.erase(&mut io, 2, &key).unwrap();
+    s3.erase(&mut io, 2, &key).or_die("erase");
     let _: longshore::store::s3::Done = wait(&mut io, &mut s3, &mut out);
     println!(
         "store with a wrong checksum -> {:?} (attempts {})",
@@ -128,16 +129,17 @@ pub(super) fn selftest(size: u32) {
         let mut steps = [None; 6];
         let mut range_ok = false;
         s3.store_no_clobber(&mut io, 0, &key, tx, size, Checksum::Compute)
-            .unwrap();
+            .or_die("store_no_clobber");
         steps[0] = Some(wait(&mut io, &mut s3, &mut out));
         s3.store_no_clobber(&mut io, 1, &key, tx, size, Checksum::Compute)
-            .unwrap();
+            .or_die("store_no_clobber");
         steps[1] = Some(wait(&mut io, &mut s3, &mut out));
-        s3.fetch(&mut io, 2, &key, None, rx).unwrap();
+        s3.fetch(&mut io, 2, &key, None, rx).or_die("fetch");
         steps[2] = Some(wait(&mut io, &mut s3, &mut out));
         if size >= 2000 {
             // Overwrites the start of rx; the full comparison below uses the tail.
-            s3.fetch(&mut io, 3, &key, Some((1000, 1999)), rx).unwrap();
+            s3.fetch(&mut io, 3, &key, Some((1000, 1999)), rx)
+                .or_die("fetch");
             steps[3] = Some(wait(&mut io, &mut s3, &mut out));
             let mut same = true;
             for i in 0..1000usize {
@@ -146,9 +148,9 @@ pub(super) fn selftest(size: u32) {
             }
             range_ok = same;
         }
-        s3.erase(&mut io, 4, &key).unwrap();
+        s3.erase(&mut io, 4, &key).or_die("erase");
         steps[4] = Some(wait(&mut io, &mut s3, &mut out));
-        s3.fetch(&mut io, 5, &key, None, rx).unwrap();
+        s3.fetch(&mut io, 5, &key, None, rx).or_die("fetch");
         steps[5] = Some(wait(&mut io, &mut s3, &mut out));
         (steps, range_ok)
     });

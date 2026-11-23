@@ -86,7 +86,7 @@ fn main() {
                     nanos: 20_000_000 * (4 - t),
                 },
             )
-            .unwrap();
+            .or_die("submit");
         }
         assert_eq!(
             io.submit(Token(9), Op::Timeout { nanos: 1 }),
@@ -96,7 +96,7 @@ fn main() {
         let mut order = [0u64; 4];
         let mut n = 0;
         while n < 4 {
-            io.tick(true, &mut out).unwrap();
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 assert_eq!(c.result, 0, "timeout result");
                 order[n] = c.token.0;
@@ -112,8 +112,10 @@ fn main() {
     {
         use longshore::io::{BufId, Io, Op, Token};
         let path = format!("/tmp/longshore-echo-uring-{}.txt", std::process::id());
-        let missing = io.register_file("/nonexistent/longshore-file").unwrap();
-        let file = io.register_file(&path).unwrap();
+        let missing = io
+            .register_file("/nonexistent/longshore-file")
+            .or_die("register_file");
+        let file = io.register_file(&path).or_die("register_file");
         let mut read = |ring: &mut UringIo, f| {
             ring.submit(
                 Token(1),
@@ -124,9 +126,9 @@ fn main() {
                     len: 64,
                 },
             )
-            .unwrap();
+            .or_die("submit");
             loop {
-                ring.tick(true, &mut out).unwrap();
+                ring.tick(true, &mut out).or_die("tick");
                 if let Some(c) = out.pop() {
                     return c.result;
                 }
@@ -134,15 +136,18 @@ fn main() {
         };
         assert_eq!(read(&mut io, missing), -2, "a missing file reports ENOENT");
         for contents in ["first", "second, longer version"] {
-            std::fs::write(&path, contents).unwrap();
-            assert_eq!(read(&mut io, file), i32::try_from(contents.len()).unwrap());
+            std::fs::write(&path, contents).or_die("write");
+            assert_eq!(
+                read(&mut io, file),
+                i32::try_from(contents.len()).or_die("file length")
+            );
             assert_eq!(
                 &io.buf(BufId(0))[..contents.len()],
                 contents.as_bytes(),
                 "file contents"
             );
         }
-        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&path).or_die("remove_file");
         println!("ok files: missing, read, reread after replacement");
     }
     // Cancelling an operation of several steps. A connect is a socket step
@@ -162,20 +167,20 @@ fn main() {
                 addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9),
             },
         )
-        .unwrap();
+        .or_die("submit");
         io.submit(Token(2), Op::Cancel { target: Token(1) })
-            .unwrap();
+            .or_die("submit");
         io.submit(
             Token(3),
             Op::Timeout {
                 nanos: 3_000_000_000,
             },
         )
-        .unwrap();
+        .or_die("submit");
         let mut connect = None;
         let mut done = 0u32;
         while connect.is_none() {
-            io.tick(true, &mut out).unwrap();
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 done |= 1 << c.token.0;
                 match c.token.0 {
@@ -186,7 +191,7 @@ fn main() {
             }
         }
         // Unreachable networks fail the connect at once, which is also fine.
-        let r = connect.unwrap();
+        let r = connect.or_die("connect");
         assert!(
             r < 0,
             "a cancelled connect to an unanswering address reported success"
@@ -194,12 +199,13 @@ fn main() {
         let ms = (io.now_ns() - t0) / 1_000_000;
         // Close the socket the first step created, and let the guard timer and
         // the cancel finish, so the echo starts with every slot free.
-        io.submit(Token(4), Op::Close { sock: Sock(3) }).unwrap();
+        io.submit(Token(4), Op::Close { sock: Sock(3) })
+            .or_die("submit");
         io.submit(Token(5), Op::Cancel { target: Token(3) })
-            .unwrap();
+            .or_die("submit");
         let all = 0b11_1110;
         while done != all {
-            io.tick(true, &mut out).unwrap();
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 assert!(
                     all & (1 << c.token.0) != 0 && done & (1 << c.token.0) == 0,
@@ -215,8 +221,8 @@ fn main() {
             "/tmp/longshore-echo-uring-cancel-{}.txt",
             std::process::id()
         );
-        std::fs::write(&path, "must not be read").unwrap();
-        let file = io.register_file(&path).unwrap();
+        std::fs::write(&path, "must not be read").or_die("write");
+        let file = io.register_file(&path).or_die("register_file");
         io.buf(BufId(0))[..4].copy_from_slice(b"----");
         io.submit(
             Token(1),
@@ -227,13 +233,13 @@ fn main() {
                 len: 64,
             },
         )
-        .unwrap();
+        .or_die("submit");
         io.submit(Token(2), Op::Cancel { target: Token(1) })
-            .unwrap();
+            .or_die("submit");
         let mut read = None;
         let mut pending = 2;
         while pending > 0 {
-            io.tick(true, &mut out).unwrap();
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 if c.token.0 == 1 {
                     read = Some(c.result);
@@ -241,7 +247,7 @@ fn main() {
                 pending -= 1;
             }
         }
-        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&path).or_die("remove_file");
         assert_eq!(
             read,
             Some(-ECANCELED),
@@ -277,9 +283,9 @@ fn main() {
                     addr: SocketAddr::new(loopback, 1),
                 },
             )
-            .unwrap();
+            .or_die("submit");
             *r = loop {
-                io.tick(true, &mut out).unwrap();
+                io.tick(true, &mut out).or_die("tick");
                 if let Some(c) = out.pop() {
                     break c.result;
                 }
@@ -297,11 +303,15 @@ fn main() {
     // the process holding a descriptor.
     {
         use longshore::io::{Io, Op, Sock, Token};
-        let open_fds = || std::fs::read_dir("/proc/self/fd").unwrap().count();
+        let open_fds = || {
+            std::fs::read_dir("/proc/self/fd")
+                .or_die("read_dir")
+                .count()
+        };
         let mut run = |ring: &mut UringIo, op: Op| {
-            ring.submit(Token(1), op).unwrap();
+            ring.submit(Token(1), op).or_die("submit");
             loop {
-                ring.tick(true, &mut out).unwrap();
+                ring.tick(true, &mut out).or_die("tick");
                 if let Some(c) = out.pop() {
                     break c.result;
                 }
@@ -309,7 +319,9 @@ fn main() {
         };
         let before = open_fds();
         io.measure_segment_sizes(true);
-        let listening = io.listen(Sock(0), SocketAddr::new(loopback, 0)).unwrap();
+        let listening = io
+            .listen(Sock(0), SocketAddr::new(loopback, 0))
+            .or_die("listen");
         let size = run(
             &mut io,
             Op::Connect {

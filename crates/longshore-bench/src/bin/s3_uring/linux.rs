@@ -190,7 +190,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
     });
     s3.start(&mut io);
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 50 * MS })
-        .unwrap();
+        .or_die("submit");
     (io, s3, 2 * conns)
 }
 
@@ -201,7 +201,7 @@ fn turn(io: &mut UringIo, s3: &mut S3, out: &mut Completions) {
         if c.token.0 == HEARTBEAT {
             s3.tick(io);
             io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 50 * MS })
-                .unwrap();
+                .or_die("submit");
         } else {
             let _: bool = s3.on_completion(io, c);
         }

@@ -114,7 +114,7 @@ pub fn round_trip(client: &Client, len: usize) {
 pub fn deadline_stops_a_connect() {
     // TEST-NET-1: routed nowhere, so the connect waits.
     let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
-    let credentials = Credentials::new("AKIDEXAMPLE", "secret").unwrap();
+    let credentials = Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new");
     let mut b = Builder::new("bucket.objects.test", "us-test-1", credentials);
     (b.port, b.address) = (nowhere.port(), Some(nowhere));
     (b.connections, b.buffers, b.operations) = (1, 1, 1);

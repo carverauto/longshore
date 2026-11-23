@@ -32,6 +32,13 @@ fn nonce(seq: u64) -> [u8; 12] {
     n
 }
 
+/// A candidate that cannot seal has nothing to measure: say which, and stop.
+#[cold]
+fn failed(what: &str) -> ! {
+    eprintln!("aead: {what} failed");
+    std::process::exit(1)
+}
+
 /// One record: `src` (RECORD bytes) -> `dst` (RECORD + 1 + TAG bytes).
 trait Sealer {
     fn seal(&self, seq: u64, src: &[u8], dst: &mut [u8]);
@@ -44,14 +51,13 @@ impl Sealer for RingCopy {
         let (body, tag) = dst.split_at_mut(RECORD + 1);
         body[..RECORD].copy_from_slice(src);
         body[RECORD] = CONTENT_TYPE[0];
-        let t = self
-            .0
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(nonce(seq)),
-                Aad::from(AAD),
-                body,
-            )
-            .unwrap();
+        let Ok(t) = self.0.seal_in_place_separate_tag(
+            Nonce::assume_unique_for_key(nonce(seq)),
+            Aad::from(AAD),
+            body,
+        ) else {
+            failed("ring sealing a record")
+        };
         tag.copy_from_slice(t.as_ref());
     }
 }
@@ -63,14 +69,13 @@ impl Sealer for AwsLcCopy {
         let (body, tag) = dst.split_at_mut(RECORD + 1);
         body[..RECORD].copy_from_slice(src);
         body[RECORD] = CONTENT_TYPE[0];
-        let t = self
-            .0
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(nonce(seq)),
-                Aad::from(AAD),
-                body,
-            )
-            .unwrap();
+        let Ok(t) = self.0.seal_in_place_separate_tag(
+            Nonce::assume_unique_for_key(nonce(seq)),
+            Aad::from(AAD),
+            body,
+        ) else {
+            failed("aws-lc-rs sealing a record")
+        };
         tag.copy_from_slice(t.as_ref());
     }
 }
@@ -86,10 +91,12 @@ impl Sealer for RustCryptoCopy {
         let (body, tag) = dst.split_at_mut(RECORD + 1);
         body[..RECORD].copy_from_slice(src);
         body[RECORD] = CONTENT_TYPE[0];
-        let t = self
+        let Ok(t) = self
             .0
             .encrypt_in_place_detached(&nonce(seq).into(), &AAD, body)
-            .unwrap();
+        else {
+            failed("aes-gcm sealing a record")
+        };
         tag.copy_from_slice(&t);
     }
 }
@@ -144,13 +151,15 @@ fn candidates() -> Vec<(&'static str, Box<dyn Sealer>)> {
         (
             "ring, copy + in-place",
             Box::new(RingCopy(ring::aead::LessSafeKey::new(
-                ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &KEY).unwrap(),
+                ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &KEY)
+                    .unwrap_or_else(|_| failed("ring key setup")),
             ))),
         ),
         (
             "aws-lc-rs, copy + in-place",
             Box::new(AwsLcCopy(aws_lc_rs::aead::LessSafeKey::new(
-                aws_lc_rs::aead::UnboundKey::new(&aws_lc_rs::aead::AES_128_GCM, &KEY).unwrap(),
+                aws_lc_rs::aead::UnboundKey::new(&aws_lc_rs::aead::AES_128_GCM, &KEY)
+                    .unwrap_or_else(|_| failed("aws-lc-rs key setup")),
             ))),
         ),
         ("aws-lc scatter, no copy", Box::new(AwsLcScatter(scatter))),

@@ -99,10 +99,10 @@ fn check_sealed_o_direct(dir: &Path) {
                 },
             ),
         ])
-        .unwrap();
+        .or_die("submit_chain");
         let mut done = 0;
         while done < 3 {
-            io.tick(true, &mut out).unwrap();
+            io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 if c.token == Token(1) {
                     assert_eq!(c.result, 0, "O_DIRECT open failed on {}", dir.display());
@@ -124,9 +124,9 @@ fn check_sealed_o_direct(dir: &Path) {
                 file_off: 0,
             },
         )
-        .unwrap();
-        io.tick(true, &mut out).unwrap();
-        assert_eq!(out.pop().unwrap().result, -EINVAL);
+        .or_die("submit");
+        io.tick(true, &mut out).or_die("tick");
+        assert_eq!(out.pop().or_die("a completion").result, -EINVAL);
 
         io.submit(
             Token(5),
@@ -138,14 +138,14 @@ fn check_sealed_o_direct(dir: &Path) {
                 file_off: 0,
             },
         )
-        .unwrap();
-        io.tick(true, &mut out).unwrap();
-        assert_eq!(out.pop().unwrap().result, 4096);
+        .or_die("submit");
+        io.tick(true, &mut out).or_die("tick");
+        assert_eq!(out.pop().or_die("a completion").result, 4096);
 
         io.submit(Token(6), Op::FileClose { slot: FileSlot(0) })
-            .unwrap();
-        io.tick(true, &mut out).unwrap();
-        assert_eq!(out.pop().unwrap().result, 0);
+            .or_die("submit");
+        io.tick(true, &mut out).or_die("tick");
+        assert_eq!(out.pop().or_die("a completion").result, 0);
     });
     let (wb, rb) = io.buf_pair(wbuf, rbuf);
     assert_eq!(wb, rb);
@@ -180,7 +180,7 @@ fn check_submit_all_partial_refusal(dir: &Path) {
             },
         },
     )
-    .unwrap();
+    .or_die("submit");
     io.submit(
         Token(11),
         Op::FileOpen {
@@ -196,11 +196,11 @@ fn check_submit_all_partial_refusal(dir: &Path) {
             },
         },
     )
-    .unwrap();
+    .or_die("submit");
     let mut r10 = None;
     let mut r11 = None;
     for _ in 0..1000 {
-        io.tick(true, &mut out).unwrap();
+        io.tick(true, &mut out).or_die("tick");
         while let Some(c) = out.pop() {
             if c.token == Token(10) {
                 r10 = Some(c.result);
@@ -219,9 +219,9 @@ fn check_submit_all_partial_refusal(dir: &Path) {
         "SUBMIT_ALL must deliver op queued behind failure"
     );
     io.submit(Token(12), Op::FileClose { slot: FileSlot(1) })
-        .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
+        .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 0);
 }
 
 fn check_over_16384_buffers(dir: &Path) {
@@ -254,9 +254,9 @@ fn check_over_16384_buffers(dir: &Path) {
             },
         },
     )
-    .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
+    .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 0);
 
     let last = limits.small(16_399);
     io.buf(last)[..64].fill(0x5E);
@@ -270,9 +270,9 @@ fn check_over_16384_buffers(dir: &Path) {
             file_off: 0,
         },
     )
-    .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 64);
+    .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 64);
 
     io.submit(
         Token(3),
@@ -284,13 +284,13 @@ fn check_over_16384_buffers(dir: &Path) {
             file_off: 0,
         },
     )
-    .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 64);
+    .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 64);
     assert!(io.buf(BufId(0))[..64].iter().all(|&b| b == 0x5E));
 
     io.submit(Token(4), Op::FileClose { slot: FileSlot(0) })
-        .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
+        .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 0);
 }

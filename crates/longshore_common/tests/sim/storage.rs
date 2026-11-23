@@ -137,6 +137,7 @@ pub(crate) fn write_bytes(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn read_all(
     sim: &mut SimIo,
     out: &mut Completions,

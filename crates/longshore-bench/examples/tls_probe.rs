@@ -32,12 +32,12 @@ fn keys(s: &ConnectionTrafficSecrets) -> Result<(Suite, Vec<u8>, [u8; 12])> {
         ConnectionTrafficSecrets::Aes128Gcm { key, iv } => (
             Suite::Aes128Gcm,
             key.as_ref().to_vec(),
-            iv.as_ref().try_into().unwrap(),
+            iv.as_ref().try_into()?,
         ),
         ConnectionTrafficSecrets::Aes256Gcm { key, iv } => (
             Suite::Aes256Gcm,
             key.as_ref().to_vec(),
-            iv.as_ref().try_into().unwrap(),
+            iv.as_ref().try_into()?,
         ),
         _ => return Err("only AES-GCM suites are offered".into()),
     })
@@ -61,23 +61,31 @@ fn main() -> Result<()> {
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let mut config = ClientConfig::builder_with_provider(Arc::new(p))
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
+        .map_err(|e| format!("protocol versions: {e}"))?
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.enable_secret_extraction = true;
 
     let mut sock = TcpStream::connect((host.as_str(), 443)).map_err(|e| format!("connect: {e}"))?;
-    let mut conn = ClientConnection::new(Arc::new(config), host.clone().try_into().unwrap())
-        .map_err(|e| format!("client: {e}"))?;
+    let mut conn = ClientConnection::new(
+        Arc::new(config),
+        rustls::pki_types::ServerName::try_from(host.clone())
+            .map_err(|e| format!("server name {host}: {e}"))?,
+    )
+    .map_err(|e| format!("client: {e}"))?;
     while conn.is_handshaking() {
         let _: (usize, usize) = conn
             .complete_io(&mut sock)
             .map_err(|e| format!("handshake: {e}"))?;
     }
-    let suite = conn.negotiated_cipher_suite().unwrap().suite();
+    let suite = conn
+        .negotiated_cipher_suite()
+        .ok_or("no cipher suite negotiated")?
+        .suite();
     println!(
         "handshake complete: {:?} {:?}",
-        conn.protocol_version().unwrap(),
+        conn.protocol_version()
+            .ok_or("no protocol version negotiated")?,
         suite
     );
 
@@ -88,16 +96,18 @@ fn main() -> Result<()> {
     let ((tx_seq, tx_secret), (rx_seq, rx_secret)) = (secrets.tx, secrets.rx);
     let (mut tx, mut rx) = (Direction::new(), Direction::new());
     let (tx_suite, tx_key, tx_iv) = keys(&tx_secret)?;
-    tx.set_keys(tx_suite, &tx_key, &tx_iv, tx_seq).unwrap();
+    tx.set_keys(tx_suite, &tx_key, &tx_iv, tx_seq)
+        .map_err(|e| format!("send keys: {e:?}"))?;
     let (rx_suite, rx_key, rx_iv) = keys(&rx_secret)?;
-    rx.set_keys(rx_suite, &rx_key, &rx_iv, rx_seq).unwrap();
+    rx.set_keys(rx_suite, &rx_key, &rx_iv, rx_seq)
+        .map_err(|e| format!("receive keys: {e:?}"))?;
     println!("keys extracted");
 
     let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     let mut record = vec![0u8; request.len() + OVERHEAD];
     let n = tx
         .seal(CONTENT_APPLICATION_DATA, request.as_bytes(), &mut record)
-        .unwrap();
+        .map_err(|e| format!("seal the request: {e:?}"))?;
     sock.write_all(&record[..n])
         .map_err(|e| format!("send: {e}"))?;
 

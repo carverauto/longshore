@@ -54,16 +54,16 @@ pub(super) fn thousand_idle_connections<IO: Io>(
 
     sealed(|| {
         srv.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-            .unwrap();
+            .or_die("submit");
         let mut accept_armed = true;
 
         for batch in client_socks.chunks(64) {
             for (idx, &(which, sock)) in batch.iter().enumerate() {
                 let op = Op::Connect { sock, addr: bound };
                 if which == 0 {
-                    c0.submit(Token(1000 + idx as u64), op).unwrap();
+                    c0.submit(Token(1000 + idx as u64), op).or_die("submit");
                 } else {
-                    c1.submit(Token(1000 + idx as u64), op).unwrap();
+                    c1.submit(Token(1000 + idx as u64), op).or_die("submit");
                 }
             }
             let mut want_c = batch.len();
@@ -79,24 +79,24 @@ pub(super) fn thousand_idle_connections<IO: Io>(
                 );
                 if !accept_armed && accepted.len() < want_s {
                     srv.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-                        .unwrap();
+                        .or_die("submit");
                     accept_armed = true;
                 }
-                c0.tick(false, &mut c_out).unwrap();
+                c0.tick(false, &mut c_out).or_die("tick");
                 while let Some(c) = c_out.pop() {
                     assert_eq!(c.result, 0, "c0 connect: {c:?}");
                     want_c -= 1;
                 }
-                c1.tick(false, &mut c_out).unwrap();
+                c1.tick(false, &mut c_out).or_die("tick");
                 while let Some(c) = c_out.pop() {
                     assert_eq!(c.result, 0, "c1 connect: {c:?}");
                     want_c -= 1;
                 }
-                srv.tick(false, &mut srv_out).unwrap();
+                srv.tick(false, &mut srv_out).or_die("tick");
                 while let Some(c) = srv_out.pop() {
                     assert!(c.token.0 == 1 && c.result >= 1, "{c:?}");
                     accept_armed = c.more;
-                    accepted.push(Sock(u32::try_from(c.result).unwrap()));
+                    accepted.push(Sock(u32::try_from(c.result).or_die("accepted socket")));
                 }
             }
         }
@@ -105,10 +105,10 @@ pub(super) fn thousand_idle_connections<IO: Io>(
         // Cancel ArmedAccept so only 1,000 armed receives remain in flight.
         if accept_armed {
             srv.submit(Token(2), Op::Cancel { target: Token(1) })
-                .unwrap();
+                .or_die("submit");
             let (mut c_done, mut a_done) = (false, false);
             while !(c_done && a_done) {
-                srv.tick(true, &mut srv_out).unwrap();
+                srv.tick(true, &mut srv_out).or_die("tick");
                 while let Some(c) = srv_out.pop() {
                     if c.token.0 == 2 {
                         c_done = true;
@@ -122,10 +122,10 @@ pub(super) fn thousand_idle_connections<IO: Io>(
         // Arm receive on all 1,000 idle connections; zero ring buffers must be held.
         for (k, &s) in accepted.iter().enumerate() {
             srv.submit(Token(10_000 + k as u64), Op::ArmedRecv { sock: s })
-                .unwrap();
+                .or_die("submit");
             recv_armed[k] = true;
         }
-        srv.tick(false, &mut srv_out).unwrap();
+        srv.tick(false, &mut srv_out).or_die("tick");
         assert!(srv_out.is_empty(), "idle connections held a ring buffer");
 
         // Send 16 bytes across c0[0..16] proving all 16 ring buffers are free.
@@ -141,7 +141,7 @@ pub(super) fn thousand_idle_connections<IO: Io>(
                     zero_copy: false,
                 },
             )
-            .unwrap();
+            .or_die("submit");
         }
         let mut sent = 0;
         let mut recvd = 0;
@@ -150,17 +150,17 @@ pub(super) fn thousand_idle_connections<IO: Io>(
         while sent < 16 || recvd < 16 {
             spins += 1;
             assert!(spins < 500_000, "send16 stalled: sent={sent} recvd={recvd}");
-            c0.tick(false, &mut c_out).unwrap();
+            c0.tick(false, &mut c_out).or_die("tick");
             while let Some(c) = c_out.pop() {
                 assert_eq!(c.result, 1);
                 sent += 1;
             }
-            srv.tick(false, &mut srv_out).unwrap();
+            srv.tick(false, &mut srv_out).or_die("tick");
             while let Some(c) = srv_out.pop() {
                 let idx = (c.token.0 - 10_000) as usize;
                 recv_armed[idx] = c.more;
                 assert_eq!(c.result, 1);
-                let b = c.buf.unwrap();
+                let b = c.buf.or_die("a ring buffer in the completion");
                 held[recvd] = Some(b);
                 recvd += 1;
             }
@@ -182,7 +182,7 @@ pub(super) fn thousand_idle_connections<IO: Io>(
                     zero_copy: false,
                 },
             )
-            .unwrap();
+            .or_die("submit");
         }
         let (mut sent2, mut recvd2, mut spins2) = (0, 0, 0u32);
         while sent2 < 16 || recvd2 < 16 {
@@ -191,17 +191,17 @@ pub(super) fn thousand_idle_connections<IO: Io>(
                 spins2 < 500_000,
                 "send16_2 stalled: sent2={sent2} recvd2={recvd2}"
             );
-            c1.tick(false, &mut c_out).unwrap();
+            c1.tick(false, &mut c_out).or_die("tick");
             while let Some(c) = c_out.pop() {
                 assert_eq!(c.result, 1);
                 sent2 += 1;
             }
-            srv.tick(false, &mut srv_out).unwrap();
+            srv.tick(false, &mut srv_out).or_die("tick");
             while let Some(c) = srv_out.pop() {
                 let idx = (c.token.0 - 10_000) as usize;
                 recv_armed[idx] = c.more;
                 assert_eq!(c.result, 1);
-                srv.give_back(c.buf.unwrap());
+                srv.give_back(c.buf.or_die("a ring buffer in the completion"));
                 recvd2 += 1;
             }
         }
@@ -216,10 +216,10 @@ pub(super) fn thousand_idle_connections<IO: Io>(
                     need_cancel += 1;
                 }
                 srv.submit(Token(90_000 + o as u64), Op::Close { sock: s })
-                    .unwrap();
+                    .or_die("submit");
             }
             while need_close > 0 || need_cancel > 0 {
-                srv.tick(true, &mut srv_out).unwrap();
+                srv.tick(true, &mut srv_out).or_die("tick");
                 while let Some(c) = srv_out.pop() {
                     if c.token.0 >= 90_000 {
                         need_close -= 1;
@@ -234,8 +234,8 @@ pub(super) fn thousand_idle_connections<IO: Io>(
             }
         }
         srv.submit(Token(99_999), Op::Close { sock: Sock(0) })
-            .unwrap();
-        srv.tick(true, &mut srv_out).unwrap();
+            .or_die("submit");
+        srv.tick(true, &mut srv_out).or_die("tick");
         assert!(srv_out.pop().is_some());
         let c_socks: [Sock; HALF] = core::array::from_fn(|k| Sock(k as u32));
         close_batch(&mut c0, &mut c_out, &c_socks);

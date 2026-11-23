@@ -32,9 +32,9 @@ pub(super) struct Shape {
 }
 
 fn one(io: &mut UringIo, out: &mut Completions, token: u64, op: Op, what: &str) {
-    io.submit(Token(token), op).unwrap();
-    io.tick(true, out).unwrap();
-    let c = out.pop().unwrap();
+    io.submit(Token(token), op).or_die("submit");
+    io.tick(true, out).or_die("tick");
+    let c = out.pop().or_die("a completion");
     assert_eq!(c.result, 0, "{what} failed: {}", c.result);
 }
 
@@ -72,10 +72,10 @@ fn pass(
                     file_off: next,
                 }
             };
-            io.submit(Token(u64::from(i)), op).unwrap();
+            io.submit(Token(u64::from(i)), op).or_die("submit");
             next += block;
         }
-        io.tick(true, out).unwrap();
+        io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
             assert_eq!(u64::try_from(c.result), Ok(block), "short or failed op");
             free.push(c.token.0 as u32);

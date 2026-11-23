@@ -113,7 +113,7 @@ fn main() {
         let addr = server
             .start(&mut io, SocketAddr::new(loopback, 0))
             .or_die("server start");
-        bound.send(addr).unwrap();
+        bound.send(addr).or_die("send");
         let mut out = Completions::new(64);
         loop {
             io.tick(true, &mut out).or_die("server tick");
@@ -128,7 +128,7 @@ fn main() {
     let mut b = Builder::new(
         "bucket.objects.test",
         "us-test-1",
-        Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
+        Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new"),
     );
     b.port = addr.port();
     b.address = Some(addr);
@@ -293,15 +293,17 @@ fn main() {
         const SOCKS: u32 = 100;
         const REPEATS: u32 = 50;
         let listener = std::net::TcpListener::bind((loopback, 0)).or_die("listener");
-        let peer = listener.local_addr().unwrap();
+        let peer = listener.local_addr().or_die("local_addr");
         let (accepted, round_accepted) = channel();
         let (finished, round_finished) = channel::<()>();
         // Holds each round's peers open, so the receives stay idle.
         let acceptor = std::thread::spawn(move || {
             for _ in 0..REPEATS {
-                let peers: Vec<_> = (0..SOCKS).map(|_| listener.accept().unwrap()).collect();
-                accepted.send(()).unwrap();
-                round_finished.recv().unwrap();
+                let peers: Vec<_> = (0..SOCKS)
+                    .map(|_| listener.accept().or_die("accept"))
+                    .collect();
+                accepted.send(()).or_die("send");
+                round_finished.recv().or_die("recv");
                 drop(peers);
             }
         });
@@ -323,7 +325,7 @@ fn main() {
                     sock: Sock(n),
                     addr: peer,
                 };
-                io.submit(Token(u64::from(n)), to).unwrap();
+                io.submit(Token(u64::from(n)), to).or_die("submit");
             }
             let mut connected = 0;
             while connected < SOCKS {
@@ -333,7 +335,7 @@ fn main() {
                     connected += 1;
                 }
             }
-            round_accepted.recv().unwrap();
+            round_accepted.recv().or_die("recv");
             for n in 0..SOCKS {
                 let (sock, buf) = (Sock(n), limits.small(n));
                 let recv = Op::Recv {
@@ -342,11 +344,11 @@ fn main() {
                     off: 0,
                     len: 64,
                 };
-                io.submit(Token(1000 + u64::from(n)), recv).unwrap();
+                io.submit(Token(1000 + u64::from(n)), recv).or_die("submit");
                 let hour = Op::Timeout {
                     nanos: 3_600 * 1_000_000_000,
                 };
-                io.submit(Token(2000 + u64::from(n)), hour).unwrap();
+                io.submit(Token(2000 + u64::from(n)), hour).or_die("submit");
             }
             // TEST-NET-1: routed nowhere, so the connect waits.
             let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
@@ -357,8 +359,8 @@ fn main() {
                     addr: nowhere,
                 },
             )
-            .unwrap();
-            io.submit(Token(9999), Op::AwaitWake).unwrap();
+            .or_die("submit");
+            io.submit(Token(9999), Op::AwaitWake).or_die("submit");
             io.tick(false, &mut out).or_die("submit");
             // A host with no route at all refuses the connect at once.
             while let Some(c) = out.pop() {
@@ -379,7 +381,7 @@ fn main() {
                 "round {round}: quiesce took {took:?}"
             );
             drop(io);
-            finished.send(()).unwrap();
+            finished.send(()).or_die("send");
         }
         acceptor.join().or_die("acceptor");
     }

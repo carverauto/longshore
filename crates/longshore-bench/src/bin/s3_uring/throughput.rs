@@ -6,6 +6,7 @@
 //! Throughput benchmarks: whole-object PUT and GET.
 
 use super::*;
+use crate::die::OrDie;
 
 /// What one client thread did in its measured window.
 struct Run {
@@ -70,7 +71,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
                 size,
                 Checksum::None,
             )
-            .unwrap();
+            .or_die("store");
         }
         for _ in 0..conns {
             if wait(&mut io, &mut s3, &mut out).outcome != Outcome::Stored {
@@ -190,7 +191,10 @@ pub(super) fn bench(
             })
         })
         .collect();
-    let runs: Vec<Run> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+    let runs: Vec<Run> = workers
+        .into_iter()
+        .map(|w| w.join().or_die("join"))
+        .collect();
     let gb_per_s = |r: &Run| r.bytes as f64 / 1e9 / r.wall;
     let total: f64 = runs.iter().map(gb_per_s).sum();
     let wall = runs.iter().map(|r| r.wall).fold(0.0, f64::max);

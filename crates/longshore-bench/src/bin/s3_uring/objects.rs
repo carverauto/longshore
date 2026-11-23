@@ -7,6 +7,7 @@
 //! list one level with a delimiter, erase in a batch, and presign a URL.
 
 use super::*;
+use crate::die::OrDie;
 use longshore::store::erase::{write_manifest, Failures};
 use longshore::store::list::Listing;
 use longshore::store::options::Options;
@@ -47,13 +48,13 @@ pub(super) fn objects(size: u32) {
 
         {
             s3.store_with(&mut io, 0, &a, tx, size, Checksum::Compute, &options)
-                .unwrap();
+                .or_die("store_with");
             let d = wait(&mut io, &mut s3, &mut out);
             step(0, d.outcome == Outcome::Stored, d);
         }
 
         {
-            s3.stat(&mut io, 1, &a, Some(rx)).unwrap();
+            s3.stat(&mut io, 1, &a, Some(rx)).or_die("stat");
             let d = wait(&mut io, &mut s3, &mut out);
             let ok = match d.outcome {
                 Outcome::Stat(stat) => {
@@ -81,13 +82,13 @@ pub(super) fn objects(size: u32) {
         }
 
         {
-            s3.copy(&mut io, 2, &a, &b).unwrap();
+            s3.copy(&mut io, 2, &a, &b).or_die("copy");
             let d = wait(&mut io, &mut s3, &mut out);
             step(2, d.outcome == Outcome::Copied, d);
         }
 
         {
-            s3.stat(&mut io, 3, &b, Some(rx)).unwrap();
+            s3.stat(&mut io, 3, &b, Some(rx)).or_die("stat");
             let d = wait(&mut io, &mut s3, &mut out);
             let ok = match d.outcome {
                 Outcome::Stat(stat) => {
@@ -115,7 +116,7 @@ pub(super) fn objects(size: u32) {
         {
             // One level below the base: one key and one common prefix.
             s3.list_with(&mut io, 4, &base, None, 100, Some("/"), rx)
-                .unwrap();
+                .or_die("list_with");
             let d = wait(&mut io, &mut s3, &mut out);
             let ok = match d.outcome {
                 Outcome::Listed { len } => {
@@ -147,7 +148,7 @@ pub(super) fn objects(size: u32) {
             // and returns a token, and the token brings the rest without
             // repeating anything.
             s3.list_with(&mut io, 4, &base, None, 1, Some("/"), rx)
-                .unwrap();
+                .or_die("list_with");
             let first_page = wait(&mut io, &mut s3, &mut out);
             let mut continuation = [0u8; 1100];
             let mut continuation_len = 0;
@@ -202,7 +203,7 @@ pub(super) fn objects(size: u32) {
         if gcs {
             // No batch erase on this store: one request each.
             for (k, key) in [(5, &a), (6, &b)] {
-                s3.erase(&mut io, k as u64, key).unwrap();
+                s3.erase(&mut io, k as u64, key).or_die("erase");
                 let d = wait(&mut io, &mut s3, &mut out);
                 step(k, d.outcome == Outcome::Erased, d);
             }
@@ -210,7 +211,8 @@ pub(super) fn objects(size: u32) {
             let manifest_len = write_manifest(io.buf(tx), &[&a, &b, "selftest/never-there"])
                 .unwrap_or_else(|| die("manifest does not fit"))
                 as u32;
-            s3.erase_many(&mut io, 5, tx, manifest_len, rx).unwrap();
+            s3.erase_many(&mut io, 5, tx, manifest_len, rx)
+                .or_die("erase_many");
             let d = wait(&mut io, &mut s3, &mut out);
             let ok = match d.outcome {
                 Outcome::ErasedMany { len } => Failures::parse(&io.buf(rx)[..len as usize])
@@ -233,7 +235,7 @@ pub(super) fn objects(size: u32) {
         }
 
         {
-            s3.stat(&mut io, 7, &a, None).unwrap();
+            s3.stat(&mut io, 7, &a, None).or_die("stat");
             let d = wait(&mut io, &mut s3, &mut out);
             step(7, d.outcome == Outcome::NotFound, d);
         }

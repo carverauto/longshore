@@ -10,6 +10,7 @@ use longshore_common::io::posix::errno::linux::EIO;
 use longshore_common::io::{BufId, Completions, FileSlot, Io, Op, OpenFlags};
 use longshore_common::sim::SimIo;
 
+#[cfg(test)]
 pub(crate) fn wal_recover(
     sim: &mut SimIo,
     out: &mut Completions,

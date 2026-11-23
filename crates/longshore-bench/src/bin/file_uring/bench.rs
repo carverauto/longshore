@@ -46,10 +46,10 @@ fn measure(io: &mut UringIo, buf: BufId, iters: usize, chained: bool, us: &mut V
                     },
                 ),
             ])
-            .unwrap();
+            .or_die("submit_chain");
             let mut done = 0;
             while done < 2 {
-                io.tick(true, &mut out).unwrap();
+                io.tick(true, &mut out).or_die("tick");
                 while let Some(c) = out.pop() {
                     assert!(c.result >= 0, "chain op failed: {}", c.result);
                     done += 1;
@@ -66,9 +66,9 @@ fn measure(io: &mut UringIo, buf: BufId, iters: usize, chained: bool, us: &mut V
                     file_off,
                 },
             )
-            .unwrap();
-            io.tick(true, &mut out).unwrap();
-            assert_eq!(out.pop().unwrap().result, 4096);
+            .or_die("submit");
+            io.tick(true, &mut out).or_die("tick");
+            assert_eq!(out.pop().or_die("a completion").result, 4096);
             io.submit(
                 Token(2),
                 Op::FileSync {
@@ -76,9 +76,9 @@ fn measure(io: &mut UringIo, buf: BufId, iters: usize, chained: bool, us: &mut V
                     datasync: true,
                 },
             )
-            .unwrap();
-            io.tick(true, &mut out).unwrap();
-            assert_eq!(out.pop().unwrap().result, 0);
+            .or_die("submit");
+            io.tick(true, &mut out).or_die("tick");
+            assert_eq!(out.pop().or_die("a completion").result, 0);
         }
         us.push(t0.elapsed().as_nanos() as u64);
         enters_total += io.enters() - e0;
@@ -144,9 +144,13 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
             },
         },
     )
-    .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0, "O_DIRECT open failed");
+    .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(
+        out.pop().or_die("a completion").result,
+        0,
+        "O_DIRECT open failed"
+    );
 
     // Pre-allocate 256 KiB so writes overwrite allocated blocks without metadata growth jitter.
     io.submit(
@@ -158,9 +162,9 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
             keep_size: false,
         },
     )
-    .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
+    .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 0);
 
     // Warmup
     let mut warm = Vec::with_capacity(40);
@@ -190,7 +194,7 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
     }
 
     io.submit(Token(99), Op::FileClose { slot: FileSlot(0) })
-        .unwrap();
-    io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
+        .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result, 0);
 }

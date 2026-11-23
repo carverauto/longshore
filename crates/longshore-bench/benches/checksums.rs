@@ -54,7 +54,10 @@ fn crc32c_crc_fast(data: &[u8]) -> u32 {
 /// on the benchmark machine, which may have instructions that one lacks.
 fn verify_kernels() {
     let all = longshore::checksum::kernels::all();
-    let table = all.iter().find(|k| k.name == "table").unwrap();
+    let Some(table) = all.iter().find(|k| k.name == "table") else {
+        eprintln!("checksums: no table kernel to check the others against");
+        std::process::exit(1)
+    };
     let data: Vec<u8> = (0..1_000_003u64)
         .map(|i| (i.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 56) as u8)
         .collect();

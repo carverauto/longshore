@@ -30,8 +30,9 @@ fn check_connect_ring_lost() {
     use longshore::io::{Completions, Io, Limits, Op, Sock, Token, EINVAL};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 
-    let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener =
+        TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).or_die("bind");
+    let addr = listener.local_addr().or_die("local_addr");
     let mut io = UringIo::new(Limits {
         sockets_max: 2,
         buffers: 1,
@@ -39,7 +40,7 @@ fn check_connect_ring_lost() {
         ops_max: 4,
         ..Limits::BASE
     })
-    .unwrap();
+    .or_die("UringIo::new");
     io.no_delay(true);
     io.keep_alive(true);
     io.inject(Fault::RingLost);
@@ -53,8 +54,8 @@ fn check_connect_ring_lost() {
                 addr,
             },
         )
-        .unwrap();
-        io.tick(false, &mut out).unwrap();
+        .or_die("submit");
+        io.tick(false, &mut out).or_die("tick");
         out.pop().or_die("connect failure completion")
     });
     assert_eq!(c.token, Token(1));
@@ -80,15 +81,15 @@ fn check_armed_accept_empty_range() {
         ops_max: 4,
         ..Limits::BASE
     })
-    .unwrap();
+    .or_die("UringIo::new");
     let _bound = io
         .listen(Sock(0), SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .unwrap();
+        .or_die("listen");
     let mut out = Completions::new(4);
     let c = sealed(|| {
         io.submit(Token(2), Op::ArmedAccept { listener: Sock(0) })
-            .unwrap();
-        io.tick(false, &mut out).unwrap();
+            .or_die("submit");
+        io.tick(false, &mut out).or_die("tick");
         out.pop().or_die("armed accept failure completion")
     });
     assert_eq!(c, Completion::new(Token(2), -ENFILE));

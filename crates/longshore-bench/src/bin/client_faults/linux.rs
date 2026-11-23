@@ -81,7 +81,7 @@ pub fn serve(connections: u32) -> SocketAddr {
         let addr = server
             .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
             .or_die("server start");
-        bound.send(addr).unwrap();
+        bound.send(addr).or_die("send");
         let mut out = Completions::new(64);
         loop {
             io.tick(true, &mut out).or_die("server tick");
@@ -97,7 +97,7 @@ pub fn builder(addr: SocketAddr, threads: u32) -> Builder {
     let mut b = Builder::new(
         "bucket.objects.test",
         "us-test-1",
-        Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
+        Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new"),
     );
     b.port = addr.port();
     b.address = Some(addr);

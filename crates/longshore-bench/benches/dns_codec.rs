@@ -19,7 +19,10 @@ const NAME: &str = "bucket.us-east-1.linodeobjects.com";
 /// its owner name compressed to the question.
 fn response(id: u16, addrs: usize) -> Vec<u8> {
     let mut m = vec![0u8; MESSAGE_MAX];
-    let n = encode_query(NAME, id, &mut m).unwrap();
+    let Ok(n) = encode_query(NAME, id, &mut m) else {
+        eprintln!("dns_codec: {NAME} does not encode");
+        std::process::exit(1)
+    };
     m.truncate(n);
     m[2..4].copy_from_slice(&0x8180u16.to_be_bytes());
     m[6..8].copy_from_slice(&(addrs as u16).to_be_bytes());
@@ -34,25 +37,28 @@ fn bench(c: &mut Criterion) {
 
     let _: &mut BenchmarkGroup<'_, WallTime> = g.bench_function("encode_query", |b| {
         let mut out = [0u8; MESSAGE_MAX];
-        b.iter(|| encode_query(black_box(NAME), black_box(0x1234), &mut out).unwrap())
+        assert!(encode_query(NAME, 0x1234, &mut out).is_ok());
+        b.iter(|| encode_query(black_box(NAME), black_box(0x1234), &mut out))
     });
 
     for addrs in [1usize, 8] {
         let msg = response(0x1234, addrs);
+        assert!(parse_response(&msg, 0x1234, NAME).is_ok());
         let _: &mut BenchmarkGroup<'_, WallTime> =
             g.throughput(Throughput::Bytes(msg.len() as u64));
         let _: &mut BenchmarkGroup<'_, WallTime> = g
             .bench_function(format!("parse_response/{addrs}_addrs"), |b| {
-                b.iter(|| parse_response(black_box(&msg), 0x1234, black_box(NAME)).unwrap())
+                b.iter(|| parse_response(black_box(&msg), 0x1234, black_box(NAME)))
             });
     }
 
     // The rejection path matters too: stale and spoofed datagrams take it.
     let msg = response(0x1234, 8);
+    assert!(parse_response(&msg, 0x4321, NAME).is_err());
     let _: &mut BenchmarkGroup<'_, WallTime> = g.throughput(Throughput::Bytes(msg.len() as u64));
     let _: &mut BenchmarkGroup<'_, WallTime> = g
         .bench_function("parse_response/id_mismatch", |b| {
-            b.iter(|| parse_response(black_box(&msg), 0x4321, black_box(NAME)).unwrap_err())
+            b.iter(|| parse_response(black_box(&msg), 0x4321, black_box(NAME)))
         });
 
     g.finish();

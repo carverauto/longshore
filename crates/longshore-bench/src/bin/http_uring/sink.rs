@@ -6,6 +6,7 @@
 //! The multi-threaded peer for throughput runs.
 
 use super::*;
+use crate::die::OrDie;
 
 /// Thread-per-connection HTTP peer that never becomes the bottleneck:
 /// request bodies are discarded in the kernel with MSG_TRUNC.
@@ -24,7 +25,7 @@ pub(super) fn sink(port: u16, get_size: u32, trust_file: Option<&str>) {
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
+        .or_die("with_protocol_versions")
         .with_no_client_auth()
         .with_single_cert(vec![k.cert.der().clone()], key)
         .unwrap_or_else(|e| die(format_args!("server config: {e}")));
@@ -110,7 +111,7 @@ fn serve<S: Read + Write + MaybeFd>(mut s: S, get_size: u32, discard_in_kernel: 
                     if n <= 0 {
                         return;
                     }
-                    left -= usize::try_from(n).unwrap();
+                    left -= usize::try_from(n).or_die("received bytes");
                 }
                 let body = if is_get { get_size as usize } else { 0 };
                 if s.write_all(

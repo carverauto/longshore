@@ -56,13 +56,8 @@ fn call(
 ) -> Result<Reply> {
     let mut key = [0u8; KEY_MAX];
     let k = decode_key(KEY, &mut key).ok_or("development key")?;
-    let date = http_date(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    );
-    let date = std::str::from_utf8(&date).unwrap();
+    let date = http_date(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
+    let date = std::str::from_utf8(&date)?;
     let mut ms: Vec<(&str, &str)> = vec![("x-ms-date", date), ("x-ms-version", VERSION)];
     ms.extend_from_slice(extra_ms);
     let content_type = if body.is_empty() {
@@ -88,7 +83,7 @@ fn call(
     for (i, (name, value)) in query.iter().enumerate() {
         target += &format!("{}{name}={value}", if i == 0 { '?' } else { '&' });
     }
-    let mut request = format!("{method} {target} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\nAuthorization: {}\r\n", body.len(), std::str::from_utf8(&auth[..n]).unwrap());
+    let mut request = format!("{method} {target} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\nAuthorization: {}\r\n", body.len(), std::str::from_utf8(&auth[..n])?);
     for (name, value) in &ms {
         request += &format!("{name}: {value}\r\n");
     }
@@ -103,10 +98,10 @@ fn call(
     }
     request += "\r\n";
     let mut s = TcpStream::connect(addr).map_err(|e| format!("{addr}: {e}"))?;
-    s.write_all(request.as_bytes()).unwrap();
-    s.write_all(body).unwrap();
+    s.write_all(request.as_bytes())?;
+    s.write_all(body)?;
     let mut raw = Vec::new();
-    let _: usize = s.read_to_end(&mut raw).unwrap();
+    let _: usize = s.read_to_end(&mut raw)?;
     let split = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -158,9 +153,9 @@ fn main() -> Result<()> {
         .collect();
     let crc = longshore::checksum::crc64_nvme(&body);
     let be = longshore::checksum::crc64_header_value(crc);
-    let be = std::str::from_utf8(&be).unwrap();
+    let be = std::str::from_utf8(&be)?;
     let le = longshore::checksum::crc64_azure_header_value(crc);
-    let le = std::str::from_utf8(&le).unwrap();
+    let le = std::str::from_utf8(&le)?;
     let block = ("x-ms-blob-type", "BlockBlob");
     let mut ok = true;
 
