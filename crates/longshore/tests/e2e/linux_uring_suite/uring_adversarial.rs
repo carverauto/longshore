@@ -10,7 +10,7 @@ use super::super::harness::{
 };
 use longshore::io::uring::UringIo;
 use longshore::io::{
-    BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token, ECANCELED,
+    BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token, ECANCELED,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 
@@ -81,7 +81,7 @@ fn uring_close_and_cancel_connect_with_tcp_opts_and_segment_probe() {
     )
     .unwrap();
     assert!(c.result >= 0);
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         &mut ring,
         &mut out,
         Token(6),
@@ -144,7 +144,7 @@ fn uring_send_zc_close_cancel_and_quiesce_drop_mixed_slots() {
         },
     )
     .unwrap();
-    let _ = drive_until(&mut ring, &mut out, 200, |v| {
+    let _: Vec<Completion> = drive_until(&mut ring, &mut out, 200, |v| {
         v.iter().any(|c| c.token == Token(4)) && v.iter().any(|c| c.token == Token(3))
     })
     .unwrap();
@@ -234,7 +234,7 @@ fn uring_unix_armed_accept_recv_close_and_shutdown_eof() {
     .unwrap();
     let r1 = cs.iter().find(|c| c.token == Token(1)).unwrap().result;
     assert!(r1 == 0 || r1 == -ECANCELED);
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         &mut ring,
         &mut out,
         Token(3),

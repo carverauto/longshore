@@ -7,7 +7,8 @@
 
 use super::{base_limits, close_file, drive_many, drive_one, open_file, write_path};
 use crate::io::{
-    BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, EBADF, EBUSY, EINVAL,
+    BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, EBADF, EBUSY,
+    EINVAL,
 };
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
@@ -291,5 +292,5 @@ fn ready_list_drains_behind_timer<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
     assert_eq!((c.token, c.result), (Token(2), -EBADF));
     io.submit(Token(3), Op::Cancel { target: Token(1) })
         .unwrap();
-    let _ = drive_many(&mut io, &mut out, [Token(1)]);
+    let _: [Completion; 1] = drive_many(&mut io, &mut out, [Token(1)]);
 }

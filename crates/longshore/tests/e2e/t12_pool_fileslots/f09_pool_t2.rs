@@ -22,7 +22,7 @@ fn t2_f09_1_invalid_block_size_rejected() {
         #[cfg(feature = "sim")]
         {
             let res = std::panic::catch_unwind(|| {
-                let _ = SimIo::new(limits, 1, Faults::default());
+                let _: SimIo = SimIo::new(limits, 1, Faults::default());
             });
             assert!(
                 res.is_err(),
@@ -257,5 +257,5 @@ fn t2_f09_4_one_gib_range_boundary_no_straddle() {
 fn t2_f09_5_span_at_buffer_count_boundary_panics() {
     let limits = file_limits(2, 3, 4096, 4096);
     let oob = BufId(limits.buffer_count());
-    let _ = limits.span(oob);
+    let _: (usize, usize) = limits.span(oob);
 }

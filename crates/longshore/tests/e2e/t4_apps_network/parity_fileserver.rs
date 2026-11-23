@@ -13,7 +13,9 @@ use super::super::harness::{
     drive_until, read_pool_into, submit_and_wait_one, write_nul_path, write_pool_bytes,
 };
 use longshore::io::files::file_size;
-use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token};
+use longshore::io::{
+    BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token,
+};
 use std::net::SocketAddr;
 
 const TCP_LISTENER: Sock = Sock(0);
@@ -300,7 +302,7 @@ pub fn run_mini_fileserver<IO: Io>(
         .result,
         32
     );
-    let _ =
+    let _: Completion =
         submit_and_wait_one(io, &mut out, Token(41), Op::Close { sock: unix_srv }, 1_000).unwrap();
 
     let mut u_got = Vec::new();
@@ -338,7 +340,7 @@ pub fn run_mini_fileserver<IO: Io>(
     .iter()
     .enumerate()
     {
-        let _ = submit_and_wait_one(
+        let _: Completion = submit_and_wait_one(
             io,
             &mut out,
             Token(60 + idx as u64),
@@ -347,7 +349,7 @@ pub fn run_mini_fileserver<IO: Io>(
         )
         .unwrap();
     }
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         io,
         &mut out,
         Token(70),

@@ -219,13 +219,13 @@ fn t2_f01_1_zero_buffers_limits_pool_bytes() {
 #[test]
 #[should_panic(expected = "small buffer out of range")]
 fn t2_f01_2_small_out_of_range_panics() {
-    let _ = Limits::BASE.small(0);
+    let _: BufId = Limits::BASE.small(0);
 }
 
 #[test]
 #[should_panic(expected = "buffer out of range")]
 fn t2_f01_3_span_out_of_range_panics() {
-    let _ = Limits::BASE.span(BufId(u32::MAX));
+    let _: (usize, usize) = Limits::BASE.span(BufId(u32::MAX));
 }
 
 #[test]
@@ -257,5 +257,5 @@ fn t2_f01_5_pair_same_buffer_panics() {
         ..Limits::BASE
     };
     let mut pool = vec![0u8; limits.pool_bytes()];
-    let _ = limits.pair(&mut pool, BufId(0), BufId(0));
+    let _: (&mut [u8], &mut [u8]) = limits.pair(&mut pool, BufId(0), BufId(0));
 }

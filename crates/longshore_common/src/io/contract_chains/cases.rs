@@ -10,8 +10,8 @@ use crate::io::contract_files::{
     base_limits, close_file, drive_many, drive_one, open_file, write_path,
 };
 use crate::io::{
-    file_size, BufId, Busy, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock, Token, EBADF,
-    ECANCELED, EINVAL, ENOENT,
+    file_size, BufId, Busy, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Sock,
+    Token, EBADF, ECANCELED, EINVAL, ENOENT,
 };
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root_dir: &str) {
@@ -121,7 +121,7 @@ fn atomic_busy_on_full_slots<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: 
         ),
     ];
     assert_eq!(io.submit_chain(&chain), Err(Busy));
-    let _ = drive_many(&mut io, &mut out, [Token(10), Token(11)]);
+    let _: [Completion; 2] = drive_many(&mut io, &mut out, [Token(10), Token(11)]);
     assert_eq!(io.submit_chain(&[]), Ok(()));
     let bad_op = io.submit_chain(&[(Token(30), Op::Close { sock: Sock(0) })]);
     if bad_op.is_ok() {

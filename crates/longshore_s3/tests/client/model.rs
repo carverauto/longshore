@@ -25,6 +25,7 @@ mod machine;
 use core::task::Poll;
 use longshore_s3::client::Error;
 use machine::*;
+use std::task::Poll;
 
 #[test]
 fn two_blocking_callers_share_one_operation_slot() {

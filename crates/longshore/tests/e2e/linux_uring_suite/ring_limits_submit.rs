@@ -10,7 +10,9 @@ use super::super::harness::{
     drive_until, read_pool_into, submit_and_wait_one, write_nul_path, write_pool_bytes, TempDir,
 };
 use longshore::io::uring::UringIo;
-use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ENOENT};
+use longshore::io::{
+    BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ENOENT,
+};
 use std::ffi::OsStr;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -97,7 +99,7 @@ fn uring_submit_all_partial_refusal_batch_executes_trailing_ops() {
     assert_eq!(cs.iter().find(|c| c.token.0 == 2).unwrap().result, 0);
     assert_eq!(cs.iter().find(|c| c.token.0 == 3).unwrap().result, 0);
 
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         &mut ring,
         &mut out,
         Token(4),

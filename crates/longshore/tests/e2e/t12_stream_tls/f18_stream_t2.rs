@@ -132,7 +132,7 @@ fn t2_f18_2_tls_stream_spill_path_across_small_dst_receives() {
         while let Some(c) = out.pop() {
             match c.token.0 {
                 1 => {
-                    let _ = client.on_send(&mut io, c.result);
+                    let _: Step = client.on_send(&mut io, c.result);
                 }
                 4 => s_step = server.on_recv(&mut io, c.result),
                 _ => {}
@@ -230,7 +230,7 @@ fn t2_f18_4_stream_sim_faults_reset_terminates_cleanly() {
     let mut server = Stream::new(SERVER, Token(3), Token(4));
     write_pool_bytes(&mut io, BufId(0), 0, &[0x5a; 4096]);
     client.send(&mut io, BufId(0), 0, 4096, 4096);
-    let _ = server.recv(&mut io, BufId(1), 0, 4096);
+    let _: Step = server.recv(&mut io, BufId(1), 0, 4096);
 
     let mut saw_end = false;
     for _ in 0..300 {
@@ -246,7 +246,7 @@ fn t2_f18_4_stream_sim_faults_reset_terminates_cleanly() {
                 4 => match server.on_recv(&mut io, c.result) {
                     Step::Done(n) if n <= 0 => saw_end = true,
                     Step::Done(_) => {
-                        let _ = server.recv(&mut io, BufId(1), 0, 4096);
+                        let _: Step = server.recv(&mut io, BufId(1), 0, 4096);
                     }
                     Step::Tls(_) => saw_end = true,
                     Step::Pending => {}
@@ -269,7 +269,7 @@ fn t2_f18_4_stream_sim_faults_reset_terminates_cleanly() {
 #[should_panic(expected = "TLS buffers must hold two records")]
 fn t2_f18_5_tls_buffers_below_two_records_panics() {
     let min = (2 * (FRAGMENT_MAX + OVERHEAD + 256)) as u32;
-    let _ = Stream::new(Sock(0), Token(1), Token(2)).with_tls_buffers(
+    let _: Stream = Stream::new(Sock(0), Token(1), Token(2)).with_tls_buffers(
         BufId(0),
         BufId(1),
         min - 1,

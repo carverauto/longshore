@@ -56,7 +56,7 @@ impl Stream {
     pub fn on_idle_check<IO: Io>(&mut self, io: &mut IO, result: i32) -> IdleCheck {
         #[cfg(not(feature = "tls"))]
         {
-            let _ = io;
+            let _: &mut IO = io;
             match result {
                 r if r == -EAGAIN => IdleCheck::Clean,
                 r if r > 0 => IdleCheck::Dirty,

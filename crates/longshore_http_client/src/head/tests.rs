@@ -303,7 +303,7 @@ fn random_mutations_never_panic() {
         m.truncate(1 + (rnd() % m.len() as u64) as usize);
         if let Ok(Some(h)) = parse(&m) {
             assert!(h.fields.head_len <= m.len());
-            let _ = h.fields.header(&m, "content-length");
+            let _: Option<&[u8]> = h.fields.header(&m, "content-length");
         }
         if let Ok(Some(h)) = parse_request(&m, LIMIT) {
             assert!(h.fields.head_len <= m.len());

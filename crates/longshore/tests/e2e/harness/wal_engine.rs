@@ -357,7 +357,7 @@ impl WalEngine {
                     }
                 }
             }
-            let _ = self.close_segment(io, out)?;
+            let _: i32 = self.close_segment(io, out)?;
         }
         if stats.last_seq >= self.next_seq {
             self.next_seq = stats.last_seq + 1;

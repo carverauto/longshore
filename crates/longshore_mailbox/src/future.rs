@@ -181,7 +181,7 @@ impl<M: Copy, A, F: FnOnce(u32) -> M> Drop for CallFuture<'_, M, A, F> {
         match self.stage {
             Stage::Slot { .. } => self.waiter.forget_one(self.sender.pool()),
             Stage::Sent(slot) => {
-                let _ = self.sender.detach(slot);
+                let _: Option<A> = self.sender.detach(slot);
             }
             Stage::Done => {}
         }

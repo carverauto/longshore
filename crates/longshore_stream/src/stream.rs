@@ -285,7 +285,7 @@ impl Stream {
     pub fn on_send<IO: Io>(&mut self, io: &mut IO, result: i32) -> Step {
         #[cfg(not(feature = "tls"))]
         {
-            let _ = io;
+            let _: &mut IO = io;
             Step::Done(result)
         }
         #[cfg(feature = "tls")]
@@ -354,7 +354,7 @@ impl Stream {
     pub fn on_recv<IO: Io>(&mut self, io: &mut IO, result: i32) -> Step {
         #[cfg(not(feature = "tls"))]
         {
-            let _ = io;
+            let _: &mut IO = io;
             Step::Done(result)
         }
         #[cfg(feature = "tls")]

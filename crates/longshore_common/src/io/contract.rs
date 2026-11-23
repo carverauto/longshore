@@ -98,7 +98,7 @@ fn close_sockets<IO: Io>(io: &mut IO, out: &mut Completions, socks: &[Sock]) {
         io.submit(Token(900 + k as u64), Op::Close { sock })
             .unwrap();
     }
-    let _ = drain_n(io, out, socks.len());
+    let _: Vec<(u64, i32)> = drain_n(io, out, socks.len());
 }
 
 /// Echo scenario with `zero_copy: false` and `zero_copy: true`, plus single-completion check.
@@ -223,7 +223,7 @@ pub fn close_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        let _ = io.listen(LISTENER, addr).expect("listen");
+        let _: SocketAddr = io.listen(LISTENER, addr).expect("listen");
         io.submit(Token(20), accept_op(LISTENER, SERVER)).unwrap();
         io.tick(false, &mut out).unwrap();
         io.submit(Token(21), Op::Close { sock: LISTENER }).unwrap();
@@ -335,7 +335,7 @@ pub fn recv_now_and_closed_peer<IO: Io>(make: &mut impl FnMut(Limits) -> IO, add
         }
         io.submit(Token(tok), Op::Timeout { nanos: 1_000_000 })
             .unwrap();
-        let _ = drain_n(&mut io, &mut out, 1);
+        let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 1);
         tok += 1;
     }
     assert!(failed, "send to closed peer should fail negatively");
@@ -377,7 +377,7 @@ pub fn cancel_never_cancels_close<IO: Io>(make: &mut impl FnMut(Limits) -> IO, a
                 }
                 io.submit(Token(14 + step * 2), Op::Timeout { nanos: 500_000 })
                     .unwrap();
-                let _ = drain_n(&mut io, &mut out, 1);
+                let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 1);
             }
             assert_eq!(eof, 0, "peer EOF");
             close_sockets(&mut io, &mut out, &[CLIENT, LISTENER]);

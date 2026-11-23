@@ -163,7 +163,7 @@ fn both_directions_wait_independently_on_one_socket() {
         io.submit(Token(900 + k as u64), Op::Close { sock })
             .unwrap();
     }
-    let _ = drain_n(&mut io, &mut out, 3);
+    let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 3);
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn full_completions_buffer_does_not_lose_readiness() {
         )
         .unwrap();
     }
-    let _ = drain_n(&mut io, &mut big, 4);
+    let _: Vec<(u64, i32)> = drain_n(&mut io, &mut big, 4);
 
     // Wait briefly so all 4 loopback segments are in the kernel rx buffers, then
     // arm 4 Recvs and drain one per tick with capacity 1.

@@ -35,11 +35,11 @@ fn parsing_arbitrary_bytes_is_safe(tc: TestCase) {
     if let Ok(Some(h)) = parse_response(&data, LIMIT) {
         assert!(h.fields.head_len <= data.len());
         assert!(data[..h.fields.head_len].ends_with(b"\r\n\r\n"));
-        let _ = h.fields.header(&data, "content-length");
+        let _: Option<&[u8]> = h.fields.header(&data, "content-length");
     }
     if let Ok(Some(h)) = parse_request(&data, LIMIT) {
         assert!(h.fields.head_len <= data.len());
-        let _ = (h.method(&data), h.target(&data));
+        let _: (&[u8], &[u8]) = (h.method(&data), h.target(&data));
     }
 }
 

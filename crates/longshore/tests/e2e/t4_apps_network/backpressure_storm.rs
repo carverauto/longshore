@@ -8,7 +8,7 @@
 
 use super::super::harness::{drive_until, posix_backend, submit_and_wait_one, write_pool_bytes};
 use longshore::io::{
-    BufId, Busy, Completions, Io, Limits, Op, Sock, Token, EMFILE, ENFILE, ENOBUFS,
+    BufId, Busy, Completion, Completions, Io, Limits, Op, Sock, Token, EMFILE, ENFILE, ENOBUFS,
 };
 use longshore::mailbox::{mailbox_parked, Config, Recv, TryRecv, TrySendError};
 #[cfg(feature = "sim")]
@@ -196,7 +196,7 @@ fn run_backpressure_storm<IO: Io>(io: &mut IO, addr: SocketAddr) {
     for b in held_bufs {
         io.give_back(b);
     }
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         io,
         &mut small_out,
         Token(80),

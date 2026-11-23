@@ -11,7 +11,9 @@ use super::{
     identity, setup_streams, BUF, CLIENT, C_CONN, C_RECV, C_SEND, C_TLS_RX, C_TLS_TX, C_TX,
     LISTENER, NAME, SCRATCH, SERVER, S_ACCEPT, S_BUF, S_RECV, S_SEND, S_TLS_RX, S_TLS_TX,
 };
-use longshore_common::io::{Completions, Io, Limits, Op, Token, EAGAIN, ECONNRESET, EPIPE};
+use longshore_common::io::{
+    Completion, Completions, Io, Limits, Op, Token, EAGAIN, ECONNRESET, EPIPE,
+};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_stream::{IdleCheck, Step, Stream, TlsError};
 use longshore_tls::handshake::{ClientSetup, Handshake, ServerSetup};
@@ -100,7 +102,7 @@ fn tls_stream_borrow_fallback_make_room_compaction_and_zero_send() {
     io.tick(true, &mut out).unwrap();
     while let Some(c) = out.pop() {
         if c.token == C_SEND {
-            let _ = client.on_send(&mut io, c.result);
+            let _: Step = client.on_send(&mut io, c.result);
         }
     }
     let mut r = server.recv(&mut io, S_BUF, 0, 5);
@@ -171,7 +173,7 @@ fn raw_send(io: &mut SimIo, out: &mut Completions, tok: u64, bytes: &[u8]) {
     };
     io.submit(Token(tok), op).unwrap();
     io.tick(true, out).unwrap();
-    let _ = out.pop();
+    let _: Option<Completion> = out.pop();
 }
 
 #[test]
@@ -189,7 +191,7 @@ fn tls_stream_idle_edges_corrupt_records_handshake_errors_and_reset_reuse() {
     io.tick(true, &mut out).unwrap();
     while let Some(c) = out.pop() {
         if c.token == C_SEND {
-            let _ = client.on_send(&mut io, c.result);
+            let _: Step = client.on_send(&mut io, c.result);
         }
     }
     assert_eq!(server.check_idle(&mut io, SCRATCH, 0), IdleCheck::Pending);
@@ -223,7 +225,7 @@ fn tls_stream_idle_edges_corrupt_records_handshake_errors_and_reset_reuse() {
     io_c.tick(true, &mut out).unwrap();
     while let Some(c) = out.pop() {
         if c.token == C_SEND {
-            let _ = client_c.on_send(&mut io_c, c.result);
+            let _: Step = client_c.on_send(&mut io_c, c.result);
         }
     }
     assert_eq!(
@@ -243,7 +245,7 @@ fn tls_stream_idle_edges_corrupt_records_handshake_errors_and_reset_reuse() {
     io_c2.tick(true, &mut out).unwrap();
     while let Some(c) = out.pop() {
         if c.token == C_SEND {
-            let _ = client_c2.on_send(&mut io_c2, c.result);
+            let _: Step = client_c2.on_send(&mut io_c2, c.result);
         }
     }
     assert_eq!(server_c2.recv(&mut io_c2, S_BUF, 0, 16), Step::Pending);
@@ -324,7 +326,7 @@ fn tls_stream_idle_edges_corrupt_records_handshake_errors_and_reset_reuse() {
         Stream::new(CLIENT, C_SEND, C_RECV).with_tls_buffers(C_TLS_TX, C_TLS_RX, BUF, BUF, 4096);
     let mut srv_reuse =
         Stream::new(SERVER, S_SEND, S_RECV).with_tls_buffers(S_TLS_TX, S_TLS_RX, BUF, BUF, 4096);
-    let _ = s_reuse.start_handshake(&mut io5, Handshake::client(&cs, NAME).unwrap());
+    let _: Step = s_reuse.start_handshake(&mut io5, Handshake::client(&cs, NAME).unwrap());
     assert_eq!(
         s_reuse.on_handshake(&mut io5, false, 0),
         Step::Done(-ECONNRESET)

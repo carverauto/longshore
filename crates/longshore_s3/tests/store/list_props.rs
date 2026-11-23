@@ -130,7 +130,7 @@ fn arbitrary_documents_are_safe(tc: TestCase) {
         for e in listing.entries().flatten() {
             assert!(!e.key_raw.is_empty() && inside(e.key_raw));
             let mut out = vec![0u8; e.key_raw.len()];
-            let _ = unescape(e.key_raw, &mut out);
+            let _: Option<usize> = unescape(e.key_raw, &mut out);
         }
         for p in listing.common_prefixes().flatten() {
             assert!(!p.is_empty() && inside(p));

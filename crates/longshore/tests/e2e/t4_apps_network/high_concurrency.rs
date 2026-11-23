@@ -7,7 +7,7 @@
 //! 0-idle-buffer invariant, `-ENOBUFS` + `give_back` recovery, shutdown EOF).
 
 use super::super::harness::{drive_until, posix_backend, submit_and_wait_one, write_pool_bytes};
-use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ENOBUFS};
+use longshore::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token, ENOBUFS};
 #[cfg(feature = "sim")]
 use longshore::sim::{Faults, SimIo};
 use std::net::SocketAddr;
@@ -206,7 +206,7 @@ fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
     );
 
     // 4. Close the matched server socket -> armed recv ends cleanly and peer client sees 0 EOF.
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         io,
         &mut out,
         Token(4000),

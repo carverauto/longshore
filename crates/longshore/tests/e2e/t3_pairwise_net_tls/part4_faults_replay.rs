@@ -12,7 +12,7 @@ use super::super::harness::{drive_until, read_pool_bytes, write_nul_path, write_
 use super::net_limits;
 #[cfg(feature = "sim")]
 use longshore::io::{
-    BufId, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token, ECONNRESET, ENOBUFS,
+    BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token, ECONNRESET, ENOBUFS,
 };
 #[cfg(feature = "sim")]
 use longshore::sim::{DiskConfig, DiskFaults, Faults, SimIo};
@@ -49,7 +49,7 @@ fn t3_18_armed_recv_enobufs_under_sim_faults_and_give_back() {
         },
     )
     .unwrap();
-    let _ = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
+    let _: Vec<Completion> = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
 
     sim.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();

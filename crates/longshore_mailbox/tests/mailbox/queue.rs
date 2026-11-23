@@ -277,7 +277,7 @@ fn recv_parked_panics_on_queue_with_wake() {
     }
 
     let (_tx, mut rx) = queue_with_wake::<u32>(std::sync::Arc::new(NoopWake), 2, Token(1));
-    let _ = rx.recv_parked();
+    let _: Recv<u32> = rx.recv_parked();
 }
 
 #[path = "queue/adversarial.rs"]

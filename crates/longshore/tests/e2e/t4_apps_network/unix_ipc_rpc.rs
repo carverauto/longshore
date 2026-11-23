@@ -164,7 +164,7 @@ fn run_unix_ipc_rpc<IO: Io>(io: &mut IO, lim: Limits, socket_path: &str) {
                         got_resp = true;
                     }
                 } else if c.token.0 == 20 {
-                    let _ = cli_a_stream.on_send(io, c.result);
+                    let _: Step = cli_a_stream.on_send(io, c.result);
                 }
             }
         }
@@ -199,7 +199,7 @@ fn run_unix_ipc_rpc<IO: Io>(io: &mut IO, lim: Limits, socket_path: &str) {
         }
 
         // Close server socket 1 -> armed Recv on srv_socks[1] ends cleanly & CLI_B sees 0 EOF.
-        let _ = submit_wait_one_stack(
+        let _: Completion = submit_wait_one_stack(
             io,
             &mut out,
             Token(50),

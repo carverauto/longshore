@@ -56,7 +56,7 @@ pub(super) fn run_two_core_ping_pong(
     m_ba.arm(&mut core_a).unwrap();
 
     let addr: SocketAddr = "192.0.2.26:9600".parse().unwrap();
-    let _ = core_b.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = core_b.listen(Sock(0), addr).unwrap();
     core_b
         .submit(
             Token(50),

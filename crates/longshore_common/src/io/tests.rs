@@ -66,7 +66,7 @@ fn invalid_block_size_panics_when_aligned_buffers_present() {
         block_size: 2048,
         ..Limits::BASE
     };
-    let _ = l.pool_bytes();
+    let _: usize = l.pool_bytes();
 }
 
 #[test]

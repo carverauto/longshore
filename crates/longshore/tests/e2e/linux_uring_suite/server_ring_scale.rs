@@ -10,7 +10,7 @@
 use super::super::harness::{drive_until, submit_and_wait_one, write_pool_bytes};
 use longshore::io::alloc_guard::sealed;
 use longshore::io::uring::UringIo;
-use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
+use longshore::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
@@ -105,7 +105,7 @@ fn uring_server_1000_idle_connections_zero_ring_bufs_and_cq_burst_sealed() {
     }
 
     // Shutdown-before-close on slot 0: peer TcpStream reads clean 0 EOF immediately.
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         &mut ring,
         &mut out,
         Token(9000),

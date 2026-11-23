@@ -297,5 +297,5 @@ fn t2_f25_5_zero_capacity_pool_rejected_and_wake_without_send_is_safe() {
     let (tx, mut rx) = queue_parked::<u32>(2);
     tx.wake();
     assert_eq!(rx.try_recv(), TryRecv::Empty);
-    let _ = Pool::new(0, 1);
+    let _: Pool = Pool::new(0, 1);
 }

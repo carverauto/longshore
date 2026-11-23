@@ -61,7 +61,7 @@ pub(super) fn check_non_lifecycle(
             Ok(())
         }
         Op::FileSync { slot, .. } | Op::FileReserve { slot, .. } => {
-            let _ = slot_ok(slot)?;
+            let _: bool = slot_ok(slot)?;
             Ok(())
         }
         Op::FilePunch {
@@ -69,7 +69,7 @@ pub(super) fn check_non_lifecycle(
             file_off,
             len,
         } => {
-            let _ = slot_ok(slot)?;
+            let _: bool = slot_ok(slot)?;
             let bs = limits.block_size as u64;
             if bs == 0 || !file_off.is_multiple_of(bs) || !len.is_multiple_of(bs) {
                 return Err(-EINVAL);

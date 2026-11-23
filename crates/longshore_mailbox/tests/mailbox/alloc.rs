@@ -203,7 +203,7 @@ fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
             }
         });
         if let Some(s) = got_slot {
-            let _ = rx_a.answer(s, 1);
+            let _: Option<u32> = rx_a.answer(s, 1);
         }
         rx_a.begin_close(|_| {});
         rx_a.finish_close(|| 0, |_| {});

@@ -292,7 +292,7 @@ fn t1_f18_3_tls_stream_batch_clamping_and_zero_copy_threshold() {
                         assert!(n > 0);
                         recvd.extend_from_slice(&read_pool_bytes(&mut io, BufId(5), 0, n as usize));
                         if recvd.len() < big.len() {
-                            let _ = server.recv(&mut io, BufId(5), 0, cap);
+                            let _: Step = server.recv(&mut io, BufId(5), 0, cap);
                         }
                     }
                 }

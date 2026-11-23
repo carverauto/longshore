@@ -183,7 +183,7 @@ fn t1_f16_4_placed_fail_after_on_rename_takes_effect_and_returns_eio() {
         .result,
         0
     );
-    let _ = sync_root_dir(&mut sim, &mut out, 8, FileSlot(1));
+    let _: i32 = sync_root_dir(&mut sim, &mut out, 8, FileSlot(1));
 }
 
 /// `T1-F16-5`: `corrupt_medium_bit` mutates durable/log bytes persistently across reads until rewritten.

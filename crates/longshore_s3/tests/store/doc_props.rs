@@ -78,11 +78,11 @@ fn arbitrary_bytes_are_safe_to_parse(tc: TestCase) {
             assert!(inside(value, &data));
         }
     }
-    let _ = parse_http_date(&data);
-    let _ = Credentials::parse(&data);
-    let _ = Credentials::parse_bearer(&data);
+    let _: Option<u64> = parse_http_date(&data);
+    let _: Option<Credentials> = Credentials::parse(&data);
+    let _: Option<Credentials> = Credentials::parse_bearer(&data);
     if let Ok(text) = core::str::from_utf8(&data) {
-        let _ = sharedkey::decode_key(text, &mut [0u8; sharedkey::KEY_MAX]);
+        let _: Option<usize> = sharedkey::decode_key(text, &mut [0u8; sharedkey::KEY_MAX]);
     }
 }
 

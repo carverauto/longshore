@@ -8,7 +8,7 @@
 
 use super::{test_limits, Duration};
 use core::task::{Context, Poll, Waker};
-use longshore_common::io::{Completions, Io, Limits, Op, Token};
+use longshore_common::io::{Completion, Completions, Io, Limits, Op, Token};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_mailbox::{mailbox_parked, queue, queue_parked, Config, Recv, SlotWaiter, TryRecv};
 
@@ -40,7 +40,7 @@ fn receiver_arm_and_on_completion_handle_busy_foreign_tokens_and_post_close() {
         .unwrap();
     assert!(rx.on_completion(&mut io, wake_c).is_err());
     io.tick(true, &mut out).unwrap();
-    let _ = out.pop();
+    let _: Option<Completion> = out.pop();
     assert!(rx.arm(&mut io).is_ok());
 
     // Close idempotency & post-close on_completion does not re-arm.

@@ -372,7 +372,7 @@ impl SimDisk {
     ) -> i32 {
         match placed {
             Some(PlacedFault::FailAfter) => {
-                let _ = f(self);
+                let _: i32 = f(self);
                 ctx.counters.placed_fail_after += 1;
                 -EIO
             }

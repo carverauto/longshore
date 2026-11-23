@@ -60,7 +60,7 @@ pub fn run_mailbox_queue_and_waiters_sealed() {
             while let Some(c) = out.pop() {
                 if io_rx.on_completion(&mut sim, c).unwrap_or(false) {
                     while let TryRecv::Message(m) = io_rx.try_recv() {
-                        let _ = io_rx.answer(m.slot, m.val * 2);
+                        let _: Option<u32> = io_rx.answer(m.slot, m.val * 2);
                     }
                 }
             }

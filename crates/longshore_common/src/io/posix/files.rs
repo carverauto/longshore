@@ -271,7 +271,7 @@ impl Posix {
         loop {
             #[cfg(target_os = "macos")]
             let r = {
-                let _ = datasync;
+                let _: bool = datasync;
                 unsafe { fcntl(fd, F_FULLFSYNC) }
             };
             #[cfg(target_os = "linux")]

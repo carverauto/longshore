@@ -54,7 +54,7 @@ pub(crate) fn wal_recover(
         );
         if r == -EIO {
             if rec_bytes.is_multiple_of(4096) {
-                let _ = drive_one(
+                let _: i32 = drive_one(
                     sim,
                     out,
                     tok,
@@ -66,7 +66,7 @@ pub(crate) fn wal_recover(
                 );
             } else {
                 sim.buf(BufId(2))[..rec_bytes].fill(0);
-                let _ = drive_one(
+                let _: i32 = drive_one(
                     sim,
                     out,
                     tok,

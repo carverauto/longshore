@@ -44,7 +44,7 @@ fn t2_f03_2_stall_ticks_deadlock_timed_out() {
         },
     )
     .unwrap();
-    let _ = drain_exact(&mut io, &mut out, 2);
+    let _: Vec<(u64, i32)> = drain_exact(&mut io, &mut out, 2);
     io.submit(
         Token(3),
         Op::Recv {

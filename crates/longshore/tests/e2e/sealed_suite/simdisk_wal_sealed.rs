@@ -221,7 +221,7 @@ pub fn run_simdisk_wal_recovery_sealed() {
             rec_cnt += 1;
             off += 4096;
         }
-        let _ = drive_one_sync(
+        let _: i32 = drive_one_sync(
             &mut sim,
             &mut out,
             Token(300),

@@ -260,8 +260,8 @@ fn wal_recovers_across_all_eleven_faults_and_medium_corruption_zero_alloc() {
         assert_eq!(sim.disk_fault_counters().punch_refused, 1);
         assert_eq!(sim.disk_fault_counters().read_error, 1);
     }
-    let _ = crc32c(&WAL_MAGIC.to_le_bytes());
-    let _ = PlacedFault::Fail;
+    let _: u32 = crc32c(&WAL_MAGIC.to_le_bytes());
+    let _: PlacedFault = PlacedFault::Fail;
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn wal_combined_fault_storm_across_seeds_and_sector_sizes_zero_alloc() {
             });
             sealed(|| {
                 let mut tok = 100u64;
-                let _ = drive_one(
+                let _: i32 = drive_one(
                     &mut sim,
                     &mut out,
                     &mut tok,
@@ -322,7 +322,7 @@ fn wal_combined_fault_storm_across_seeds_and_sector_sizes_zero_alloc() {
                         break;
                     }
                 }
-                let _ = drive_one(
+                let _: i32 = drive_one(
                     &mut sim,
                     &mut out,
                     &mut tok,

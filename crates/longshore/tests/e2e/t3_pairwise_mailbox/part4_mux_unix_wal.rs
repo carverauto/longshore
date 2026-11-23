@@ -7,7 +7,7 @@
 //! Unix-socket `Sender::stop()` shutdown-before-close, and `alloc_guard`-sealed WAL over mailbox.
 
 use super::PingMsg;
-use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
+use longshore::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token};
 use longshore::mailbox::{mailbox, queue, Config, TryRecv};
 
 #[cfg(unix)]
@@ -46,7 +46,7 @@ fn t3_28_stream_and_mailbox_receiver_multiplexed_on_one_io() {
         },
     )
     .unwrap();
-    let _ = drive_until(&mut io, &mut out, 10_000, |v| v.len() == 2).unwrap();
+    let _: Vec<Completion> = drive_until(&mut io, &mut out, 10_000, |v| v.len() == 2).unwrap();
 
     let mut cli = Stream::new(Sock(1), Token(10), Token(11));
     let mut srv = Stream::new(Sock(2), Token(20), Token(21));
@@ -71,7 +71,7 @@ fn t3_28_stream_and_mailbox_receiver_multiplexed_on_one_io() {
                     got_bytes = Some(read_pool_bytes(&mut io, BufId(1), 0, n as usize));
                 }
             } else if c.token == Token(10) {
-                let _ = cli.on_send(&mut io, c.result);
+                let _: Step = cli.on_send(&mut io, c.result);
             }
         }
     }
@@ -118,7 +118,7 @@ fn t3_29_unix_socket_server_mailbox_stop_drains_and_closes() {
         },
     )
     .unwrap();
-    let _ = drive_until(&mut io, &mut out, 10_000, |v| v.len() == 2).unwrap();
+    let _: Vec<Completion> = drive_until(&mut io, &mut out, 10_000, |v| v.len() == 2).unwrap();
 
     let (tx, mut io_rx) = queue::<PingMsg, _>(&mut io, 4, Token(100)).unwrap();
     io_rx.arm(&mut io).unwrap();
@@ -308,7 +308,7 @@ fn t3_30_sealed_wal_append_over_mailbox_within_prealloc_waiters() {
                 }
                 if got_w && got_s {
                     if let Some(s) = pending_slot.take() {
-                        let _ = io_rx.answer(s, (w_res, s_res));
+                        let _: Option<u32> = io_rx.answer(s, (w_res, s_res));
                     }
                     break;
                 }

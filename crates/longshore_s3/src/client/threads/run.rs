@@ -80,7 +80,7 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
         }
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = n;
+    let _: u32 = n;
 
     let conns = b.connections;
     // Large buffers: two per connection for TLS records, then the lent

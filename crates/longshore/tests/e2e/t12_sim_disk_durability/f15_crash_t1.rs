@@ -9,7 +9,7 @@ use super::super::harness::{drive_until, read_pool_bytes, submit_and_wait_one, w
 use super::helpers::{
     close_file, make_disk_sim, open_file, read_file_vec, sync_file, sync_root_dir, write_file,
 };
-use longshore::io::{BufId, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
+use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// `T1-F15-1`: Unsynced 4-sector write across seeds yields absent, whole, or sector-cut prefix.
@@ -241,7 +241,7 @@ fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
         },
     )
     .unwrap();
-    let _ = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
+    let _: Vec<Completion> = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
 
     let rw = OpenFlags {
         read: true,
@@ -320,7 +320,7 @@ fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
         read_file_vec(&mut sim, &mut out, 21, FileSlot(0), 0, 12).unwrap(),
         b"before-crash"
     );
-    let _ = submit_and_wait_one(
+    let _: Completion = submit_and_wait_one(
         &mut sim,
         &mut out,
         Token(22),

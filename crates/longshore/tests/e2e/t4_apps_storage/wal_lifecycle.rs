@@ -165,9 +165,9 @@ fn run_wal_lifecycle_for_seed(seed: u64) -> (u64, u32, u64) {
                 break;
             }
         }
-        let _ = wal.close_seg(&mut sim, &mut out);
+        let _: i32 = wal.close_seg(&mut sim, &mut out);
 
-        let _ = wal.rename_seg(&mut sim, &mut out, 1, 2);
+        let _: i32 = wal.rename_seg(&mut sim, &mut out, 1, 2);
         assert!(wal.open_seg(&mut sim, &mut out, 1, true, true) >= 0);
         let seg2_dir_synced = wal.sync_dir(&mut sim, &mut out) == 0;
         wal.cursor = 0;
@@ -211,7 +211,7 @@ fn run_wal_lifecycle_for_seed(seed: u64) -> (u64, u32, u64) {
         let tail_seq = wal.next_seq;
         let (w, s) = wal.append_chained(&mut sim, &mut out, &payload[..tail_len]);
         assert_eq!((w, s), (BLOCK_SIZE as i32, 0));
-        let _ = wal.close_seg(&mut sim, &mut out);
+        let _: i32 = wal.close_seg(&mut sim, &mut out);
 
         let mut saw_tail = false;
         let (final_valid, final_last, _) = wal.recover(&mut sim, &mut out, 4, &mut |seq| {

@@ -8,7 +8,9 @@
 
 use super::super::harness::{drive_until, submit_and_wait_one, write_pool_bytes};
 use super::{disk_config, file_limits, open_file};
-use longshore::io::{BufId, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token, ECANCELED};
+use longshore::io::{
+    BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token, ECANCELED,
+};
 use longshore::sim::{DiskFaults, Faults, PlacedFault, SimIo};
 
 const EIO: i32 = 5;
@@ -41,7 +43,7 @@ fn t3_06_simio_trace_parity_with_zero_disk_faults() {
             },
         )
         .unwrap();
-        let _ = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
+        let _: Vec<Completion> = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
 
         assert_eq!(
             open_file(
@@ -82,7 +84,7 @@ fn t3_06_simio_trace_parity_with_zero_disk_faults() {
             ),
         ])
         .unwrap();
-        let _ = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
+        let _: Vec<Completion> = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
         (sim.trace_hash(), sim.disk_fault_counters())
     };
     let (h1, c1) = run_mixed_zero_faults(77);
@@ -130,7 +132,7 @@ fn t3_07_simio_power_loss_and_placed_fault_op_number_continuity() {
         },
     )
     .unwrap();
-    let _ = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
+    let _: Vec<Completion> = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
 
     assert_eq!(
         open_file(

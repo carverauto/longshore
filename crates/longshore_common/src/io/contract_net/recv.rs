@@ -48,7 +48,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
         tok += 1;
         armed50 = false;
     }
-    let _ = armed50;
+    let _: bool = armed50;
 
     io.submit(Token(51), Op::ArmedRecv { sock: srv }).unwrap();
     let mut armed51 = true;

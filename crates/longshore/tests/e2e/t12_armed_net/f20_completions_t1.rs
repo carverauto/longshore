@@ -179,7 +179,7 @@ fn t1_f20_4_armed_completion_more_and_buf_affect_trace_hash() {
         assert!(r.more);
         let id = r.buf.expect("ring buf id");
         if consume_one_first {
-            let _ = id;
+            let _: BufId = id;
         } else {
             io.give_back(id);
         }
@@ -195,7 +195,7 @@ fn t1_f20_4_armed_completion_more_and_buf_affect_trace_hash() {
             },
         )
         .unwrap();
-        let _ = drive_until(&mut io, &mut out, 30, |v| {
+        let _: Vec<Completion> = drive_until(&mut io, &mut out, 30, |v| {
             v.iter().any(|c| c.token == Token(3))
         })
         .unwrap();

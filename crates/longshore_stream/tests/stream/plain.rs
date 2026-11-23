@@ -225,9 +225,9 @@ fn plain_stream_idle_check_eof_and_reset() {
 
     // TlsError and KEY_RECORDS_RETIRE are available even when `tls` is disabled.
     assert_eq!(KEY_RECORDS_RETIRE, 1 << 23);
-    let _ = TlsError::BadRecord;
-    let _ = TlsError::Record;
-    let _ = TlsError::Alert(116);
+    let _: TlsError = TlsError::BadRecord;
+    let _: TlsError = TlsError::Record;
+    let _: TlsError = TlsError::Alert(116);
 }
 
 #[test]

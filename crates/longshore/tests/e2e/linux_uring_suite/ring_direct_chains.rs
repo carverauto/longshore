@@ -195,7 +195,7 @@ fn uring_direct_io_chain_punch_statx_sealed() {
             assert!(ring.buf(r_buf)[..4096].iter().all(|&b| b == 0));
         }
 
-        let _ = submit_wait_one_stack(
+        let _: Completion = submit_wait_one_stack(
             &mut ring,
             &mut out,
             Token(15),

@@ -135,7 +135,7 @@ fn t4_09_threaded_s3_client_mailbox_sealed_detach_and_reload() {
     // 4. Verify credential reload counter is accessible and clean, and Drop sends in-band stop.
     let (ok_reloads, fail_reloads) = client.credential_reloads();
     assert_eq!(fail_reloads, 0);
-    let _ = ok_reloads;
+    let _: u64 = ok_reloads;
 
     // Queue final operations right before dropping Client handle to test graceful stop drain.
     let mut final_buf = client.buffer_blocking();

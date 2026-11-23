@@ -156,7 +156,7 @@ fn cancel_during_tls_handshake_and_invalid_tls_hostname() {
                 Handled::Done(d) => res = Some(d.result),
                 Handled::Pending => {}
                 Handled::NotMine => {
-                    let _ = srv.on_completion(&mut io, c);
+                    let _: bool = srv.on_completion(&mut io, c);
                 }
             }
         }
@@ -184,7 +184,7 @@ fn cancel_during_tls_handshake_and_invalid_tls_hostname() {
         io2.tick(false, &mut out).unwrap();
         while let Some(c) = out.pop() {
             if cli2.on_completion(&mut io2, c) == Handled::NotMine {
-                let _ = plain_srv.on_completion(&mut io2, c);
+                let _: bool = plain_srv.on_completion(&mut io2, c);
             }
         }
     }
@@ -197,7 +197,7 @@ fn cancel_during_tls_handshake_and_invalid_tls_hostname() {
                 Handled::Done(d) => done2 = Some(d.result),
                 Handled::Pending => {}
                 Handled::NotMine => {
-                    let _ = plain_srv.on_completion(&mut io2, c);
+                    let _: bool = plain_srv.on_completion(&mut io2, c);
                 }
             }
         }

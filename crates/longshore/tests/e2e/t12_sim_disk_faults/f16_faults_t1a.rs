@@ -33,7 +33,7 @@ fn t1_f16_1_zero_rates_zero_rng_draws_same_trace_hash() {
             1024
         );
         assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-        let _ = read_file_vec(&mut sim, &mut out, 4, FileSlot(0), 0, 1024).unwrap();
+        let _: Vec<u8> = read_file_vec(&mut sim, &mut out, 4, FileSlot(0), 0, 1024).unwrap();
         assert_eq!(close_file(&mut sim, &mut out, 5, FileSlot(0)), 0);
         assert_eq!(sim.disk_fault_counters(), Default::default());
         sim.trace_hash()

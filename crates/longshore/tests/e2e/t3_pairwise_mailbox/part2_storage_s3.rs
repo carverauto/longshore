@@ -8,7 +8,7 @@
 //! plain vs `--no-default-features` TLS rejection.
 
 use super::WriteCmd;
-use longshore::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
+use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token};
 use longshore::mailbox::{block_on, mailbox, Config, TryRecv, TrySendError};
 
 #[cfg(feature = "sim")]
@@ -73,7 +73,7 @@ fn t3_23_mailbox_to_storage_core_aligned_submit_chain() {
             },
         )
         .unwrap();
-    let _ = drive_until(&mut core_b, &mut out_b, 100, |v| v.len() == 1).unwrap();
+    let _: Vec<Completion> = drive_until(&mut core_b, &mut out_b, 100, |v| v.len() == 1).unwrap();
 
     let (tx_b, mut io_rx_b) = mailbox::<WriteCmd, i32, _>(
         &mut core_b,
@@ -199,7 +199,7 @@ fn t3_24_storage_core_power_loss_closes_mailbox_and_settles_disk() {
             },
         )
         .unwrap();
-    let _ = drive_until(&mut core_b, &mut out_b, 100, |v| v.len() == 1).unwrap();
+    let _: Vec<Completion> = drive_until(&mut core_b, &mut out_b, 100, |v| v.len() == 1).unwrap();
 
     let (tx_b, mut io_rx_b) = mailbox::<WriteCmd, i32, _>(
         &mut core_b,
@@ -312,5 +312,5 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
         }
     }
     #[cfg(feature = "tls")]
-    let _ = BuildError::Unsupported;
+    let _: BuildError = BuildError::Unsupported;
 }

@@ -293,7 +293,7 @@ impl StackWal {
                     }
                 }
             }
-            let _ = self.close_seg(sim, out);
+            let _: i32 = self.close_seg(sim, out);
         }
         if last_seq >= self.next_seq {
             self.next_seq = last_seq + 1;

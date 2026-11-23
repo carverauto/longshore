@@ -9,7 +9,7 @@ use super::super::harness::{
     drive_until_nonblocking, read_pool_bytes, submit_and_wait_one, write_nul_path, write_pool_bytes,
 };
 use super::helpers::{close_slot, file_limits, open_slot, run_on_backends, DynIo, LINUX_EINVAL};
-use longshore::io::{BufId, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
+use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// `T1-F10-1`: Open into `FileSlot(0)`, write, close, and reopen another file into `FileSlot(0)`.
@@ -260,11 +260,11 @@ fn t1_f10_4_ready_list_drains_without_blocking() {
         io.submit(Token(3), Op::Cancel { target: Token(1) })
             .expect("cancel");
         let mut dyn_io = DynIo(io);
-        let _ = drive_until_nonblocking(&mut dyn_io, &mut out, 100, |v| {
+        let _: Option<Vec<Completion>> = drive_until_nonblocking(&mut dyn_io, &mut out, 100, |v| {
             v.iter().any(|x| x.token == Token(1))
         })
         .ok();
-        let _ = LINUX_EINVAL;
+        let _: i32 = LINUX_EINVAL;
     });
 }
 
@@ -360,7 +360,7 @@ fn t1_f10_5_concurrent_file_and_socket_slots_independent() {
             assert_eq!(close_slot(io, &mut out, 300 + s as u64, FileSlot(s)), 0);
         }
         for sock in [Sock(0), Sock(1), Sock(2)] {
-            let _ = submit_and_wait_one(
+            let _: Completion = submit_and_wait_one(
                 &mut DynIo(io),
                 &mut out,
                 Token(400 + sock.0 as u64),

@@ -243,7 +243,7 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
     io.submit(Token(6), Op::Cancel { target: Token(3) })
         .unwrap();
     io.submit(Token(7), Op::Close { sock: Sock(0) }).unwrap();
-    let _ = drain_n(&mut io, &mut out, 4);
+    let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 4);
     // Best-effort cleanup: a leftover temporary file does not change the result.
     std::fs::remove_file(&path).ok();
 }

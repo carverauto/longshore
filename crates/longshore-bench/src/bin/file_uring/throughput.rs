@@ -143,7 +143,7 @@ pub(super) fn run(dir: &Path, shape: Shape) {
     one(&mut io, &mut out, 2, reserve, "reserve");
 
     // Unmeasured fill: the measured writes then overwrite written extents.
-    let _ = pass(&mut io, &mut out, &limits, &shape, true);
+    let _: (f64, f64) = pass(&mut io, &mut out, &limits, &shape, true);
 
     for run in 1..=shape.runs {
         for write in [true, false] {

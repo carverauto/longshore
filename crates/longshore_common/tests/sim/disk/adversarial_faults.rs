@@ -161,10 +161,10 @@ fn simdisk_read_error_saturation_and_placed_faults_above_64_sealed() {
             punch_refused: 200_000,
         });
         for k in 0..10u64 {
-            let _ = write_fill(&mut sim, &mut out, 200 + k * 4, FileSlot(0), 0, 1024, 0x44);
-            let _ = read_at(&mut sim, &mut out, 201 + k * 4, FileSlot(0), 0, 1024);
-            let _ = sync_slot(&mut sim, &mut out, 202 + k * 4, FileSlot(0));
-            let _ = drive(
+            let _: i32 = write_fill(&mut sim, &mut out, 200 + k * 4, FileSlot(0), 0, 1024, 0x44);
+            let _: i32 = read_at(&mut sim, &mut out, 201 + k * 4, FileSlot(0), 0, 1024);
+            let _: i32 = sync_slot(&mut sim, &mut out, 202 + k * 4, FileSlot(0));
+            let _: i32 = drive(
                 &mut sim,
                 &mut out,
                 203 + k * 4,
@@ -176,7 +176,7 @@ fn simdisk_read_error_saturation_and_placed_faults_above_64_sealed() {
             );
         }
         let dl = put_path(&mut sim, BufId(0), "/sealed_dir");
-        let _ = drive(
+        let _: i32 = drive(
             &mut sim,
             &mut out,
             500,

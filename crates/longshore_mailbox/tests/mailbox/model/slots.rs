@@ -315,7 +315,7 @@ fn slots_call_future_drop_detach_races_answer_and_close() {
         });
         match rx.recv_parked() {
             Recv::Message(s) => {
-                let _ = rx.answer(s, 42);
+                let _: Option<u32> = rx.answer(s, 42);
             }
             Recv::Closed | Recv::Stop => {}
         }

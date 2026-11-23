@@ -10,7 +10,7 @@ use super::helpers::{
     close_file, make_disk_sim, open_file, read_file_vec, sync_file, sync_root_dir, write_file,
     LINUX_EIO,
 };
-use longshore::io::{BufId, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
+use longshore::io::{BufId, Completion, Completions, FileSlot, Io, Op, OpenFlags, Sock, Token};
 use longshore::sim::{DiskFaults, PlacedFault};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -37,7 +37,7 @@ fn t2_f15_1_power_loss_drops_inflight_ops_frees_slots_clears_timers() {
         },
     )
     .unwrap();
-    let _ = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
+    let _: Vec<Completion> = drive_until(&mut sim, &mut out, 100, |v| v.len() == 2).unwrap();
 
     let rw = OpenFlags {
         read: true,

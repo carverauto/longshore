@@ -48,7 +48,7 @@ fn raise_nofile() {
             let target = lim.rlim_max.min(8192);
             if target > lim.rlim_cur {
                 lim.rlim_cur = target;
-                let _ = setrlimit(RLIMIT_NOFILE, &lim);
+                let _: i32 = setrlimit(RLIMIT_NOFILE, &lim);
             }
         }
     }
