@@ -24,20 +24,12 @@ use die::OrDie;
 #[global_allocator]
 static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
 
+/// Up to two nameservers from /etc/resolv.conf.
 #[cfg(target_os = "linux")]
-fn main() {
+fn nameservers() -> Vec<std::net::SocketAddr> {
     use longshore::dns::codec::parse_resolv_conf;
-    use longshore::dns::{Config, Family, Resolver};
-    use longshore::io::alloc_guard::sealed;
-    use longshore::io::uring::UringIo;
-    use longshore::io::{BufId, Completions, Io, Limits, Sock};
     use std::net::SocketAddr;
 
-    let hosts: Vec<String> = std::env::args().skip(1).collect();
-    if hosts.is_empty() {
-        eprintln!("usage: dns_uring HOST [HOST...]");
-        std::process::exit(2);
-    }
     let conf = std::fs::read_to_string("/etc/resolv.conf").or_die("read /etc/resolv.conf");
     let servers: Vec<SocketAddr> = parse_resolv_conf(&conf)
         .into_iter()
@@ -45,8 +37,15 @@ fn main() {
         .map(|ip| SocketAddr::new(ip, 53))
         .collect();
     assert!(!servers.is_empty(), "no nameserver in /etc/resolv.conf");
-    // DNS_FAMILY: 4 (the default), 6, prefer6 or prefer4.
-    let family = match std::env::var("DNS_FAMILY").as_deref() {
+    servers
+}
+
+/// The address family DNS_FAMILY asks for: 4 (the default), 6, prefer6 or prefer4.
+#[cfg(target_os = "linux")]
+fn family() -> longshore::dns::Family {
+    use longshore::dns::Family;
+
+    match std::env::var("DNS_FAMILY").as_deref() {
         Err(_) | Ok("4") => Family::V4,
         Ok("6") => Family::V6,
         Ok("prefer6") => Family::PreferV6,
@@ -54,7 +53,23 @@ fn main() {
         Ok(other) => die::die(format_args!(
             "DNS_FAMILY={other}: expected 4, 6, prefer6 or prefer4"
         )),
-    };
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn main() {
+    use longshore::dns::{Config, Resolver};
+    use longshore::io::alloc_guard::sealed;
+    use longshore::io::uring::UringIo;
+    use longshore::io::{BufId, Completions, Io, Limits, Sock};
+
+    let hosts: Vec<String> = std::env::args().skip(1).collect();
+    if hosts.is_empty() {
+        eprintln!("usage: dns_uring HOST [HOST...]");
+        std::process::exit(2);
+    }
+    let servers = nameservers();
+    let family = family();
     println!("nameservers: {servers:?}");
 
     let mut io = UringIo::new(Limits {
