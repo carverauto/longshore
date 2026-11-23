@@ -66,3 +66,6 @@ harness = false
 # Feasibility probe for splitting TLS: handshake by rustls, records by longshore::tls.
 [[example]]
 name = "tls_probe"
+
+[lints]
+workspace = true

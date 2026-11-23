@@ -71,3 +71,6 @@ path = "tests/http/server_refusals.rs"
 [[test]]
 name = "http_adversarial"
 path = "tests/http/adversarial.rs"
+
+[lints]
+workspace = true

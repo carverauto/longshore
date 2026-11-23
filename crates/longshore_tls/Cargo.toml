@@ -48,3 +48,6 @@ path = "tests/tls/record.rs"
 [[test]]
 name = "tls_record_edges"
 path = "tests/tls/record_edges.rs"
+
+[lints]
+workspace = true

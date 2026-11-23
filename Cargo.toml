@@ -50,6 +50,26 @@ crc32c = "0.6"
 crc64fast-nvme = "1.2"
 criterion = { version = "0.8", default-features = false }
 
+[workspace.lints.rust]
+# `--cfg longshore_model` builds the loom model checks (scripts/test-model.sh).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(longshore_model)'] }
+bare_trait_objects = "forbid"
+deprecated_safe = { level = "warn", priority = -1 }
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# The workspace's one lint table: every crate takes it with `[lints] workspace = true`.
+# Adopted from UltraGraphDB's lint set one lint at a time, each with its violations fixed.
+all = { level = "deny", priority = -1 }
+infinite_iter = "deny"
+maybe_infinite_iter = "deny"
+todo = "deny"
+unimplemented = "warn"
+rc_buffer = "deny"
+mutex_atomic = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

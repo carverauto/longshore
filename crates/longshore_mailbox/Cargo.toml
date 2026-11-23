@@ -14,8 +14,8 @@ longshore_common.workspace = true
 [target.'cfg(longshore_model)'.dependencies]
 loom.workspace = true
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(longshore_model)'] }
+[lints]
+workspace = true
 
 [dev-dependencies]
 longshore_common = { workspace = true, features = ["sim"] }
