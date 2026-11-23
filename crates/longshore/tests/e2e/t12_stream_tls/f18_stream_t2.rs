@@ -181,12 +181,12 @@ fn t2_f18_3_tls_stream_close_notify_followed_by_eof_returns_done_zero() {
     );
 
     client.send_alert(&mut io, BufId(4), 0, 1, 0);
-    drive_until(&mut io, &mut out, 20, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 20, |v| {
         v.iter().any(|c| c.token == Token(1))
     })
     .unwrap();
     io.submit(Token(99), Op::Close { sock: CLIENT }).unwrap();
-    drive_until(&mut io, &mut out, 20, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 20, |v| {
         v.iter().any(|c| c.token == Token(99))
     })
     .unwrap();

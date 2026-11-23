@@ -132,7 +132,7 @@ fn run_chaos_seed(seed: u64) -> (u64, u64) {
             write_pool_bytes(&mut sim, BufId(0), 0, &[0x40 + round as u8; 512]);
             // Network faults may fail or stall this exchange; the test checks
             // that the disk chain beside it is unaffected, not the exchange.
-            submit_and_wait_one(
+            let _: Option<longshore::io::Completion> = submit_and_wait_one(
                 &mut sim,
                 &mut out,
                 Token(10 + round * 4),
@@ -146,7 +146,7 @@ fn run_chaos_seed(seed: u64) -> (u64, u64) {
                 500,
             )
             .ok();
-            submit_and_wait_one(
+            let _: Option<longshore::io::Completion> = submit_and_wait_one(
                 &mut sim,
                 &mut out,
                 Token(11 + round * 4),

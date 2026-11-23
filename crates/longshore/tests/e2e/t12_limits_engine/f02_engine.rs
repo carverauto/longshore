@@ -258,7 +258,7 @@ fn t1_f02_4_engine_respects_world_readiness_filter() {
     engine.tick(false, &mut out).expect("tick2");
 
     let mut got = Vec::new();
-    drain_completions(&mut out, &mut got);
+    let _: usize = drain_completions(&mut out, &mut got);
     got.sort_by_key(|c| c.token.0);
     assert_eq!(got.len(), 3);
     assert_eq!(got[0].token, Token(21));
@@ -296,7 +296,7 @@ fn t1_f02_5_engine_clock_and_arrival_order() {
 
     assert_eq!(engine.now_ns(), 6_000_000);
     let mut got = Vec::new();
-    drain_completions(&mut out, &mut got);
+    let _: usize = drain_completions(&mut out, &mut got);
     assert_eq!(got.len(), 3);
     assert_eq!(got[0].token, Token(2), "walk started at index 1");
 }

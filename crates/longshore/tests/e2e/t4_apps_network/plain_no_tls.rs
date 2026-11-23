@@ -146,7 +146,8 @@ fn t4_04_plain_stream_echo_without_tls() {
         },
     )
     .unwrap();
-    drive_until(&mut sim, &mut out, 100, |v| v.len() >= 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut sim, &mut out, 100, |v| v.len() >= 2).unwrap();
 
     let mut c_stream = Stream::new(Sock(1), Token(10), Token(11));
     let mut s_stream = Stream::new(Sock(2), Token(12), Token(13));

@@ -158,7 +158,7 @@ fn main() {
                 // A bucket without versions answers nothing, or "null".
                 version: a.version.filter(|v| v.as_bytes() != b"null"),
             };
-            first.get_or_insert((key, options, expect));
+            let _: &mut (String, Put, Expect) = first.get_or_insert((key, options, expect));
         }
     }
     let mut failed = false;

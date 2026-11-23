@@ -48,14 +48,14 @@ impl UringIo {
             if let Err(errno) =
                 super::backend::apply_tcp_options(fd, self.no_delay, self.keep_alive)
             {
-                unsafe { close(fd) };
+                let _: i32 = unsafe { close(fd) };
                 self.slots[i as usize].state = State::Free;
                 self.ready.push(i, Completion::new(token, -errno));
                 return None;
             }
         }
         if let Err(errno) = self.ring.update_file_raw(sock.0, fd) {
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             if opts {
                 self.slots[i as usize].state = State::Free;
                 self.ready.push(i, Completion::new(token, -errno));
@@ -106,7 +106,7 @@ impl UringIo {
                 }
             }
         }
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         measured
     }
 

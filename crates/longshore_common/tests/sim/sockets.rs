@@ -48,7 +48,7 @@ impl World {
     /// A world with `A` connected to `B`.
     fn connected(seed: u64) -> World {
         let mut w = World::new(seed);
-        w.io.listen(LISTENER, ADDR).unwrap();
+        let _: SocketAddr = w.io.listen(LISTENER, ADDR).unwrap();
         let accept = Op::Accept {
             listener: LISTENER,
             sock: B,
@@ -132,10 +132,10 @@ fn a_connect_is_refused_when_nothing_listens_and_leaves_its_slot_free() {
     };
     assert_eq!(w.one(connect), -ECONNREFUSED);
     // Listening elsewhere does not help.
-    w.io.listen(LISTENER, OTHER).unwrap();
+    let _: SocketAddr = w.io.listen(LISTENER, OTHER).unwrap();
     assert_eq!(w.one(connect), -ECONNREFUSED);
     // The slot needs no close: the same connect works once something listens.
-    w.io.listen(Sock(3), ADDR).unwrap();
+    let _: SocketAddr = w.io.listen(Sock(3), ADDR).unwrap();
     let accept = Op::Accept {
         listener: Sock(3),
         sock: B,
@@ -241,7 +241,7 @@ fn a_full_socket_stalls_the_sender_until_the_reader_makes_room() {
 #[test]
 fn a_connect_given_up_before_it_is_accepted_leaves_nothing_to_accept() {
     let mut w = World::new(5);
-    w.io.listen(LISTENER, ADDR).unwrap();
+    let _: SocketAddr = w.io.listen(LISTENER, ADDR).unwrap();
     let connect = Op::Connect {
         sock: A,
         addr: ADDR,

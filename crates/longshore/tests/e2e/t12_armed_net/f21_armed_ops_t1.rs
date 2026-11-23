@@ -236,7 +236,8 @@ fn t1_f21_4_give_back_recycles_ring_buffer_ids_without_leak() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
 
@@ -293,7 +294,8 @@ fn t1_f21_5_peer_close_ends_armed_recv_with_zero_and_none() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();

@@ -40,7 +40,7 @@ fn path_server(mut io: SimIo, bucket: &'static str) -> (SimIo, Server) {
         checksum: None,
     });
     server.serve_bucket_in_path(bucket);
-    server.start(&mut io, ADDR).unwrap();
+    let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
     (io, server)
 }
 
@@ -226,7 +226,7 @@ fn a_copy_names_a_dotted_bucket_in_the_host_whole() {
         checksum: None,
     });
     server.verify_requests(signed_and_copied_from_dotted);
-    server.start(&mut io, ADDR).unwrap();
+    let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
     let mut cfg = s3_config(3, false);
     cfg.host = format!("{DOTTED}.s3.us-test-1.amazonaws.com");
     let mut w = finish_world(io, server, cfg);
@@ -271,7 +271,7 @@ fn a_presigned_url_has_the_endpoint_as_host_and_the_bucket_in_its_path() {
 fn a_bucket_name_that_could_not_be_one_is_refused_when_the_store_is_built() {
     let mut cfg = s3_config(3, false);
     cfg.bucket_in_path = Some("Bad/Name".into());
-    S3::new(cfg);
+    let _: S3 = S3::new(cfg);
 }
 
 #[test]
@@ -342,7 +342,7 @@ fn the_longest_bucket_and_the_longest_key_fit_one_path() {
     let mut w = world_for_bucket(8, bucket);
     let key = "k".repeat(KEY_ENCODED_MAX - 1);
     assert_eq!(w.s3.erase(&mut w.io, 1, &key), Ok(()));
-    w.last();
+    let _: longshore_s3::s3::Done = w.last();
     assert_eq!(
         w.s3.erase(&mut w.io, 2, &(key + "k")),
         Err(SubmitError::BadKey)

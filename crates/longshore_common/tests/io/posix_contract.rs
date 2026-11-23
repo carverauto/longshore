@@ -51,8 +51,8 @@ fn posix_keeps_the_shared_io_contract_v4_and_v6() {
     let p4 = std::env::temp_dir().join(format!("longshore-posix-v4-{unique}.sock"));
     let p6 = std::env::temp_dir().join(format!("longshore-posix-v6-{unique}.sock"));
     // A file left by an earlier run would get in the way; usually there is none.
-    std::fs::remove_file(&p4).ok();
-    std::fs::remove_file(&p6).ok();
+    let _: Option<()> = std::fs::remove_file(&p4).ok();
+    let _: Option<()> = std::fs::remove_file(&p6).ok();
     contract::run_all(&mut |l| PosixIo::new(l).unwrap(), v4());
     contract::run_all(&mut |l| PosixIo::new(l).unwrap(), v6());
     contract_net::run_all(
@@ -66,8 +66,8 @@ fn posix_keeps_the_shared_io_contract_v4_and_v6() {
         p6.to_str().unwrap(),
     );
     // Best-effort cleanup: a leftover temporary file does not change the result.
-    std::fs::remove_file(&p4).ok();
-    std::fs::remove_file(&p6).ok();
+    let _: Option<()> = std::fs::remove_file(&p4).ok();
+    let _: Option<()> = std::fs::remove_file(&p6).ok();
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn read_file_and_errno_translation() {
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(2, 15)]);
     assert_eq!(&io.buf(BufId(0))[..15], b"posix-file-body");
     // Best-effort cleanup: a leftover temporary file does not change the result.
-    std::fs::remove_file(&path).ok();
+    let _: Option<()> = std::fs::remove_file(&path).ok();
 
     // Unknown errno falls back to -EIO.
     assert_eq!(to_linux_errno(99_999), -linux::EIO);
@@ -162,7 +162,7 @@ fn udp_connect_send_and_recv() {
     let mut rx = [0u8; 16];
     let (n, from) = srv.recv_from(&mut rx).unwrap();
     assert_eq!(&rx[..n], b"ping");
-    srv.send_to(b"pong", from).unwrap();
+    let _: usize = srv.send_to(b"pong", from).unwrap();
 
     io.submit(
         Token(3),
@@ -186,7 +186,7 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("longshore-posix-closed-{unique}.sock"));
     // A file left by an earlier run would get in the way; usually there is none.
-    std::fs::remove_file(&path).ok();
+    let _: Option<()> = std::fs::remove_file(&path).ok();
     let limits = Limits {
         accept_range_start: 2,
         accept_range_len: 4,
@@ -245,5 +245,5 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
     io.submit(Token(7), Op::Close { sock: Sock(0) }).unwrap();
     let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 4);
     // Best-effort cleanup: a leftover temporary file does not change the result.
-    std::fs::remove_file(&path).ok();
+    let _: Option<()> = std::fs::remove_file(&path).ok();
 }

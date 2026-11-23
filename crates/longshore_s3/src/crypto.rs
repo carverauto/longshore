@@ -42,7 +42,7 @@ impl Default for Sha256 {
 
 pub fn sha256(data: &[u8]) -> [u8; SHA256_LEN] {
     let mut h = Sha256::new();
-    h.update(data);
+    let _: &mut Sha256 = h.update(data);
     h.finish()
 }
 

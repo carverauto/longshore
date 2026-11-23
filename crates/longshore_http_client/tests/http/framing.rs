@@ -26,7 +26,7 @@ fn raw_reply_with(cfg: client::Config, reply: &'static [u8]) -> Result<Response,
     const SEND: u64 = ACCEPT + 2;
     const OUT_OFF: u32 = 4096;
     let mut w = world_with(12, Faults::default(), cfg);
-    w.io.listen(LISTEN, PEER).unwrap();
+    let _: SocketAddr = w.io.listen(LISTEN, PEER).unwrap();
     w.io.submit(
         Token(ACCEPT),
         Op::Accept {

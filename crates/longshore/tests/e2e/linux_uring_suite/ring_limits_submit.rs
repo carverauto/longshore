@@ -233,11 +233,12 @@ fn uring_rlimit_memlock_refusal_e2e() {
 
     let exe = std::env::current_exe().unwrap();
     let mut cmd = Command::new(exe);
-    cmd.arg("uring_rlimit_memlock_refusal_e2e")
+    let _: &mut Command = cmd
+        .arg("uring_rlimit_memlock_refusal_e2e")
         .arg("--nocapture")
         .env("LONGSHORE_E2E_URING_CHILD", "memlock");
     unsafe {
-        cmd.pre_exec(|| {
+        let _: &mut Command = cmd.pre_exec(|| {
             let lim = Rlimit {
                 rlim_cur: 64 * 1024,
                 rlim_max: 64 * 1024,
@@ -282,11 +283,12 @@ fn uring_rlimit_nofile_refusal_e2e() {
 
     let exe = std::env::current_exe().unwrap();
     let mut cmd = Command::new(exe);
-    cmd.arg("uring_rlimit_nofile_refusal_e2e")
+    let _: &mut Command = cmd
+        .arg("uring_rlimit_nofile_refusal_e2e")
         .arg("--nocapture")
         .env("LONGSHORE_E2E_URING_CHILD", "nofile");
     unsafe {
-        cmd.pre_exec(|| {
+        let _: &mut Command = cmd.pre_exec(|| {
             let lim = Rlimit {
                 rlim_cur: 32,
                 rlim_max: 32,

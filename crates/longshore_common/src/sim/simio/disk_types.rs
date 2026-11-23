@@ -42,10 +42,10 @@ impl DiskConfig {
             .checked_add(self.max_dirs as usize)
             .and_then(|n| n.checked_add(1))
             .expect("DiskConfig inode count overflow");
-        (self.max_files as usize)
+        let _: usize = (self.max_files as usize)
             .checked_mul(self.max_bytes_per_file)
             .expect("DiskConfig file_data size overflow");
-        total_inodes
+        let _: usize = total_inodes
             .checked_mul(self.max_name_len)
             .expect("DiskConfig name_bytes size overflow");
     }

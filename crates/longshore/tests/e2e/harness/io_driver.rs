@@ -35,13 +35,13 @@ fn drive_until_inner<IO: Io + ?Sized>(
     mut pred: impl FnMut(&[Completion]) -> bool,
 ) -> io::Result<Vec<Completion>> {
     let mut collected = Vec::new();
-    drain_completions(out, &mut collected);
+    let _: usize = drain_completions(out, &mut collected);
     if pred(&collected) {
         return Ok(collected);
     }
     for _ in 0..max_ticks {
         io.tick(wait, out)?;
-        drain_completions(out, &mut collected);
+        let _: usize = drain_completions(out, &mut collected);
         if pred(&collected) {
             return Ok(collected);
         }
@@ -267,7 +267,7 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         // Best-effort cleanup; Drop must not panic over a leftover temporary file.
-        std::fs::remove_dir_all(&self.path).ok();
+        let _: Option<()> = std::fs::remove_dir_all(&self.path).ok();
     }
 }
 

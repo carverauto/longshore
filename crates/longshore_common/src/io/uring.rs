@@ -205,13 +205,13 @@ struct EventFd(i32);
 impl crate::io::Wake for EventFd {
     fn wake(&self) {
         let one: u64 = 1;
-        unsafe { write(self.0, (&one as *const u64).cast(), 8) };
+        let _: isize = unsafe { write(self.0, (&one as *const u64).cast(), 8) };
     }
 }
 
 impl Drop for EventFd {
     fn drop(&mut self) {
-        unsafe { close(self.0) };
+        let _: i32 = unsafe { close(self.0) };
     }
 }
 
@@ -220,7 +220,7 @@ impl Drop for UringIo {
         let quiet = self.quiesce();
         unsafe { ManuallyDrop::drop(&mut self.ring) };
         if self.wake_fd >= 0 {
-            unsafe { close(self.wake_fd) };
+            let _: i32 = unsafe { close(self.wake_fd) };
         }
         if !quiet {
             self.leak();
@@ -318,13 +318,13 @@ impl UringIo {
     /// Everything the kernel may still read or write, given up for good
     /// because it may still be in use.
     fn leak(&mut self) {
-        Box::leak(core::mem::take(&mut self.slots));
-        Box::leak(core::mem::take(&mut self.bufs));
-        Box::leak(core::mem::take(&mut self.quiet_ts));
-        Box::leak(core::mem::take(&mut self.buf_range));
+        let _: &mut [Slot] = Box::leak(core::mem::take(&mut self.slots));
+        let _: &mut [u8] = Box::leak(core::mem::take(&mut self.bufs));
+        let _: &mut timespec = Box::leak(core::mem::take(&mut self.quiet_ts));
+        let _: &mut [u16] = Box::leak(core::mem::take(&mut self.buf_range));
         core::mem::forget(self.buf_ring.take());
-        Box::leak(core::mem::take(&mut self.ring_in_ring));
-        Box::leak(core::mem::take(&mut self.ready.items));
+        let _: &mut [bool] = Box::leak(core::mem::take(&mut self.ring_in_ring));
+        let _: &mut [(u32, Completion)] = Box::leak(core::mem::take(&mut self.ready.items));
         core::mem::forget(core::mem::take(&mut self.files));
     }
 

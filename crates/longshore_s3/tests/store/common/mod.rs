@@ -85,7 +85,7 @@ pub fn world_with(seed: u64, faults: Faults, attempts_max: u32, enforce: bool) -
     // Every request must carry a signature that matches the bytes it
     // arrived as; see `signing`.
     server.verify_requests(signing::verify_sigv4);
-    server.start(&mut io, ADDR).unwrap();
+    let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     finish_world(io, server, s3_config(attempts_max, enforce))
 }
 

@@ -17,7 +17,7 @@ pub(super) fn ops(kind: &str, conns: u32, size: u32, secs: u64, cpu: Option<usiz
     if let Some(cpu) = cpu {
         let mut mask = [0u64; 16];
         mask[cpu / 64] |= 1 << (cpu % 64);
-        unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
+        let _: i32 = unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
     }
     const LISTED: u32 = 200;
     const RANGE: u64 = 4096;

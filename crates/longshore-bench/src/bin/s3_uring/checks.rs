@@ -103,7 +103,7 @@ pub(super) fn bad_checksum(size: u32) {
     s3.fetch(&mut io, 1, &key, None, rx).unwrap();
     let fetched = wait(&mut io, &mut s3, &mut out);
     s3.erase(&mut io, 2, &key).unwrap();
-    wait(&mut io, &mut s3, &mut out);
+    let _: longshore::store::s3::Done = wait(&mut io, &mut s3, &mut out);
     println!(
         "store with a wrong checksum -> {:?} (attempts {})",
         stored.outcome, stored.attempts

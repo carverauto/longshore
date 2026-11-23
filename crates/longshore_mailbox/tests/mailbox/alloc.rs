@@ -194,10 +194,10 @@ fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
         }
         sim_a.tick(false, &mut out_a).expect("tick");
         while let Some(c) = out_a.pop() {
-            rx_a.on_completion(&mut sim_a, c).expect("re-arm the wake");
+            let _: bool = rx_a.on_completion(&mut sim_a, c).expect("re-arm the wake");
         }
         let mut got_slot = None;
-        rx_a.drain(|item| {
+        let _: bool = rx_a.drain(|item| {
             if let Recv::Message(s) = item {
                 got_slot = Some(s);
             }

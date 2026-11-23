@@ -48,7 +48,7 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
 
     let file = io.register_file("creds.txt").unwrap();
     io.set_file(file, Some(b"secret-key"));
-    io.listen(listener, tcp_addr).unwrap();
+    let _: SocketAddr = io.listen(listener, tcp_addr).unwrap();
     io.bind_udp(udp_srv, udp_addr);
     let waker = io.waker().unwrap();
     waker.wake();
@@ -277,8 +277,12 @@ fn t1_f03_4_distinct_seeds_produce_distinct_trace_hashes() {
     for seed in 1..=6u64 {
         let mut io = SimIo::new(sim_limits(), seed, faults);
         let mut out = Completions::new(8);
-        echo(&mut io, addr, 64 * 1024, 4096, false, &mut out).expect("echo");
-        hashes.insert(io.trace_hash());
+        let _: longshore::io::scenario::EchoStats =
+            echo(&mut io, addr, 64 * 1024, 4096, false, &mut out).expect("echo");
+        assert!(
+            hashes.insert(io.trace_hash()),
+            "seed {seed} repeats a trace"
+        );
     }
     assert_eq!(hashes.len(), 6);
 }
@@ -290,7 +294,7 @@ fn t1_f03_5_routed_segment_measurement_preserves_trace() {
     let run_once = || {
         let mut io = SimIo::new(sim_limits(), 77, Faults::default());
         let mut out = Completions::new(8);
-        io.listen(Sock(0), listener_addr).unwrap();
+        let _: SocketAddr = io.listen(Sock(0), listener_addr).unwrap();
         io.route(routed_addr, listener_addr, 8228);
         io.set_path_limit(8960);
         io.measure_segment_sizes(true);

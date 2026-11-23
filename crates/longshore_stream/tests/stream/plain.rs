@@ -43,7 +43,7 @@ const LIMITS: Limits = Limits {
 
 fn connect_pair(seed: u64, faults: Faults) -> (SimIo, Stream, Stream) {
     let mut io = SimIo::new(LIMITS, seed, faults);
-    io.listen(LISTENER, ADDR).unwrap();
+    let _: SocketAddr = io.listen(LISTENER, ADDR).unwrap();
     io.submit(
         S_ACCEPT,
         Op::Accept {

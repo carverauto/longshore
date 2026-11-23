@@ -81,7 +81,7 @@ fn main() {
         while r.cycles == 0 && io.now_ns() - t0 < 5_000_000_000 {
             io.tick(true, &mut out).expect("tick");
             while let Some(c) = out.pop() {
-                r.on_completion(&mut io, c);
+                let _: bool = r.on_completion(&mut io, c);
             }
         }
     });

@@ -111,10 +111,10 @@ impl Drop for HttpStoreServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         // Only wakes the accept loop, which may already have stopped.
-        TcpStream::connect(self.addr).ok();
+        let _: Option<TcpStream> = TcpStream::connect(self.addr).ok();
         if let Some(h) = self.thread.take() {
             // A panicked server thread has already reported it; Drop must not panic again.
-            h.join().ok();
+            let _: Option<()> = h.join().ok();
         }
     }
 }
@@ -142,7 +142,7 @@ fn accept_loop(l: &TcpListener, st: &Arc<Mutex<StoreState>>, sp: &Arc<AtomicBool
     }
     for w in workers {
         // A panicked connection thread has already reported it; its client saw the failure.
-        w.join().ok();
+        let _: Option<()> = w.join().ok();
     }
 }
 
@@ -168,12 +168,12 @@ fn read_more(s: &mut TcpStream, dst: &mut Vec<u8>, tmp: &mut [u8]) -> io::Result
 fn handle_conn(mut s: TcpStream, st: &Mutex<StoreState>, sp: &AtomicBool, tls: MaybeTls) {
     // The peer may already be gone (macOS then refuses socket options with EINVAL);
     // the read loop below ends on a dead socket either way.
-    s.set_nonblocking(false).ok();
-    s.set_read_timeout(Some(Duration::from_millis(50))).ok();
+    let _: Option<()> = s.set_nonblocking(false).ok();
+    let _: Option<()> = s.set_read_timeout(Some(Duration::from_millis(50))).ok();
     #[cfg(feature = "tls")]
     if let Some(setup) = tls {
         // A failed TLS connection just ends; its client sees the failure.
-        handle_tls(s, st, sp, &setup).ok();
+        let _: Option<()> = handle_tls(s, st, sp, &setup).ok();
         return;
     }
     #[cfg(not(feature = "tls"))]
@@ -211,7 +211,7 @@ fn handle_tls(
             return Ok(());
         };
         if u > 0 {
-            wire.drain(..u);
+            let _: std::vec::Drain<'_, u8> = wire.drain(..u);
         } else if !read_more(&mut s, &mut wire, &mut tmp)? {
             return Ok(());
         }
@@ -229,7 +229,7 @@ fn handle_tls(
             let Ok((ct, plen)) = rx.open(&wire[..rlen], &mut tmp) else {
                 return Ok(());
             };
-            wire.drain(..rlen);
+            let _: std::vec::Drain<'_, u8> = wire.drain(..rlen);
             if ct == CONTENT_ALERT {
                 return Ok(());
             }
@@ -273,7 +273,7 @@ fn try_http(buf: &mut Vec<u8>, state: &Mutex<StoreState>) -> Option<(Vec<u8>, bo
         .and_then(|s| s.strip_prefix("bytes=")?.split_once('-'))
         .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)));
     let (close, body) = (head.fields.close, buf[hl..hl + bl].to_vec());
-    buf.drain(..hl + bl);
+    let _: std::vec::Drain<'_, u8> = buf.drain(..hl + bl);
     let mut st = state.lock().expect("lock");
     st.requests += 1;
     Some((dispatch_s3(&mut st, &m, &t, inm, rng, body), close))

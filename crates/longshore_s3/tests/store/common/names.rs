@@ -128,7 +128,7 @@ pub fn resolved_world(
         token_base: 2 << 40,
         checksum: None,
     });
-    server.start(&mut io, listen).unwrap();
+    let _: SocketAddr = server.start(&mut io, listen).unwrap();
     io.bind_udp(NS_SOCK, NS);
     Nameserver::recv(&mut io);
     let mut cfg = s3_config(3, false);

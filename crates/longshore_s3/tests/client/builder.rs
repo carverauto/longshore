@@ -162,11 +162,12 @@ fn builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure()
         }
         let exe = std::env::current_exe().unwrap();
         let mut cmd = std::process::Command::new(exe);
-        cmd.arg("builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure")
+        let _: &mut std::process::Command = cmd
+            .arg("builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure")
             .arg("--exact")
             .env("LONGSHORE_S3_PARTIAL_START", "1");
         unsafe {
-            cmd.pre_exec(|| {
+            let _: &mut std::process::Command = cmd.pre_exec(|| {
                 let lim = Rlimit {
                     rlim_cur: 24,
                     rlim_max: 24,

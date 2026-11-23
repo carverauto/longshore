@@ -86,7 +86,7 @@ impl World {
     pub fn three_parts(&mut self, key: &str, upload: &UploadId) -> (u32, Vec<u8>) {
         // Part 2 first, then 1 and 3 at the same time from two buffers.
         self.send_part(12, key, upload, 2, TX);
-        self.last();
+        let _: longshore_s3::s3::Done = self.last();
         self.send_part(11, key, upload, 1, TX);
         self.send_part(13, key, upload, 3, RX);
         self.run_until_done(self.done.len() + 2);

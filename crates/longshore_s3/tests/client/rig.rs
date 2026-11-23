@@ -54,7 +54,7 @@ pub fn rig_with(lanes: usize, operations: u32) -> Rig {
                     longshore_crc::crc64_header_value(longshore_crc::crc64_nvme(body))
                 }),
             });
-            server.start(&mut io, ADDR).unwrap();
+            let _: std::net::SocketAddr = server.start(&mut io, ADDR).unwrap();
             let layout = Layout {
                 operations,
                 first_buffer: TX,

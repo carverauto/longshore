@@ -54,7 +54,7 @@ impl<M: Copy> QueueReceiver<M> {
                 self.head += 1;
                 match entry {
                     Entry::Msg(m) => {
-                        self.shared.state.fetch_sub(1, Ordering::Release);
+                        let _: u64 = self.shared.state.fetch_sub(1, Ordering::Release);
                         return TryRecv::Message(m);
                     }
                     Entry::Stop => {
@@ -112,7 +112,7 @@ impl<M: Copy> QueueReceiver<M> {
             "recv_parked requires a queue built with queue_parked or mailbox_parked"
         );
         loop {
-            self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
+            let _: usize = self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
             match self.try_recv() {
                 TryRecv::Message(m) => return Recv::Message(m),
                 TryRecv::Stop => return Recv::Stop,
@@ -149,13 +149,14 @@ impl<M: Copy> QueueReceiver<M> {
         if self.shared.park_mode.load(Ordering::Acquire) == PARK_NONE {
             // Only the receiver moves the mode off PARK_NONE, so there is no
             // competing writer whose value a failed exchange would report.
-            self.shared
+            let _: Option<u8> = self
+                .shared
                 .park_mode
                 .compare_exchange(PARK_NONE, PARK_STOP, Ordering::SeqCst, Ordering::SeqCst)
                 .ok();
         }
         loop {
-            self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
+            let _: usize = self.shared.notify.swap(NOTIFY_IDLE, Ordering::AcqRel);
             if self.shared.stop_requested.load(Ordering::SeqCst)
                 || self.shared.senders.load(Ordering::SeqCst) == 0
             {
@@ -201,7 +202,7 @@ impl<M: Copy> QueueReceiver<M> {
             self.head += 1;
             match entry {
                 Entry::Msg(m) => {
-                    self.shared.state.fetch_sub(1, Ordering::Release);
+                    let _: u64 = self.shared.state.fetch_sub(1, Ordering::Release);
                     on_item(Recv::Message(m));
                 }
                 Entry::Stop => {

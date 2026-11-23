@@ -101,7 +101,7 @@ impl<'a> Iterator for Failures<'a> {
     type Item = Result<Failure<'a>, ListError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        find(self.rest, b"<Error>")?;
+        let _: usize = find(self.rest, b"<Error>")?;
         let Some((error, past)) = between(self.rest, b"<Error>", b"</Error>") else {
             self.rest = &[];
             return Some(Err(ListError::Malformed));

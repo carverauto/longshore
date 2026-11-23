@@ -72,7 +72,8 @@ fn close_all<IO: Io + ?Sized>(io: &mut IO, out: &mut Completions, socks: &[Sock]
             .unwrap();
     }
     // Teardown: the checks are done, and a slow close does not change them.
-    drive_until(io, out, 1_000, |v| v.len() == socks.len()).ok();
+    let _: Option<Vec<longshore::io::Completion>> =
+        drive_until(io, out, 1_000, |v| v.len() == socks.len()).ok();
 }
 
 #[test]
@@ -80,7 +81,7 @@ fn t1_f04_1_cancel_waiting_recv_across_backends() {
     for_each_backend(|make, addr| {
         let mut io = make(contract_limits());
         let mut out = Completions::new(8);
-        setup_pair(&mut *io, &mut out, addr);
+        let _: SocketAddr = setup_pair(&mut *io, &mut out, addr);
         io.submit(
             Token(10),
             Op::Recv {
@@ -111,7 +112,7 @@ fn t1_f04_2_close_connected_sock_cancels_inflight_recv() {
     for_each_backend(|make, addr| {
         let mut io = make(contract_limits());
         let mut out = Completions::new(8);
-        setup_pair(&mut *io, &mut out, addr);
+        let _: SocketAddr = setup_pair(&mut *io, &mut out, addr);
         io.submit(
             Token(10),
             Op::Recv {
@@ -201,7 +202,7 @@ fn t1_f04_5_cancel_waiting_connect_frees_slot() {
     let addr: SocketAddr = "192.0.2.30:443".parse().unwrap();
     let mut io = SimIo::new(contract_limits(), 5, Faults::default());
     let mut out = Completions::new(8);
-    io.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = io.listen(Sock(0), addr).unwrap();
     io.submit(
         Token(1),
         Op::Connect {
@@ -337,7 +338,7 @@ fn t2_f04_5_double_cancel_same_target_delivers_one_target_completion() {
     for_each_backend(|make, addr| {
         let mut io = make(contract_limits());
         let mut out = Completions::new(8);
-        setup_pair(&mut *io, &mut out, addr);
+        let _: SocketAddr = setup_pair(&mut *io, &mut out, addr);
         io.submit(
             Token(80),
             Op::Recv {

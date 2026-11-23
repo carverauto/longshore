@@ -212,13 +212,13 @@ fn a_send_buffer_smaller_than_the_longest_query_is_refused_at_start() {
 #[test]
 #[should_panic(expected = "one or two nameservers")]
 fn no_nameserver_is_refused() {
-    Resolver::new(config(&[], SEC, Family::V4));
+    let _: Resolver = Resolver::new(config(&[], SEC, Family::V4));
 }
 
 #[test]
 #[should_panic(expected = "one or two nameservers")]
 fn three_nameservers_are_refused() {
-    Resolver::new(config(&[NS1, NS2, NOWHERE], SEC, Family::V4));
+    let _: Resolver = Resolver::new(config(&[NS1, NS2, NOWHERE], SEC, Family::V4));
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn three_nameservers_are_refused() {
 fn no_hostname_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.hosts.clear();
-    Resolver::new(cfg);
+    let _: Resolver = Resolver::new(cfg);
 }
 
 #[test]
@@ -234,13 +234,13 @@ fn no_hostname_is_refused() {
 fn a_hostname_that_is_not_one_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V6);
     cfg.hosts.push("not a host".into());
-    Resolver::new(cfg);
+    let _: Resolver = Resolver::new(cfg);
 }
 
 #[test]
 #[should_panic]
 fn a_refresh_interval_of_zero_is_refused() {
-    Resolver::new(config(&[NS1], 0, Family::V4));
+    let _: Resolver = Resolver::new(config(&[NS1], 0, Family::V4));
 }
 
 #[test]
@@ -248,5 +248,5 @@ fn a_refresh_interval_of_zero_is_refused() {
 fn an_answer_timeout_of_zero_is_refused() {
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.timeout_ns = 0;
-    Resolver::new(cfg);
+    let _: Resolver = Resolver::new(cfg);
 }

@@ -72,7 +72,7 @@ fn lookups_converge_on_the_addresses_with_large_segments() {
     let (_io, mut r, _s, _out) = resolved(Some(1));
     let all = zone_addrs(0);
     for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], SMALL)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     assert_eq!(handed_out(&mut r, 9), [all[1]]);
     // Sizes are per address: host 1 is untouched.
@@ -86,7 +86,7 @@ fn addresses_whose_segments_are_alike_all_stay_in_use() {
     let all = zone_addrs(0);
     // 8228 and 8176 differ by an option's worth of bytes, not by a class.
     for (ip, size) in [(all[0], LARGE), (all[1], 8176), (all[2], LARGE)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     assert_eq!(handed_out(&mut r, 9), all);
 }
@@ -96,14 +96,14 @@ fn a_minimum_number_of_addresses_is_kept_by_admitting_the_next_largest() {
     let (_io, mut r, _s, _out) = resolved(Some(2));
     let all = zone_addrs(0);
     for (ip, size) in [(all[0], 1200), (all[1], LARGE), (all[2], SMALL)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     assert_eq!(r.segment_floor(0), SMALL);
     assert_eq!(handed_out(&mut r, 9), [all[1], all[2]]);
     // Asking for more addresses than there are keeps them all.
     let (_io, mut r, _s, _out) = resolved(Some(8));
     for (ip, size) in [(all[0], 1200), (all[1], LARGE), (all[2], SMALL)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     assert_eq!(handed_out(&mut r, 9), all);
 }
@@ -123,7 +123,7 @@ fn a_refresh_keeps_the_sizes_of_addresses_still_in_the_answer() {
     let (mut io, mut r, mut s, mut out) = resolved(Some(1));
     let all = zone_addrs(0);
     for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], SMALL)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     let before = r.cycles;
     pump(&mut io, &mut r, &mut s, &mut out, 3 * SEC);
@@ -140,12 +140,12 @@ fn a_new_measurement_replaces_the_old_one_for_its_address() {
     let (_io, mut r, _s, _out) = resolved(Some(1));
     let all = zone_addrs(0);
     for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], LARGE)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     assert_eq!(handed_out(&mut r, 9), [all[1], all[2]]);
     // The paths change places.
-    r.connected(0, all[0], seg(LARGE));
-    r.connected(0, all[1], seg(SMALL));
+    let _: u32 = r.connected(0, all[0], seg(LARGE));
+    let _: u32 = r.connected(0, all[1], seg(SMALL));
     assert_eq!(handed_out(&mut r, 9), [all[0], all[2]]);
 }
 
@@ -178,7 +178,7 @@ fn small_segments_on_a_path_that_carries_no_more_are_not_starvation() {
             size: SMALL,
             path_limit: 1460,
         };
-        r.connected(0, ip, segment);
+        let _: u32 = r.connected(0, ip, segment);
     }
     pump(&mut io, &mut r, &mut s, &mut out, 600 * MS);
     assert_eq!(r.early_refreshes, 0);
@@ -188,8 +188,8 @@ fn small_segments_on_a_path_that_carries_no_more_are_not_starvation() {
 fn unmeasured_addresses_are_probed_first_when_the_measured_ones_are_small() {
     let (_io, mut r, _s, _out) = resolved(Some(1));
     let all = zone_addrs(0);
-    r.connected(0, all[0], on_path(SMALL));
-    r.connected(0, all[1], on_path(SMALL));
+    let _: u32 = r.connected(0, all[0], on_path(SMALL));
+    let _: u32 = r.connected(0, all[1], on_path(SMALL));
     // No large address is known, so nothing is worth replacing yet, but
     // the one unmeasured address is worth a connection, and lookups go to it.
     assert_eq!((r.segment_floor(0), r.probes_wanted(0)), (0, 1));
@@ -207,8 +207,8 @@ fn the_floor_is_half_the_largest_rounded_up_and_includes_its_own_value() {
     for (largest, half) in [(8228, 4114), (8229, 4115), (3, 2), (1, 1)] {
         let (_io, mut r, _s, _out) = resolved(Some(1));
         let all = zone_addrs(0);
-        r.connected(0, all[0], seg(largest));
-        r.connected(0, all[1], seg(half));
+        let _: u32 = r.connected(0, all[0], seg(largest));
+        let _: u32 = r.connected(0, all[1], seg(half));
         assert_eq!(r.connected(0, all[2], seg(half - 1)), half, "{largest}");
         assert_eq!(r.segment_floor(0), half, "{largest}");
         // An address measured at zero is one not measured, so with a floor
@@ -240,7 +240,7 @@ fn starvation_begins_one_byte_under_a_quarter_of_the_path_limit() {
     for (size, starved) in [(PATH / 4, false), (PATH / 4 - 1, true)] {
         let (mut io, mut r, mut s, mut out) = resolved(Some(1));
         for ip in zone_addrs(0) {
-            r.connected(0, ip, on_path(size));
+            let _: u32 = r.connected(0, ip, on_path(size));
         }
         pump(&mut io, &mut r, &mut s, &mut out, 600 * MS);
         assert_eq!(r.early_refreshes > 0, starved, "size {size}");
@@ -254,7 +254,7 @@ fn keeping_zero_addresses_keeps_one() {
     let (_io, mut r, _s, _out) = resolved(Some(0));
     let all = zone_addrs(0);
     for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], SMALL)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     assert_eq!(r.segment_floor(0), LARGE / 2);
     assert_eq!(handed_out(&mut r, 9), [all[1]]);
@@ -267,7 +267,7 @@ fn the_preference_can_be_switched_while_running() {
     let (_io, mut r, _s, _out) = resolved(None);
     let all = zone_addrs(0);
     for (ip, size) in [(all[0], SMALL), (all[1], LARGE), (all[2], SMALL)] {
-        r.connected(0, ip, seg(size));
+        let _: u32 = r.connected(0, ip, seg(size));
     }
     assert_eq!((r.segment_floor(0), r.probes_wanted(0)), (0, 0));
     assert_eq!(handed_out(&mut r, 9), all);
@@ -292,6 +292,6 @@ fn one_address_small_for_the_path_is_ranked_out_without_seeing_a_large_one() {
     // compare with: 1432 is under a quarter of 8960.
     let (_io, mut r, _s, _out) = resolved(Some(1));
     let all = zone_addrs(0);
-    r.connected(0, all[0], on_path(SMALL));
+    let _: u32 = r.connected(0, all[0], on_path(SMALL));
     assert_eq!(handed_out(&mut r, 6), [all[1], all[2]]);
 }

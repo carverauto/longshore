@@ -298,7 +298,7 @@ fn tls_stream_idle_edges_corrupt_records_handshake_errors_and_reset_reuse() {
         Faults::default(),
     );
     let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 21)), 443);
-    io5.listen(LISTENER, addr2).unwrap();
+    let _: SocketAddr = io5.listen(LISTENER, addr2).unwrap();
     io5.submit(
         S_ACCEPT,
         Op::Accept {

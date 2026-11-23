@@ -16,7 +16,8 @@
 //!
 //! All candidates must produce byte-identical records before any is timed.
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::measurement::WallTime;
+use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use std::hint::black_box;
 
 const RECORD: usize = 16384; // largest TLS 1.3 plaintext fragment
@@ -187,16 +188,17 @@ fn bench(c: &mut Criterion) {
     );
 
     let mut g = c.benchmark_group("aes128gcm_tls13_record_seal/8MiB");
-    g.throughput(Throughput::Bytes((RECORD * RECORDS) as u64));
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.throughput(Throughput::Bytes((RECORD * RECORDS) as u64));
     for (name, sealer) in &all {
         // One destination record reused, as a registered send buffer would be.
         let mut dst = vec![0u8; RECORD + 1 + TAG];
-        g.bench_function(*name, |b| {
+        let _: &mut BenchmarkGroup<'_, WallTime> = g.bench_function(*name, |b| {
             b.iter(|| {
                 for (seq, rec) in src.as_chunks::<RECORD>().0.iter().enumerate() {
                     sealer.seal(seq as u64, black_box(rec), &mut dst);
                 }
-                black_box(&dst);
+                let _: &Vec<u8> = black_box(&dst);
             })
         });
     }

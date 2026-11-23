@@ -118,7 +118,7 @@ fn world_cfg(
         Some(s) => Server::with_tls(server_cfg(), s, 10),
         None => Server::new(server_cfg()),
     };
-    server.start(&mut io, ADDR).unwrap();
+    let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     let client = match client_tls {
         Some(s) => Client::with_tls(cfg, s, 2),
         None => Client::new(cfg),
@@ -195,7 +195,7 @@ impl World {
                         io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     } else if client.on_completion(io, c) == Handled::NotMine {
-                        server.on_completion(io, c);
+                        let _: bool = server.on_completion(io, c);
                     }
                 }
             }

@@ -57,7 +57,7 @@ mod linux {
 
     fn thread_cpu_secs() -> f64 {
         let mut ts = [0i64; 2];
-        unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        let _: i32 = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
         ts[0] as f64 + ts[1] as f64 / 1e9
     }
 
@@ -152,7 +152,7 @@ mod linux {
         );
         for s in l.incoming() {
             let Ok(mut s) = s else { continue };
-            std::thread::spawn(move || {
+            let _: std::thread::JoinHandle<()> = std::thread::spawn(move || {
                 let mut buf = vec![0x5au8; 1 << 20];
                 if source {
                     while s.write_all(&buf).is_ok() {}
@@ -246,7 +246,7 @@ mod linux {
             ring.push(make(i, &mut bufs))
                 .expect("sq sized for all connections");
             if unbatched {
-                ring.enter(0).unwrap_or_else(|e| die(&e.to_string()));
+                let _: u32 = ring.enter(0).unwrap_or_else(|e| die(&e.to_string()));
             }
         }
 
@@ -256,7 +256,8 @@ mod linux {
         let core0 = a.cpu.map(core_busy_and_total);
         let deadline = start + Duration::from_secs(a.secs);
         while Instant::now() < deadline {
-            ring.enter(1)
+            let _: u32 = ring
+                .enter(1)
                 .unwrap_or_else(|e| die(&format!("io_uring_enter: {e}")));
             while let Some(c) = ring.pop() {
                 if c.flags & IORING_CQE_F_NOTIF != 0 {

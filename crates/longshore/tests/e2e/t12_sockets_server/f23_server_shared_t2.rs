@@ -96,7 +96,8 @@ fn t2_f23_2_sim_armed_recv_observes_bit_flip_in_ring_buffer() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
 
@@ -240,14 +241,14 @@ fn t2_f23_4_uring_peer_eof_on_armed_close() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 50, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
         v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
     })
     .unwrap();
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
     io.submit(Token(4), Op::Close { sock: Sock(2) }).unwrap();
-    drive_until(&mut io, &mut out, 50, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
         v.iter().any(|c| c.token == Token(3) && !c.more) && v.iter().any(|c| c.token == Token(4))
     })
     .unwrap();

@@ -72,7 +72,7 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
         token_base: 2 << 40,
         checksum: Some(crc32c_form),
     });
-    server.start(&mut io, ADDR).unwrap();
+    let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[TOKEN_A]);
     let token_file = io.register_file("/var/run/token").unwrap();
     let http = client::Config {

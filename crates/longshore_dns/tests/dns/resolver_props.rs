@@ -52,7 +52,7 @@ fn lookups_always_have_an_address_whatever_was_measured(tc: TestCase) {
                 r.set_prefer_large_segments(keep);
             }
             1 => {
-                r.connected(
+                let _: u32 = r.connected(
                     0,
                     stranger,
                     Segment {

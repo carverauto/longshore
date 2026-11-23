@@ -9,7 +9,8 @@
 //! is first checked against the algorithm's published check value, so a fast
 //! wrong answer cannot win.
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::measurement::WallTime;
+use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use std::hint::black_box;
 
 const CHECK_INPUT: &[u8] = b"123456789";
@@ -141,25 +142,29 @@ fn bench(c: &mut Criterion) {
             format!("{size}B")
         };
         let mut g = c.benchmark_group(format!("crc64_nvme/{label}"));
-        g.throughput(Throughput::Bytes(size as u64));
+        let _: &mut BenchmarkGroup<'_, WallTime> = g.throughput(Throughput::Bytes(size as u64));
         for (name, f) in crc64 {
-            g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
+            let _: &mut BenchmarkGroup<'_, WallTime> =
+                g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
         }
         for k in &kernels {
-            g.bench_function(format!("longshore {}", k.name), |b| {
-                b.iter(|| !k.crc64_update(!0, black_box(&data)))
-            });
+            let _: &mut BenchmarkGroup<'_, WallTime> = g
+                .bench_function(format!("longshore {}", k.name), |b| {
+                    b.iter(|| !k.crc64_update(!0, black_box(&data)))
+                });
         }
         g.finish();
         let mut g = c.benchmark_group(format!("crc32c/{label}"));
-        g.throughput(Throughput::Bytes(size as u64));
+        let _: &mut BenchmarkGroup<'_, WallTime> = g.throughput(Throughput::Bytes(size as u64));
         for (name, f) in crc32c {
-            g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
+            let _: &mut BenchmarkGroup<'_, WallTime> =
+                g.bench_function(name, |b| b.iter(|| f(black_box(&data))));
         }
         for k in &kernels {
-            g.bench_function(format!("longshore {}", k.name), |b| {
-                b.iter(|| !k.crc32c_update(!0, black_box(&data)))
-            });
+            let _: &mut BenchmarkGroup<'_, WallTime> = g
+                .bench_function(format!("longshore {}", k.name), |b| {
+                    b.iter(|| !k.crc32c_update(!0, black_box(&data)))
+                });
         }
         g.finish();
     }

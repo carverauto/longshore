@@ -81,7 +81,7 @@ pub(super) fn selftest() {
                         }
                         Handled::Pending => {}
                         Handled::NotMine => {
-                            server.on_completion(&mut io, c);
+                            let _: bool = server.on_completion(&mut io, c);
                         }
                     }
                 }

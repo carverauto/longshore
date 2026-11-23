@@ -34,7 +34,7 @@ pub fn model_within(switches: usize, f: impl Fn() + Sync + Send + 'static) {
     // The model's first thread has a small stack, so the test runs on one
     // of its own.
     builder.check(move || {
-        counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _: u64 = counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let f = f.clone();
         spawn(move || f()).join().unwrap();
     });
@@ -233,7 +233,7 @@ impl World {
                 token_base: 2 << 40,
                 checksum: None,
             });
-            server.start(&mut io, ADDR).unwrap();
+            let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
             let layout = Layout {
                 operations,
                 first_buffer: TX,

@@ -17,7 +17,7 @@ fn store_put(st: &mut StoreState, key: &str, data: Vec<u8>) -> StoreObject {
         etag,
         crc64_b64,
     };
-    st.objects.insert(key.to_string(), obj.clone());
+    let _: Option<StoreObject> = st.objects.insert(key.to_string(), obj.clone());
     obj
 }
 
@@ -70,7 +70,8 @@ pub(super) fn dispatch_s3(
         "POST" if q.contains("uploads") => {
             st.next_id += 1;
             let id = format!("up-{}", st.next_id);
-            st.uploads
+            let _: Option<(String, BTreeMap<u32, Vec<u8>>)> = st
+                .uploads
                 .insert(id.clone(), (key.to_string(), BTreeMap::new()));
             xml_ok(&format!("<InitiateMultipartUploadResult><UploadId>{id}</UploadId></InitiateMultipartUploadResult>"))
         }
@@ -89,7 +90,7 @@ pub(super) fn dispatch_s3(
                 .unwrap_or(0);
             match st.uploads.get_mut(qp(q, "uploadId").unwrap_or("")) {
                 Some((_, parts)) => {
-                    parts.insert(p, body);
+                    let _: Option<Vec<u8>> = parts.insert(p, body);
                     ok(&format!("ETag: \"part-{p}\"\r\n"), &[])
                 }
                 None => no_up(),
@@ -134,9 +135,9 @@ pub(super) fn dispatch_s3(
         },
         "DELETE" => {
             if let Some(id) = qp(q, "uploadId") {
-                st.uploads.remove(id);
+                let _: Option<(String, BTreeMap<u32, Vec<u8>>)> = st.uploads.remove(id);
             } else {
-                st.objects.remove(key);
+                let _: Option<StoreObject> = st.objects.remove(key);
             }
             resp("204 No Content", "", &[])
         }

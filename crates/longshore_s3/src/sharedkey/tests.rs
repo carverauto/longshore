@@ -236,7 +236,7 @@ fn what_fits_exactly_is_signed() {
     );
     // The signature is the MAC of the string, in base64.
     let mut mac = [0u8; 44];
-    base64(&hmac_sha256(b"key", &out[..n]), &mut mac);
+    let _: usize = base64(&hmac_sha256(b"key", &out[..n]), &mut mac);
     assert_eq!(&value[12..m], &mac[..]);
     assert_eq!(&value[..12], b"SharedKey a:");
 }

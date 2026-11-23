@@ -64,7 +64,7 @@ fn run_two_cores(seed_a: u64, seed_b: u64, tick_order: &[usize], faults: Faults)
         while let Some(c) = out.pop() {
             assert!(core.rx.on_completion(&mut core.io, c).unwrap());
         }
-        core.rx.drain(|item| {
+        let _: bool = core.rx.drain(|item| {
             if let Recv::Message(msg) = item {
                 core.delivered.push(msg);
                 if reply {

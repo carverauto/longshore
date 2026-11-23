@@ -69,7 +69,7 @@ fn threaded_client_exact_and_multipart_allocate_nothing_under_sealed() {
                         io.submit(WAKE_TOKEN, Op::AwaitWake).expect("rearm wake");
                     }
                 } else {
-                    server.on_completion(&mut io, c);
+                    let _: bool = server.on_completion(&mut io, c);
                 }
             }
         }
@@ -130,7 +130,7 @@ fn threaded_client_exact_and_multipart_allocate_nothing_under_sealed() {
         let up2 = block_on(client.upload_begin("mp-abort")).unwrap();
         buf.as_mut_slice()[..4].copy_from_slice(b"part");
         let (p2, buf) = block_on(client.upload_part("mp-abort", &up2, 1, buf, 4));
-        p2.unwrap();
+        let _: longshore_s3::multipart::Part = p2.unwrap();
         block_on(client.upload_abort("mp-abort", &up2)).unwrap();
         drop(buf);
     });

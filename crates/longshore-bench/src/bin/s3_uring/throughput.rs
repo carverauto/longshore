@@ -52,7 +52,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
     if let Some(cpu) = cpu {
         let mut mask = [0u64; 16];
         mask[cpu / 64] |= 1 << (cpu % 64);
-        unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
+        let _: i32 = unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
     }
     let (mut io, mut s3, first) = setup(conns, conns, size, conns);
     let mut out = Completions::new(64);
@@ -98,7 +98,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
             std::process::exit(4);
         }
     };
-    start.wait();
+    let _: std::sync::BarrierWaitResult = start.wait();
     for i in 0..conns {
         start_one(&mut s3, &mut io, i);
     }

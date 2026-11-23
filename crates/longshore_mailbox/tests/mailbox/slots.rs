@@ -23,10 +23,10 @@ struct CountWaker(AtomicUsize);
 
 impl Wake for CountWaker {
     fn wake(self: Arc<Self>) {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.0.fetch_add(1, Ordering::Relaxed);
     }
     fn wake_by_ref(self: &Arc<Self>) {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.0.fetch_add(1, Ordering::Relaxed);
     }
 }
 

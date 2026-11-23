@@ -84,7 +84,7 @@ pub fn world_with(seed: u64, faults: Faults, cfg: client::Config) -> World {
         token_base: 2 << 40,
         checksum: None,
     });
-    server.start(&mut io, ADDR).unwrap();
+    let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     World {
@@ -153,7 +153,7 @@ impl World {
                             .unwrap();
                     } else if let Handled::Done(d) = match client.on_completion(io, c) {
                         Handled::NotMine => {
-                            server.on_completion(io, c);
+                            let _: bool = server.on_completion(io, c);
                             Handled::Pending
                         }
                         h @ (Handled::Pending | Handled::Done(_)) => h,
@@ -243,7 +243,7 @@ pub fn raw_exchange(
     const SEND: u64 = ACCEPT + 2;
     const IN_MAX: u32 = 4096;
     let mut w = world_with(12, Faults::default(), cfg);
-    w.io.listen(LISTEN, RAW_PEER).unwrap();
+    let _: SocketAddr = w.io.listen(LISTEN, RAW_PEER).unwrap();
     w.io.submit(
         Token(ACCEPT),
         Op::Accept {

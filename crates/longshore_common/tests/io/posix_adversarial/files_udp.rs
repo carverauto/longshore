@@ -17,7 +17,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 fn posix_file_edge_cases_and_sun_path_boundary() {
     let dir = std::env::temp_dir().join(format!("longshore_posix_files_{}", std::process::id()));
     // A file left by an earlier run would get in the way; usually there is none.
-    std::fs::remove_dir_all(&dir).ok();
+    let _: Option<()> = std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
 
     let mut io = PosixIo::new(Limits {
@@ -149,7 +149,7 @@ fn posix_file_edge_cases_and_sun_path_boundary() {
         assert_eq!(c.result, -ENAMETOOLONG);
     }
     // Best-effort cleanup: a leftover temporary file does not change the result.
-    std::fs::remove_dir_all(&dir).ok();
+    let _: Option<()> = std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn posix_udp_recv_now_and_send_zero_copy_backpressure() {
     let mut tmp = [0u8; 16];
     let (n, peer) = udp_srv.recv_from(&mut tmp).unwrap();
     assert_eq!(&tmp[..n], b"ping");
-    udp_srv.send_to(b"pong", peer).unwrap();
+    let _: usize = udp_srv.send_to(b"pong", peer).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
 
     io.submit(

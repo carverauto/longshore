@@ -233,8 +233,8 @@ fn request_lines_are_refused_in_every_malformed_form() {
 fn the_writer_fits_exactly_or_not_at_all() {
     let write = |buf: &mut [u8]| {
         let mut w = HeadWriter::request(buf, "PUT", "/key");
-        w.header("Host", b"objects.test");
-        w.header_u64("Content-Length", u64::MAX);
+        let _: &mut HeadWriter<'_> = w.header("Host", b"objects.test");
+        let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", u64::MAX);
         w.finish()
     };
     let mut big = [0u8; 256];

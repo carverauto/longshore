@@ -49,10 +49,10 @@ impl Posix {
                 let s = &mut self.socks[sock.0 as usize];
                 if s.fd >= 0 {
                     if s.kind == SockKind::Open {
-                        unsafe { shutdown(s.fd, SHUT_RDWR) };
+                        let _: i32 = unsafe { shutdown(s.fd, SHUT_RDWR) };
                     }
                     self.poller.before_close(s);
-                    unsafe { close(s.fd) };
+                    let _: i32 = unsafe { close(s.fd) };
                     s.reset();
                 }
                 Some(0)
@@ -98,7 +98,7 @@ impl Posix {
         }
         if err != 0 {
             self.poller.before_close(&mut self.socks[idx]);
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             self.socks[idx].reset();
             return Some(to_linux_errno(err));
         }
@@ -115,7 +115,7 @@ impl Posix {
             return None;
         }
         self.poller.before_close(&mut self.socks[idx]);
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         self.socks[idx].reset();
         Some(to_linux_errno(e))
     }
@@ -136,7 +136,7 @@ impl Posix {
         };
         if self.no_delay || self.keep_alive {
             if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
-                unsafe { close(fd) };
+                let _: i32 = unsafe { close(fd) };
                 return Some(to_linux_errno(e));
             }
         }
@@ -155,7 +155,7 @@ impl Posix {
             self.poller.arm_write(idx, &mut self.socks[idx]);
             return None;
         }
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         Some(to_linux_errno(e))
     }
 
@@ -172,12 +172,12 @@ impl Posix {
         let (sa, sa_len) = sockaddr_from(addr);
         if unsafe { connect(fd, (&sa as *const sockaddr_storage).cast(), sa_len) } < 0 {
             let e = os_errno();
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return Some(to_linux_errno(e));
         }
         if self.socks[idx].fd >= 0 {
             self.poller.before_close(&mut self.socks[idx]);
-            unsafe { close(self.socks[idx].fd) };
+            let _: i32 = unsafe { close(self.socks[idx].fd) };
         }
         self.socks[idx].reset();
         self.socks[idx].fd = fd;
@@ -303,7 +303,7 @@ impl Posix {
             }
             break to_linux_errno(e);
         };
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         Some(res)
     }
 }

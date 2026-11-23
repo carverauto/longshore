@@ -134,7 +134,7 @@ fn cancel_during_tls_handshake_and_invalid_tls_hostname() {
     // Invalid hostname triggers TlsError::Setup during connect -> handshake transition.
     let mut io = SimIo::new(tls_limits, 55, Faults::default());
     let mut srv = Server::with_tls(tls_srv_cfg, ss, 10);
-    srv.start(&mut io, ADDR).unwrap();
+    let _: std::net::SocketAddr = srv.start(&mut io, ADDR).unwrap();
     let mut cli = Client::with_tls(tls_cli_cfg, cs, 2);
     let bad = Request {
         method: "GET",
@@ -166,7 +166,7 @@ fn cancel_during_tls_handshake_and_invalid_tls_hostname() {
     // Explicit Client::cancel() mid-TlsHandshake (plain server stalls in RecvHead after ClientHello).
     let mut io2 = SimIo::new(tls_limits, 56, Faults::default());
     let mut plain_srv = Server::new(tls_srv_cfg);
-    plain_srv.start(&mut io2, ADDR).unwrap();
+    let _: std::net::SocketAddr = plain_srv.start(&mut io2, ADDR).unwrap();
     let cs2 = ClientSetup::with_roots(&[&cert]).unwrap();
     let mut cli2 = Client::with_tls(tls_cli_cfg, cs2, 2);
     let req = Request {

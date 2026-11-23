@@ -37,7 +37,7 @@ pub(super) fn sink(port: u16, get_size: u32, trust_file: Option<&str>) {
     for s in l.incoming() {
         let Ok(s) = s else { continue };
         let tls = tls.clone();
-        std::thread::spawn(move || match tls {
+        let _: std::thread::JoinHandle<()> = std::thread::spawn(move || match tls {
             None => serve(s, get_size, true),
             Some(cfg) => {
                 let Ok(conn) = rustls::ServerConnection::new(cfg) else {

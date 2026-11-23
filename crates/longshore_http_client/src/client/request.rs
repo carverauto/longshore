@@ -43,12 +43,13 @@ impl Client {
         let head_len = {
             let buf = &mut io.buf(self.head_buf(pick))[..self.cfg.head_max as usize];
             let mut w = HeadWriter::request(buf, req.method, req.target);
-            w.header("Host", req.host.as_bytes());
+            let _: &mut HeadWriter<'_> = w.header("Host", req.host.as_bytes());
             if req.body.is_some() || matches!(req.method, "PUT" | "POST") {
-                w.header_u64("Content-Length", req.body.map_or(0, |b| b.1 as u64));
+                let _: &mut HeadWriter<'_> =
+                    w.header_u64("Content-Length", req.body.map_or(0, |b| b.1 as u64));
             }
             for (name, value) in req.headers {
-                w.header(name, value);
+                let _: &mut HeadWriter<'_> = w.header(name, value);
             }
             w.finish().map_err(|_| Error::BadRequest)? as u32
         };

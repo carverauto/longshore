@@ -188,7 +188,7 @@ fn a_signature_depends_on_content_not_on_presentation(tc: TestCase) {
     renamed[at].0.push('x');
     assert_ne!(sign("PUT", &renamed, &query), base);
     let mut dropped = headers.clone();
-    dropped.remove(at);
+    let _: (String, String) = dropped.remove(at);
     if !dropped.is_empty() {
         assert_ne!(sign("PUT", &dropped, &query), base);
     }

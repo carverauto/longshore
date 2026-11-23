@@ -24,10 +24,10 @@ use std::time::Duration;
 struct CountWake(AtomicUsize);
 impl Wake for CountWake {
     fn wake(self: Arc<Self>) {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.0.fetch_add(1, Ordering::Relaxed);
     }
     fn wake_by_ref(self: &Arc<Self>) {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.0.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -139,8 +139,8 @@ fn t1_f25_4_waiting_within_preallocated_waiters_allocates_zero_heap() {
         }
         cells.prepare(s0, None);
         cells.prepare(s1, None);
-        cells.answer(&pool, s0, 1);
-        cells.answer(&pool, s1, 2);
+        let _: Option<u32> = cells.answer(&pool, s0, 1);
+        let _: Option<u32> = cells.answer(&pool, s1, 2);
         matches!(cells.poll_answer(&pool, s0, &mut cx), Poll::Ready(1))
             && matches!(cells.poll_answer(&pool, s1, &mut cx), Poll::Ready(2))
     });
@@ -283,7 +283,7 @@ fn t2_f25_4_close_never_overwrites_unsent_free_slots() {
         panic!("slot 0 free");
     };
     cells.prepare(s0, None);
-    cells.answer(&pool, s0, 77);
+    let _: Option<u32> = cells.answer(&pool, s0, 77);
     // Slots 1 and 2 are free/unsent; close_unanswered must not panic or fabricate answers.
     cells.close_unanswered(&pool, || 999, |_| {});
     assert_eq!(cells.poll_answer(&pool, s0, &mut cx), Poll::Ready(77));

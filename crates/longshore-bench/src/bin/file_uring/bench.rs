@@ -163,8 +163,8 @@ pub(super) fn run_direct_sync_bench(dir: &Path, iters: usize, order: Order) {
 
     // Warmup
     let mut warm = Vec::with_capacity(40);
-    measure(&mut io, wbuf, 20, true, &mut warm);
-    measure(&mut io, wbuf, 20, false, &mut warm);
+    let _: u64 = measure(&mut io, wbuf, 20, true, &mut warm);
+    let _: u64 = measure(&mut io, wbuf, 20, false, &mut warm);
 
     // Whichever mode runs second runs on a file the first has just
     // written, so the order is the caller's choice.

@@ -162,13 +162,13 @@ impl Server {
             let (d, at) = decimal(o.kept.version);
             put(b"sim-v");
             put(&d[at..]);
-            w.header("x-amz-version-id", &digits[..n]);
+            let _: &mut HeadWriter<'_> = w.header("x-amz-version-id", &digits[..n]);
         }
         if o.kept.encrypted {
-            w.header("x-amz-server-side-encryption", b"AES256");
+            let _: &mut HeadWriter<'_> = w.header("x-amz-server-side-encryption", b"AES256");
         }
         if let Some(sum) = o.kept.sha256 {
-            w.header("x-amz-checksum-sha256", &sum);
+            let _: &mut HeadWriter<'_> = w.header("x-amz-checksum-sha256", &sum);
         }
         if let Some((first, last)) = range {
             let mut value = [0u8; 48];
@@ -187,12 +187,12 @@ impl Server {
                     n += d.len() - at;
                 }
             }
-            w.header("Content-Range", &value[..n]);
+            let _: &mut HeadWriter<'_> = w.header("Content-Range", &value[..n]);
         }
         let (d, at) = decimal(self.requests as u32);
         let mut id = *b"sim-request-0000000000";
         let start = id.len() - (d.len() - at);
         id[start..].copy_from_slice(&d[at..]);
-        w.header("x-amz-request-id", &id);
+        let _: &mut HeadWriter<'_> = w.header("x-amz-request-id", &id);
     }
 }

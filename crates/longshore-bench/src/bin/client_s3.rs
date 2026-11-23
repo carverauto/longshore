@@ -232,7 +232,7 @@ fn main() {
                     let due = started.elapsed().as_millis() as u64 * puts_per_sec / 1000;
                     let store = put || (mix && puts.fetch_add(1, Ordering::Relaxed) < due);
                     if mix && !store {
-                        puts.fetch_sub(1, Ordering::Relaxed);
+                        let _: u64 = puts.fetch_sub(1, Ordering::Relaxed);
                     }
                     if mix && store {
                         fill(i, &mut buffer);
@@ -252,7 +252,7 @@ fn main() {
                         }
                     }
                 }
-                ready.wait();
+                let _: std::sync::BarrierWaitResult = ready.wait();
                 let mut ops: Vec<(usize, Op)> = (0..keys.len())
                     .map(|i| (i, next(i, client.buffer_blocking())))
                     .collect();
@@ -265,16 +265,16 @@ fn main() {
                                 std::process::exit(3);
                             }
                             if !ok {
-                                failed.fetch_add(1, Ordering::Relaxed);
+                                let _: u64 = failed.fetch_add(1, Ordering::Relaxed);
                             } else if measuring.load(Ordering::Relaxed) {
-                                bytes.fetch_add(size as u64, Ordering::Relaxed);
-                                requests.fetch_add(1, Ordering::Relaxed);
+                                let _: u64 = bytes.fetch_add(size as u64, Ordering::Relaxed);
+                                let _: u64 = requests.fetch_add(1, Ordering::Relaxed);
                             }
                             if mix && ok && !op.is_put() {
-                                gets.fetch_add(1, Ordering::Relaxed);
+                                let _: u64 = gets.fetch_add(1, Ordering::Relaxed);
                                 let got = buffer.as_slice();
                                 if sampled(size as usize).any(|at| got[at] != pattern(c, *i, at)) {
-                                    wrong.fetch_add(1, Ordering::Relaxed);
+                                    let _: u64 = wrong.fetch_add(1, Ordering::Relaxed);
                                 }
                             }
                             *op = next(*i, buffer);
@@ -288,7 +288,7 @@ fn main() {
             })
         })
         .collect();
-    ready.wait();
+    let _: std::sync::BarrierWaitResult = ready.wait();
     // Let connections open and settle before the measured window.
     std::thread::sleep(Duration::from_secs(2));
     let cpu0 = process_cpu_secs();

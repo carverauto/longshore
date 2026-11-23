@@ -25,7 +25,7 @@ const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 
 fn sha256_header(body: &[u8]) -> [u8; 44] {
     let mut out = [0u8; 44];
-    longshore_crc::base64(&sha256(body), &mut out);
+    let _: usize = longshore_crc::base64(&sha256(body), &mut out);
     out
 }
 
@@ -338,7 +338,7 @@ fn a_range_the_store_cuts_short_is_reported_as_served() {
     let options = archive(&mut w);
     w.s3.put(&mut w.io, 1, "k", TX, LEN, &options, ONCE)
         .unwrap();
-    answer(&mut w);
+    let _: Answer = answer(&mut w);
     // Two hundred bytes are asked for where the object has one hundred left.
     w.s3.get(
         &mut w.io,

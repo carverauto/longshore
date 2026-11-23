@@ -44,7 +44,7 @@ impl Map {
 
 impl Drop for Map {
     fn drop(&mut self) {
-        unsafe { munmap(self.ptr, self.len) };
+        let _: i32 = unsafe { munmap(self.ptr, self.len) };
     }
 }
 
@@ -108,7 +108,7 @@ impl Ring {
         }
         let res = Self::map(fd, p);
         if res.is_err() {
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
         }
         res
     }
@@ -324,7 +324,7 @@ impl Ring {
 
 impl Drop for Ring {
     fn drop(&mut self) {
-        unsafe { close(self.fd) };
+        let _: i32 = unsafe { close(self.fd) };
     }
 }
 

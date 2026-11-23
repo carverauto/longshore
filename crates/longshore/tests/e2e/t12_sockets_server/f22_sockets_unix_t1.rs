@@ -59,7 +59,8 @@ fn check_shutdown_before_close<IO: Io>(io: &mut IO, addr: SocketAddr) {
         },
     )
     .unwrap();
-    drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(io, &mut out, 50, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();

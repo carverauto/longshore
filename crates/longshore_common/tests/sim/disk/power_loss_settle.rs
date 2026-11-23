@@ -108,7 +108,7 @@ fn power_loss_settles_single_write_outcomes_and_replays_deterministically() {
             } else {
                 assert_eq!(prefix % sector_size as usize, 0);
                 assert!(b1[prefix..].iter().all(|&b| b == 0x11));
-                cuts.insert(prefix);
+                let _: bool = cuts.insert(prefix);
             }
         }
         assert!(saw_drop && saw_whole && !cuts.is_empty());

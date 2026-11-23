@@ -46,7 +46,7 @@ fn t2_f21_1_armed_accept_range_full_terminates_with_enfile_or_emfile() {
         )
         .unwrap();
     }
-    drive_until(&mut io, &mut out, 40, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 40, |v| {
         v.iter().filter(|c| c.token == Token(1)).count() == 2
             && v.iter().filter(|c| c.token.0 >= 10).count() == 2
     })
@@ -126,14 +126,14 @@ fn t2_f21_2_rearm_accept_after_closing_slot_accepts_next_client() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 40, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 40, |v| {
         v.iter().any(|c| c.token == Token(1) && !c.more)
     })
     .unwrap();
 
     io.submit(Token(20), Op::Close { sock: first_slot })
         .unwrap();
-    drive_until(&mut io, &mut out, 20, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 20, |v| {
         v.iter().any(|c| c.token == Token(20))
     })
     .unwrap();
@@ -179,7 +179,8 @@ fn t2_f21_3_empty_buffer_ring_returns_enobufs_and_preserves_bytes_on_rearm() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
@@ -294,7 +295,7 @@ fn t2_f21_5_armed_ops_count_against_ops_max_busy_limit() {
     )
     .unwrap();
     assert_eq!(io.submit(Token(3), Op::Timeout { nanos: 0 }), Err(Busy));
-    drive_until(&mut io, &mut out, 30, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 30, |v| {
         v.iter().any(|c| c.token == Token(2))
     })
     .unwrap();

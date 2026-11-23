@@ -98,7 +98,7 @@ fn main() -> Result<(), Failure> {
     }
 
     let body = read(&client, &key, None, &expect, body, budget, &bytes)?;
-    read(
+    let _: longshore_s3::client::Buffer = read(
         &client,
         &key,
         Some((1000, 1999)),

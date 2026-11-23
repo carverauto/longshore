@@ -76,7 +76,7 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
     io.give_back(id);
 
     io.submit(Token(5), Op::Close { sock: srv_sock }).unwrap();
-    drive_until(io, &mut out, 50, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(io, &mut out, 50, |v| {
         v.iter().any(|c| c.token == Token(3) && !c.more) && v.iter().any(|c| c.token == Token(5))
     })
     .unwrap();
@@ -93,7 +93,8 @@ fn run_server_net_suite<IO: Io>(io: &mut IO, tcp_addr: SocketAddr, tag: &str) {
     let cs = drive_until(io, &mut out, 50, |v| v.iter().any(|c| c.token == Token(6))).unwrap();
     assert_eq!(cs[0].result, 0);
     io.submit(Token(7), Op::Close { sock: Sock(1) }).unwrap();
-    drive_until(io, &mut out, 30, |v| v.iter().any(|c| c.token == Token(7))).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(io, &mut out, 30, |v| v.iter().any(|c| c.token == Token(7))).unwrap();
 
     // `#44` § Every backend specifies identical Unix-domain socket and armed accept/recv
     // behavior across `SimIo`, `Posix`, and `UringIo`.
@@ -201,7 +202,8 @@ fn t1_f23_2_sim_armed_recv_delivers_exact_stream_under_partial_short_delay_fault
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 100, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 100, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();

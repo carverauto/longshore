@@ -120,9 +120,9 @@ fn child() {
 /// Run `case` in a child, with the test harness capturing its output or not.
 fn run(case: &str, capture: bool) -> (Output, String) {
     let mut cmd = Command::new(std::env::current_exe().unwrap());
-    cmd.args(["--exact", "child", "--test-threads", "1"]);
+    let _: &mut Command = cmd.args(["--exact", "child", "--test-threads", "1"]);
     if !capture {
-        cmd.arg("--nocapture");
+        let _: &mut Command = cmd.arg("--nocapture");
     }
     let out = cmd.env(CASE, case).output().unwrap();
     let text = format!(

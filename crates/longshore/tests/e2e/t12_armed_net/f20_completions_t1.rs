@@ -111,11 +111,13 @@ fn t1_f20_3_non_armed_trace_hash_parity_preserved() {
     for seed in 0..5u64 {
         let mut a = SimIo::new(limits, seed, Faults::default());
         let mut out_a = Completions::new(16);
-        scenario::echo(&mut a, ADDR, 8192, 1024, false, &mut out_a).expect("echo a");
+        let _: longshore::io::scenario::EchoStats =
+            scenario::echo(&mut a, ADDR, 8192, 1024, false, &mut out_a).expect("echo a");
 
         let mut b = SimIo::new(limits, seed, Faults::default());
         let mut out_b = Completions::new(16);
-        scenario::echo(&mut b, ADDR, 8192, 1024, false, &mut out_b).expect("echo b");
+        let _: longshore::io::scenario::EchoStats =
+            scenario::echo(&mut b, ADDR, 8192, 1024, false, &mut out_b).expect("echo b");
 
         assert_eq!(a.trace_hash(), b.trace_hash());
         hashes.push(a.trace_hash());
@@ -155,7 +157,7 @@ fn t1_f20_4_armed_completion_more_and_buf_affect_trace_hash() {
             },
         )
         .unwrap();
-        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+        let _: Vec<Completion> = drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
 
         io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
             .unwrap();

@@ -5,7 +5,8 @@
 
 //! HTTP head microbenchmarks: what the client does per request besides I/O.
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::measurement::WallTime;
+use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use longshore::http::head::{parse_response, HeadWriter};
 use std::hint::black_box;
 
@@ -14,22 +15,24 @@ const RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nx-amz-id-2: LriYPLdmOdAiIfgSm/F1YsV
 
 fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("http_head");
-    g.throughput(Throughput::Bytes(RESPONSE.len() as u64));
-    g.bench_function("parse_response", |b| {
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.throughput(Throughput::Bytes(RESPONSE.len() as u64));
+    let _: &mut BenchmarkGroup<'_, WallTime> = g.bench_function("parse_response", |b| {
         b.iter(|| parse_response(black_box(RESPONSE), 4096).unwrap().unwrap())
     });
-    g.bench_function("parse_response_then_lookup", |b| {
-        b.iter(|| {
-            let h = parse_response(black_box(RESPONSE), 4096).unwrap().unwrap();
-            h.fields.header(RESPONSE, "etag").unwrap().len()
-        })
-    });
-    g.throughput(Throughput::Elements(1));
-    g.bench_function("write_put_request", |b| {
+    let _: &mut BenchmarkGroup<'_, WallTime> =
+        g.bench_function("parse_response_then_lookup", |b| {
+            b.iter(|| {
+                let h = parse_response(black_box(RESPONSE), 4096).unwrap().unwrap();
+                h.fields.header(RESPONSE, "etag").unwrap().len()
+            })
+        });
+    let _: &mut BenchmarkGroup<'_, WallTime> = g.throughput(Throughput::Elements(1));
+    let _: &mut BenchmarkGroup<'_, WallTime> = g.bench_function("write_put_request", |b| {
         let mut buf = [0u8; 1024];
         b.iter(|| {
             let mut w = HeadWriter::request(&mut buf, "PUT", black_box("/bucket/some/object/key-000123"));
-            w.header("Host", b"bucket.us-east-1.linodeobjects.com").header_u64("Content-Length", 8_388_608).header("x-amz-content-sha256", b"UNSIGNED-PAYLOAD").header("x-amz-date", b"20261112T101500Z").header("Authorization", b"AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261112/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024");
+            let _: &mut HeadWriter<'_> = w.header("Host", b"bucket.us-east-1.linodeobjects.com").header_u64("Content-Length", 8_388_608).header("x-amz-content-sha256", b"UNSIGNED-PAYLOAD").header("x-amz-date", b"20261112T101500Z").header("Authorization", b"AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261112/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024");
             w.finish().unwrap()
         })
     });

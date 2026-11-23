@@ -76,7 +76,7 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
         let mut mask = [0u64; 16];
         if cpu < 1024 {
             mask[cpu / 64] |= 1 << (cpu % 64);
-            unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
+            let _: i32 = unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -112,7 +112,7 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
         Ok(io) => io,
         Err(e) => {
             // The builder may have stopped waiting; this thread ends either way.
-            ready.send(Err(e)).ok();
+            let _: Option<()> = ready.send(Err(e)).ok();
             return;
         }
     };
@@ -129,7 +129,7 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
             }),
             Err(e) => {
                 // The builder may have stopped waiting; this thread ends either way.
-                ready.send(Err(e)).ok();
+                let _: Option<()> = ready.send(Err(e)).ok();
                 return;
             }
         },
@@ -221,7 +221,7 @@ pub fn run<B: Backend>(b: &Builder, n: u32, ready: Sender<std::io::Result<Arc<La
             return;
         }
         while let Some(c) = out.pop() {
-            worker.on_completion(&mut io, c);
+            let _: bool = worker.on_completion(&mut io, c);
         }
     }
     worker.close();

@@ -105,7 +105,7 @@ fn an_aged_connection_is_replaced_before_a_free_slot_is_used() {
                 w.client.on_completion(&mut w.io, c),
                 Handled::Pending | Handled::Done(_)
             ) {
-                w.server.on_completion(&mut w.io, c);
+                let _: bool = w.server.on_completion(&mut w.io, c);
             }
         }
     }

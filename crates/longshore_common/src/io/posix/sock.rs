@@ -112,7 +112,7 @@ pub(super) fn open_socket(domain: c_int, kind: c_int) -> Result<c_int, c_int> {
     #[cfg(target_os = "macos")]
     if !set_socket_flags(fd) {
         let e = os_errno();
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         return Err(e);
     }
     Ok(fd)
@@ -140,7 +140,7 @@ pub(super) fn accept_socket(listener_fd: c_int) -> Result<c_int, c_int> {
         }
         #[cfg(target_os = "macos")]
         if let Err(e) = set_accepted_socket_flags(fd) {
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return Err(e);
         }
         return Ok(fd);
@@ -240,7 +240,7 @@ impl Posix {
         let fd = open_socket(domain, SOCK_STREAM).map_err(io::Error::from_raw_os_error)?;
         let on: c_int = 1;
         unsafe {
-            setsockopt(
+            let _: i32 = setsockopt(
                 fd,
                 SOL_SOCKET,
                 SO_REUSEADDR,
@@ -250,19 +250,19 @@ impl Posix {
         }
         if self.no_delay || self.keep_alive {
             if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
-                unsafe { close(fd) };
+                let _: i32 = unsafe { close(fd) };
                 return Err(io::Error::from_raw_os_error(e));
             }
         }
         let (sa, sa_len) = sockaddr_from(addr);
         if unsafe { bind(fd, (&sa as *const sockaddr_storage).cast(), sa_len) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return Err(err);
         }
         if unsafe { listen(fd, 128) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return Err(err);
         }
         let mut bound = sockaddr_storage::default();
@@ -276,20 +276,20 @@ impl Posix {
         } < 0
         {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return Err(err);
         }
         let local = match sockaddr_to(&bound) {
             Ok(a) => a,
             Err(e) => {
-                unsafe { close(fd) };
+                let _: i32 = unsafe { close(fd) };
                 return Err(e);
             }
         };
         let slot = &mut self.socks[sock.0 as usize];
         if slot.fd >= 0 {
             self.poller.before_close(slot);
-            unsafe { close(slot.fd) };
+            let _: i32 = unsafe { close(slot.fd) };
         }
         slot.reset();
         slot.fd = fd;
@@ -311,18 +311,18 @@ impl Posix {
         let fd = open_socket(AF_UNIX, SOCK_STREAM).map_err(io::Error::from_raw_os_error)?;
         if unsafe { bind(fd, (&sa as *const sockaddr_storage).cast(), sa_len) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return Err(err);
         }
         if unsafe { listen(fd, 128) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return Err(err);
         }
         let slot = &mut self.socks[sock.0 as usize];
         if slot.fd >= 0 {
             self.poller.before_close(slot);
-            unsafe { close(slot.fd) };
+            let _: i32 = unsafe { close(slot.fd) };
         }
         slot.reset();
         slot.fd = fd;

@@ -92,7 +92,8 @@ fn t2_f08_3_uring_failing_op_followed_by_valid_chain() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
 
     let missing = dir.file_path("missing.dat");
     let mlen = write_nul_path(&mut io, BufId(1), 0, missing.to_str().unwrap());
@@ -226,7 +227,8 @@ fn t2_f08_5_engine_backends_match_uring_invalid_head_never_strands_tail() {
         assert_eq!(cs[2].result, 0);
         io.submit(Token(4), Op::FileClose { slot: FileSlot(0) })
             .unwrap();
-        drive_until(io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
+        let _: Vec<longshore::io::Completion> =
+            drive_until(io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
     };
     #[cfg(feature = "sim")]
     {

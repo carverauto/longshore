@@ -66,7 +66,7 @@ pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate
         token_base: 2 << 40,
         checksum: None,
     });
-    server.start(&mut io, ADDR).unwrap();
+    let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[KEY_A]);
     let creds = io.register_file("/etc/store/credentials").unwrap();
     let http = client::Config {

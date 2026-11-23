@@ -351,12 +351,12 @@ impl SimDisk {
         }
         match placed {
             Some(PlacedFault::FailAfter) => {
-                self.close(slot);
+                let _: i32 = self.close(slot);
                 ctx.counters.placed_fail_after += 1;
                 -EIO
             }
             Some(_) => {
-                self.close(slot);
+                let _: i32 = self.close(slot);
                 ctx.counters.placed_fail += 1;
                 -EIO
             }

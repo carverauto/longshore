@@ -30,7 +30,7 @@ pub fn main() {
     };
     // A caller that never gets an answer is the failure these runs look
     // for, so a run that has not ended by now has failed.
-    std::thread::spawn(|| {
+    let _: std::thread::JoinHandle<()> = std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(240));
         eprintln!("client_faults: still running after 240 s; a caller is stuck");
         std::process::exit(2);
@@ -59,7 +59,7 @@ pub fn main() {
 /// ends.
 pub fn serve(connections: u32) -> SocketAddr {
     let (bound, listening) = channel();
-    std::thread::spawn(move || {
+    let _: std::thread::JoinHandle<()> = std::thread::spawn(move || {
         let mut io = UringIo::new(Limits {
             sockets_max: 1 + connections,
             buffers: 2 * connections,
@@ -87,7 +87,7 @@ pub fn serve(connections: u32) -> SocketAddr {
         loop {
             io.tick(true, &mut out).expect("server tick");
             while let Some(c) = out.pop() {
-                server.on_completion(&mut io, c);
+                let _: bool = server.on_completion(&mut io, c);
             }
         }
     });
@@ -160,10 +160,10 @@ fn caller(client: &Client, n: usize, stop: &AtomicBool, seen: &Seen) {
         if body.is_empty() {
             // Void: its thread failed and could not be stopped, or no
             // thread is left. An operation given it must end closed.
-            seen.void.fetch_add(1, Ordering::Relaxed);
+            let _: u64 = seen.void.fetch_add(1, Ordering::Relaxed);
             let (stored, _void) = client.store(&key, body, 0).wait();
             assert_eq!(stored, Err(Error::Closed), "a void buffer was accepted");
-            seen.closed.fetch_add(1, Ordering::Relaxed);
+            let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(1));
             continue;
         }
@@ -172,7 +172,7 @@ fn caller(client: &Client, n: usize, stop: &AtomicBool, seen: &Seen) {
         match stored {
             Ok(()) => {}
             Err(Error::Closed) => {
-                seen.closed.fetch_add(1, Ordering::Relaxed);
+                let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
             Err(other) => panic!("caller {n}: store ended {other:?}"),
@@ -185,12 +185,12 @@ fn caller(client: &Client, n: usize, stop: &AtomicBool, seen: &Seen) {
                     body.as_slice().iter().all(|b| *b == round ^ n as u8),
                     "caller {n}: fetched bytes differ"
                 );
-                seen.stored.fetch_add(1, Ordering::Relaxed);
+                let _: u64 = seen.stored.fetch_add(1, Ordering::Relaxed);
             }
             // The object may be on no thread's answer: the fetch went to a
             // thread that failed.
             Err(Error::Closed) => {
-                seen.closed.fetch_add(1, Ordering::Relaxed);
+                let _: u64 = seen.closed.fetch_add(1, Ordering::Relaxed);
             }
             other => panic!("caller {n}: fetch ended {other:?}"),
         }

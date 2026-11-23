@@ -72,7 +72,7 @@ fn main() {
     // The server: its own ring on its own thread, serving until the process ends.
     let (bound, listening) = channel();
     let server_conns = threads * conns_per_thread;
-    std::thread::spawn(move || {
+    let _: std::thread::JoinHandle<()> = std::thread::spawn(move || {
         let mut io = UringIo::new(Limits {
             sockets_max: 1 + server_conns,
             buffers: 2 * server_conns,
@@ -112,7 +112,7 @@ fn main() {
         loop {
             io.tick(true, &mut out).expect("server tick");
             while let Some(c) = out.pop() {
-                server.on_completion(&mut io, c);
+                let _: bool = server.on_completion(&mut io, c);
             }
         }
     });
@@ -187,7 +187,7 @@ fn main() {
         );
         assert_eq!(client.erase("rotate-probe").wait(), Ok(()));
         // Best-effort cleanup: a leftover temporary file does not change the result.
-        std::fs::remove_file(&credentials_path).ok();
+        let _: Option<()> = std::fs::remove_file(&credentials_path).ok();
         println!(
             "ok rotate: refused {refused} times with the first keys, then accepted with the file's"
         );

@@ -34,7 +34,7 @@ impl Count {
 
 impl Wake for Count {
     fn wake(self: Arc<Self>) {
-        self.0.fetch_add(1, Ordering::SeqCst);
+        let _: usize = self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
 

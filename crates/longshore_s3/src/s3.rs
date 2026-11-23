@@ -300,7 +300,7 @@ impl S3 {
             io.measure_segment_sizes(keep.is_some());
             r.set_prefer_large_segments(keep);
             if keep.is_some() {
-                self.client.retire_unmeasured(0);
+                let _: u32 = self.client.retire_unmeasured(0);
                 let floor = r.segment_floor(0);
                 self.small_segment_retired += self.client.retire_below(0, floor) as u64;
             }
@@ -356,7 +356,7 @@ impl S3 {
                     self.resolver_cycles = r.cycles;
                     let floor = r.segment_floor(0);
                     self.small_segment_retired += self.client.retire_below(0, floor) as u64;
-                    self.client.retire_some(0, r.probes_wanted(0) as u32);
+                    let _: u32 = self.client.retire_some(0, r.probes_wanted(0) as u32);
                 }
                 return true;
             }

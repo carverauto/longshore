@@ -75,8 +75,9 @@ pub(super) fn run_two_core_ping_pong(
             },
         )
         .unwrap();
-    drive_until_nonblocking(&mut core_b, &mut out_b, 20, |v| v.len() == 2)
-        .expect("accept and connect complete");
+    let _: Vec<longshore::io::Completion> =
+        drive_until_nonblocking(&mut core_b, &mut out_b, 20, |v| v.len() == 2)
+            .expect("accept and connect complete");
     write_pool_bytes(&mut core_b, BufId(0), 0, b"core-b-net");
     core_b
         .submit(

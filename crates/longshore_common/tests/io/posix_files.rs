@@ -37,7 +37,7 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         // Best-effort cleanup; Drop must not panic over a leftover temporary file.
-        std::fs::remove_dir_all(&self.0).ok();
+        let _: Option<()> = std::fs::remove_dir_all(&self.0).ok();
     }
 }
 

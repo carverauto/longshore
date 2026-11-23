@@ -13,13 +13,13 @@ use core::ffi::c_int;
 impl Io for UringIo {
     fn now_ns(&self) -> u64 {
         let mut ts = timespec::default();
-        unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
+        let _: i32 = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
         ts.sec as u64 * 1_000_000_000 + ts.nsec as u64
     }
 
     fn unix_secs(&self) -> u64 {
         let mut ts = timespec::default();
-        unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
+        let _: i32 = unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
         ts.sec as u64
     }
 
@@ -78,13 +78,13 @@ impl Io for UringIo {
         let fd = l.into_raw_fd();
         if self.no_delay || self.keep_alive {
             if let Err(errno) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
-                unsafe { close(fd) };
+                let _: i32 = unsafe { close(fd) };
                 return Err(io::Error::from_raw_os_error(errno));
             }
         }
         self.last_listen_opts = Some(read_tcp_options(fd));
         let r = self.ring.update_file(sock.0, fd);
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         r.map(|_| bound)
     }
 
@@ -100,7 +100,7 @@ impl Io for UringIo {
         let l = std::os::unix::net::UnixListener::bind(path)?;
         let fd = l.into_raw_fd();
         let r = self.ring.update_file(sock.0, fd);
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         r
     }
 
@@ -302,7 +302,7 @@ impl UringIo {
                     ..Default::default()
                 };
                 ring.push(sqe).map_err(|_| io::Error::other("sq full"))?;
-                ring.enter(1)?;
+                let _: u32 = ring.enter(1)?;
                 let cqe = ring.pop().ok_or_else(|| io::Error::other("missing cqe"))?;
                 if cqe.res == -EINVAL || cqe.res == -95 {
                     return Ok(None);

@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 /// The value a body's `x-amz-checksum-sha256` header must have.
 pub fn sha256_header(body: &[u8]) -> [u8; 44] {
     let mut out = [0u8; 44];
-    longshore::checksum::base64(&sha256(body), &mut out);
+    let _: usize = longshore::checksum::base64(&sha256(body), &mut out);
     out
 }
 
@@ -83,7 +83,7 @@ pub fn round_trip(client: &Client, len: usize) {
     // The key is taken now, and a body that is not what its SHA-256 says
     // is refused wherever it is written.
     let (again, body) = client.put(key, body, len, &options, once()).wait();
-    answered(&again, 412);
+    let _: Answer = answered(&again, 412);
     let wrong = Put {
         checksum: Checksum::Sha256(sha256(b"other bytes")),
         ..options
@@ -91,7 +91,7 @@ pub fn round_trip(client: &Client, len: usize) {
     let (damaged, body) = client
         .put("exact-damaged", body, len, &wrong, once())
         .wait();
-    answered(&damaged, 400);
+    let _: Answer = answered(&damaged, 400);
 
     // A deadline that has passed sends nothing.
     let past = Budget::once(Instant::now() - Duration::from_millis(1));
@@ -103,7 +103,7 @@ pub fn round_trip(client: &Client, len: usize) {
     let (absent, _into) = client
         .get("exact-late", None, &Expect::default(), into, once())
         .wait();
-    answered(&absent, 404);
+    let _: Answer = answered(&absent, 404);
     assert_eq!(client.erase(key).wait(), Ok(()));
 }
 

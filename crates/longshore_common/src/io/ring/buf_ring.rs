@@ -54,7 +54,7 @@ impl BufRing {
             resv: [0; 3],
         };
         if let Err(e) = ring.register_pbuf_ring(&reg) {
-            unsafe { munmap(raw, mmap_len) };
+            let _: i32 = unsafe { munmap(raw, mmap_len) };
             return Err(e);
         }
         let mut br = Self {
@@ -92,6 +92,6 @@ impl BufRing {
 
 impl Drop for BufRing {
     fn drop(&mut self) {
-        unsafe { munmap(self.ptr.cast(), self.mmap_len) };
+        let _: i32 = unsafe { munmap(self.ptr.cast(), self.mmap_len) };
     }
 }

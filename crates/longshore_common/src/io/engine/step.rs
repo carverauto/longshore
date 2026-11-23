@@ -156,7 +156,7 @@ impl<W: World> Engine<W> {
                         out.push(c);
                         i = idx + 1;
                     } else {
-                        self.pending.swap_remove(idx);
+                        let _: Pending = self.pending.swap_remove(idx);
                         self.finish_op(p, result);
                         self.record_trace(c);
                         out.push(c);

@@ -189,7 +189,7 @@ impl Posix {
         #[cfg(target_os = "macos")]
         if flags.direct && unsafe { fcntl(fd, F_NOCACHE, 1) } < 0 {
             let e = os_errno();
-            unsafe { close(fd) };
+            let _: i32 = unsafe { close(fd) };
             return to_linux_errno(e);
         }
         self.file_fds[slot.0 as usize] = fd;

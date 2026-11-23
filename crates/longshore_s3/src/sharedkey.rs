@@ -146,7 +146,7 @@ pub fn authorization(req: &Request, key: &[u8], out: &mut [u8]) -> Result<usize,
     let n = string_to_sign(req, &mut string)?;
     let mac = hmac_sha256(key, &string[..n]);
     let mut signature = [0u8; 44];
-    base64(&mac, &mut signature);
+    let _: usize = base64(&mac, &mut signature);
     let mut o = Out {
         buf: out,
         len: 0,

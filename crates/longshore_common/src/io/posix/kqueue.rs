@@ -36,7 +36,7 @@ impl Wake for KqueueWaker {
             udata: core::ptr::null_mut(),
         };
         unsafe {
-            kevent(
+            let _: i32 = kevent(
                 self.kq_dup,
                 &kev,
                 1,
@@ -51,7 +51,7 @@ impl Wake for KqueueWaker {
 impl Drop for KqueueWaker {
     fn drop(&mut self) {
         if self.kq_dup >= 0 {
-            unsafe { close(self.kq_dup) };
+            let _: i32 = unsafe { close(self.kq_dup) };
         }
     }
 }
@@ -69,7 +69,7 @@ impl Poller {
         }
         if unsafe { fcntl(kq, F_SETFD, FD_CLOEXEC) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(kq) };
+            let _: i32 = unsafe { close(kq) };
             return Err(err);
         }
         let wake_reg = kevent {
@@ -92,7 +92,7 @@ impl Poller {
         } < 0
         {
             let err = io::Error::from_raw_os_error(os_errno());
-            unsafe { close(kq) };
+            let _: i32 = unsafe { close(kq) };
             return Err(err);
         }
         Ok(Self {
@@ -267,7 +267,7 @@ impl Poller {
 impl Drop for Poller {
     fn drop(&mut self) {
         if self.kq >= 0 {
-            unsafe { close(self.kq) };
+            let _: i32 = unsafe { close(self.kq) };
         }
     }
 }

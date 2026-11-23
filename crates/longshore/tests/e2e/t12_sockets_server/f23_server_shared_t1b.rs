@@ -55,7 +55,8 @@ fn t1_f23_3_sim_armed_recv_under_reset_delivers_prior_bytes_then_final_reset() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 60, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 60, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();

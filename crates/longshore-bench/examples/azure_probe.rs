@@ -104,7 +104,7 @@ fn call(
     s.write_all(head.as_bytes()).unwrap();
     s.write_all(body).unwrap();
     let mut raw = Vec::new();
-    s.read_to_end(&mut raw).unwrap();
+    let _: usize = s.read_to_end(&mut raw).unwrap();
     let split = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")

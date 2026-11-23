@@ -92,7 +92,7 @@ mod linux {
 
     fn thread_cpu_secs() -> f64 {
         let mut ts = Timespec { sec: 0, nsec: 0 };
-        unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        let _: i32 = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) };
         ts.sec as f64 + ts.nsec as f64 / 1e9
     }
 
@@ -128,7 +128,7 @@ mod linux {
         if let Some(cpu) = args.get(5).and_then(|v| v.parse::<usize>().ok()) {
             let mut mask = [0u64; 16];
             mask[cpu / 64] |= 1 << (cpu % 64);
-            unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
+            let _: i32 = unsafe { sched_setaffinity(0, 128, mask.as_ptr()) };
         }
 
         // Handshake in user space, AES-128-GCM only so the key layout is fixed.
@@ -166,16 +166,18 @@ mod linux {
         let mut conn =
             rustls::ClientConnection::new(Arc::new(cfg), "bench.test".try_into().unwrap()).unwrap();
         let mut sock = TcpStream::connect(addr).unwrap_or_else(|e| die(&format!("{addr}: {e}")));
-        sock.set_nodelay(true).ok();
+        let _: Option<()> = sock.set_nodelay(true).ok();
         while conn.is_handshaking() {
-            conn.complete_io(&mut sock)
+            let _: (usize, usize) = conn
+                .complete_io(&mut sock)
                 .unwrap_or_else(|e| die(&format!("handshake: {e}")));
         }
         while conn.wants_write() {
-            conn.write_tls(&mut sock)
+            let _: usize = conn
+                .write_tls(&mut sock)
                 .unwrap_or_else(|e| die(&format!("handshake: {e}")));
         }
-        sock.flush().ok();
+        let _: Option<()> = sock.flush().ok();
         let secrets = conn
             .dangerous_extract_secrets()
             .unwrap_or_else(|e| die(&format!("secrets: {e}")));

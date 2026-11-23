@@ -54,14 +54,14 @@ impl Posix {
                         l_linger: 0,
                     };
                     unsafe {
-                        setsockopt(
+                        let _: i32 = setsockopt(
                             new_fd,
                             SOL_SOCKET,
                             SO_LINGER,
                             (&lin as *const linger).cast(),
                             size_of::<linger>() as u32,
                         );
-                        close(new_fd);
+                        let _: i32 = close(new_fd);
                     }
                     Some(Attempt::single(-errno::linux::ENFILE))
                 }
@@ -176,7 +176,7 @@ impl Posix {
             self.poller.arm_write(idx, &mut self.socks[idx]);
             return None;
         }
-        unsafe { close(fd) };
+        let _: i32 = unsafe { close(fd) };
         Some(to_linux_errno(e))
     }
 }

@@ -37,7 +37,7 @@ fn operations_complete_over_a_fixed_ipv6_endpoint() {
         token_base: 2 << 40,
         checksum: None,
     });
-    server.start(&mut io, ADDR_V6).unwrap();
+    let _: SocketAddr = server.start(&mut io, ADDR_V6).unwrap();
     let mut cfg = s3_config(3, false);
     cfg.endpoint = Endpoint::Fixed(ADDR_V6);
     let mut s3 = S3::new(cfg);

@@ -224,7 +224,7 @@ fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
     let mut sim = make_disk_sim(55, 512, 32, 64 * 1024);
     let mut out = Completions::new(16);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001);
-    sim.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = sim.listen(Sock(0), addr).unwrap();
     sim.submit(
         Token(1),
         Op::Accept {
@@ -263,7 +263,7 @@ fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
     sim.power_loss();
 
     // Rebuild listener + connection + file handle on the same SimIo.
-    sim.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = sim.listen(Sock(0), addr).unwrap();
     sim.submit(
         Token(10),
         Op::Accept {

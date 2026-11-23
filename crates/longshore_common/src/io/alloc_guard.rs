@@ -31,9 +31,9 @@ fn violation(what: &'static str) -> ! {
     let msg = b"alloc_guard: heap ";
     let tail = b" while sealed (allocation after initialization)\n";
     unsafe {
-        write(2, msg.as_ptr().cast(), msg.len());
-        write(2, what.as_ptr().cast(), what.len());
-        write(2, tail.as_ptr().cast(), tail.len());
+        let _: isize = write(2, msg.as_ptr().cast(), msg.len());
+        let _: isize = write(2, what.as_ptr().cast(), what.len());
+        let _: isize = write(2, tail.as_ptr().cast(), tail.len());
         abort()
     }
 }

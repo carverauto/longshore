@@ -118,9 +118,9 @@ fn written_heads_parse_back(tc: TestCase) {
 
     let mut buf = [0u8; LIMIT];
     let mut w = HeadWriter::request(&mut buf, method, &target);
-    w.header_u64("Content-Length", length);
+    let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", length);
     for (n, v) in &headers {
-        w.header(n, v.as_bytes());
+        let _: &mut HeadWriter<'_> = w.header(n, v.as_bytes());
     }
     let n = w.finish().expect("valid fields that fit must be accepted");
 
@@ -151,7 +151,7 @@ fn writer_never_emits_injected_lines(tc: TestCase) {
     let value = tc.draw(gs::binary().max_size(40));
     let mut buf = [0u8; 512];
     let mut w = HeadWriter::request(&mut buf, "GET", &target);
-    w.header(&name, &value);
+    let _: &mut HeadWriter<'_> = w.header(&name, &value);
     match w.finish() {
         Err(e) => assert_eq!(e, HttpError::BadRequest),
         Ok(n) => {
@@ -196,9 +196,9 @@ fn written_response_heads_parse_back(tc: TestCase) {
 
     let mut buf = [0u8; LIMIT];
     let mut w = HeadWriter::response(&mut buf, status, &reason);
-    w.header_u64("Content-Length", length);
+    let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", length);
     for (name, value) in names.iter().zip(&values) {
-        w.header(name, value.as_bytes());
+        let _: &mut HeadWriter<'_> = w.header(name, value.as_bytes());
     }
     let n = w.finish().expect("short enough to fit");
     let head = parse_response(&buf[..n], LIMIT)

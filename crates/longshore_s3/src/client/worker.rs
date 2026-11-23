@@ -158,7 +158,7 @@ impl Worker {
     }
 
     fn answer(&mut self, op: u32, finished: &Finished) {
-        self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+        let _: u32 = self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
         if let Some(buf) = self.rx.answer(op, *finished) {
             self.lane.give_buffer(buf);
         }
@@ -248,7 +248,7 @@ impl Worker {
         let stopping = &mut self.stopping;
         self.rx.begin_close(|item| match item {
             Recv::Message(r) => {
-                lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                let _: u32 = lane.in_flight.fetch_sub(1, Ordering::Relaxed);
                 if let Some(buf) =
                     lane.sender
                         .cells()

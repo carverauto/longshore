@@ -82,17 +82,17 @@ fn update_trimmed(h: &mut Sha256, value: &str) {
             continue;
         }
         if pending_space {
-            h.update(b" ");
+            let _: &mut Sha256 = h.update(b" ");
             pending_space = false;
         }
         started = true;
-        h.update(&[b]);
+        let _: &mut Sha256 = h.update(&[b]);
     }
 }
 
 fn update_lower(h: &mut Sha256, s: &str) {
     for b in s.bytes() {
-        h.update(&[b.to_ascii_lowercase()]);
+        let _: &mut Sha256 = h.update(&[b.to_ascii_lowercase()]);
     }
 }
 
@@ -113,20 +113,22 @@ pub fn canonical_request_sha256(req: &Request) -> Result<[u8; 32], SignError> {
 
     // Canonical request, hashed as it is generated.
     let mut h = Sha256::new();
-    h.update(req.method.as_bytes())
+    let _: &mut Sha256 = h
+        .update(req.method.as_bytes())
         .update(b"\n")
         .update(req.canonical_uri.as_bytes())
         .update(b"\n");
     for (n, i) in query[..req.query.len()].iter().enumerate() {
         let (name, value) = req.query[*i];
         if n > 0 {
-            h.update(b"&");
+            let _: &mut Sha256 = h.update(b"&");
         }
-        h.update(name.as_bytes())
+        let _: &mut Sha256 = h
+            .update(name.as_bytes())
             .update(b"=")
             .update(value.as_bytes());
     }
-    h.update(b"\n");
+    let _: &mut Sha256 = h.update(b"\n");
     // A name given more than once is one header: its values are joined
     // with commas in the order given (the sort is stable), and the name is
     // listed once among the signed headers.
@@ -140,32 +142,32 @@ pub fn canonical_request_sha256(req: &Request) -> Result<[u8; 32], SignError> {
     for (k, i) in order.iter().enumerate() {
         let (name, value) = req.headers[*i];
         if repeats(k) {
-            h.update(b",");
+            let _: &mut Sha256 = h.update(b",");
         } else {
             if k > 0 {
-                h.update(b"\n");
+                let _: &mut Sha256 = h.update(b"\n");
             }
             update_lower(&mut h, name);
-            h.update(b":");
+            let _: &mut Sha256 = h.update(b":");
         }
         update_trimmed(&mut h, value);
     }
     if !order.is_empty() {
-        h.update(b"\n");
+        let _: &mut Sha256 = h.update(b"\n");
     }
-    h.update(b"\n");
+    let _: &mut Sha256 = h.update(b"\n");
     let mut first = true;
     for (k, i) in order.iter().enumerate() {
         if repeats(k) {
             continue;
         }
         if !first {
-            h.update(b";");
+            let _: &mut Sha256 = h.update(b";");
         }
         first = false;
         update_lower(&mut h, req.headers[*i].0);
     }
-    h.update(b"\n").update(req.payload_hash.as_bytes());
+    let _: &mut Sha256 = h.update(b"\n").update(req.payload_hash.as_bytes());
     Ok(h.finish())
 }
 

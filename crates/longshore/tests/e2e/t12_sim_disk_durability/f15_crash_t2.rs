@@ -20,7 +20,7 @@ fn t2_f15_1_power_loss_drops_inflight_ops_frees_slots_clears_timers() {
     let mut sim = make_disk_sim(101, 512, 32, 64 * 1024);
     let mut out = Completions::new(16);
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9100);
-    sim.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = sim.listen(Sock(0), addr).unwrap();
     sim.submit(
         Token(1),
         Op::Accept {
@@ -91,7 +91,7 @@ fn t2_f15_1_power_loss_drops_inflight_ops_frees_slots_clears_timers() {
     );
 
     // Socket and file slots are immediately free for reuse.
-    sim.listen(Sock(0), addr).expect("listener slot 0 freed");
+    let _: SocketAddr = sim.listen(Sock(0), addr).expect("listener slot 0 freed");
     assert_eq!(
         open_file(&mut sim, &mut out, 20, FileSlot(0), "/reused.dat", rw),
         0
@@ -267,7 +267,7 @@ fn t2_f15_5_power_loss_respects_4096_sector_cuts() {
         );
         assert!(got[..prefix_new].iter().all(|&b| b == 0x22));
         assert!(got[prefix_new..].iter().all(|&b| b == 0x11));
-        submit_and_wait_one(
+        let _: Completion = submit_and_wait_one(
             &mut sim,
             &mut out,
             Token(22),

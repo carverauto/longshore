@@ -31,10 +31,10 @@ fn run_backend<IO: longshore::io::Io>(
     contract::run_all(make, addr);
     let unix_path = format!("/tmp/longshore-contract-{}.sock", std::process::id());
     // A file left by an earlier run would get in the way; usually there is none.
-    std::fs::remove_file(&unix_path).ok();
+    let _: Option<()> = std::fs::remove_file(&unix_path).ok();
     contract_net::run_all(make, addr, &unix_path);
     // Best-effort cleanup: a leftover temporary file does not change the result.
-    std::fs::remove_file(&unix_path).ok();
+    let _: Option<()> = std::fs::remove_file(&unix_path).ok();
 
     // Cross-thread wake while `tick(true)` is blocked in the kernel.
     {

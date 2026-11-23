@@ -40,7 +40,7 @@ pub(super) fn unescape(raw: &[u8], out: &mut [u8]) -> Option<usize> {
         };
         let c = char::from_u32(ch)?;
         let dst = out.get_mut(n..n + c.len_utf8())?;
-        c.encode_utf8(dst);
+        let _: &mut str = c.encode_utf8(dst);
         n += c.len_utf8();
         i = end + 1;
     }

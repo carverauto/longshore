@@ -52,7 +52,7 @@ fn t3_28_stream_and_mailbox_receiver_multiplexed_on_one_io() {
     let mut srv = Stream::new(Sock(2), Token(20), Token(21));
     write_pool_bytes(&mut io, BufId(0), 0, b"mux-stream");
     cli.send(&mut io, BufId(0), 0, 10, u32::MAX);
-    srv.recv(&mut io, BufId(1), 0, 16);
+    let _: Step = srv.recv(&mut io, BufId(1), 0, 16);
     tx.try_send(PingMsg { seq: 99, slot: 0 }).unwrap();
 
     let (mut got_msg, mut got_bytes) = (None, None);

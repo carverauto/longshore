@@ -144,7 +144,7 @@ impl<T: Output> Pending<T> {
     fn send(&mut self, op: u32) -> bool {
         let mut r = self.request.take().expect("sent once");
         r.op = op;
-        self.lane.in_flight.fetch_add(1, Ordering::Relaxed);
+        let _: u32 = self.lane.in_flight.fetch_add(1, Ordering::Relaxed);
         let tag = self.buf.filter(|&b| b != NO_INDEX);
         match self.lane.sender.send_slot(op, tag, r) {
             Ok(()) => {
@@ -153,12 +153,12 @@ impl<T: Output> Pending<T> {
             }
             Err(TrySendError::Closed(r)) => {
                 self.request = Some(r);
-                self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                let _: u32 = self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
                 self.lane.sender.pool().give(op);
                 false
             }
             Err(TrySendError::Full(_)) => {
-                self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
+                let _: u32 = self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
                 self.lane.sender.pool().give(op);
                 panic!("mailbox queue full while holding an operation slot");
             }

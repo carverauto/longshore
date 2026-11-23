@@ -130,7 +130,7 @@ fn posix_io_wakes_from_another_thread_without_any_timer() {
         while let Some(c) = out.pop() {
             assert!(rx.on_completion(&mut io, c).unwrap());
         }
-        rx.drain(|item| match item {
+        let _: bool = rx.drain(|item| match item {
             Recv::Message(v) => got.push(v),
             Recv::Stop => stopped = true,
             Recv::Closed => panic!("unexpected Closed before Stop"),

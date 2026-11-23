@@ -94,7 +94,7 @@ fn threaded_client_operations_allocate_nothing_after_waker_warmup() {
                         io.submit(WAKE_TOKEN, Op::AwaitWake).expect("rearm wake");
                     }
                 } else {
-                    server.on_completion(&mut io, c);
+                    let _: bool = server.on_completion(&mut io, c);
                 }
             }
         }
@@ -136,7 +136,7 @@ fn threaded_client_operations_allocate_nothing_after_waker_warmup() {
             std::thread::spawn(move || {
                 // Warm this thread's block_on waker before sealing allocations.
                 block_on(core::future::ready(()));
-                start.wait();
+                let _: std::sync::BarrierWaitResult = start.wait();
 
                 sealed(|| {
                     for round in 0..ROUNDS {
@@ -191,7 +191,7 @@ fn threaded_client_operations_allocate_nothing_after_waker_warmup() {
                     assert_eq!(block_on(client.erase(&detach_key)), Ok(()));
                 });
 
-                end.wait();
+                let _: std::sync::BarrierWaitResult = end.wait();
             })
         })
         .collect();

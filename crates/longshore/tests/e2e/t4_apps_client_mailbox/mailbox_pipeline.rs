@@ -62,7 +62,7 @@ fn spawn_posix_receiver(
                         match io_rx.try_recv() {
                             TryRecv::Message(job) => {
                                 handled += 1;
-                                tx_done.fetch_add(1, Ordering::Relaxed);
+                                let _: usize = tx_done.fetch_add(1, Ordering::Relaxed);
                                 if handled == 1 {
                                     if let Some(gate) = &answer_gate {
                                         let (lock, cv) = &**gate;
@@ -258,11 +258,11 @@ fn t4_10_cross_core_mailbox_pipeline_multipool_stop_and_close_race() {
                     )
                     .wait();
                 if ans == u32::MAX {
-                    cc.fetch_add(1, Ordering::Relaxed);
+                    let _: usize = cc.fetch_add(1, Ordering::Relaxed);
                     sf.store(true, Ordering::Relaxed);
                 } else {
                     assert_eq!(ans, (rid * 10 + k) * 2);
-                    ac.fetch_add(1, Ordering::Relaxed);
+                    let _: usize = ac.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }));

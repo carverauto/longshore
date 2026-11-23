@@ -40,7 +40,7 @@ fn die(msg: &str) -> ! {
 
 fn thread_cpu_secs() -> f64 {
     let mut ts = [0i64; 2];
-    unsafe { clock_gettime(3, &mut ts) };
+    let _: i32 = unsafe { clock_gettime(3, &mut ts) };
     ts[0] as f64 + ts[1] as f64 / 1e9
 }
 

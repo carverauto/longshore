@@ -152,7 +152,7 @@ fn cancel_stops_a_pending_operation() {
     use longshore_common::io::{BufId, Io, Op, Sock, Token};
     let mut io = SimIo::new(LIMITS, 3, Faults::default());
     let mut out = Completions::new(8);
-    io.listen(Sock(0), ADDR).unwrap();
+    let _: SocketAddr = io.listen(Sock(0), ADDR).unwrap();
     io.submit(
         Token(1),
         Op::Accept {
@@ -247,8 +247,8 @@ fn a_stale_peer_cannot_disturb_a_reused_slot() {
         seen
     };
     let (listener, client, old_server, new_server) = (Sock(0), Sock(1), Sock(2), Sock(3));
-    io.listen(listener, ADDR).unwrap();
-    run(
+    let _: SocketAddr = io.listen(listener, ADDR).unwrap();
+    let _: Vec<(u64, i32)> = run(
         &mut io,
         &[
             (
@@ -268,8 +268,8 @@ fn a_stale_peer_cannot_disturb_a_reused_slot() {
         ],
     );
     // The client closes and reconnects in the same slot; the server accepts it elsewhere.
-    run(&mut io, &[(3, Op::Close { sock: client })]);
-    run(
+    let _: Vec<(u64, i32)> = run(&mut io, &[(3, Op::Close { sock: client })]);
+    let _: Vec<(u64, i32)> = run(
         &mut io,
         &[
             (
@@ -289,7 +289,7 @@ fn a_stale_peer_cannot_disturb_a_reused_slot() {
         ],
     );
     // Only now does the old server-side socket close.
-    run(&mut io, &[(6, Op::Close { sock: old_server })]);
+    let _: Vec<(u64, i32)> = run(&mut io, &[(6, Op::Close { sock: old_server })]);
     io.buf(BufId(0))[..5].copy_from_slice(b"hello");
     let r = run(
         &mut io,
@@ -334,7 +334,7 @@ fn close_ends_an_accepted_connect_not_yet_reported() {
     for seed in 0..200u64 {
         let mut io = SimIo::new(LIMITS, seed, Faults::default());
         let mut out = Completions::new(8);
-        io.listen(listener, ADDR).unwrap();
+        let _: SocketAddr = io.listen(listener, ADDR).unwrap();
         io.submit(
             Token(1),
             Op::Connect {

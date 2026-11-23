@@ -157,7 +157,7 @@ pub fn cancel_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAdd
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        connect_pair(&mut io, &mut out, addr);
+        let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
         io.submit(Token(10), recv_op(SERVER, BufId(0), 1024))
             .unwrap();
         io.tick(false, &mut out).unwrap();
@@ -206,7 +206,7 @@ pub fn close_cases<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr
     {
         let mut io = make(limits);
         let mut out = Completions::new(8);
-        connect_pair(&mut io, &mut out, addr);
+        let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
         io.submit(Token(10), recv_op(SERVER, BufId(0), 1024))
             .unwrap();
         io.tick(false, &mut out).unwrap();
@@ -283,7 +283,7 @@ pub fn wake_ready<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
 pub fn recv_now_and_closed_peer<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
     let mut io = make(io_limits());
     let mut out = Completions::new(8);
-    connect_pair(&mut io, &mut out, addr);
+    let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
 
     io.submit(Token(10), recv_now_op(SERVER, BufId(0), 64))
         .unwrap();
@@ -348,7 +348,7 @@ pub fn cancel_never_cancels_close<IO: Io>(make: &mut impl FnMut(Limits) -> IO, a
         for tick_recv in [false, true] {
             let mut io = make(io_limits());
             let mut out = Completions::new(8);
-            connect_pair(&mut io, &mut out, addr);
+            let _: SocketAddr = connect_pair(&mut io, &mut out, addr);
             for k in 0..shift {
                 io.submit(Token(100 + k), Op::Timeout { nanos: 0 }).unwrap();
                 assert_eq!(drain_n(&mut io, &mut out, 1), vec![(100 + k, 0)]);

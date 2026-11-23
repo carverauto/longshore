@@ -27,7 +27,7 @@ fn t2_f03_2_stall_ticks_deadlock_timed_out() {
     let mut io = SimIo::new(sim_limits(), 1, Faults::default());
     let mut out = Completions::new(8);
     let addr: SocketAddr = "192.0.2.1:443".parse().unwrap();
-    io.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = io.listen(Sock(0), addr).unwrap();
     io.submit(
         Token(1),
         Op::Accept {
@@ -99,7 +99,7 @@ fn t2_f03_3_read_file_absent_returns_enoent() {
 fn t2_f03_4_duplicate_listen_returns_addr_in_use() {
     let mut io = SimIo::new(sim_limits(), 1, Faults::default());
     let addr: SocketAddr = "192.0.2.5:8080".parse().unwrap();
-    io.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = io.listen(Sock(0), addr).unwrap();
     let err = io.listen(Sock(1), addr).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::AddrInUse);
 }
@@ -116,7 +116,7 @@ fn t2_f03_5_connect_refused_fault_leaves_slot_reusable() {
         },
     );
     let mut out = Completions::new(8);
-    io.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = io.listen(Sock(0), addr).unwrap();
     io.submit(
         Token(1),
         Op::Connect {

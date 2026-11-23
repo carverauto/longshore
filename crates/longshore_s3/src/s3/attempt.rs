@@ -149,7 +149,7 @@ impl S3 {
             .map(|v| core::str::from_utf8(v).expect("base64 is ASCII"));
         let mut sha_value = [0u8; 44];
         let sha_str = s.sha256.map(|digest| {
-            longshore_crc::base64(&digest, &mut sha_value);
+            let _: usize = longshore_crc::base64(&digest, &mut sha_value);
             core::str::from_utf8(&sha_value).expect("base64 is ASCII")
         });
         let asked = s.exact.unwrap_or_default();

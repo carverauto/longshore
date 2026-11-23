@@ -206,7 +206,7 @@ fn a_key_is_accepted_up_to_the_encoded_limit_and_refused_one_byte_past_it() {
         let result = w.s3.erase(&mut w.io, token, key);
         if result.is_ok() {
             // Whatever the test server makes of so long a key, the slot is freed.
-            w.last();
+            let _: Done = w.last();
         }
         result
     };

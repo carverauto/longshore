@@ -204,7 +204,7 @@ impl WalEngine {
         io.submit_chain(&[(t_w, w_op), (t_s, s_op)])
             .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Busy"))?;
         let (mut w, mut s) = (0, 0);
-        drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
+        let _: usize = drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
             let cw = v.iter().find(|c| c.token == t_w);
             let cs = v.iter().find(|c| c.token == t_s);
             if let (Some(a), Some(b)) = (cw, cs) {
@@ -292,7 +292,7 @@ impl WalEngine {
         io.submit_chain(&[(t1, o_op), (t2, s_op), (t3, c_op)])
             .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Busy"))?;
         let mut s_res = 0;
-        drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
+        let _: usize = drive_until_stack::<IO, 32>(io, out, 10_000, |v| {
             if v.iter().any(|c| c.token == t3) {
                 s_res = v.iter().find(|c| c.token == t2).map_or(0, |c| c.result);
                 return true;

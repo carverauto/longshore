@@ -72,7 +72,7 @@ fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
     let timeout = client_cfg().request_timeout_ns;
     for seed in 0..64 {
         let mut w = world(seed, Faults::default());
-        w.io.listen(LISTEN, PEER).unwrap();
+        let _: SocketAddr = w.io.listen(LISTEN, PEER).unwrap();
         w.io.submit(
             Token(ACCEPT),
             Op::Accept {

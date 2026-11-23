@@ -107,7 +107,7 @@ pub fn base64(input: &[u8], out: &mut [u8]) -> usize {
 /// checksum's eight bytes, most significant first.
 pub fn crc64_header_value(crc: u64) -> [u8; 12] {
     let mut out = [0u8; 12];
-    base64(&crc.to_be_bytes(), &mut out);
+    let _: usize = base64(&crc.to_be_bytes(), &mut out);
     out
 }
 
@@ -117,7 +117,7 @@ pub fn crc64_header_value(crc: u64) -> [u8; 12] {
 /// to the other; not yet against a real storage account.
 pub fn crc64_azure_header_value(crc: u64) -> [u8; 12] {
     let mut out = [0u8; 12];
-    base64(&crc.to_le_bytes(), &mut out);
+    let _: usize = base64(&crc.to_le_bytes(), &mut out);
     out
 }
 
@@ -125,7 +125,7 @@ pub fn crc64_azure_header_value(crc: u64) -> [u8; 12] {
 /// most significant first.
 pub fn crc32c_header_value(crc: u32) -> [u8; 8] {
     let mut out = [0u8; 8];
-    base64(&crc.to_be_bytes(), &mut out);
+    let _: usize = base64(&crc.to_be_bytes(), &mut out);
     out
 }
 

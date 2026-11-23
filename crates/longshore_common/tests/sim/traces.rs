@@ -46,7 +46,7 @@ fn exercise_all_ops(seed: u64, faults: Faults) -> u64 {
     // 1. Register file, set contents, listen TCP, bind UDP, get waker.
     let file = io.register_file("creds.txt").unwrap();
     io.set_file(file, Some(b"secret-key"));
-    io.listen(LISTENER, TCP_ADDR).unwrap();
+    let _: SocketAddr = io.listen(LISTENER, TCP_ADDR).unwrap();
     io.bind_udp(UDP_SRV, UDP_ADDR);
     let waker = io.waker().unwrap();
     waker.wake();

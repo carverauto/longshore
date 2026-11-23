@@ -54,10 +54,10 @@ fn run_writing(
         at_server = (at_server + step).min(to_server.len());
         at_client = (at_client + step).min(to_client.len());
         let used = server.read(&to_server[..at_server])?;
-        to_server.drain(..used);
+        let _: std::vec::Drain<'_, u8> = to_server.drain(..used);
         at_server -= used;
         let used = client.read(&to_client[..at_client])?;
-        to_client.drain(..used);
+        let _: std::vec::Drain<'_, u8> = to_client.drain(..used);
         at_client -= used;
         if client.is_done() && server.is_done() && to_server.is_empty() {
             return Ok(to_client);
@@ -198,7 +198,8 @@ fn flights_larger_than_the_write_buffer_go_out_in_pieces() {
         );
         // Nothing is written into no room, and nothing is lost by asking.
         assert_eq!(c.write(&mut []), 0);
-        run_writing(&mut c, &mut s, 4096, room).unwrap_or_else(|e| panic!("room {room}: {e:?}"));
+        let _: Vec<u8> = run_writing(&mut c, &mut s, 4096, room)
+            .unwrap_or_else(|e| panic!("room {room}: {e:?}"));
         let (mut ctx, mut srx) = (Direction::new(), Direction::new());
         c.finish(&mut ctx, &mut Direction::new()).unwrap();
         s.finish(&mut Direction::new(), &mut srx).unwrap();
@@ -285,7 +286,7 @@ fn a_handshake_record_larger_than_one_read_is_fed_completely() {
             Handshake::client(&cs, NAME).unwrap(),
             Handshake::server(&ss).unwrap(),
         );
-        run(&mut c, &mut s, step).unwrap_or_else(|e| panic!("step {step}: {e:?}"));
+        let _: Vec<u8> = run(&mut c, &mut s, step).unwrap_or_else(|e| panic!("step {step}: {e:?}"));
         let (mut ctx, mut crx, mut stx, mut srx) = (
             Direction::new(),
             Direction::new(),

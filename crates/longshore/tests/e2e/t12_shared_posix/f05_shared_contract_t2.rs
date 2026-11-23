@@ -121,7 +121,8 @@ fn t2_f05_3_connect_unbound_port_refused_and_slot_free() {
             io.submit(Token(10 + k as u64), Op::Close { sock }).unwrap();
         }
         // Teardown: the checks are done, and a slow close does not change them.
-        drive_until(&mut *io, &mut out, 1_000, |v| v.len() == 3).ok();
+        let _: Option<Vec<longshore::io::Completion>> =
+            drive_until(&mut *io, &mut out, 1_000, |v| v.len() == 3).ok();
     });
 }
 
@@ -173,7 +174,8 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
             },
         )
         .unwrap();
-        drive_until(&mut *io, &mut out, 1_000, |v| v.len() == 2).unwrap();
+        let _: Vec<longshore::io::Completion> =
+            drive_until(&mut *io, &mut out, 1_000, |v| v.len() == 2).unwrap();
 
         let idle = submit_and_wait_one(
             &mut *io,
@@ -233,7 +235,7 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
         }
         assert_eq!(got.as_slice(), msg);
 
-        submit_and_wait_one(
+        let _: longshore::io::Completion = submit_and_wait_one(
             &mut *io,
             &mut out,
             Token(tok),
@@ -262,7 +264,7 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
                 eof = r.result;
                 break;
             }
-            submit_and_wait_one(
+            let _: longshore::io::Completion = submit_and_wait_one(
                 &mut *io,
                 &mut out,
                 Token(tok),
@@ -279,6 +281,7 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
                 .unwrap();
         }
         // Teardown: the checks are done, and a slow close does not change them.
-        drive_until(&mut *io, &mut out, 100, |v| v.len() == 2).ok();
+        let _: Option<Vec<longshore::io::Completion>> =
+            drive_until(&mut *io, &mut out, 100, |v| v.len() == 2).ok();
     });
 }

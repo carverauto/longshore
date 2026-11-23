@@ -63,7 +63,7 @@ fn client_stores_and_fetches_over_loopback_on_portable_backend() {
                         io.submit(WAKE_TOKEN, Op::AwaitWake).expect("rearm wake");
                     }
                 } else {
-                    server.on_completion(&mut io, c);
+                    let _: bool = server.on_completion(&mut io, c);
                 }
             }
         }

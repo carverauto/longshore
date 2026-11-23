@@ -138,10 +138,10 @@ pub fn run_armed_net_ring_sealed() {
             }
         }
         // Teardown after the count is settled: a busy ring or a failed tick does not change it.
-        sim.submit(Token(900), Op::Close { sock: srv }).ok();
-        sim.submit(Token(901), Op::Close { sock: Sock(1) }).ok();
+        let _: Option<()> = sim.submit(Token(900), Op::Close { sock: srv }).ok();
+        let _: Option<()> = sim.submit(Token(901), Op::Close { sock: Sock(1) }).ok();
         for _ in 0..16 {
-            sim.tick(false, &mut out).ok();
+            let _: Option<()> = sim.tick(false, &mut out).ok();
             while out.pop().is_some() {}
         }
         cycles

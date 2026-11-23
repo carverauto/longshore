@@ -143,7 +143,8 @@ fn t1_f08_2_uring_submit_all_refused_open_does_not_block_trailing_ops() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 1_000, |v| !v.is_empty()).unwrap();
 
     // Queue failing open ahead of Timeout and FileWrite in one turn.
     let missing = dir.file_path("absent.dat");
@@ -232,7 +233,8 @@ fn t1_f08_4_uring_mixed_socket_and_file_ops_single_turn() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 1_000, |v| v.len() == 3).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 1_000, |v| v.len() == 3).unwrap();
 
     write_pool_bytes(&mut io, BufId(1), 0, b"sock-msg");
     write_pool_bytes(&mut io, BufId(2), 0, b"file-msg");

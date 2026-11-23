@@ -101,7 +101,8 @@ fn t1_f19_2_plain_stream_and_tls_error_compile_with_or_without_tls_feature() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
 
     let mut s = Stream::new(Sock(1), Token(3), Token(4));
     assert!(!s.is_tls());

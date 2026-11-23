@@ -19,7 +19,7 @@ fn power_loss_drops_in_flight_ops_frees_slots_and_rebuilds_callers() {
     let mut out = Completions::new(16);
     let waker = sim.waker().unwrap();
 
-    sim.listen(Sock(0), ADDR).unwrap();
+    let _: SocketAddr = sim.listen(Sock(0), ADDR).unwrap();
     sim.submit(
         Token(1),
         Op::Accept {
@@ -151,7 +151,7 @@ fn power_loss_drops_in_flight_ops_frees_slots_and_rebuilds_callers() {
     });
 
     // Rebuild both ends of a fresh connection on the same sockets (listener slot freed).
-    sim.listen(Sock(0), ADDR).unwrap();
+    let _: SocketAddr = sim.listen(Sock(0), ADDR).unwrap();
     sim.submit(
         Token(300),
         Op::Accept {

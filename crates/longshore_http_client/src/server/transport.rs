@@ -99,29 +99,30 @@ impl Server {
         let limit = self.cfg.head_max as usize;
         let buf = &mut io.buf(self.head_buf(i))[..limit];
         let mut w = HeadWriter::response(buf, status, reason);
-        w.header_u64("Content-Length", content_length);
+        let _: &mut HeadWriter<'_> = w.header_u64("Content-Length", content_length);
         if close {
-            w.header("Connection", b"close");
+            let _: &mut HeadWriter<'_> = w.header("Connection", b"close");
         }
         if let Some(sum) = self.conns[i].reply_checksum.take() {
             if sum[8..] == [0; 4] {
                 let mut value = *b"crc32c=AAAAAAAA";
                 value[7..].copy_from_slice(&sum[..8]);
-                w.header("x-goog-hash", &value);
+                let _: &mut HeadWriter<'_> = w.header("x-goog-hash", &value);
             } else {
-                w.header("x-amz-checksum-crc64nvme", &sum);
+                let _: &mut HeadWriter<'_> = w.header("x-amz-checksum-crc64nvme", &sum);
             }
         }
         if let Some(slot) = self.conns[i].reply_object.take() {
             let o = &self.objects[slot as usize];
-            w.header("ETag", &multipart::tag(&o.data[..o.len as usize]));
-            w.header("Last-Modified", describing::LAST_MODIFIED);
+            let _: &mut HeadWriter<'_> =
+                w.header("ETag", &multipart::tag(&o.data[..o.len as usize]));
+            let _: &mut HeadWriter<'_> = w.header("Last-Modified", describing::LAST_MODIFIED);
             for (name, value) in describing::lines(&o.describing[..o.describing_len]) {
-                w.header(name, value);
+                let _: &mut HeadWriter<'_> = w.header(name, value);
             }
         }
         if let Some(tag) = self.conns[i].reply_tag.take() {
-            w.header("ETag", &tag);
+            let _: &mut HeadWriter<'_> = w.header("ETag", &tag);
         }
         self.identify(&mut w, i);
         let n = w.finish().expect("server heads are small and well-formed");

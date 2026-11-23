@@ -195,7 +195,7 @@ fn random_rates_replay_zero_stops_and_tear_invariants() {
         for seed in 0..20u64 {
             let l = tear_len(seed, sector_size);
             assert_eq!(l, tear_len(seed, sector_size));
-            cuts.insert(l);
+            let _: bool = cuts.insert(l);
         }
         assert!(cuts.len() > 1);
     }

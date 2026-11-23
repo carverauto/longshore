@@ -167,7 +167,7 @@ fn handle_disk_req(
             } else {
                 write_res
             };
-            io_rx.answer(slot, DiskResp::PutOk(status));
+            let _: Option<u32> = io_rx.answer(slot, DiskResp::PutOk(status));
         }
         DiskReq::Get { key, slot } => {
             let rd = Op::FileRead {
@@ -189,7 +189,7 @@ fn handle_disk_req(
             } else {
                 0
             };
-            io_rx.answer(slot, DiskResp::GetOk(read_res, val));
+            let _: Option<u32> = io_rx.answer(slot, DiskResp::GetOk(read_res, val));
         }
     }
 }
@@ -270,7 +270,7 @@ fn run_partitioned_service(net_seed: u64, disk_seed: u64) -> (u64, u64, Vec<(u32
         let try_dispatch = |accum: &mut Vec<u8>, pf: &mut Option<_>, cx: &mut Context<'_>| {
             if pf.is_none() && accum.len() >= 16 {
                 let fb: [u8; 16] = accum[..16].try_into().unwrap();
-                accum.drain(..16);
+                let _: std::vec::Drain<'_, u8> = accum.drain(..16);
                 let k = u32::from_le_bytes(fb[4..8].try_into().unwrap());
                 let v = u64::from_le_bytes(fb[8..16].try_into().unwrap());
                 let mut f = Box::pin(tx.call(

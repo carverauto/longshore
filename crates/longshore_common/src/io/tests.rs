@@ -88,13 +88,13 @@ fn a_pair_borrows_two_buffers_in_the_order_asked() {
 #[test]
 #[should_panic(expected = "buffer range out of bounds")]
 fn a_range_past_a_small_buffer_is_refused() {
-    LIMITS.range(BufId(2), 5, 6);
+    let _: std::ops::Range<usize> = LIMITS.range(BufId(2), 5, 6);
 }
 
 #[test]
 #[should_panic(expected = "buffer out of range")]
 fn a_buffer_past_the_pool_is_refused() {
-    LIMITS.span(BufId(5));
+    let _: (usize, usize) = LIMITS.span(BufId(5));
 }
 
 #[test]
@@ -107,20 +107,20 @@ fn a_range_may_end_exactly_at_its_buffers_end() {
 #[test]
 #[should_panic(expected = "buffer range out of bounds")]
 fn a_range_whose_end_overflows_is_refused() {
-    LIMITS.range(BufId(0), u32::MAX, 2);
+    let _: std::ops::Range<usize> = LIMITS.range(BufId(0), u32::MAX, 2);
 }
 
 #[test]
 #[should_panic(expected = "small buffer out of range")]
 fn a_small_buffer_past_the_last_is_refused() {
-    LIMITS.small(3);
+    let _: BufId = LIMITS.small(3);
 }
 
 #[test]
 #[should_panic(expected = "buf_pair needs two distinct pool buffers")]
 fn a_pair_of_the_same_buffer_is_refused() {
     let mut pool = vec![0u8; LIMITS.pool_bytes()];
-    LIMITS.pair(&mut pool, BufId(1), BufId(1));
+    let _: (&mut [u8], &mut [u8]) = LIMITS.pair(&mut pool, BufId(1), BufId(1));
 }
 
 #[test]

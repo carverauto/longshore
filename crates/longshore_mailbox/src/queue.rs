@@ -130,7 +130,7 @@ pub struct QueueSender<M: Copy> {
 
 impl<M: Copy> Clone for QueueSender<M> {
     fn clone(&self) -> Self {
-        self.shared.senders.fetch_add(1, Ordering::Relaxed);
+        let _: usize = self.shared.senders.fetch_add(1, Ordering::Relaxed);
         Self {
             shared: self.shared.clone(),
         }
@@ -293,7 +293,7 @@ impl<M: Copy> QueueSender<M> {
         let slot = &self.shared.slots[idx];
         debug_assert_eq!(slot.seq.load(Ordering::Acquire), pos);
         slot.val.with_mut(|p| unsafe {
-            (*p).write(Entry::Msg(msg));
+            let _: &mut Entry<M> = (*p).write(Entry::Msg(msg));
         });
         slot.seq.store(pos + 1, Ordering::Release);
         self.signal_msg();
@@ -329,7 +329,7 @@ impl<M: Copy> QueueSender<M> {
             let slot = &self.shared.slots[idx];
             debug_assert_eq!(slot.seq.load(Ordering::Acquire), pos);
             slot.val.with_mut(|p| unsafe {
-                (*p).write(Entry::Stop);
+                let _: &mut Entry<M> = (*p).write(Entry::Stop);
             });
             slot.seq.store(pos + 1, Ordering::Release);
         }

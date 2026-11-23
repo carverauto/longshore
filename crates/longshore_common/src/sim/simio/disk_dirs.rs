@@ -338,7 +338,8 @@ impl SimDisk {
             }
             let keep = (e.old_dir_synced && e.new_dir_synced) || rng.below(2) == 1;
             if keep {
-                self.apply_dir_change_to_durable(i);
+                let _: crate::sim::simio::disk::dirs_apply::ApplyReclaim =
+                    self.apply_dir_change_to_durable(i);
             }
         }
         self.dir_log_len = 0;

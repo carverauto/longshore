@@ -32,7 +32,7 @@ fn t2_f06_1_posix_stale_readiness_among_real_ready_ops() {
     connect_pair(&mut io, &mut out, Sock(3), Sock(4), Sock(5));
 
     write_pool_bytes(&mut io, BufId(0), 0, b"real");
-    submit_and_wait_one(
+    let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
         Token(10),
@@ -75,7 +75,7 @@ fn t2_f06_1_posix_stale_readiness_among_real_ready_ops() {
 
     // Sock(4) remains pending and receives real data when sent.
     write_pool_bytes(&mut io, BufId(0), 0, b"late");
-    submit_and_wait_one(
+    let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
         Token(13),
@@ -161,7 +161,7 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
     write_pool_bytes(&mut io, BufId(0), 0, b"msg1");
     write_pool_bytes(&mut io, BufId(1), 0, b"msg2");
     for (tok, sock, buf) in [(1, Sock(2), BufId(0)), (2, Sock(5), BufId(1))] {
-        submit_and_wait_one(
+        let _: longshore::io::Completion = submit_and_wait_one(
             &mut io,
             &mut setup_out,
             Token(tok),
@@ -213,7 +213,7 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while got.len() < 4 && std::time::Instant::now() < deadline {
         io.tick(false, &mut small_out).unwrap();
-        drain_completions(&mut small_out, &mut got);
+        let _: usize = drain_completions(&mut small_out, &mut got);
         if got.len() < 4 {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -242,7 +242,7 @@ fn t2_f06_4_posix_continuous_immediate_ops_do_not_starve_recv() {
     connect_pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
 
     write_pool_bytes(&mut io, BufId(0), 0, b"data");
-    submit_and_wait_one(
+    let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
         Token(1),
@@ -319,7 +319,7 @@ fn t2_f06_5_posix_linux_errno_mapping_and_waker_outlives_backend() {
     assert_eq!(again.result, -EAGAIN);
 
     // Close peer and send repeatedly until Linux -EPIPE (-32) or -ECONNRESET (-104).
-    submit_and_wait_one(
+    let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
         Token(2),

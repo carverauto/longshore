@@ -127,13 +127,13 @@ impl Drop for Posix {
         for s in self.socks.iter_mut() {
             if s.fd >= 0 {
                 self.poller.before_close(s);
-                unsafe { close(s.fd) };
+                let _: i32 = unsafe { close(s.fd) };
                 s.reset();
             }
         }
         for fd in self.file_fds.iter_mut() {
             if *fd >= 0 {
-                unsafe { close(*fd) };
+                let _: i32 = unsafe { close(*fd) };
                 *fd = -1;
             }
         }
@@ -176,7 +176,7 @@ impl PosixIo {
 
 pub(super) fn monotonic_ns() -> u64 {
     let mut ts = timespec::default();
-    unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
+    let _: i32 = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) };
     ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
 
@@ -187,7 +187,7 @@ impl World for Posix {
 
     fn unix_secs(&self) -> u64 {
         let mut ts = timespec::default();
-        unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
+        let _: i32 = unsafe { clock_gettime(CLOCK_REALTIME, &mut ts) };
         ts.tv_sec as u64
     }
 
@@ -342,7 +342,7 @@ impl World for Posix {
             let s = &mut self.socks[sock.0 as usize];
             if s.kind == SockKind::Connecting && s.fd >= 0 {
                 self.poller.before_close(s);
-                unsafe { close(s.fd) };
+                let _: i32 = unsafe { close(s.fd) };
                 s.reset();
             }
         }

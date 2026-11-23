@@ -68,7 +68,7 @@ fn main() {
     let mut conn =
         ClientConnection::new(Arc::new(config), host.clone().try_into().unwrap()).expect("client");
     while conn.is_handshaking() {
-        conn.complete_io(&mut sock).expect("handshake");
+        let _: (usize, usize) = conn.complete_io(&mut sock).expect("handshake");
     }
     let suite = conn.negotiated_cipher_suite().unwrap().suite();
     println!(
@@ -105,7 +105,7 @@ fn main() {
             let (ctype, n) = rx
                 .open(&inbox[..len], &mut out[..len - HEADER_LEN - TAG_LEN])
                 .expect("record must authenticate");
-            inbox.drain(..len);
+            let _: std::vec::Drain<'_, u8> = inbox.drain(..len);
             match ctype {
                 CONTENT_APPLICATION_DATA => {
                     counts[0] += 1;

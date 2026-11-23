@@ -281,7 +281,7 @@ impl FileTable {
                 | Op::FileUnlink { .. }
                 | Op::FileMkdir { .. } => {
                     if let Some(slot) = validate::slot_of(op) {
-                        self.sync_sim(slot, g).map_err(|e| (idx, e))?;
+                        let _: &SlotEntry = self.sync_sim(slot, g).map_err(|e| (idx, e))?;
                     }
                     validate::check_non_lifecycle(&self.slots, op, pool, limits, true)
                 }

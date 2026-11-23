@@ -63,15 +63,15 @@ fn rustls_client(cert: &[u8]) -> Connection {
 /// Give `bytes` to rustls, all of them.
 fn feed(peer: &mut Connection, mut bytes: &[u8]) {
     while !bytes.is_empty() {
-        peer.read_tls(&mut bytes).unwrap();
-        peer.process_new_packets().unwrap();
+        let _: usize = peer.read_tls(&mut bytes).unwrap();
+        let _: rustls::IoState = peer.process_new_packets().unwrap();
     }
 }
 
 /// Everything rustls has to send.
 fn drain(peer: &mut Connection, out: &mut Vec<u8>) {
     while peer.wants_write() {
-        peer.write_tls(out).unwrap();
+        let _: usize = peer.write_tls(out).unwrap();
     }
 }
 
@@ -85,7 +85,7 @@ fn handshake(ours: &mut Handshake, peer: &mut Connection) -> Vec<u8> {
         feed(peer, &buf[..n]);
         drain(peer, &mut to_us);
         let used = ours.read(&to_us).unwrap();
-        to_us.drain(..used);
+        let _: std::vec::Drain<'_, u8> = to_us.drain(..used);
         if ours.is_done() && !peer.is_handshaking() && !peer.wants_write() {
             return to_us;
         }

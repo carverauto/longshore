@@ -62,7 +62,8 @@ fn t2_f20_1_small_completions_buffer_drains_multi_completion_burst() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
@@ -130,7 +131,7 @@ fn t2_f20_2_armed_recv_cancelled_delivers_single_final_completion() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 50, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
         v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
     })
     .unwrap();
@@ -186,7 +187,8 @@ fn t2_f20_3_final_armed_recv_with_bytes_delivers_valid_buffer_payload() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
@@ -252,7 +254,7 @@ fn t2_f20_4_uring_empty_armed_recv_completions_never_leak_ring_buffers() {
             },
         )
         .unwrap();
-        drive_until(&mut io, &mut out, 50, |v| {
+        let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
             v.iter().any(|c| c.token == Token(1 + round * 10))
                 && v.iter().any(|c| c.token == Token(2 + round * 10))
         })
@@ -275,7 +277,7 @@ fn t2_f20_4_uring_empty_armed_recv_completions_never_leak_ring_buffers() {
         assert!(eof.buf.is_none());
         io.submit(Token(5 + round * 10), Op::Close { sock: Sock(2) })
             .unwrap();
-        drive_until(&mut io, &mut out, 50, |v| {
+        let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
             v.iter().any(|c| c.token == Token(5 + round * 10))
         })
         .unwrap();
@@ -313,7 +315,8 @@ fn t2_f20_5_armed_op_occupies_ops_max_until_final_completion() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
@@ -321,14 +324,14 @@ fn t2_f20_5_armed_op_occupies_ops_max_until_final_completion() {
         .unwrap();
     assert_eq!(io.submit(Token(5), Op::Timeout { nanos: 0 }), Err(Busy));
 
-    drive_until(&mut io, &mut out, 50, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
         v.iter().any(|c| c.token == Token(4))
     })
     .unwrap();
     io.submit(Token(7), Op::Cancel { target: Token(3) })
         .unwrap();
     assert_eq!(io.submit(Token(8), Op::Timeout { nanos: 0 }), Err(Busy));
-    drive_until(&mut io, &mut out, 50, |v| {
+    let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
         v.iter().any(|c| c.token == Token(3) && !c.more)
     })
     .unwrap();

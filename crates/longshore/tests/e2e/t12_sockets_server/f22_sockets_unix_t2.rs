@@ -216,7 +216,8 @@ fn t2_f22_5_close_ends_both_armed_recv_and_pending_send_and_signals_eof() {
         },
     )
     .unwrap();
-    drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
+    let _: Vec<longshore::io::Completion> =
+        drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
 
     io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
         .unwrap();
