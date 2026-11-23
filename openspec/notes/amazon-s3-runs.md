@@ -15,6 +15,14 @@ damaged on the way, and retries. Google Cloud Storage uses `CrcMismatch`
 and RustFS uses `BadDigest` (`bench/results/m27-self-hosted-stores.md`),
 but Amazon S3's code has not been seen.
 
+`s3_uring badcrc` prints only how the client classed the answer: a
+`Fatal(RetriesExhausted)` after 4 attempts means S3 answered `BadDigest`, and a
+`Fatal(Status(400))` after 1 attempt means some other code. Which code it
+was comes from `badcrc-curl.txt`: the script sends one signed PUT with a
+wrong `x-amz-checksum-crc64nvme` straight to S3 with curl, to a key under
+`longshore-badcrc/`, and keeps the status line and the body, where the code
+is.
+
 ## Why not a local store
 
 `bench/results/m27-self-hosted-stores.md` ran the same programs against
@@ -24,9 +32,9 @@ Ceph and RustFS already disagree on whether a wrong checksum is refused.
 
 ## What is needed
 
-- A Linux host on kernel 6.1 or later with a Rust toolchain and this
-  repository, with `RLIMIT_MEMLOCK` large enough for the buffers (the
-  benchmark instances already are).
+- A Linux host on kernel 6.1 or later with a Rust toolchain, curl 7.75 or
+  later (for `--aws-sigv4`) and this repository, with `RLIMIT_MEMLOCK`
+  large enough for the buffers (the benchmark instances already are).
 - An S3 bucket in a known region, with a name without dots.
 - Keys that can put, get, head and delete objects in that bucket, and
   nothing else. Temporary keys are fine: the script reads
@@ -59,6 +67,6 @@ Nothing is left in the bucket.
    what it shows and what it does not.
 3. Tick `add-reported-operations` 4.5 and `add-ipv6` 3.3 with the file
    name, and archive both changes.
-4. If S3's code for a checksum mismatch is not `BadDigest`, change it in
-   `crates/longshore_s3/src/s3/outcome.rs`. Either way, the comment there
-   that calls it assumed is updated.
+4. If S3's code for a checksum mismatch in `badcrc-curl.txt` is not
+   `BadDigest`, change it in `crates/longshore_s3/src/s3/outcome.rs`.
+   Either way, the comment there that calls it assumed is updated.

@@ -226,6 +226,10 @@ down() {
 }
 
 case "${1:-}" in
+up | run | down) cd "$(dirname "$0")/.." ;;
+esac
+
+case "${1:-}" in
 ceph-inside) ceph_inside ;;
 up) up "${2:-}" ;;
 run) run "${2:-}" ;;

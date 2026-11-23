@@ -68,7 +68,27 @@ step exact-https "$BIN/exact_s3"
 
 # 2. Whether S3 refuses a wrong CRC-64/NVME, and with which error code. The
 #    client assumes `BadDigest`; RustFS uses it (bench/results/m27).
+#    `s3_uring badcrc` prints only how the client classed the answer, so one
+#    signed PUT with a wrong checksum is also sent with curl, and its status
+#    line and body are kept: the error code is in that body.
 step badcrc-https "$BIN/s3_uring" badcrc
+
+badcrc_curl() {
+    local url body="longshore wrong checksum" hash token=()
+    url=https://$S3_BUCKET.s3.$S3_REGION.amazonaws.com/longshore-badcrc/$(date -u +%Y%m%dT%H%M%SZ)-$$
+    hash=$(printf %s "$body" | sha256sum | cut -d' ' -f1)
+    if [ -n "$S3_SESSION_TOKEN" ]; then
+        token=(-H "x-amz-security-token: $S3_SESSION_TOKEN")
+    fi
+    local sign=(--aws-sigv4 "aws:amz:$S3_REGION:s3" --user "$S3_ACCESS_KEY:$S3_SECRET_KEY" ${token[@]+"${token[@]}"})
+    curl -sS -i -X PUT "${sign[@]}" \
+        -H "Content-Type: application/octet-stream" \
+        -H "x-amz-content-sha256: $hash" \
+        -H "x-amz-checksum-crc64nvme: AAAAAAAAAAA=" \
+        --data-binary "$body" "$url"
+    curl -sS -o /dev/null -X DELETE "${sign[@]}" "$url"
+}
+step badcrc-curl badcrc_curl
 
 # 3. add-ipv6 3.3: the dual-stack endpoint, over IPv6 only, IPv6 first, and
 #    IPv4 for comparison, each over HTTP and HTTPS.
