@@ -132,6 +132,8 @@ impl Direction {
         if key.len() != suite.key_len() {
             return Err(RecordError::BadKey);
         }
+        // Before the first key: the fastest AES-GCM routine this CPU can run.
+        let _: bool = crate::wide_gcm::enable();
         self.clear();
         // SAFETY: `ctx` is owned storage of the right size and alignment.
         // `EVP_AEAD_CTX_zero` puts it in the state `EVP_AEAD_CTX_init`

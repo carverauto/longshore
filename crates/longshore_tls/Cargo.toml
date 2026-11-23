@@ -42,6 +42,10 @@ name = "tls_interop"
 path = "tests/tls/interop.rs"
 
 [[test]]
+name = "tls_wide_gcm"
+path = "tests/tls/wide_gcm.rs"
+
+[[test]]
 name = "tls_record"
 path = "tests/tls/record.rs"
 

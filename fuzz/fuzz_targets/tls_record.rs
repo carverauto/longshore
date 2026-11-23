@@ -13,6 +13,11 @@ use libfuzzer_sys::fuzz_target;
 #[allow(dead_code)]
 #[path = "../../crates/longshore_tls/src/record.rs"]
 mod record;
+// record.rs asks this module for the fastest AES-GCM routine before the
+// first key, as in the crate.
+#[allow(dead_code)]
+#[path = "../../crates/longshore_tls/src/wide_gcm.rs"]
+mod wide_gcm;
 use record::{record_len, Direction, Suite, CONTENT_APPLICATION_DATA, OVERHEAD};
 
 fuzz_target!(|data: &[u8]| {
