@@ -24,7 +24,7 @@ pub fn sha256_header(body: &[u8]) -> [u8; 44] {
     out
 }
 
-fn answered(report: Result<Report, longshore::client::Error>, status: u16) -> Answer {
+fn answered(report: &Result<Report, longshore::client::Error>, status: u16) -> Answer {
     match report.expect("a request was sent").end {
         End::Answered(answer) if answer.status == status => answer,
         other => panic!("expected an answer of {status}: {other:?}"),
@@ -50,7 +50,7 @@ pub fn round_trip(client: &Client, len: usize) {
     let report = put.expect("a request was sent");
     assert_eq!((report.sent, report.unanswered), (1, 0));
     assert_eq!(report.request.map(|signed| signed.method), Some("PUT"));
-    let stored = answered(Ok(report), 200);
+    let stored = answered(&Ok(report), 200);
     assert_eq!(stored.encryption, Some(ServerEncryption::Aes256));
     assert_eq!(stored.sha256, Some(sha256(&sent)));
     let expect = Expect {
@@ -59,17 +59,17 @@ pub fn round_trip(client: &Client, len: usize) {
     };
     assert!(expect.etag.is_some() && expect.version.is_some());
 
-    let head = answered(client.head(key, &expect, once()).wait(), 200);
+    let head = answered(&client.head(key, &expect, once()).wait(), 200);
     assert_eq!(head.content_length, Some(len as u64));
     assert_eq!((head.etag, head.version), (expect.etag, expect.version));
 
     let (whole, body) = client.get(key, None, &expect, body, once()).wait();
-    assert_eq!(answered(whole, 200).body_len as usize, len);
+    assert_eq!(answered(&whole, 200).body_len as usize, len);
     assert!(body.as_slice()[..len] == sent[..], "bytes differ");
     let (part, body) = client
         .get(key, Some((4096, 8191)), &expect, body, once())
         .wait();
-    let part = answered(part, 206);
+    let part = answered(&part, 206);
     let range = ContentRange {
         first: 4096,
         last: 8191,
@@ -81,7 +81,7 @@ pub fn round_trip(client: &Client, len: usize) {
     // The key is taken now, and a body that is not what its SHA-256 says
     // is refused wherever it is written.
     let (again, body) = client.put(key, body, len, &options, once()).wait();
-    answered(again, 412);
+    answered(&again, 412);
     let wrong = Put {
         checksum: Checksum::Sha256(sha256(b"other bytes")),
         ..options
@@ -89,7 +89,7 @@ pub fn round_trip(client: &Client, len: usize) {
     let (damaged, body) = client
         .put("exact-damaged", body, len, &wrong, once())
         .wait();
-    answered(damaged, 400);
+    answered(&damaged, 400);
 
     // A deadline that has passed sends nothing.
     let past = Budget::once(Instant::now() - Duration::from_millis(1));
@@ -101,7 +101,7 @@ pub fn round_trip(client: &Client, len: usize) {
     let (absent, _into) = client
         .get("exact-late", None, &Expect::default(), into, once())
         .wait();
-    answered(absent, 404);
+    answered(&absent, 404);
     assert_eq!(client.erase(key).wait(), Ok(()));
 }
 

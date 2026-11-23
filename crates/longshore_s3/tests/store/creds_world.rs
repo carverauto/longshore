@@ -62,10 +62,10 @@ pub fn world(seed: u64, faults: Faults) -> World {
 }
 
 pub fn world_with_buffers(seed: u64, faults: Faults, buf: u32) -> World {
-    world_validating(seed, faults, buf, Validate::List(KeyPrefix::EMPTY))
+    world_validating(seed, faults, buf, &Validate::List(KeyPrefix::EMPTY))
 }
 
-pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: Validate) -> World {
+pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate) -> World {
     let mut io = SimIo::new(limits(buf), seed, faults);
     let mut server = Server::new(server::Config {
         listener: Sock(0),
@@ -108,7 +108,7 @@ pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: Validate)
             buf: CREDS_BUF,
             reread_ns: REREAD_MS * MS,
             token: CREDS_TOKEN,
-            validate,
+            validate: *validate,
         }),
         requests_max: 4,
         attempts_max: 3,

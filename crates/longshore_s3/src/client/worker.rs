@@ -144,7 +144,7 @@ impl Worker {
     pub fn turn<IO: Io>(&mut self, io: &mut IO) {
         loop {
             match self.rx.try_recv() {
-                TryRecv::Message(r) => self.begin(io, r),
+                TryRecv::Message(r) => self.begin(io, &r),
                 TryRecv::Stop => self.stopping = true,
                 TryRecv::Empty => break,
                 // Every handle is gone: nothing more can be asked for.
@@ -157,9 +157,9 @@ impl Worker {
         self.report();
     }
 
-    fn answer(&mut self, op: u32, finished: Finished) {
+    fn answer(&mut self, op: u32, finished: &Finished) {
         self.lane.in_flight.fetch_sub(1, Ordering::Relaxed);
-        if let Some(buf) = self.rx.answer(op, finished) {
+        if let Some(buf) = self.rx.answer(op, *finished) {
             self.lane.give_buffer(buf);
         }
     }
@@ -175,13 +175,13 @@ impl Worker {
         }
         while let Some(d) = self.s3.poll() {
             self.running[d.token as usize] = false;
-            self.answer(d.token as u32, Finished::Outcome(d.outcome));
+            self.answer(d.token as u32, &Finished::Outcome(d.outcome));
         }
     }
 
-    fn begin<IO: Io>(&mut self, io: &mut IO, r: Request) {
+    fn begin<IO: Io>(&mut self, io: &mut IO, r: &Request) {
         if self.stopping {
-            self.answer(r.op, Finished::Closed);
+            self.answer(r.op, &Finished::Closed);
             return;
         }
         let key = core::str::from_utf8(&r.key[..r.key_len as usize]).unwrap_or("");
@@ -232,7 +232,7 @@ impl Worker {
         };
         match sent {
             Ok(()) => self.running[r.op as usize] = true,
-            Err(e) => self.answer(r.op, Finished::Rejected(e)),
+            Err(e) => self.answer(r.op, &Finished::Rejected(e)),
         }
     }
 
@@ -284,7 +284,7 @@ impl Worker {
                     Some(report) => Finished::Outcome(crate::s3::Outcome::Report(report)),
                     None => Finished::Closed,
                 };
-                self.answer(op as u32, finished);
+                self.answer(op as u32, &finished);
             }
         }
         let lane = &self.lane;

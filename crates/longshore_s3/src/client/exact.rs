@@ -61,9 +61,9 @@ impl Budget {
 
 /// The report of an operation that ends with one. Anything else means
 /// nothing was sent.
-fn report_of(finished: Finished, _: u32) -> Result<Report, Error> {
+fn report_of(finished: &Finished, _: u32) -> Result<Report, Error> {
     match finished {
-        Finished::Outcome(Outcome::Report(report)) => Ok(report),
+        Finished::Outcome(Outcome::Report(report)) => Ok(*report),
         other => Err(error_of(other)),
     }
 }

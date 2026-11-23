@@ -176,8 +176,8 @@ pub struct S3 {
 
 impl S3 {
     /// End the operation in slot `i` with `outcome`.
-    fn finish(&mut self, i: usize, outcome: Outcome) {
-        self.slots[i].outcome = outcome;
+    fn finish(&mut self, i: usize, outcome: &Outcome) {
+        self.slots[i].outcome = *outcome;
         self.slots[i].state = State::Finished;
     }
 }
@@ -341,7 +341,7 @@ impl S3 {
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
         if let Some(f) = self.cfg.credentials_file.filter(|f| f.token == c.token.0) {
             if self.provider == Provider::Reading {
-                self.on_credentials_read(io, f, c.result);
+                self.on_credentials_read(io, &f, c.result);
             }
             return true;
         }

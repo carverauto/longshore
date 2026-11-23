@@ -39,7 +39,7 @@ fn test_builder(srv: &HttpStoreServer, threads: u32, ops: u32, bufs: u32, waiter
     b
 }
 
-fn report_status(rep: Report) -> Option<u16> {
+fn report_status(rep: &Report) -> Option<u16> {
     match rep.end {
         End::Answered(ans) => Some(ans.status),
         _ => None,
@@ -63,16 +63,16 @@ fn t1_f27_1_builder_waiters_field_and_full_object_and_exact_report_api() {
     let (rep, buf) = client
         .put("k2", buf, 7, &Put::default(), Budget::UNLIMITED)
         .wait();
-    assert_eq!(report_status(rep.expect("put report")), Some(200));
+    assert_eq!(report_status(&rep.expect("put report")), Some(200));
     let head_rep = client
         .head("k2", &Expect::default(), Budget::UNLIMITED)
         .wait()
         .expect("head");
-    assert_eq!(report_status(head_rep), Some(200));
+    assert_eq!(report_status(&head_rep), Some(200));
     let (get_rep, buf) = client
         .get("k2", None, &Expect::default(), buf, Budget::UNLIMITED)
         .wait();
-    assert_eq!(report_status(get_rep.expect("get report")), Some(200));
+    assert_eq!(report_status(&get_rep.expect("get report")), Some(200));
     drop(buf);
 
     client.erase("k1").wait().expect("erase k1");

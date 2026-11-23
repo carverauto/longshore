@@ -60,7 +60,7 @@ pub struct Pending<T: Output> {
     /// The lent buffer the operation holds, as an index in the lane.
     buf: Option<u32>,
     /// The second argument is the part number, for a part of an upload.
-    map: fn(Finished, u32) -> Result<T::Value, Error>,
+    map: fn(&Finished, u32) -> Result<T::Value, Error>,
     number: u32,
 }
 
@@ -83,7 +83,7 @@ impl<T: Output> Pending<T> {
         buf: Option<u32>,
         len: u32,
         early: Option<Error>,
-        map: fn(Finished, u32) -> Result<T::Value, Error>,
+        map: fn(&Finished, u32) -> Result<T::Value, Error>,
     ) -> Self {
         let built = match early {
             Some(e) => Err(e),
@@ -165,7 +165,7 @@ impl<T: Output> Pending<T> {
         }
     }
 
-    fn finish(&mut self, finished: Finished) -> T {
+    fn finish(&mut self, finished: &Finished) -> T {
         self.stage = Stage::Taken;
         let buffer = self.buffer();
         T::build((self.map)(finished, self.number), buffer)
@@ -234,7 +234,7 @@ impl<T: Output> Pending<T> {
             Stage::Early(e) => self.early(e),
             Stage::Sent(op) => {
                 let finished = self.lane.sender.wait_answer(op);
-                self.finish(finished)
+                self.finish(&finished)
             }
             Stage::Slot | Stage::Taken => unreachable!("a result is taken once"),
         }
@@ -253,7 +253,7 @@ impl<T: Output> Future for Pending<T> {
         match me.stage {
             Stage::Early(e) => Poll::Ready(me.early(e)),
             Stage::Sent(op) => match me.lane.sender.poll_answer(op, cx) {
-                Poll::Ready(finished) => Poll::Ready(me.finish(finished)),
+                Poll::Ready(finished) => Poll::Ready(me.finish(&finished)),
                 Poll::Pending => Poll::Pending,
             },
             Stage::Slot => unreachable!("a slot was taken or the lane closed"),

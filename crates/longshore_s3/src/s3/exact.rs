@@ -228,13 +228,13 @@ impl S3 {
     /// End slot `i` with no answer to its last attempt.
     pub(super) fn end_unanswered(&mut self, i: usize, cause: Cause) {
         let exact = self.slots[i].exact.expect("only such operations end so");
-        self.finish(i, Outcome::Report(exact.report(cause)));
+        self.finish(i, &Outcome::Report(exact.report(cause)));
     }
 
     /// End slot `i` because its attempt could not begin.
     pub(super) fn fail_unsent(&mut self, i: usize, fatal: Fatal) {
         if self.slots[i].exact.is_none() {
-            return self.finish(i, Outcome::Fatal(fatal));
+            return self.finish(i, &Outcome::Fatal(fatal));
         }
         self.end_unanswered(
             i,
@@ -313,7 +313,7 @@ impl S3 {
             // Not used: an answer is what the operation ends with.
             Ok(_) => Cause::Closed,
         };
-        self.finish(i, Outcome::Report(exact.report(cause)));
+        self.finish(i, &Outcome::Report(exact.report(cause)));
     }
 
     /// What the response on `r.conn` said, for the operation in slot `s`.

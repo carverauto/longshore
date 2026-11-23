@@ -17,7 +17,7 @@ impl S3 {
     pub(super) fn on_credentials_read<IO: Io>(
         &mut self,
         io: &mut IO,
-        f: CredentialsFile,
+        f: &CredentialsFile,
         result: i32,
     ) {
         let again = Provider::Idle {

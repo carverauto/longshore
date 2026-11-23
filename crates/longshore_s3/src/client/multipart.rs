@@ -40,7 +40,7 @@ impl Client {
             checksums: self.sends_checksums(),
         };
         self.unbuffered(key, kind, |f, _| match f {
-            Finished::Outcome(Outcome::Begun { upload }) => Ok(upload),
+            Finished::Outcome(Outcome::Begun { upload }) => Ok(*upload),
             other => Err(error_of(other)),
         })
     }
@@ -73,7 +73,7 @@ impl Client {
             |f, number| match f {
                 Finished::Outcome(Outcome::PartStored { tag, checksum }) => Ok(Part {
                     number,
-                    tag,
+                    tag: *tag,
                     checksum: checksum.map(longshore_crc::crc64_header_value),
                 }),
                 other => Err(error_of(other)),

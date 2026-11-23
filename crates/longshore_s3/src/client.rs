@@ -239,7 +239,7 @@ impl Client {
         body: Buffer,
         len: usize,
         no_clobber: bool,
-        map: fn(Finished, u32) -> Result<T, Error>,
+        map: fn(&Finished, u32) -> Result<T, Error>,
     ) -> Pending<(Result<T, Error>, Buffer)> {
         let too_long = len > body.lane.buf_size;
         let (lane, buf, alive) = body.into_parts();
@@ -291,7 +291,7 @@ impl Client {
             0,
             None,
             |f, _| match f {
-                Finished::Outcome(Outcome::Fetched { len, .. }) => Ok(Some(len as usize)),
+                Finished::Outcome(Outcome::Fetched { len, .. }) => Ok(Some(*len as usize)),
                 Finished::Outcome(Outcome::NotFound) => Ok(None),
                 other => Err(error_of(other)),
             },
@@ -312,7 +312,7 @@ impl Client {
         &self,
         key: &str,
         kind: Kind,
-        map: fn(Finished, u32) -> Result<T, Error>,
+        map: fn(&Finished, u32) -> Result<T, Error>,
     ) -> Pending<Result<T, Error>> {
         let first = self.lanes[least_busy(&self.lanes)].clone();
         let pending = Pending::new((first, self.alive.clone()), key, kind, None, 0, None, map);
@@ -324,9 +324,9 @@ impl Client {
     }
 }
 
-fn error_of(f: Finished) -> Error {
+fn error_of(f: &Finished) -> Error {
     match f {
-        Finished::Outcome(Outcome::Fatal(fatal)) => Error::Store(fatal),
+        Finished::Outcome(Outcome::Fatal(fatal)) => Error::Store(*fatal),
         Finished::Outcome(_) => Error::Unexpected,
         Finished::Rejected(SubmitError::BadKey) => Error::BadKey,
         Finished::Rejected(SubmitError::BadRange) => Error::BadRange,
