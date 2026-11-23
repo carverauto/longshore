@@ -212,35 +212,11 @@ fn break_threads(fault: Fault, threads: u32) {
             std::thread::spawn(move || caller(&c, n, &s, &k))
         })
         .collect();
-    let count = |a: &AtomicU64| a.load(Ordering::Relaxed);
-    let reaches = |what: &str, a: &AtomicU64, target: u64| {
-        let started = Instant::now();
-        while count(a) < target {
-            assert!(
-                started.elapsed() < Duration::from_secs(20),
-                "{what}: {} of {target} after 20 s",
-                count(a)
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    };
     // Every thread is carrying work before one fails.
     reaches("round trips before the fault", &seen.stored, 200);
 
-    // Wait for the thread to notice. It may have had nothing in flight
-    // just then, so no caller need have seen an operation end closed.
-    let noticed = |thread: usize| {
-        let started = Instant::now();
-        while !client.thread_failed(thread) {
-            assert!(
-                started.elapsed() < Duration::from_secs(10),
-                "I/O thread {thread} never noticed its ring had failed"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    };
     client.inject_fault(0, fault);
-    noticed(0);
+    noticed(&client, 0);
     let after_first = count(&seen.stored);
     // The threads still running carry on.
     reaches(
@@ -253,7 +229,7 @@ fn break_threads(fault: Fault, threads: u32) {
     for thread in 1..threads as usize {
         client.inject_fault(thread, fault);
     }
-    (1..threads as usize).for_each(noticed);
+    (1..threads as usize).for_each(|thread| noticed(&client, thread));
     let all_noticed = count(&seen.stored);
     // With no thread left every call still returns, and returns closed.
     reaches(
@@ -261,13 +237,66 @@ fn break_threads(fault: Fault, threads: u32) {
         &seen.closed,
         closed_by_first + 200,
     );
-    // A failed thread marks its lane closed before it quiesces, and only
-    // then reports the outcomes of operations that had already finished
-    // before the failure. Those are real successes and may arrive after
-    // every thread noticed, so wait for the count to stop changing. Each
-    // thread has CONNS operation slots, so at most threads * CONNS
-    // operations can have finished unreported; anything more succeeded
-    // after the failure.
+    settle_after_failure(&seen, all_noticed, threads);
+    if fault == Fault::RingLost {
+        assert!(count(&seen.void) > 0, "no buffer came back void");
+    }
+    stop.store(true, Ordering::Release);
+    for c in callers {
+        c.join().or_die("a caller failed");
+    }
+    // The failed threads are still there, refusing work, until the last
+    // handle goes.
+    assert_eq!(io_threads(), threads_before + threads as usize);
+    drop(client);
+    settles("I/O threads after the drop", threads_before, io_threads);
+    settles("descriptors after the drop", fds_before, descriptors);
+    println!(
+        "ok break {fault:?}: {threads} I/O threads, {} round trips, {} operations ended closed, {} void buffers, threads and descriptors gone",
+        count(&seen.stored),
+        count(&seen.closed),
+        count(&seen.void)
+    );
+}
+
+fn count(a: &AtomicU64) -> u64 {
+    a.load(Ordering::Relaxed)
+}
+
+/// Wait up to 20 seconds for the counter `a` to reach `target`.
+fn reaches(what: &str, a: &AtomicU64, target: u64) {
+    let started = Instant::now();
+    while count(a) < target {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "{what}: {} of {target} after 20 s",
+            count(a)
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Wait for the thread to notice. It may have had nothing in flight
+/// just then, so no caller need have seen an operation end closed.
+fn noticed(client: &Client, thread: usize) {
+    let started = Instant::now();
+    while !client.thread_failed(thread) {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "I/O thread {thread} never noticed its ring had failed"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// A failed thread marks its lane closed before it quiesces, and only
+/// then reports the outcomes of operations that had already finished
+/// before the failure. Those are real successes and may arrive after
+/// every thread noticed, so wait for the count to stop changing. Each
+/// thread has CONNS operation slots, so at most threads * CONNS
+/// operations can have finished unreported; anything more succeeded
+/// after the failure.
+fn settle_after_failure(seen: &Seen, all_noticed: u64, threads: u32) {
     let started = Instant::now();
     let mut settled = count(&seen.stored);
     loop {
@@ -287,24 +316,5 @@ fn break_threads(fault: Fault, threads: u32) {
         "{} operations succeeded after every I/O thread failed, more than the {} that could have been finished and unreported",
         settled - all_noticed,
         threads * CONNS
-    );
-    if fault == Fault::RingLost {
-        assert!(count(&seen.void) > 0, "no buffer came back void");
-    }
-    stop.store(true, Ordering::Release);
-    for c in callers {
-        c.join().or_die("a caller failed");
-    }
-    // The failed threads are still there, refusing work, until the last
-    // handle goes.
-    assert_eq!(io_threads(), threads_before + threads as usize);
-    drop(client);
-    settles("I/O threads after the drop", threads_before, io_threads);
-    settles("descriptors after the drop", fds_before, descriptors);
-    println!(
-        "ok break {fault:?}: {threads} I/O threads, {} round trips, {} operations ended closed, {} void buffers, threads and descriptors gone",
-        count(&seen.stored),
-        count(&seen.closed),
-        count(&seen.void)
     );
 }
