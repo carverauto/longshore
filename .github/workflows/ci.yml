@@ -50,9 +50,10 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint
         run: |
-          cargo clippy --workspace --all-targets -- -D warnings
+          # Every feature on covers the default build and fault-injection;
+          # TLS off is the only build with code of its own (not(feature = "tls")).
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
           cargo clippy --workspace --exclude longshore-bench --all-targets --no-default-features -- -D warnings
-          cargo clippy -p longshore_common --all-targets --features fault-injection -- -D warnings
       - name: Plain build excludes TLS and AWS-LC
         run: |
           tree=$(cargo tree -p longshore --no-default-features -e normal)
@@ -94,8 +95,7 @@ jobs:
           rustup default "${RUST_VERSION}"
       - name: Lint
         run: |
-          cargo clippy -p longshore_common -p longshore_s3 --all-targets -- -D warnings
-          cargo clippy -p longshore_common --all-targets --features fault-injection -- -D warnings
+          cargo clippy -p longshore_common -p longshore_s3 --all-targets --all-features -- -D warnings
       - name: Test
         run: |
           cargo test -p longshore_common

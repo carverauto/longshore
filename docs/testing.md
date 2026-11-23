@@ -17,7 +17,8 @@ real-kernel checks) has to be cross-compiled and run on a Linux host.
 cargo test --workspace          # unit, simulation and property tests
 cargo test --workspace --exclude longshore-bench --no-default-features  # plain build without longshore_tls / aws-lc-sys
 cargo test -p longshore_common --features fault-injection               # stale-readiness and fault-injection tests
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --exclude longshore-bench --all-targets --no-default-features -- -D warnings
 ./scripts/test-model.sh         # the client's hand-offs, model checked
 ./scripts/test.sh               # the tests and the model, then the real-kernel checks
 cargo bench -p longshore-bench --bench <name>   # criterion microbenchmarks (see bench/README.md)

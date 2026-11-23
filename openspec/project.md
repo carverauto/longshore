@@ -53,6 +53,7 @@ either redesigned or left out.
 
 ### Code Style
 - `cargo fmt`, and `cargo clippy --workspace --all-targets -- -D warnings`
+  with `--all-features` and again with `--no-default-features`
 - Files stay under roughly 400 lines; split by responsibility before that
 - Tests live in their own files, not inline with the code under test
 - Every source file carries the Apache 2.0 header (`scripts/license-headers.py`)
