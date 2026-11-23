@@ -86,7 +86,12 @@ badcrc_curl() {
         -H "x-amz-content-sha256: $hash" \
         -H "x-amz-checksum-crc64nvme: AAAAAAAAAAA=" \
         --data-binary "$body" "$url"
-    curl -sS -o /dev/null -X DELETE "${sign[@]}" "$url"
+    # curl before 8 does not add x-amz-content-sha256 itself, and S3 needs it
+    # signed: this is the SHA-256 of the empty body. Its status is kept, so a
+    # refused DELETE does not pass unseen (204 means the key is gone).
+    curl -sS -o /dev/null -w '\nDELETE status: %{http_code}\n' -X DELETE "${sign[@]}" \
+        -H "x-amz-content-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+        "$url"
 }
 step badcrc-curl badcrc_curl
 
