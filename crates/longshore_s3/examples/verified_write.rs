@@ -27,29 +27,8 @@ use std::time::{Duration, Instant};
 type Failure = Box<dyn std::error::Error>;
 
 fn main() -> Result<(), Failure> {
-    let var = |name: &str| std::env::var(name).map_err(|_| format!("set {name}"));
     let key = std::env::args().nth(1).ok_or("give the key to write")?;
-    let credentials = match var("AWS_SESSION_TOKEN") {
-        Ok(token) => Credentials::with_session(
-            &var("AWS_ACCESS_KEY_ID")?,
-            &var("AWS_SECRET_ACCESS_KEY")?,
-            &token,
-        ),
-        Err(_) => Credentials::new(&var("AWS_ACCESS_KEY_ID")?, &var("AWS_SECRET_ACCESS_KEY")?),
-    }
-    .ok_or("the credentials are not usable")?;
-    let mut settings = Builder::new(
-        &var("LONGSHORE_HOST")?,
-        &var("LONGSHORE_REGION")?,
-        credentials,
-    );
-    settings.bucket_in_path = var("LONGSHORE_BUCKET").ok();
-    (settings.tls, settings.port) = (true, 443);
-    // One operation at a time needs little: a megabyte for the object, and
-    // what two connections use.
-    (settings.connections, settings.buffers, settings.operations) = (2, 2, 2);
-    settings.buffer_size = 1 << 20;
-    let client = settings.build()?;
+    let client = client_from_env()?;
 
     // Everything below shares one deadline, and each step is one request.
     let budget = Budget::once(Instant::now() + Duration::from_secs(30));
@@ -109,6 +88,33 @@ fn main() -> Result<(), Failure> {
     )?;
     println!("read back whole and in part: {} bytes match", bytes.len());
     Ok(())
+}
+
+/// A client for the store the environment names, sized for one operation
+/// at a time.
+fn client_from_env() -> Result<Client, Failure> {
+    let var = |name: &str| std::env::var(name).map_err(|_| format!("set {name}"));
+    let credentials = match var("AWS_SESSION_TOKEN") {
+        Ok(token) => Credentials::with_session(
+            &var("AWS_ACCESS_KEY_ID")?,
+            &var("AWS_SECRET_ACCESS_KEY")?,
+            &token,
+        ),
+        Err(_) => Credentials::new(&var("AWS_ACCESS_KEY_ID")?, &var("AWS_SECRET_ACCESS_KEY")?),
+    }
+    .ok_or("the credentials are not usable")?;
+    let mut settings = Builder::new(
+        &var("LONGSHORE_HOST")?,
+        &var("LONGSHORE_REGION")?,
+        credentials,
+    );
+    settings.bucket_in_path = var("LONGSHORE_BUCKET").ok();
+    (settings.tls, settings.port) = (true, 443);
+    // One operation at a time needs little: a megabyte for the object, and
+    // what two connections use.
+    (settings.connections, settings.buffers, settings.operations) = (2, 2, 2);
+    settings.buffer_size = 1 << 20;
+    Ok(settings.build()?)
 }
 
 /// The answer of a report, if the store gave one with status `status`.
