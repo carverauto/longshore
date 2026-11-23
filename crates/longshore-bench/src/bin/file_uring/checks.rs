@@ -41,21 +41,19 @@ pub(super) fn run_all(dir: &Path, posix: bool) {
 }
 
 fn check_sealed_o_direct(dir: &Path) {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        files_max: 2,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(8);
     let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(8);
     let path = format!("{}/sealed_direct.bin\0", dir.display());
-    io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
+    io.buf(BufId::new(0))[..path.len()].copy_from_slice(path.as_bytes());
     let wbuf = limits.aligned(0);
     let rbuf = limits.aligned(1);
     for (i, b) in io.buf(wbuf).iter_mut().enumerate() {
@@ -82,25 +80,23 @@ fn open_write_sync_chain(
 ) {
     io.submit_chain(&[
         (
-            Token(1),
+            Token::new(1),
             Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
+                slot: FileSlot::new(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    direct: true,
-                    ..Default::default()
-                },
+                flags: OpenFlags::NONE
+                    .with_read(true)
+                    .with_write(true)
+                    .with_create(true)
+                    .with_direct(true),
             },
         ),
         (
-            Token(2),
+            Token::new(2),
             Op::FileWrite {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 buf: wbuf,
                 off: 0,
                 len: 4096,
@@ -108,9 +104,9 @@ fn open_write_sync_chain(
             },
         ),
         (
-            Token(3),
+            Token::new(3),
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: true,
             },
         ),
@@ -120,12 +116,12 @@ fn open_write_sync_chain(
     while done < 3 {
         io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
-            if c.token == Token(1) {
-                assert_eq!(c.result, 0, "O_DIRECT open failed on {}", dir.display());
-            } else if c.token == Token(2) {
-                assert_eq!(c.result, 4096);
+            if c.token().get() == 1 {
+                assert_eq!(c.result(), 0, "O_DIRECT open failed on {}", dir.display());
+            } else if c.token().get() == 2 {
+                assert_eq!(c.result(), 4096);
             } else {
-                assert_eq!(c.result, 0);
+                assert_eq!(c.result(), 0);
             }
             done += 1;
         }
@@ -136,9 +132,9 @@ fn open_write_sync_chain(
 /// `rbuf` succeeds; the file closes.
 fn refuse_misaligned_then_read(io: &mut UringIo, out: &mut Completions, wbuf: BufId, rbuf: BufId) {
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::FileWrite {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: wbuf,
             off: 0,
             len: 512,
@@ -147,12 +143,12 @@ fn refuse_misaligned_then_read(io: &mut UringIo, out: &mut Completions, wbuf: Bu
     )
     .or_die("submit");
     io.tick(true, out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, -EINVAL);
+    assert_eq!(out.pop().or_die("a completion").result(), -EINVAL);
 
     io.submit(
-        Token(5),
+        Token::new(5),
         Op::FileRead {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: rbuf,
             off: 0,
             len: 4096,
@@ -161,57 +157,55 @@ fn refuse_misaligned_then_read(io: &mut UringIo, out: &mut Completions, wbuf: Bu
     )
     .or_die("submit");
     io.tick(true, out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 4096);
+    assert_eq!(out.pop().or_die("a completion").result(), 4096);
 
-    io.submit(Token(6), Op::FileClose { slot: FileSlot(0) })
-        .or_die("submit");
+    io.submit(
+        Token::new(6),
+        Op::FileClose {
+            slot: FileSlot::new(0),
+        },
+    )
+    .or_die("submit");
     io.tick(true, out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 0);
+    assert_eq!(out.pop().or_die("a completion").result(), 0);
 }
 
 fn check_submit_all_partial_refusal(dir: &Path) {
-    let limits = Limits {
-        buffers: 2,
-        buffer_size: 4096,
-        files_max: 2,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_ops_max(4);
     let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(8);
     let bad = format!("{}/no_such_dir_xyz/bad.bin\0", dir.display());
     let good = format!("{}/after_bad.bin\0", dir.display());
-    io.buf(BufId(0))[..bad.len()].copy_from_slice(bad.as_bytes());
-    io.buf(BufId(1))[..good.len()].copy_from_slice(good.as_bytes());
+    io.buf(BufId::new(0))[..bad.len()].copy_from_slice(bad.as_bytes());
+    io.buf(BufId::new(1))[..good.len()].copy_from_slice(good.as_bytes());
 
     // Submit a kernel-refused open ahead of a valid open in the same batch.
     io.submit(
-        Token(10),
+        Token::new(10),
         Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf: BufId(0),
+            slot: FileSlot::new(0),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: bad.len() as u32,
-            flags: OpenFlags {
-                read: true,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE.with_read(true),
         },
     )
     .or_die("submit");
     io.submit(
-        Token(11),
+        Token::new(11),
         Op::FileOpen {
-            slot: FileSlot(1),
-            path_buf: BufId(1),
+            slot: FileSlot::new(1),
+            path_buf: BufId::new(1),
             path_off: 0,
             path_len: good.len() as u32,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true),
         },
     )
     .or_die("submit");
@@ -220,10 +214,10 @@ fn check_submit_all_partial_refusal(dir: &Path) {
     for _ in 0..1000 {
         io.tick(true, &mut out).or_die("tick");
         while let Some(c) = out.pop() {
-            if c.token == Token(10) {
-                r10 = Some(c.result);
-            } else if c.token == Token(11) {
-                r11 = Some(c.result);
+            if c.token().get() == 10 {
+                r10 = Some(c.result());
+            } else if c.token().get() == 11 {
+                r11 = Some(c.result());
             }
         }
         if r10.is_some() && r11.is_some() {
@@ -236,52 +230,53 @@ fn check_submit_all_partial_refusal(dir: &Path) {
         Some(0),
         "SUBMIT_ALL must deliver op queued behind failure"
     );
-    io.submit(Token(12), Op::FileClose { slot: FileSlot(1) })
-        .or_die("submit");
-    io.tick(true, &mut out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 0);
-}
-
-fn check_over_16384_buffers(dir: &Path) {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 4096,
-        small_buffers: 16_400,
-        small_buffer_size: 256,
-        files_max: 2,
-        ops_max: 4,
-        ..Limits::BASE
-    };
-    let mut io = UringIo::new(limits).or_die("UringIo::new with 16401 buffers");
-    let mut out = Completions::new(8);
-    let path = format!("{}/many_bufs.bin\0", dir.display());
-    io.buf(BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
     io.submit(
-        Token(1),
-        Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: path.len() as u32,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                ..Default::default()
-            },
+        Token::new(12),
+        Op::FileClose {
+            slot: FileSlot::new(1),
         },
     )
     .or_die("submit");
     io.tick(true, &mut out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 0);
+    assert_eq!(out.pop().or_die("a completion").result(), 0);
+}
+
+fn check_over_16384_buffers(dir: &Path) {
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(4096)
+        .with_small_buffers(16_400)
+        .with_small_buffer_size(256)
+        .with_files_max(2)
+        .with_ops_max(4);
+    let mut io = UringIo::new(limits).or_die("UringIo::new with 16401 buffers");
+    let mut out = Completions::new(8);
+    let path = format!("{}/many_bufs.bin\0", dir.display());
+    io.buf(BufId::new(0))[..path.len()].copy_from_slice(path.as_bytes());
+    io.submit(
+        Token::new(1),
+        Op::FileOpen {
+            slot: FileSlot::new(0),
+            path_buf: BufId::new(0),
+            path_off: 0,
+            path_len: path.len() as u32,
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true),
+        },
+    )
+    .or_die("submit");
+    io.tick(true, &mut out).or_die("tick");
+    assert_eq!(out.pop().or_die("a completion").result(), 0);
 
     let last = limits.small(16_399);
     io.buf(last)[..64].fill(0x5E);
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::FileWrite {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: last,
             off: 0,
             len: 64,
@@ -290,13 +285,13 @@ fn check_over_16384_buffers(dir: &Path) {
     )
     .or_die("submit");
     io.tick(true, &mut out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 64);
+    assert_eq!(out.pop().or_die("a completion").result(), 64);
 
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::FileRead {
-            slot: FileSlot(0),
-            buf: BufId(0),
+            slot: FileSlot::new(0),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
             file_off: 0,
@@ -304,11 +299,16 @@ fn check_over_16384_buffers(dir: &Path) {
     )
     .or_die("submit");
     io.tick(true, &mut out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 64);
-    assert!(io.buf(BufId(0))[..64].iter().all(|&b| b == 0x5E));
+    assert_eq!(out.pop().or_die("a completion").result(), 64);
+    assert!(io.buf(BufId::new(0))[..64].iter().all(|&b| b == 0x5E));
 
-    io.submit(Token(4), Op::FileClose { slot: FileSlot(0) })
-        .or_die("submit");
+    io.submit(
+        Token::new(4),
+        Op::FileClose {
+            slot: FileSlot::new(0),
+        },
+    )
+    .or_die("submit");
     io.tick(true, &mut out).or_die("tick");
-    assert_eq!(out.pop().or_die("a completion").result, 0);
+    assert_eq!(out.pop().or_die("a completion").result(), 0);
 }

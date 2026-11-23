@@ -12,7 +12,7 @@ use longshore::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token,
 use longshore::sim::{Faults, SimIo};
 use std::net::SocketAddr;
 
-const LISTENER: Sock = Sock(0);
+const LISTENER: Sock = Sock::new(0);
 const CLIENT_BASE: u32 = 1;
 const IDLE_CLIENTS: u32 = 20;
 const ACCEPT_START: u32 = 24;
@@ -20,19 +20,17 @@ const ACCEPT_LEN: u32 = 24;
 const RING_BUFS: u32 = 16;
 
 fn server_limits() -> Limits {
-    Limits {
-        sockets_max: 48,
-        buffers: 4,
-        buffer_size: 2048,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        accept_range_start: ACCEPT_START,
-        accept_range_len: ACCEPT_LEN,
-        ring_buffers: RING_BUFS,
-        ring_buffer_size: 256,
-        ops_max: 64,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(48)
+        .with_buffers(4)
+        .with_buffer_size(2048)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_accept_range_start(ACCEPT_START)
+        .with_accept_range_len(ACCEPT_LEN)
+        .with_ring_buffers(RING_BUFS)
+        .with_ring_buffer_size(256)
+        .with_ops_max(64)
 }
 
 /// Connects 20 idle clients through the armed accept; returns the accepted
@@ -45,10 +43,10 @@ fn connect_idle_clients<IO: Io>(
     let mut srv_socks = Vec::with_capacity(IDLE_CLIENTS as usize);
     let mut cli_socks = Vec::with_capacity(IDLE_CLIENTS as usize);
     for i in 0..IDLE_CLIENTS {
-        let cs = Sock(CLIENT_BASE + i);
+        let cs = Sock::new(CLIENT_BASE + i);
         cli_socks.push(cs);
         io.submit(
-            Token(100 + u64::from(i)),
+            Token::new(100 + u64::from(i)),
             Op::Connect {
                 sock: cs,
                 addr: bound,
@@ -60,17 +58,17 @@ fn connect_idle_clients<IO: Io>(
     while srv_socks.len() < IDLE_CLIENTS as usize {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 1 {
-                assert!(c.more && c.result >= 0, "accept must remain armed");
-                let accepted = Sock(u32::try_from(c.result).unwrap());
+            if c.token().get() == 1 {
+                assert!(c.more() && c.result() >= 0, "accept must remain armed");
+                let accepted = Sock::new(u32::try_from(c.result()).unwrap());
                 assert!(
-                    accepted.0 >= ACCEPT_START && accepted.0 < ACCEPT_START + ACCEPT_LEN,
+                    accepted.get() >= ACCEPT_START && accepted.get() < ACCEPT_START + ACCEPT_LEN,
                     "accepted slot {} outside range",
-                    accepted.0
+                    accepted.get()
                 );
                 srv_socks.push(accepted);
-            } else if c.token.0 >= 100 && c.token.0 < 200 {
-                assert_eq!(c.result, 0);
+            } else if c.token().get() >= 100 && c.token().get() < 200 {
+                assert_eq!(c.result(), 0);
             }
         }
     }
@@ -85,14 +83,14 @@ fn idle_armed_recvs_hold_no_buffers<IO: Io>(
     srv_socks: &[Sock],
 ) {
     for (idx, &ss) in srv_socks.iter().enumerate() {
-        io.submit(Token(1000 + idx as u64), Op::ArmedRecv { sock: ss })
+        io.submit(Token::new(1000 + idx as u64), Op::ArmedRecv { sock: ss })
             .unwrap();
     }
-    io.submit(Token(500), Op::Timeout { nanos: 1_000_000 })
+    io.submit(Token::new(500), Op::Timeout { nanos: 1_000_000 })
         .unwrap();
-    let idle_cs = drive_until(io, out, 200, |v| v.iter().any(|c| c.token.0 == 500)).unwrap();
+    let idle_cs = drive_until(io, out, 200, |v| v.iter().any(|c| c.token().get() == 500)).unwrap();
     for c in idle_cs {
-        if c.token.0 >= 1000 {
+        if c.token().get() >= 1000 {
             panic!("idle armed recv must not complete or consume buffer: {c:?}");
         }
     }
@@ -115,13 +113,13 @@ fn burst_without_give_back<IO: Io>(
 ) {
     for burst in 0..(RING_BUFS + 2) {
         let msg = [0x60 + burst as u8; 64];
-        write_pool_bytes(io, BufId(0), 0, &msg);
+        write_pool_bytes(io, BufId::new(0), 0, &msg);
         let c_idx = (burst % IDLE_CLIENTS) as usize;
         io.submit(
-            Token(2000 + u64::from(burst)),
+            Token::new(2000 + u64::from(burst)),
             Op::Send {
                 sock: cli_socks[c_idx],
-                buf: BufId(0),
+                buf: BufId::new(0),
                 off: 0,
                 len: 64,
                 zero_copy: false,
@@ -130,15 +128,15 @@ fn burst_without_give_back<IO: Io>(
         .unwrap();
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 >= 1000 && c.token.0 < 2000 {
-                if c.result > 0 {
-                    if let Some(bid) = c.buf {
+            if c.token().get() >= 1000 && c.token().get() < 2000 {
+                if c.result() > 0 {
+                    if let Some(bid) = c.buf() {
                         ex.held_bufs.push(bid);
                     }
-                } else if c.result == -ENOBUFS {
-                    assert!(!c.more, "-ENOBUFS must end armed Recv with more=false");
-                    assert!(c.buf.is_none());
-                    ex.ended_socks.push((c.token.0 - 1000) as usize);
+                } else if c.result() == -ENOBUFS {
+                    assert!(!c.more(), "-ENOBUFS must end armed Recv with more=false");
+                    assert!(c.buf().is_none());
+                    ex.ended_socks.push((c.token().get() - 1000) as usize);
                     ex.saw_enobufs = true;
                 }
             }
@@ -151,20 +149,20 @@ fn burst_without_give_back<IO: Io>(
 
 /// Drains remaining completions until `-ENOBUFS` shows up or a timer fires.
 fn drain_until_enobufs<IO: Io>(io: &mut IO, out: &mut Completions, ex: &mut Exhaustion) {
-    io.submit(Token(501), Op::Timeout { nanos: 5_000_000 })
+    io.submit(Token::new(501), Op::Timeout { nanos: 5_000_000 })
         .unwrap();
     let cs = drive_until(io, out, 500, |v| {
-        v.iter().any(|c| c.result == -ENOBUFS) || v.iter().any(|c| c.token.0 == 501)
+        v.iter().any(|c| c.result() == -ENOBUFS) || v.iter().any(|c| c.token().get() == 501)
     })
     .unwrap();
     for c in cs {
-        if let Some(bid) = c.buf {
+        if let Some(bid) = c.buf() {
             ex.held_bufs.push(bid);
         }
-        if c.result == -ENOBUFS {
-            assert!(!c.more);
-            if c.token.0 >= 1000 && c.token.0 < 2000 {
-                ex.ended_socks.push((c.token.0 - 1000) as usize);
+        if c.result() == -ENOBUFS {
+            assert!(!c.more());
+            if c.token().get() >= 1000 && c.token().get() < 2000 {
+                ex.ended_socks.push((c.token().get() - 1000) as usize);
             }
             ex.saw_enobufs = true;
         }
@@ -185,19 +183,19 @@ fn recover_with_give_back<IO: Io>(
     }
     for idx in ex.ended_socks {
         io.submit(
-            Token(1000 + idx as u64),
+            Token::new(1000 + idx as u64),
             Op::ArmedRecv {
                 sock: srv_socks[idx],
             },
         )
         .expect("re-arm the receive");
     }
-    write_pool_bytes(io, BufId(1), 0, b"recovered-after-give-back");
+    write_pool_bytes(io, BufId::new(1), 0, b"recovered-after-give-back");
     io.submit(
-        Token(3000),
+        Token::new(3000),
         Op::Send {
             sock: cli_socks[0],
-            buf: BufId(1),
+            buf: BufId::new(1),
             off: 0,
             len: 25,
             zero_copy: false,
@@ -209,11 +207,11 @@ fn recover_with_give_back<IO: Io>(
     for _ in 0..200 {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if let Some(bid) = c.buf {
-                let slice = &io.buf(bid)[..usize::try_from(c.result).unwrap()];
+            if let Some(bid) = c.buf() {
+                let slice = &io.buf(bid)[..usize::try_from(c.result()).unwrap()];
                 if slice.windows(25).any(|w| w == b"recovered-after-give-back") {
-                    if c.token.0 >= 1000 && c.token.0 < 2000 {
-                        matched_srv_sock = srv_socks[(c.token.0 - 1000) as usize];
+                    if c.token().get() >= 1000 && c.token().get() < 2000 {
+                        matched_srv_sock = srv_socks[(c.token().get() - 1000) as usize];
                     }
                     got_recovery = true;
                 }
@@ -234,33 +232,33 @@ fn recover_with_give_back<IO: Io>(
 /// Closes `srv` (ending its armed recv); the peer client reads to EOF.
 fn close_gives_peer_eof<IO: Io>(io: &mut IO, out: &mut Completions, srv: Sock, cli: Sock) {
     let _: Completion =
-        submit_and_wait_one(io, out, Token(4000), Op::Close { sock: srv }, 1_000).unwrap();
+        submit_and_wait_one(io, out, Token::new(4000), Op::Close { sock: srv }, 1_000).unwrap();
 
     loop {
         let eof_c = submit_and_wait_one(
             io,
             out,
-            Token(4001),
+            Token::new(4001),
             Op::Recv {
                 sock: cli,
-                buf: BufId(2),
+                buf: BufId::new(2),
                 off: 0,
                 len: 256,
             },
             1_000,
         )
         .unwrap();
-        if eof_c.result == 0 {
+        if eof_c.result() == 0 {
             break;
         }
-        assert!(eof_c.result > 0);
+        assert!(eof_c.result() > 0);
     }
 }
 
 fn run_high_concurrency_plain_server<IO: Io>(io: &mut IO, addr: SocketAddr) {
     let mut out = Completions::new(64);
     let bound = io.listen(LISTENER, addr).unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: LISTENER })
+    io.submit(Token::new(1), Op::ArmedAccept { listener: LISTENER })
         .unwrap();
 
     let (srv_socks, cli_socks) = connect_idle_clients(io, &mut out, bound);

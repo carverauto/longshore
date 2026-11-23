@@ -92,11 +92,7 @@ mod memlock_child {
             rlim_max: 0,
         };
         assert_eq!(unsafe { getrlimit(RLIMIT_MEMLOCK, &mut orig) }, 0);
-        let tiny = Limits {
-            sockets_max: 2,
-            ops_max: 4,
-            ..Limits::BASE
-        };
+        let tiny = Limits::BASE.with_sockets_max(2).with_ops_max(4);
         let mut chosen = None;
         for shift in 17..=28 {
             let cap = 1u64 << shift;
@@ -124,13 +120,11 @@ mod memlock_child {
         drop_root();
         let cap = lowest_workable_memlock();
         let pool_target = (cap as u32).saturating_add(1 << 20);
-        let limits = Limits {
-            sockets_max: 2,
-            buffers: 1,
-            buffer_size: pool_target,
-            ops_max: 4,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(1)
+            .with_buffer_size(pool_target)
+            .with_ops_max(4);
         let err = match UringIo::new(limits) {
             Ok(_) => panic!("expected RLIMIT_MEMLOCK failure for cap={cap}"),
             Err(e) => e,
@@ -201,14 +195,12 @@ fn t2_f09_3_linux_rlimit_nofile_descriptive_error() {
     let total_wanted = rlim.rlim_cur.saturating_add(16).min(u64::from(u32::MAX)) as u32;
     let sockets_max = total_wanted / 2;
     let files_max = total_wanted - sockets_max;
-    let limits = Limits {
-        sockets_max,
-        files_max,
-        buffers: 1,
-        buffer_size: 4096,
-        ops_max: 2,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(sockets_max)
+        .with_files_max(files_max)
+        .with_buffers(1)
+        .with_buffer_size(4096)
+        .with_ops_max(2);
     let err = match UringIo::new(limits) {
         Ok(_) => panic!("expected RLIMIT_NOFILE error"),
         Err(e) => e,
@@ -226,26 +218,24 @@ fn t2_f09_3_linux_rlimit_nofile_descriptive_error() {
 fn t2_f09_4_one_gib_range_boundary_no_straddle() {
     const ONE_GIB: usize = 1usize << 30;
     let buf_sz = 200 * 1024 * 1024u32; // 200 MiB -> 5 bufs = 1000 MiB <= 1 GiB
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 0,
-        buffer_size: 0,
-        small_buffers: 0,
-        small_buffer_size: 0,
-        files_max: 2,
-        aligned_buffers: 8,
-        aligned_buffer_size: buf_sz,
-        block_size: 4096,
-        ops_max: 2,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(0)
+        .with_buffer_size(0)
+        .with_small_buffers(0)
+        .with_small_buffer_size(0)
+        .with_files_max(2)
+        .with_aligned_buffers(8)
+        .with_aligned_buffer_size(buf_sz)
+        .with_block_size(4096)
+        .with_ops_max(2);
     assert_eq!(limits.buffer_count(), 8);
     assert!(limits.pool_bytes() > ONE_GIB);
 
     // Group contiguous buffers into <= 1 GiB registration chunks without splitting any buffer.
     let mut chunks: Vec<(usize, usize)> = Vec::new();
     let (mut cur_start, mut cur_len) = (0usize, 0usize);
-    for i in 0..limits.aligned_buffers {
+    for i in 0..limits.aligned_buffers() {
         let (off, len) = limits.span(limits.aligned(i));
         assert_eq!(len, buf_sz as usize);
         assert!(len <= ONE_GIB);
@@ -278,6 +268,6 @@ fn t2_f09_4_one_gib_range_boundary_no_straddle() {
 #[should_panic(expected = "buffer out of range")]
 fn t2_f09_5_span_at_buffer_count_boundary_panics() {
     let limits = file_limits(2, 3, 4096, 4096);
-    let oob = BufId(limits.buffer_count());
+    let oob = BufId::new(limits.buffer_count());
     let _: (usize, usize) = limits.span(oob);
 }

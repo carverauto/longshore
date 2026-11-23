@@ -27,12 +27,10 @@ fn slot_busy_and_free_refusals<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
     let mut out = Completions::new(8);
     let p1 = format!("{root}busy1.dat");
     let p2 = format!("{root}busy2.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p1, rw),
         0
@@ -78,12 +76,10 @@ fn invalid_paths_and_status_buf<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
     let limits = base_limits();
     let mut io = make(limits);
     let mut out = Completions::new(8);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     // Missing trailing NUL.
     io.buf(BufId(0))[..4].copy_from_slice(b"abcd");
     assert_eq!(
@@ -143,13 +139,11 @@ fn direct_alignment_and_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
     let mut out = Completions::new(8);
     let p = format!("{root}direct_bad.dat");
     let plen = write_path(&mut io, BufId(0), 0, &p);
-    let df = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        direct: true,
-        ..Default::default()
-    };
+    let df = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
+        .with_direct(true);
     // Misaligned write behind an Opening direct FileOpen -> -EINVAL.
     io.must_submit(Token(1), open_op(FileSlot(0), BufId(0), plen, df));
     io.must_submit(Token(2), write_op(FileSlot(0), BufId(1), 512, 0));

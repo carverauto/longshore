@@ -19,39 +19,36 @@ use longshore::sim::{DiskConfig, DiskFaults, Faults, SimIo};
 const BLOCK_SIZE: u32 = 4096;
 
 fn wal_limits() -> Limits {
-    Limits {
-        sockets_max: 4,
-        buffers: 4,
-        buffer_size: BLOCK_SIZE,
-        small_buffers: 4,
-        small_buffer_size: 256,
-        aligned_buffers: 4,
-        aligned_buffer_size: BLOCK_SIZE,
-        block_size: BLOCK_SIZE,
-        files_max: 4,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(4)
+        .with_buffer_size(BLOCK_SIZE)
+        .with_small_buffers(4)
+        .with_small_buffer_size(256)
+        .with_aligned_buffers(4)
+        .with_aligned_buffer_size(BLOCK_SIZE)
+        .with_block_size(BLOCK_SIZE)
+        .with_files_max(4)
+        .with_ops_max(16)
 }
 
 fn wal_disk_config() -> DiskConfig {
-    DiskConfig {
-        max_files: 8,
-        max_dirs: 16,
-        max_bytes_per_file: (BLOCK_SIZE as usize) * 32,
-        max_name_len: 128,
-        write_log_entries: 16,
-        write_log_bytes: (BLOCK_SIZE as usize) * 16,
-        read_error_sectors: 16,
-        sector_size: 512,
-    }
+    DiskConfig::BASE
+        .with_max_files(8)
+        .with_max_dirs(16)
+        .with_max_bytes_per_file((BLOCK_SIZE as usize) * 32)
+        .with_max_name_len(128)
+        .with_write_log_entries(16)
+        .with_write_log_bytes((BLOCK_SIZE as usize) * 16)
+        .with_read_error_sectors(16)
+        .with_sector_size(512)
 }
 
 /// Submits `op` and waits up to 1000 ticks for its result.
 fn wait_result(sim: &mut SimIo, out: &mut Completions, token: Token, op: Op) -> i32 {
     submit_and_wait_one(sim, out, token, op, 1_000)
         .unwrap()
-        .result
+        .result()
 }
 
 fn build_wal_sim(seed: u64, disk_faults: DiskFaults) -> SimIo {
@@ -65,27 +62,25 @@ fn build_wal_sim(seed: u64, disk_faults: DiskFaults) -> SimIo {
         path_off: 0,
         path_len: wal_len,
     };
-    assert_eq!(wait_result(&mut sim, &mut out, Token(1), mkdir), 0);
+    assert_eq!(wait_result(&mut sim, &mut out, Token::new(1), mkdir), 0);
     let root_len = write_nul_path(&mut sim, path_buf, 0, "/");
     let open_root = Op::FileOpen {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         path_buf,
         path_off: 0,
         path_len: root_len,
-        flags: OpenFlags {
-            read: true,
-            directory: true,
-            ..Default::default()
-        },
+        flags: OpenFlags::NONE.with_read(true).with_directory(true),
     };
-    assert_eq!(wait_result(&mut sim, &mut out, Token(2), open_root), 0);
+    assert_eq!(wait_result(&mut sim, &mut out, Token::new(2), open_root), 0);
     let sync_root = Op::FileSync {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         datasync: false,
     };
-    assert_eq!(wait_result(&mut sim, &mut out, Token(3), sync_root), 0);
-    let close = Op::FileClose { slot: FileSlot(0) };
-    assert_eq!(wait_result(&mut sim, &mut out, Token(4), close), 0);
+    assert_eq!(wait_result(&mut sim, &mut out, Token::new(3), sync_root), 0);
+    let close = Op::FileClose {
+        slot: FileSlot::new(0),
+    };
+    assert_eq!(wait_result(&mut sim, &mut out, Token::new(4), close), 0);
     sim.set_disk_faults(disk_faults);
     sim
 }
@@ -160,7 +155,7 @@ impl Session<'_> {
             }
         });
         let counters = self.sim.disk_fault_counters();
-        let silent_write_fault = counters.lost_silent > 0 || counters.misdirected_write > 0;
+        let silent_write_fault = counters.lost_silent() > 0 || counters.misdirected_write() > 0;
 
         let seed = self.seed;
         for &cseq in &committed.seqs[..committed.count] {
@@ -202,15 +197,13 @@ impl Session<'_> {
 }
 
 fn run_wal_lifecycle_for_seed(seed: u64) -> (u64, u32, u64) {
-    let faults = DiskFaults {
-        short_write: 100_000,
-        torn_reported: 60_000,
-        lost_silent: 60_000,
-        misdirected_write: 50_000,
-        bit_flip: 40_000,
-        sync_fail: 50_000,
-        ..DiskFaults::default()
-    };
+    let faults = DiskFaults::NONE
+        .with_short_write(100_000)
+        .with_torn_reported(60_000)
+        .with_lost_silent(60_000)
+        .with_misdirected_write(50_000)
+        .with_bit_flip(40_000)
+        .with_sync_fail(50_000);
     let mut sim = build_wal_sim(seed, faults);
     let mut out = Completions::new(16);
     let mut wal = StackWal::new(wal_limits(), BLOCK_SIZE);

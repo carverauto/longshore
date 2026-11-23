@@ -59,29 +59,26 @@ impl Io for StubNoWakerIo {
 fn build_fails_when_io_has_no_waker() {
     let mut io = StubNoWakerIo;
     assert!(matches!(
-        queue::<u32, _>(&mut io, 4, Token(1)),
+        queue::<u32, _>(&mut io, 4, Token::new(1)),
         Err(NoWaker)
     ));
     let cfg = longshore_mailbox::Config {
         capacity: 4,
         slots: 2,
         waiters_prealloc: 4,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     };
     assert!(matches!(mailbox::<u32, u32, _>(&mut io, cfg), Err(NoWaker)));
 }
 
 fn test_limits() -> Limits {
-    Limits {
-        ops_max: 4,
-        ..Limits::BASE
-    }
+    Limits::BASE.with_ops_max(4)
 }
 
 #[test]
 fn sim_io_wakes_and_drains_without_any_timer() {
     let mut io = SimIo::new(test_limits(), 42, Faults::default());
-    let (tx, mut rx) = queue::<u32, _>(&mut io, 4, Token(99)).unwrap();
+    let (tx, mut rx) = queue::<u32, _>(&mut io, 4, Token::new(99)).unwrap();
     rx.arm(&mut io).unwrap();
 
     // Signal arrives while no timer is submitted.
@@ -92,8 +89,8 @@ fn sim_io_wakes_and_drains_without_any_timer() {
     let mut out = Completions::new(16);
     io.tick(true, &mut out).unwrap();
     let c = out.pop().expect("AwaitWake completion");
-    assert_eq!(c.token, Token(99));
-    assert_eq!(c.result, 0);
+    assert_eq!(c.token(), Token::new(99));
+    assert_eq!(c.result(), 0);
     assert!(rx.on_completion(&mut io, c).unwrap());
 
     let mut got = Vec::new();
@@ -108,7 +105,7 @@ fn sim_io_wakes_and_drains_without_any_timer() {
 #[test]
 fn posix_io_wakes_from_another_thread_without_any_timer() {
     let mut io = PosixIo::new(test_limits()).unwrap();
-    let (tx, mut rx) = queue::<u64, _>(&mut io, 4, Token(7)).unwrap();
+    let (tx, mut rx) = queue::<u64, _>(&mut io, 4, Token::new(7)).unwrap();
     rx.arm(&mut io).unwrap();
 
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -282,7 +279,7 @@ fn recv_parked_panics_on_queue_with_wake() {
         fn wake(&self) {}
     }
 
-    let (_tx, mut rx) = queue_with_wake::<u32>(std::sync::Arc::new(NoopWake), 2, Token(1));
+    let (_tx, mut rx) = queue_with_wake::<u32>(std::sync::Arc::new(NoopWake), 2, Token::new(1));
     let _: Recv<u32> = rx.recv_parked();
 }
 

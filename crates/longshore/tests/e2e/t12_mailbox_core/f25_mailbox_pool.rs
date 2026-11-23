@@ -43,7 +43,7 @@ fn t1_f25_1_blocking_caller_sends_request_and_receives_answer() {
         capacity: 4,
         slots: 2,
         waiters_prealloc: 4,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     });
 
     let worker = thread::spawn(move || {
@@ -63,7 +63,7 @@ fn t1_f25_2_future_caller_woken_and_yields_answer_via_block_on() {
         capacity: 4,
         slots: 2,
         waiters_prealloc: 4,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     });
 
     let (wakes, waker) = counting_waker();
@@ -177,7 +177,7 @@ fn t2_f25_1_dropped_future_frees_slot_first_and_returns_attached_tag() {
         capacity: 4,
         slots: 1,
         waiters_prealloc: 2,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     });
     let (_c, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);
@@ -217,7 +217,7 @@ fn t2_f25_2_waiters_exceeding_slots_and_preallocated_grow_and_complete() {
         capacity: 8,
         slots: 1,
         waiters_prealloc: 2,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     });
 
     let receiver = thread::spawn(move || {
@@ -247,7 +247,7 @@ fn t2_f25_3_close_delivers_answered_slot_and_closed_to_unanswered() {
         capacity: 4,
         slots: 2,
         waiters_prealloc: 4,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     });
     let (_c, waker) = counting_waker();
     let mut cx = Context::from_waker(&waker);

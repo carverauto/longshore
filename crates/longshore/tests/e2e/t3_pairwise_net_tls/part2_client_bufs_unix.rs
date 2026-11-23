@@ -80,27 +80,21 @@ fn t3_13_s3_client_portable_with_stream_server_plain_and_tls() {
 
 #[test]
 fn t3_14_four_buffer_classes_isolation_and_cq_burst() {
-    #[expect(
-        clippy::needless_update,
-        reason = "every `Limits` literal ends in `..Limits::BASE` (t1_f01_5 checks it), even one that names each field"
-    )]
-    let limits = Limits {
-        sockets_max: 32,
-        buffers: 2,
-        buffer_size: 8192,
-        small_buffers: 4,
-        small_buffer_size: 512,
-        files_max: 16,
-        aligned_buffers: 4,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        accept_range_start: 16,
-        accept_range_len: 16,
-        ring_buffers: 256,
-        ring_buffer_size: 1024,
-        ops_max: 32,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(32)
+        .with_buffers(2)
+        .with_buffer_size(8192)
+        .with_small_buffers(4)
+        .with_small_buffer_size(512)
+        .with_files_max(16)
+        .with_aligned_buffers(4)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_accept_range_start(16)
+        .with_accept_range_len(16)
+        .with_ring_buffers(256)
+        .with_ring_buffer_size(1024)
+        .with_ops_max(32);
 
     #[cfg(unix)]
     {
@@ -109,7 +103,9 @@ fn t3_14_four_buffer_classes_isolation_and_cq_burst() {
         let dir = TempDir::new("t3_14").unwrap();
         let mut io = posix_backend(limits).unwrap();
         let mut out = Completions::new(64);
-        let addr = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = io
+            .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
+            .unwrap();
 
         stamp_buffer_classes(&mut io, limits);
         let path = dir.file_path("burst.dat");
@@ -117,7 +113,7 @@ fn t3_14_four_buffer_classes_isolation_and_cq_burst() {
         let rbuf = burst_send_and_write(&mut io, &mut out, limits, srv);
         assert_eq!(read_pool_bytes(&mut io, rbuf, 0, 8), b"SMALL-00");
         io.give_back(rbuf);
-        assert_eq!(&io.buf(BufId(0))[..8], b"LARGE-00");
+        assert_eq!(&io.buf(BufId::new(0))[..8], b"LARGE-00");
         assert_eq!(&io.buf(limits.aligned(0))[..8], b"ALIGN-00");
     }
 }
@@ -125,10 +121,10 @@ fn t3_14_four_buffer_classes_isolation_and_cq_burst() {
 /// Stamps the first large, small, and aligned buffers and checks each kept its own bytes.
 #[cfg(unix)]
 fn stamp_buffer_classes<IO: Io>(io: &mut IO, limits: Limits) {
-    io.buf(BufId(0))[..8].copy_from_slice(b"LARGE-00");
+    io.buf(BufId::new(0))[..8].copy_from_slice(b"LARGE-00");
     io.buf(limits.small(0))[..8].copy_from_slice(b"SMALL-00");
     io.buf(limits.aligned(0))[..8].copy_from_slice(b"ALIGN-00");
-    assert_eq!(&io.buf(BufId(0))[..8], b"LARGE-00");
+    assert_eq!(&io.buf(BufId::new(0))[..8], b"LARGE-00");
     assert_eq!(&io.buf(limits.small(0))[..8], b"SMALL-00");
     assert_eq!(&io.buf(limits.aligned(0))[..8], b"ALIGN-00");
 }
@@ -144,40 +140,43 @@ fn accept_connect_and_open<IO: Io>(
     path: &str,
 ) -> Sock {
     let plen = write_nul_path(io, limits.small(1), 0, path);
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
     io.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::FileOpen {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             path_buf: limits.small(1),
             path_off: 0,
             path_len: plen,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                direct: true,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true)
+                .with_direct(true),
         },
     )
     .unwrap();
     let cs = drive_until(io, out, 10_000, |v| {
         [1, 2, 3]
             .iter()
-            .all(|t| v.iter().any(|c| c.token == Token(*t)))
+            .all(|t| v.iter().any(|c| c.token() == Token::new(*t)))
     })
     .unwrap();
-    Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap())
+    Sock::new(u32::try_from(cs.iter().find(|c| c.token().get() == 1).unwrap().result()).unwrap())
 }
 
 /// Sends the small buffer to `srv` (armed recv) while writing the aligned
@@ -189,11 +188,12 @@ fn burst_send_and_write<IO: Io>(
     limits: Limits,
     srv: Sock,
 ) -> BufId {
-    io.submit(Token(4), Op::ArmedRecv { sock: srv }).unwrap();
+    io.submit(Token::new(4), Op::ArmedRecv { sock: srv })
+        .unwrap();
     io.submit(
-        Token(5),
+        Token::new(5),
         Op::Send {
-            sock: Sock(1),
+            sock: Sock::new(1),
             buf: limits.small(0),
             off: 0,
             len: 8,
@@ -202,9 +202,9 @@ fn burst_send_and_write<IO: Io>(
     )
     .unwrap();
     io.submit(
-        Token(6),
+        Token::new(6),
         Op::FileWrite {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: limits.aligned(0),
             off: 0,
             len: 4096,
@@ -213,13 +213,13 @@ fn burst_send_and_write<IO: Io>(
     )
     .unwrap();
     let cs2 = drive_until(io, out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(4)) && v.iter().any(|c| c.token == Token(6))
+        v.iter().any(|c| c.token().get() == 4) && v.iter().any(|c| c.token().get() == 6)
     })
     .unwrap();
     cs2.iter()
-        .find(|c| c.token == Token(4))
+        .find(|c| c.token().get() == 4)
         .unwrap()
-        .buf
+        .buf()
         .unwrap()
 }
 
@@ -232,14 +232,19 @@ fn unix_armed_pair<IO: Io>(
     limits: Limits,
     sock_p: &str,
 ) -> Sock {
-    io.listen_unix(Sock(0), sock_p).unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io.listen_unix(Sock::new(0), sock_p).unwrap();
+    io.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
     let sp_len = write_nul_path(io, limits.small(0), 0, sock_p);
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::ConnectUnix {
-            sock: Sock(1),
+            sock: Sock::new(1),
             path_buf: limits.small(0),
             path_off: 0,
             path_len: sp_len,
@@ -247,11 +252,16 @@ fn unix_armed_pair<IO: Io>(
     )
     .unwrap();
     let cs = drive_until(io, out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
+        v.iter().any(|c| c.token().get() == 1) && v.iter().any(|c| c.token().get() == 2)
     })
     .unwrap();
-    let srv = Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
-    assert_eq!(cs.iter().find(|c| c.token == Token(2)).unwrap().result, 0);
+    let srv = Sock::new(
+        u32::try_from(cs.iter().find(|c| c.token().get() == 1).unwrap().result()).unwrap(),
+    );
+    assert_eq!(
+        cs.iter().find(|c| c.token().get() == 2).unwrap().result(),
+        0
+    );
     srv
 }
 
@@ -267,52 +277,53 @@ fn persist_chain<IO: Io>(
     let fp_len = write_nul_path(io, limits.small(1), 0, data_p);
     io.submit_chain(&[
         (
-            Token(5),
+            Token::new(5),
             Op::FileOpen {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 path_buf: limits.small(1),
                 path_off: 0,
                 path_len: fp_len,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    ..Default::default()
-                },
+                flags: OpenFlags::NONE
+                    .with_read(true)
+                    .with_write(true)
+                    .with_create(true),
             },
         ),
         (
-            Token(6),
+            Token::new(6),
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len,
                 file_off: 0,
             },
         ),
         (
-            Token(7),
+            Token::new(7),
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: true,
             },
         ),
     ])
     .unwrap();
-    let fcs = drive_until(io, out, 10_000, |v| v.iter().any(|c| c.token == Token(7))).unwrap();
-    assert_eq!(fcs.iter().find(|c| c.token == Token(7)).unwrap().result, 0);
+    let fcs = drive_until(io, out, 10_000, |v| v.iter().any(|c| c.token().get() == 7)).unwrap();
+    assert_eq!(
+        fcs.iter().find(|c| c.token().get() == 7).unwrap().result(),
+        0
+    );
 }
 
 /// The server acknowledges with `OK`; checks the client reads exactly that.
 #[cfg(unix)]
 fn ack_ok<IO: Io>(io: &mut IO, out: &mut Completions, srv: Sock) {
-    write_pool_bytes(io, BufId(2), 0, b"OK");
+    write_pool_bytes(io, BufId::new(2), 0, b"OK");
     io.submit(
-        Token(8),
+        Token::new(8),
         Op::Send {
             sock: srv,
-            buf: BufId(2),
+            buf: BufId::new(2),
             off: 0,
             len: 2,
             zero_copy: false,
@@ -322,18 +333,18 @@ fn ack_ok<IO: Io>(io: &mut IO, out: &mut Completions, srv: Sock) {
     let ack = submit_and_wait_one(
         io,
         out,
-        Token(9),
+        Token::new(9),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(3),
+            sock: Sock::new(1),
+            buf: BufId::new(3),
             off: 0,
             len: 8,
         },
         10_000,
     )
     .unwrap();
-    assert_eq!(ack.result, 2);
-    assert_eq!(read_pool_bytes(io, BufId(3), 0, 2), b"OK");
+    assert_eq!(ack.result(), 2);
+    assert_eq!(read_pool_bytes(io, BufId::new(3), 0, 2), b"OK");
 }
 
 #[cfg(unix)]
@@ -344,25 +355,24 @@ fn t3_15_unix_domain_armed_recv_and_chained_file_persist() {
     let dir = TempDir::new("t3_15").unwrap();
     let sock_p = dir.socket_path("rpc.sock");
     let data_p = dir.file_path("persist.bin");
-    let limits = Limits {
-        files_max: 4,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ..net_limits(12, 6, 4, 4, 1024)
-    };
+    let limits = (net_limits(12, 6, 4, 4, 1024))
+        .with_files_max(4)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096);
     let mut io = posix_backend(limits).unwrap();
     let mut out = Completions::new(16);
 
     let srv = unix_armed_pair(&mut io, &mut out, limits, sock_p.to_str().unwrap());
-    io.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
+    io.submit(Token::new(3), Op::ArmedRecv { sock: srv })
+        .unwrap();
     let msg = b"persist-this-unix-payload";
-    write_pool_bytes(&mut io, BufId(0), 0, msg);
+    write_pool_bytes(&mut io, BufId::new(0), 0, msg);
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: msg.len() as u32,
             zero_copy: false,
@@ -370,14 +380,14 @@ fn t3_15_unix_domain_armed_recv_and_chained_file_persist() {
     )
     .unwrap();
     let rcs = drive_until(&mut io, &mut out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(3))
+        v.iter().any(|c| c.token().get() == 3)
     })
     .unwrap();
-    let rc = rcs.iter().find(|c| c.token == Token(3)).unwrap();
-    let rbuf = rc.buf.unwrap();
-    let got = read_pool_bytes(&mut io, rbuf, 0, usize::try_from(rc.result).unwrap());
+    let rc = rcs.iter().find(|c| c.token().get() == 3).unwrap();
+    let rbuf = rc.buf().unwrap();
+    let got = read_pool_bytes(&mut io, rbuf, 0, usize::try_from(rc.result()).unwrap());
     assert_eq!(got, msg);
-    write_pool_bytes(&mut io, BufId(1), 0, &got);
+    write_pool_bytes(&mut io, BufId::new(1), 0, &got);
     io.give_back(rbuf);
 
     persist_chain(

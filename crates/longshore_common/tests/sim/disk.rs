@@ -33,33 +33,32 @@ mod power_loss;
 mod power_loss_settle;
 
 pub(crate) fn base_limits() -> Limits {
-    Limits {
-        sockets_max: 6,
-        buffers: 4,
-        buffer_size: 32 * 1024,
-        small_buffers: 2,
-        small_buffer_size: 128,
-        files_max: 4,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(4)
+        .with_buffer_size(32 * 1024)
+        .with_small_buffers(2)
+        .with_small_buffer_size(128)
+        .with_files_max(4)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(16)
 }
 
 pub(crate) fn make_sim(seed: u64, sector_size: u32, log_entries: u32, log_bytes: usize) -> SimIo {
     let mut sim = SimIo::new(base_limits(), seed, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 16,
-        max_dirs: 8,
-        max_bytes_per_file: 64 * 1024,
-        max_name_len: 128,
-        write_log_entries: log_entries,
-        write_log_bytes: log_bytes,
-        read_error_sectors: 16,
-        sector_size,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(16)
+            .with_max_dirs(8)
+            .with_max_bytes_per_file(64 * 1024)
+            .with_max_name_len(128)
+            .with_write_log_entries(log_entries)
+            .with_write_log_bytes(log_bytes)
+            .with_read_error_sectors(16)
+            .with_sector_size(sector_size),
+    );
     sim
 }
 
@@ -73,12 +72,12 @@ pub(crate) fn put_path(sim: &mut SimIo, buf: BufId, path: &str) -> u32 {
 
 #[cfg(test)]
 pub(crate) fn drive(sim: &mut SimIo, out: &mut Completions, tok: u64, op: Op) -> i32 {
-    sim.submit(Token(tok), op).unwrap();
+    sim.submit(Token::new(tok), op).unwrap();
     for _ in 0..10_000 {
         sim.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(tok) {
-                return c.result;
+            if c.token() == Token::new(tok) {
+                return c.result();
             }
         }
     }
@@ -86,28 +85,18 @@ pub(crate) fn drive(sim: &mut SimIo, out: &mut Completions, tok: u64, op: Op) ->
 }
 
 pub(crate) fn rw_create() -> OpenFlags {
-    OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    }
+    OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
 }
 
 pub(crate) fn rw_open() -> OpenFlags {
-    OpenFlags {
-        read: true,
-        write: true,
-        ..Default::default()
-    }
+    OpenFlags::NONE.with_read(true).with_write(true)
 }
 
 pub(crate) fn dir_open() -> OpenFlags {
-    OpenFlags {
-        read: true,
-        directory: true,
-        ..Default::default()
-    }
+    OpenFlags::NONE.with_read(true).with_directory(true)
 }
 
 pub(crate) fn open_path(
@@ -118,14 +107,14 @@ pub(crate) fn open_path(
     path: &str,
     flags: OpenFlags,
 ) -> i32 {
-    let len = put_path(sim, BufId(0), path);
+    let len = put_path(sim, BufId::new(0), path);
     drive(
         sim,
         out,
         tok,
         Op::FileOpen {
             slot,
-            path_buf: BufId(0),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: len,
             flags,
@@ -134,21 +123,31 @@ pub(crate) fn open_path(
 }
 
 pub(crate) fn sync_dir_path(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(3), path, dir_open()), 0);
+    assert_eq!(
+        open_path(sim, out, tok, FileSlot::new(3), path, dir_open()),
+        0
+    );
     assert_eq!(
         drive(
             sim,
             out,
             tok + 1,
             Op::FileSync {
-                slot: FileSlot(3),
+                slot: FileSlot::new(3),
                 datasync: false,
             },
         ),
         0
     );
     assert_eq!(
-        drive(sim, out, tok + 2, Op::FileClose { slot: FileSlot(3) }),
+        drive(
+            sim,
+            out,
+            tok + 2,
+            Op::FileClose {
+                slot: FileSlot::new(3)
+            }
+        ),
         0
     );
 }
@@ -162,14 +161,14 @@ pub(crate) fn write_fill(
     len: u32,
     byte: u8,
 ) -> i32 {
-    sim.buf(BufId(1))[..len as usize].fill(byte);
+    sim.buf(BufId::new(1))[..len as usize].fill(byte);
     drive(
         sim,
         out,
         tok,
         Op::FileWrite {
             slot,
-            buf: BufId(1),
+            buf: BufId::new(1),
             off: 0,
             len,
             file_off,
@@ -191,7 +190,7 @@ pub(crate) fn read_at(
         tok,
         Op::FileRead {
             slot,
-            buf: BufId(2),
+            buf: BufId::new(2),
             off: 0,
             len,
             file_off,
@@ -212,37 +211,37 @@ pub(crate) fn sync_slot(sim: &mut SimIo, out: &mut Completions, tok: u64, slot: 
 }
 
 pub(crate) fn stat_size(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) -> u64 {
-    let len = put_path(sim, BufId(0), path);
+    let len = put_path(sim, BufId::new(0), path);
     assert_eq!(
         drive(
             sim,
             out,
             tok,
             Op::FileStatus {
-                path_buf: BufId(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: len,
-                out_buf: BufId(2),
+                out_buf: BufId::new(2),
                 out_off: 0,
             },
         ),
         0
     );
-    file_size(sim.buf(BufId(2)))
+    file_size(sim.buf(BufId::new(2)))
 }
 
 #[test]
 #[should_panic(expected = "sector_size must be 512 or 4096")]
 fn invalid_sector_size_panics_at_setup() {
     let mut sim = SimIo::new(base_limits(), 1, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 4,
-        max_dirs: 2,
-        max_bytes_per_file: 4096,
-        max_name_len: 64,
-        sector_size: 1024,
-        ..DiskConfig::BASE
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(4)
+            .with_max_dirs(2)
+            .with_max_bytes_per_file(4096)
+            .with_max_name_len(64)
+            .with_sector_size(1024),
+    );
 }
 
 #[test]
@@ -257,7 +256,7 @@ fn write_log_overflow_evicts_oldest_to_durable_and_zero_allocs() {
                 &mut sim,
                 &mut out,
                 1,
-                FileSlot(0),
+                FileSlot::new(0),
                 "/evict.dat",
                 rw_create()
             ),
@@ -267,15 +266,15 @@ fn write_log_overflow_evicts_oldest_to_durable_and_zero_allocs() {
 
         sealed(|| {
             for idx in 0..4u64 {
-                sim.buf(BufId(1))[..512].fill((0x10 + idx) as u8);
+                sim.buf(BufId::new(1))[..512].fill((0x10 + idx) as u8);
                 assert_eq!(
                     drive(
                         &mut sim,
                         &mut out,
                         20 + idx,
                         Op::FileWrite {
-                            slot: FileSlot(0),
-                            buf: BufId(1),
+                            slot: FileSlot::new(0),
+                            buf: BufId::new(1),
                             off: 0,
                             len: 512,
                             file_off: idx * 512,
@@ -286,7 +285,14 @@ fn write_log_overflow_evicts_oldest_to_durable_and_zero_allocs() {
             }
             sim.power_loss();
             assert_eq!(
-                open_path(&mut sim, &mut out, 30, FileSlot(0), "/evict.dat", rw_open()),
+                open_path(
+                    &mut sim,
+                    &mut out,
+                    30,
+                    FileSlot::new(0),
+                    "/evict.dat",
+                    rw_open()
+                ),
                 0
             );
             assert_eq!(
@@ -295,8 +301,8 @@ fn write_log_overflow_evicts_oldest_to_durable_and_zero_allocs() {
                     &mut out,
                     31,
                     Op::FileRead {
-                        slot: FileSlot(0),
-                        buf: BufId(2),
+                        slot: FileSlot::new(0),
+                        buf: BufId::new(2),
                         off: 0,
                         len: 1024,
                         file_off: 0,
@@ -304,7 +310,7 @@ fn write_log_overflow_evicts_oldest_to_durable_and_zero_allocs() {
                 ),
                 1024
             );
-            let r = sim.buf(BufId(2));
+            let r = sim.buf(BufId::new(2));
             assert!(r[..512].iter().all(|&b| b == 0x10));
             assert!(r[512..1024].iter().all(|&b| b == 0x11));
         });

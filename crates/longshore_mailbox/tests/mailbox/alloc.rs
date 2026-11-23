@@ -54,7 +54,7 @@ fn waiters_within_prealloc_and_warmed_block_on_allocate_nothing() {
         capacity: 4,
         slots: 2,
         waiters_prealloc: 4,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     };
     let (tx, mut rx) = mailbox_parked::<(u32, u32), u32>(cfg);
 
@@ -123,17 +123,14 @@ type Tx = Sender<u32, u32>;
 
 #[test]
 fn poll_many_begin_finish_close_and_dropped_call_future_allocate_nothing() {
-    let limits = Limits {
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE.with_ops_max(4);
     let mut sim_a = SimIo::new(limits, 1, Faults::default());
     let mut sim_b = SimIo::new(limits, 2, Faults::default());
     let cfg = Config {
         capacity: 4,
         slots: 1,
         waiters_prealloc: 4,
-        wake_token: Token(9),
+        wake_token: Token::new(9),
     };
     let (tx_a, mut rx_a) = mailbox::<u32, u32, _>(&mut sim_a, cfg).unwrap();
     let (tx_b, mut rx_b) = mailbox::<u32, u32, _>(&mut sim_b, cfg).unwrap();

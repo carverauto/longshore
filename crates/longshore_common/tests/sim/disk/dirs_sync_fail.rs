@@ -23,32 +23,46 @@ fn recreate_same_name_after_poisoned_create_survives_later_dir_sync_fail() {
     let mut out = Completions::new(16);
     sealed(|| {
         assert_eq!(
-            open_path(&mut sim, &mut out, 1, FileSlot(0), "/x", rw_create()),
+            open_path(&mut sim, &mut out, 1, FileSlot::new(0), "/x", rw_create()),
             0
         );
         assert_eq!(
-            write_fill(&mut sim, &mut out, 2, FileSlot(0), 0, 16, 0xAA),
+            write_fill(&mut sim, &mut out, 2, FileSlot::new(0), 0, 16, 0xAA),
             16
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 3, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 3, FileSlot::new(0)), 0);
         assert_eq!(
-            drive(&mut sim, &mut out, 4, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                4,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         fail_dir_sync(&mut sim, &mut out, 10, "/");
 
         unlink_path(&mut sim, &mut out, 20, "/x");
         assert_eq!(
-            open_path(&mut sim, &mut out, 21, FileSlot(0), "/x", rw_create()),
+            open_path(&mut sim, &mut out, 21, FileSlot::new(0), "/x", rw_create()),
             0
         );
         assert_eq!(
-            write_fill(&mut sim, &mut out, 22, FileSlot(0), 0, 16, 0xBB),
+            write_fill(&mut sim, &mut out, 22, FileSlot::new(0), 0, 16, 0xBB),
             16
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 23, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 23, FileSlot::new(0)), 0);
         assert_eq!(
-            drive(&mut sim, &mut out, 24, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                24,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         sync_dir_path(&mut sim, &mut out, 30, "/");
@@ -57,41 +71,39 @@ fn recreate_same_name_after_poisoned_create_survives_later_dir_sync_fail() {
         sim.power_loss();
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 50, FileSlot(0), "/x", rw_open()),
+            open_path(&mut sim, &mut out, 50, FileSlot::new(0), "/x", rw_open()),
             0
         );
-        assert_eq!(read_at(&mut sim, &mut out, 51, FileSlot(0), 0, 16), 16);
-        assert!(sim.buf(BufId(2))[..16].iter().all(|&b| b == 0xBB));
+        assert_eq!(read_at(&mut sim, &mut out, 51, FileSlot::new(0), 0, 16), 16);
+        assert!(sim.buf(BufId::new(2))[..16].iter().all(|&b| b == 0xBB));
     });
 }
 
 #[test]
 fn synced_child_in_unsynced_dir_survives_later_child_dir_sync_fail() {
+    const SLOT_0: FileSlot = FileSlot::new(0);
     let mut sim = make_sim(43, 512, 16, 16 * 1024);
     let mut out = Completions::new(16);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d1");
         assert_eq!(
-            open_path(&mut sim, &mut out, 2, FileSlot(0), "/d1/keep", rw_create()),
+            open_path(&mut sim, &mut out, 2, SLOT_0, "/d1/keep", rw_create()),
             0
         );
+        assert_eq!(write_fill(&mut sim, &mut out, 3, SLOT_0, 0, 16, 0xCC), 16);
+        assert_eq!(sync_slot(&mut sim, &mut out, 4, SLOT_0), 0);
         assert_eq!(
-            write_fill(&mut sim, &mut out, 3, FileSlot(0), 0, 16, 0xCC),
-            16
-        );
-        assert_eq!(sync_slot(&mut sim, &mut out, 4, FileSlot(0)), 0);
-        assert_eq!(
-            drive(&mut sim, &mut out, 5, Op::FileClose { slot: FileSlot(0) }),
+            drive(&mut sim, &mut out, 5, Op::FileClose { slot: SLOT_0 }),
             0
         );
         sync_dir_path(&mut sim, &mut out, 10, "/d1");
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 20, FileSlot(0), "/d1/drop", rw_create()),
+            open_path(&mut sim, &mut out, 20, SLOT_0, "/d1/drop", rw_create()),
             0
         );
         assert_eq!(
-            drive(&mut sim, &mut out, 21, Op::FileClose { slot: FileSlot(0) }),
+            drive(&mut sim, &mut out, 21, Op::FileClose { slot: SLOT_0 }),
             0
         );
         fail_dir_sync(&mut sim, &mut out, 30, "/d1");
@@ -99,13 +111,20 @@ fn synced_child_in_unsynced_dir_survives_later_child_dir_sync_fail() {
         sim.power_loss();
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 50, FileSlot(0), "/d1/keep", rw_open()),
+            open_path(&mut sim, &mut out, 50, SLOT_0, "/d1/keep", rw_open()),
             0
         );
-        assert_eq!(read_at(&mut sim, &mut out, 51, FileSlot(0), 0, 16), 16);
-        assert!(sim.buf(BufId(2))[..16].iter().all(|&b| b == 0xCC));
+        assert_eq!(read_at(&mut sim, &mut out, 51, SLOT_0, 0, 16), 16);
+        assert!(sim.buf(BufId::new(2))[..16].iter().all(|&b| b == 0xCC));
         assert_eq!(
-            open_path(&mut sim, &mut out, 52, FileSlot(1), "/d1/drop", rw_open()),
+            open_path(
+                &mut sim,
+                &mut out,
+                52,
+                FileSlot::new(1),
+                "/d1/drop",
+                rw_open()
+            ),
             -ENOENT
         );
     });

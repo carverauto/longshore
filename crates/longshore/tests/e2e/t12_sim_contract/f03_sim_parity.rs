@@ -14,13 +14,11 @@ use std::collections::BTreeSet;
 use std::net::SocketAddr;
 
 pub(super) fn sim_limits() -> Limits {
-    Limits {
-        sockets_max: 6,
-        buffers: 4,
-        buffer_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(4)
+        .with_buffer_size(4096)
+        .with_ops_max(8)
 }
 
 pub(super) fn drain_exact(
@@ -32,18 +30,18 @@ pub(super) fn drain_exact(
     while got.len() < expected {
         io.tick(true, out).expect("tick");
         while let Some(c) = out.pop() {
-            got.push((c.token.0, c.result));
+            got.push((c.token().get(), c.result()));
         }
     }
     got
 }
 
 /// The sockets of the all-ops trace.
-const LISTENER: Sock = Sock(0);
-const SERVER: Sock = Sock(1);
-const CLIENT: Sock = Sock(2);
-const UDP_SRV: Sock = Sock(3);
-const UDP_CLI: Sock = Sock(4);
+const LISTENER: Sock = Sock::new(0);
+const SERVER: Sock = Sock::new(1);
+const CLIENT: Sock = Sock::new(2);
+const UDP_SRV: Sock = Sock::new(3);
+const UDP_CLI: Sock = Sock::new(4);
 
 /// Wake, file read, two timers (one cancelled) and a UDP connect.
 fn wake_file_timers_udp_connect(
@@ -52,24 +50,30 @@ fn wake_file_timers_udp_connect(
     file: FileId,
     udp_addr: SocketAddr,
 ) -> Vec<(u64, i32)> {
-    io.submit(Token(1), Op::AwaitWake).unwrap();
+    io.submit(Token::new(1), Op::AwaitWake).unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::ReadFile {
             file,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    io.submit(Token(3), Op::Timeout { nanos: 400_000 }).unwrap();
-    io.submit(Token(4), Op::Timeout { nanos: 5_000_000 })
+    io.submit(Token::new(3), Op::Timeout { nanos: 400_000 })
         .unwrap();
-    io.submit(Token(5), Op::Cancel { target: Token(4) })
+    io.submit(Token::new(4), Op::Timeout { nanos: 5_000_000 })
         .unwrap();
     io.submit(
-        Token(6),
+        Token::new(5),
+        Op::Cancel {
+            target: Token::new(4),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(6),
         Op::ConnectUdp {
             sock: UDP_CLI,
             addr: udp_addr,
@@ -85,12 +89,12 @@ fn udp_ping_and_tcp_connect(
     out: &mut Completions,
     tcp_addr: SocketAddr,
 ) -> Vec<(u64, i32)> {
-    io.buf(BufId(1))[..4].copy_from_slice(b"ping");
+    io.buf(BufId::new(1))[..4].copy_from_slice(b"ping");
     io.submit(
-        Token(7),
+        Token::new(7),
         Op::Send {
             sock: UDP_CLI,
-            buf: BufId(1),
+            buf: BufId::new(1),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -98,17 +102,17 @@ fn udp_ping_and_tcp_connect(
     )
     .unwrap();
     io.submit(
-        Token(8),
+        Token::new(8),
         Op::Recv {
             sock: UDP_SRV,
-            buf: BufId(2),
+            buf: BufId::new(2),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
     io.submit(
-        Token(9),
+        Token::new(9),
         Op::Accept {
             listener: LISTENER,
             sock: SERVER,
@@ -116,7 +120,7 @@ fn udp_ping_and_tcp_connect(
     )
     .unwrap();
     io.submit(
-        Token(10),
+        Token::new(10),
         Op::Connect {
             sock: CLIENT,
             addr: tcp_addr,
@@ -129,17 +133,22 @@ fn udp_ping_and_tcp_connect(
 /// An idle `RecvNow` and a cancel of an unknown token.
 fn idle_recv_now_and_stray_cancel(io: &mut SimIo, out: &mut Completions) -> Vec<(u64, i32)> {
     io.submit(
-        Token(11),
+        Token::new(11),
         Op::RecvNow {
             sock: SERVER,
-            buf: BufId(3),
+            buf: BufId::new(3),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    io.submit(Token(12), Op::Cancel { target: Token(999) })
-        .unwrap();
+    io.submit(
+        Token::new(12),
+        Op::Cancel {
+            target: Token::new(999),
+        },
+    )
+    .unwrap();
     drain_exact(io, out, 2)
 }
 
@@ -148,15 +157,15 @@ fn idle_recv_now_and_stray_cancel(io: &mut SimIo, out: &mut Completions) -> Vec<
 fn stream_payload(io: &mut SimIo, out: &mut Completions, log: &mut Vec<(u64, i32)>) {
     let payload = b"hello-stream-payload";
     let (mut sent, mut recvd, mut tok) = (0usize, 0usize, 20u64);
-    io.buf(BufId(0))[..payload.len()].copy_from_slice(payload);
+    io.buf(BufId::new(0))[..payload.len()].copy_from_slice(payload);
     while recvd < payload.len() {
         let mut submitted = 0;
         if sent < payload.len() {
             io.submit(
-                Token(tok),
+                Token::new(tok),
                 Op::Send {
                     sock: CLIENT,
-                    buf: BufId(0),
+                    buf: BufId::new(0),
                     off: sent as u32,
                     len: (payload.len() - sent) as u32,
                     zero_copy: true,
@@ -168,10 +177,10 @@ fn stream_payload(io: &mut SimIo, out: &mut Completions, log: &mut Vec<(u64, i32
         }
         let rtok = tok;
         io.submit(
-            Token(rtok),
+            Token::new(rtok),
             Op::Recv {
                 sock: SERVER,
-                buf: BufId(3),
+                buf: BufId::new(3),
                 off: recvd as u32,
                 len: (payload.len() - recvd) as u32,
             },
@@ -216,7 +225,7 @@ pub(super) fn run_all_ops_trace(seed: u64, faults: Faults) -> (Vec<(u64, i32)>, 
         .into_iter()
         .enumerate()
     {
-        io.submit(Token(100 + idx as u64), Op::Close { sock })
+        io.submit(Token::new(100 + idx as u64), Op::Close { sock })
             .unwrap();
     }
     log.extend(drain_exact(&mut io, &mut out, 5));
@@ -254,10 +263,7 @@ fn t1_f03_1_echo_and_golden_trace_hashes_without_faults() {
 #[test]
 fn t1_f03_2_echo_and_golden_trace_hashes_with_delay() {
     let addr: SocketAddr = "192.0.2.1:443".parse().unwrap();
-    let faults = Faults {
-        delay: 200_000,
-        ..Default::default()
-    };
+    let faults = Faults::NONE.with_delay(200_000);
     for seed in 0..10u64 {
         let mut io_plain = SimIo::new(sim_limits(), seed, Faults::default());
         let mut io_a = SimIo::new(sim_limits(), seed, faults);
@@ -272,7 +278,10 @@ fn t1_f03_2_echo_and_golden_trace_hashes_with_delay() {
         let sb = echo(&mut io_b, addr, 64 * 1024, 4096, false, &mut ob).unwrap();
         assert_eq!(sa, sb);
         assert_eq!(io_a.trace_hash(), io_b.trace_hash());
-        assert!(sa.ticks > sp.ticks, "seed {seed} should show delay ticks");
+        assert!(
+            sa.ticks() > sp.ticks(),
+            "seed {seed} should show delay ticks"
+        );
     }
 
     let golden = [
@@ -289,10 +298,7 @@ fn t1_f03_2_echo_and_golden_trace_hashes_with_delay() {
 
 #[test]
 fn t1_f03_3_composite_all_ops_deterministic_replay() {
-    let faults = Faults {
-        delay: 100_000,
-        ..Default::default()
-    };
+    let faults = Faults::NONE.with_delay(100_000);
     let (log1, hash1) = run_all_ops_trace(31415, faults);
     let (log2, hash2) = run_all_ops_trace(31415, faults);
     assert_eq!(log1, log2);
@@ -304,11 +310,7 @@ fn t1_f03_3_composite_all_ops_deterministic_replay() {
 #[test]
 fn t1_f03_4_distinct_seeds_produce_distinct_trace_hashes() {
     let addr: SocketAddr = "192.0.2.1:443".parse().unwrap();
-    let faults = Faults {
-        delay: 200_000,
-        short_send: 100_000,
-        ..Default::default()
-    };
+    let faults = Faults::NONE.with_delay(200_000).with_short_send(100_000);
     let mut hashes = BTreeSet::new();
     for seed in 1..=6u64 {
         let mut io = SimIo::new(sim_limits(), seed, faults);
@@ -330,22 +332,22 @@ fn t1_f03_5_routed_segment_measurement_preserves_trace() {
     let run_once = || {
         let mut io = SimIo::new(sim_limits(), 77, Faults::default());
         let mut out = Completions::new(8);
-        let _: SocketAddr = io.listen(Sock(0), listener_addr).unwrap();
+        let _: SocketAddr = io.listen(Sock::new(0), listener_addr).unwrap();
         io.route(routed_addr, listener_addr, 8228);
         io.set_path_limit(8960);
         io.measure_segment_sizes(true);
         io.submit(
-            Token(1),
+            Token::new(1),
             Op::Accept {
-                listener: Sock(0),
-                sock: Sock(1),
+                listener: Sock::new(0),
+                sock: Sock::new(1),
             },
         )
         .unwrap();
         io.submit(
-            Token(2),
+            Token::new(2),
             Op::Connect {
-                sock: Sock(2),
+                sock: Sock::new(2),
                 addr: routed_addr,
             },
         )
@@ -353,13 +355,7 @@ fn t1_f03_5_routed_segment_measurement_preserves_trace() {
         let mut cs = drain_exact(&mut io, &mut out, 2);
         cs.sort_by_key(|x| x.0);
         assert_eq!(cs[0], (1, 0));
-        assert_eq!(
-            Segment::decode(cs[1].1),
-            Some(Segment {
-                size: 8228,
-                path_limit: 8960
-            })
-        );
+        assert_eq!(Segment::decode(cs[1].1), Some(Segment::new(8228, 8960)));
         assert_eq!(io.route_connects(routed_addr), 1);
         io.trace_hash()
     };

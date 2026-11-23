@@ -110,13 +110,11 @@ fn a_stalled_store_times_out_and_is_retried() {
 /// then readable byte for byte, or ends in a reported fatal outcome.
 #[test]
 fn success_means_durable_under_faults() {
-    let faults = Faults {
-        reset: 80_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_reset(80_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000)
+        .with_delay(200_000);
     let (mut stored, mut gave_up, mut retried) = (0, 0, 0);
     for seed in 0..60 {
         let mut w = world(seed, faults, 6);

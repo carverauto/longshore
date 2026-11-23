@@ -15,20 +15,18 @@ pub fn run_posix_echo_sealed() {
     use super::super::harness::posix_backend;
     use longshore::io::scenario::echo;
 
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 3,
-        buffer_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(3)
+        .with_buffer_size(4096)
+        .with_ops_max(8);
     let mut io = posix_backend(limits).expect("posix backend");
     let mut out = Completions::new(16);
     let addr = "127.0.0.1:0".parse().expect("loopback addr");
 
     let stats = sealed(|| echo(&mut io, addr, 128 * 1024, 4096, false, &mut out));
     let stats = stats.expect("sealed posix echo");
-    assert!(stats.sends > 0 && stats.recvs > 0 && stats.ticks > 0);
+    assert!(stats.sends() > 0 && stats.recvs() > 0 && stats.ticks() > 0);
 }
 
 #[cfg(unix)]
@@ -40,12 +38,17 @@ fn sealed_posix_echo() {
 /// Arms an accept, connects `Sock(1)`, and arms a `Recv` on the accepted slot.
 /// Returns `None` when any step fails.
 fn accept_and_arm_recv(sim: &mut SimIo, out: &mut Completions, addr: SocketAddr) -> Option<Sock> {
-    sim.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .ok()?;
     sim.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .ok()?;
+    sim.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -54,9 +57,9 @@ fn accept_and_arm_recv(sim: &mut SimIo, out: &mut Completions, addr: SocketAddr)
     for _ in 0..64 {
         sim.tick(false, out).ok()?;
         while let Some(c) = out.pop() {
-            if c.token == Token(1) && c.result >= 0 {
-                srv_opt = Some(Sock(u32::try_from(c.result).unwrap()));
-            } else if c.token == Token(2) && c.result == 0 {
+            if c.token().get() == 1 && c.result() >= 0 {
+                srv_opt = Some(Sock::new(u32::try_from(c.result()).unwrap()));
+            } else if c.token().get() == 2 && c.result() == 0 {
                 cli_ok = true;
             }
         }
@@ -65,7 +68,8 @@ fn accept_and_arm_recv(sim: &mut SimIo, out: &mut Completions, addr: SocketAddr)
         }
     }
     let srv = srv_opt?;
-    sim.submit(Token(3), Op::ArmedRecv { sock: srv }).ok()?;
+    sim.submit(Token::new(3), Op::ArmedRecv { sock: srv })
+        .ok()?;
     Some(srv)
 }
 
@@ -75,10 +79,10 @@ fn await_round(sim: &mut SimIo, out: &mut Completions, round: u32) -> Option<boo
     for _ in 0..32 {
         sim.tick(false, out).ok()?;
         while let Some(c) = out.pop() {
-            if c.token == Token(100 + u64::from(round)) && c.result == 16 {
+            if c.token() == Token::new(100 + u64::from(round)) && c.result() == 16 {
                 sent_ok = true;
-            } else if c.token == Token(3) && c.result > 0 {
-                if let Some(id) = c.buf {
+            } else if c.token().get() == 3 && c.result() > 0 {
+                if let Some(id) = c.buf() {
                     if sim.buf(id)[0] == 0x5C {
                         recvd_ok = true;
                     }
@@ -97,15 +101,18 @@ fn await_round(sim: &mut SimIo, out: &mut Completions, round: u32) -> Option<boo
 fn echo_rounds(sim: &mut SimIo, out: &mut Completions) -> (u32, bool) {
     let mut cycles = 0u32;
     for round in 0..40u32 {
-        sim.buf(BufId(0))[..16].copy_from_slice(&[0x5Cu8; 16]);
+        sim.buf(BufId::new(0))[..16].copy_from_slice(&[0x5Cu8; 16]);
         let send = Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 16,
             zero_copy: false,
         };
-        if sim.submit(Token(100 + u64::from(round)), send).is_err() {
+        if sim
+            .submit(Token::new(100 + u64::from(round)), send)
+            .is_err()
+        {
             break;
         }
         match await_round(sim, out, round) {
@@ -118,21 +125,19 @@ fn echo_rounds(sim: &mut SimIo, out: &mut Completions) -> (u32, bool) {
 }
 
 pub fn run_armed_net_ring_sealed() {
-    let limits = Limits {
-        sockets_max: 12,
-        buffers: 2,
-        buffer_size: 4096,
-        accept_range_start: 6,
-        accept_range_len: 4,
-        ring_buffers: 8,
-        ring_buffer_size: 1024,
-        ops_max: 16,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(12)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_accept_range_start(6)
+        .with_accept_range_len(4)
+        .with_ring_buffers(8)
+        .with_ring_buffer_size(1024)
+        .with_ops_max(16);
     let mut sim = SimIo::new(limits, 9002, Faults::default());
     let mut out = Completions::new(16);
     let addr = sim
-        .listen(Sock(0), "192.0.2.90:9002".parse().expect("addr"))
+        .listen(Sock::new(0), "192.0.2.90:9002".parse().expect("addr"))
         .expect("listen");
 
     let completed = sealed(|| {
@@ -144,8 +149,10 @@ pub fn run_armed_net_ring_sealed() {
             return cycles;
         }
         // Teardown after the count is settled: a busy ring or a failed tick does not change it.
-        let _: Option<()> = sim.submit(Token(900), Op::Close { sock: srv }).ok();
-        let _: Option<()> = sim.submit(Token(901), Op::Close { sock: Sock(1) }).ok();
+        let _: Option<()> = sim.submit(Token::new(900), Op::Close { sock: srv }).ok();
+        let _: Option<()> = sim
+            .submit(Token::new(901), Op::Close { sock: Sock::new(1) })
+            .ok();
         for _ in 0..16 {
             let _: Option<()> = sim.tick(false, &mut out).ok();
             while out.pop().is_some() {}

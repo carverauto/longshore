@@ -25,7 +25,7 @@ fn power_loss_drops_in_flight_ops_frees_slots_and_rebuilds_callers() {
 
     // Leave in-flight Recv, FileWrite, Timeout, and a pre-signalled waker.
     waker.wake();
-    sim.buf(BufId(1))[..4].copy_from_slice(b"lost");
+    sim.buf(BufId::new(1))[..4].copy_from_slice(b"lost");
     sealed(|| {
         submit_in_flight_ops(&mut sim);
 
@@ -36,12 +36,12 @@ fn power_loss_drops_in_flight_ops_frees_slots_and_rebuilds_callers() {
         assert!(out.is_empty());
 
         // Waker flag was cleared: AwaitWake waits until waker.wake() fires again.
-        sim.submit(Token(200), Op::AwaitWake).unwrap();
+        sim.submit(Token::new(200), Op::AwaitWake).unwrap();
         sim.tick(false, &mut out).unwrap();
         assert!(out.is_empty());
         waker.wake();
         sim.tick(false, &mut out).unwrap();
-        assert_eq!(out.pop().unwrap().token, Token(200));
+        assert_eq!(out.pop().unwrap().token(), Token::new(200));
 
         // Pre-crash socket is dead (-EPIPE).
         assert_eq!(
@@ -50,8 +50,8 @@ fn power_loss_drops_in_flight_ops_frees_slots_and_rebuilds_callers() {
                 &mut out,
                 201,
                 Op::Send {
-                    sock: Sock(2),
-                    buf: BufId(1),
+                    sock: Sock::new(2),
+                    buf: BufId::new(1),
                     off: 0,
                     len: 4,
                     zero_copy: false,
@@ -71,33 +71,33 @@ fn power_loss_drops_in_flight_ops_frees_slots_and_rebuilds_callers() {
             &mut sim,
             &mut out,
             304,
-            FileSlot(0),
+            FileSlot::new(0),
             "/durable.dat",
             rw_open()
         ),
         0
     );
-    assert_eq!(read_at(&mut sim, &mut out, 305, FileSlot(0), 0, 8), 8);
-    assert_eq!(&sim.buf(BufId(2))[..8], b"syncdata");
+    assert_eq!(read_at(&mut sim, &mut out, 305, FileSlot::new(0), 0, 8), 8);
+    assert_eq!(&sim.buf(BufId::new(2))[..8], b"syncdata");
 }
 
 /// Listens on `Sock(0)`, accepts into `Sock(1)` (token `tok`) and connects `Sock(2)`
 /// (token `tok + 1`); returns both results in completion order.
 #[cfg(test)]
 fn connect_pair(sim: &mut SimIo, out: &mut Completions, tok: u64) -> [i32; 2] {
-    let _: SocketAddr = sim.listen(Sock(0), ADDR).unwrap();
+    let _: SocketAddr = sim.listen(Sock::new(0), ADDR).unwrap();
     sim.submit(
-        Token(tok),
+        Token::new(tok),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
+            listener: Sock::new(0),
+            sock: Sock::new(1),
         },
     )
     .unwrap();
     sim.submit(
-        Token(tok + 1),
+        Token::new(tok + 1),
         Op::Connect {
-            sock: Sock(2),
+            sock: Sock::new(2),
             addr: ADDR,
         },
     )
@@ -114,7 +114,7 @@ fn collect_two(sim: &mut SimIo, out: &mut Completions) -> [i32; 2] {
         sim.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
             if let Some(r) = results.get_mut(done) {
-                *r = c.result;
+                *r = c.result();
             }
             done += 1;
         }
@@ -125,19 +125,19 @@ fn collect_two(sim: &mut SimIo, out: &mut Completions) -> [i32; 2] {
 /// Creates `/durable.dat` with a durable entry and the synced contents `syncdata`.
 fn write_synced_file(sim: &mut SimIo, out: &mut Completions) {
     assert_eq!(
-        open_path(sim, out, 3, FileSlot(0), "/durable.dat", rw_create()),
+        open_path(sim, out, 3, FileSlot::new(0), "/durable.dat", rw_create()),
         0
     );
     sync_dir_path(sim, out, 10, "/");
-    sim.buf(BufId(1))[..8].copy_from_slice(b"syncdata");
+    sim.buf(BufId::new(1))[..8].copy_from_slice(b"syncdata");
     assert_eq!(
         drive(
             sim,
             out,
             20,
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 8,
                 file_off: 0,
@@ -145,27 +145,27 @@ fn write_synced_file(sim: &mut SimIo, out: &mut Completions) {
         ),
         8
     );
-    assert_eq!(sync_slot(sim, out, 21, FileSlot(0)), 0);
+    assert_eq!(sync_slot(sim, out, 21, FileSlot::new(0)), 0);
 }
 
 /// A `Recv`, a `FileWrite` and a `Timeout` that power loss must drop (tokens 100..103).
 #[cfg(test)]
 fn submit_in_flight_ops(sim: &mut SimIo) {
     sim.submit(
-        Token(100),
+        Token::new(100),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(2),
+            sock: Sock::new(1),
+            buf: BufId::new(2),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
     sim.submit(
-        Token(101),
+        Token::new(101),
         Op::FileWrite {
-            slot: FileSlot(0),
-            buf: BufId(1),
+            slot: FileSlot::new(0),
+            buf: BufId::new(1),
             off: 0,
             len: 4,
             file_off: 0,
@@ -173,7 +173,7 @@ fn submit_in_flight_ops(sim: &mut SimIo) {
     )
     .unwrap();
     sim.submit(
-        Token(102),
+        Token::new(102),
         Op::Timeout {
             nanos: 1_000_000_000,
         },
@@ -184,12 +184,12 @@ fn submit_in_flight_ops(sim: &mut SimIo) {
 /// `hello` goes from `Sock(2)` to `Sock(1)` (tokens 302, 303).
 #[cfg(test)]
 fn send_and_receive_hello(sim: &mut SimIo, out: &mut Completions) {
-    sim.buf(BufId(1))[..5].copy_from_slice(b"hello");
+    sim.buf(BufId::new(1))[..5].copy_from_slice(b"hello");
     sim.submit(
-        Token(302),
+        Token::new(302),
         Op::Send {
-            sock: Sock(2),
-            buf: BufId(1),
+            sock: Sock::new(2),
+            buf: BufId::new(1),
             off: 0,
             len: 5,
             zero_copy: false,
@@ -197,15 +197,15 @@ fn send_and_receive_hello(sim: &mut SimIo, out: &mut Completions) {
     )
     .unwrap();
     sim.submit(
-        Token(303),
+        Token::new(303),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(2),
+            sock: Sock::new(1),
+            buf: BufId::new(2),
             off: 0,
             len: 5,
         },
     )
     .unwrap();
     assert_eq!(collect_two(sim, out), [5, 5]);
-    assert_eq!(&sim.buf(BufId(2))[..5], b"hello");
+    assert_eq!(&sim.buf(BufId::new(2))[..5], b"hello");
 }

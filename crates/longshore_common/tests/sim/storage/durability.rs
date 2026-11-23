@@ -17,14 +17,21 @@ fn unsynced_write_settled_by_power_loss() {
     for seed in 0..24u64 {
         let (mut sim, mut out, mut tok) = make_storage(seed, 512);
         assert_eq!(
-            open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+            open_file(
+                &mut sim,
+                &mut out,
+                tok,
+                FileSlot::new(0),
+                "/d/f",
+                rw_create()
+            ),
             0
         );
         tok += 1;
         sync_dir(&mut sim, &mut out, tok, "/d");
         tok += 5;
         assert_eq!(
-            write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"synced"),
+            write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"synced"),
             6
         );
         tok += 1;
@@ -34,7 +41,7 @@ fn unsynced_write_settled_by_power_loss() {
                 &mut out,
                 tok,
                 Op::FileSync {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     datasync: false,
                 },
             ),
@@ -42,12 +49,19 @@ fn unsynced_write_settled_by_power_loss() {
         );
         tok += 1;
         assert_eq!(
-            write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"later!!!"),
+            write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"later!!!"),
             8
         );
         tok += 1;
         assert_eq!(
-            drive(&mut sim, &mut out, tok, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                tok,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         tok += 1;
@@ -73,12 +87,19 @@ fn file_sync_does_not_make_entry_durable() {
     for seed in 0..16u64 {
         let (mut sim, mut out, mut tok) = make_storage(seed, 512);
         assert_eq!(
-            open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+            open_file(
+                &mut sim,
+                &mut out,
+                tok,
+                FileSlot::new(0),
+                "/d/f",
+                rw_create()
+            ),
             0
         );
         tok += 1;
         assert_eq!(
-            write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"data"),
+            write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"data"),
             4
         );
         tok += 1;
@@ -88,7 +109,7 @@ fn file_sync_does_not_make_entry_durable() {
                 &mut out,
                 tok,
                 Op::FileSync {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     datasync: false,
                 },
             ),
@@ -109,17 +130,31 @@ fn dir_sync_makes_entry_durable_not_contents() {
     for seed in 0..16u64 {
         let (mut sim, mut out, mut tok) = make_storage(seed, 512);
         assert_eq!(
-            open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+            open_file(
+                &mut sim,
+                &mut out,
+                tok,
+                FileSlot::new(0),
+                "/d/f",
+                rw_create()
+            ),
             0
         );
         tok += 1;
         assert_eq!(
-            write_bytes(&mut sim, &mut out, tok, FileSlot(0), 0, b"data"),
+            write_bytes(&mut sim, &mut out, tok, FileSlot::new(0), 0, b"data"),
             4
         );
         tok += 1;
         assert_eq!(
-            drive(&mut sim, &mut out, tok, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                tok,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         tok += 1;
@@ -153,11 +188,11 @@ fn rename_and_unlink_durable_only_after_dir_sync() {
 /// `/d/a` holding `A`, file and entry both synced; returns the next token.
 fn create_durable_a(sim: &mut SimIo, out: &mut Completions, mut tok: u64) -> u64 {
     assert_eq!(
-        open_file(sim, out, tok, FileSlot(0), "/d/a", rw_create()),
+        open_file(sim, out, tok, FileSlot::new(0), "/d/a", rw_create()),
         0
     );
     tok += 1;
-    assert_eq!(write_bytes(sim, out, tok, FileSlot(0), 0, b"A"), 1);
+    assert_eq!(write_bytes(sim, out, tok, FileSlot::new(0), 0, b"A"), 1);
     tok += 1;
     assert_eq!(
         drive(
@@ -165,14 +200,24 @@ fn create_durable_a(sim: &mut SimIo, out: &mut Completions, mut tok: u64) -> u64
             out,
             tok,
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: false,
             },
         ),
         0
     );
     tok += 1;
-    assert_eq!(drive(sim, out, tok, Op::FileClose { slot: FileSlot(0) }), 0);
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
+        0
+    );
     tok += 1;
     sync_dir(sim, out, tok, "/d");
     tok + 5
@@ -230,17 +275,17 @@ fn unlink_b_until_dir_sync(sim: &mut SimIo, out: &mut Completions, mut tok: u64)
 }
 
 fn rename(sim: &mut SimIo, out: &mut Completions, tok: u64, old: &str, new: &str) -> i32 {
-    let old_len = put_path(sim, BufId(0), old);
-    let new_len = put_path(sim, BufId(1), new);
+    let old_len = put_path(sim, BufId::new(0), old);
+    let new_len = put_path(sim, BufId::new(1), new);
     drive(
         sim,
         out,
         tok,
         Op::FileRename {
-            old_buf: BufId(0),
+            old_buf: BufId::new(0),
             old_off: 0,
             old_len,
-            new_buf: BufId(1),
+            new_buf: BufId::new(1),
             new_off: 0,
             new_len,
         },
@@ -248,13 +293,13 @@ fn rename(sim: &mut SimIo, out: &mut Completions, tok: u64, old: &str, new: &str
 }
 
 fn unlink(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) -> i32 {
-    let path_len = put_path(sim, BufId(0), path);
+    let path_len = put_path(sim, BufId::new(0), path);
     drive(
         sim,
         out,
         tok,
         Op::FileUnlink {
-            path_buf: BufId(0),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len,
         },

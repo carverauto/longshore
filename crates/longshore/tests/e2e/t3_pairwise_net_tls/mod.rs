@@ -20,17 +20,15 @@ pub(super) fn net_limits(
     ring_buffers: u32,
     ring_buffer_size: u32,
 ) -> Limits {
-    Limits {
-        sockets_max,
-        buffers: 4,
-        buffer_size: 32 * 1024,
-        small_buffers: 4,
-        small_buffer_size: 4096,
-        ops_max: 32,
-        accept_range_start: accept_start,
-        accept_range_len: accept_len,
-        ring_buffers,
-        ring_buffer_size,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(sockets_max)
+        .with_buffers(4)
+        .with_buffer_size(32 * 1024)
+        .with_small_buffers(4)
+        .with_small_buffer_size(4096)
+        .with_ops_max(32)
+        .with_accept_range_start(accept_start)
+        .with_accept_range_len(accept_len)
+        .with_ring_buffers(ring_buffers)
+        .with_ring_buffer_size(ring_buffer_size)
 }

@@ -17,34 +17,33 @@ use longshore::sim::{Faults, SimIo};
 pub const LINUX_EINVAL: i32 = 22;
 
 pub fn chain_limits(ops_max: u32) -> Limits {
-    Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 8192,
-        small_buffers: 2,
-        small_buffer_size: 512,
-        files_max: 4,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(8192)
+        .with_small_buffers(2)
+        .with_small_buffer_size(512)
+        .with_files_max(4)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(ops_max)
 }
 
 #[cfg(feature = "sim")]
 pub fn make_sim(limits: Limits, seed: u64) -> SimIo {
     let mut sim = SimIo::new(limits, seed, Faults::default());
-    sim.setup_disk(longshore::sim::DiskConfig {
-        max_files: 32,
-        max_dirs: 16,
-        max_bytes_per_file: 1024 * 1024,
-        max_name_len: 256,
-        write_log_entries: 64,
-        write_log_bytes: 256 * 1024,
-        read_error_sectors: 16,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        longshore::sim::DiskConfig::BASE
+            .with_max_files(32)
+            .with_max_dirs(16)
+            .with_max_bytes_per_file(1024 * 1024)
+            .with_max_name_len(256)
+            .with_write_log_entries(64)
+            .with_write_log_bytes(256 * 1024)
+            .with_read_error_sectors(16)
+            .with_sector_size(512),
+    );
     sim
 }
 
@@ -138,7 +137,7 @@ pub fn open_slot(
     submit_and_wait_one(
         &mut d,
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileOpen {
             slot,
             path_buf,
@@ -149,19 +148,19 @@ pub fn open_slot(
         10_000,
     )
     .expect("open")
-    .result
+    .result()
 }
 
 pub fn close_slot(io: &mut dyn Io, out: &mut Completions, tok: u64, slot: FileSlot) -> i32 {
     submit_and_wait_one(
         &mut DynIo(io),
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileClose { slot },
         10_000,
     )
     .expect("close")
-    .result
+    .result()
 }
 
 pub fn submit_chain_and_collect(
@@ -173,7 +172,9 @@ pub fn submit_chain_and_collect(
     d.submit_chain(ops).expect("submit_chain");
     let expected: Vec<Token> = ops.iter().map(|(t, _)| *t).collect();
     drive_until(&mut d, out, 10_000, |done| {
-        expected.iter().all(|t| done.iter().any(|c| c.token == *t))
+        expected
+            .iter()
+            .all(|t| done.iter().any(|c| c.token() == *t))
     })
     .expect("chain completion")
 }

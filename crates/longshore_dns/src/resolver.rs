@@ -184,7 +184,7 @@ impl Resolver {
         reason = "the resolver keeps at most OPS_IN_FLIGHT_MAX operations, which Limits::ops_max must leave it"
     )]
     fn submit<IO: Io>(io: &mut IO, token: u64, op: Op) {
-        io.submit(Token(token), op)
+        io.submit(Token::new(token), op)
             .expect("Limits::ops_max must leave OPS_IN_FLIGHT_MAX slots for the resolver");
     }
 
@@ -270,8 +270,8 @@ impl Resolver {
     /// Feed a completion. Returns false if the token is not the resolver's.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
         let Some(kind) = c
-            .token
-            .0
+            .token()
+            .get()
             .checked_sub(self.cfg.token_base)
             .filter(|k| *k < 256)
         else {
@@ -283,9 +283,9 @@ impl Resolver {
             return true;
         }
         match kind {
-            k if k < K_RECV => self.on_connect(io, (k - K_CONNECT) as usize, c.result),
-            k if k < K_SEND => self.on_recv(io, (k - K_RECV) as usize, c.result),
-            K_SEND => self.on_send(io, c.result),
+            k if k < K_RECV => self.on_connect(io, (k - K_CONNECT) as usize, c.result()),
+            k if k < K_SEND => self.on_recv(io, (k - K_RECV) as usize, c.result()),
+            K_SEND => self.on_send(io, c.result()),
             K_TICK => self.on_tick(io),
             _ => {}
         }

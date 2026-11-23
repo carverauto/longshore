@@ -103,13 +103,11 @@ fn retried_no_clobber_store_without_a_checksum_is_undecided() {
 /// one must end as stored, never as a false already-exists.
 #[test]
 fn no_clobber_stores_under_faults_are_never_falsely_refused() {
-    let faults = Faults {
-        reset: 30_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_reset(30_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000)
+        .with_delay(200_000);
     let keys = ["a", "b", "c", "d", "e", "f"];
     let mut comparisons = 0;
     for seed in 0..40 {

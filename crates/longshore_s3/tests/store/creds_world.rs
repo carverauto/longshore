@@ -23,16 +23,14 @@ pub const HEARTBEAT: u64 = 1 << 50;
 pub const CREDS_TOKEN: u64 = 1 << 51;
 pub const REREAD_MS: u64 = 200;
 // Buffers: client heads 0..3, server pairs 3..9, user tx 9, (10 unused), credentials 11.
-pub const TX: BufId = BufId(9);
-pub const CREDS_BUF: BufId = BufId(11);
+pub const TX: BufId = BufId::new(9);
+pub const CREDS_BUF: BufId = BufId::new(11);
 pub const fn limits(buffer_size: u32) -> Limits {
-    Limits {
-        sockets_max: 1 + CONNS * 2,
-        buffers: 12,
-        buffer_size,
-        ops_max: CONNS * 3 + CONNS + 1 + 2,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(1 + CONNS * 2)
+        .with_buffers(12)
+        .with_buffer_size(buffer_size)
+        .with_ops_max(CONNS * 3 + CONNS + 1 + 2)
 }
 
 pub const KEY_A: &str = "AKIDOLD";
@@ -56,7 +54,7 @@ pub struct World {
 pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate) -> World {
     let mut io = SimIo::new(limits(buf), seed, faults);
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, CONNS, buf, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, CONNS, buf, 2 << 40)
             .head_max(2048)
             .objects_max(4)
             .build()
@@ -99,7 +97,7 @@ pub fn world_validating(seed: u64, faults: Faults, buf: u32, validate: &Validate
         endpoint: Endpoint::Fixed(ADDR),
     });
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     World {
         io,
@@ -126,9 +124,9 @@ impl World {
             while done.len() < n || io.now_ns() < until {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         s3.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     } else if !s3.on_completion(io, c) {
                         assert!(server.on_completion(io, c), "unrouted completion {c:?}");

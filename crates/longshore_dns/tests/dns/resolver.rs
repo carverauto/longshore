@@ -109,12 +109,10 @@ fn falls_back_to_the_second_nameserver() {
 
 #[test]
 fn survives_lost_and_delayed_datagrams_without_caching_a_wrong_address() {
-    let faults = Faults {
-        udp_drop: 400_000,
-        bit_flip: 50_000,
-        delay: 300_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_udp_drop(400_000)
+        .with_bit_flip(50_000)
+        .with_delay(300_000);
     for seed in 0..100 {
         let (mut io, mut r, mut s, mut out) = world(seed, faults, &[NS1], NS1, 200 * MS);
         pump(&mut io, &mut r, &mut s, &mut out, 20 * SEC);

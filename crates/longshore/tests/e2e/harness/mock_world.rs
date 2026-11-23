@@ -227,7 +227,7 @@ impl World for TestWorld {
     }
 
     fn register_file(&mut self, _path: &str) -> io::Result<FileId> {
-        Ok(FileId(0))
+        Ok(FileId::new(0))
     }
 
     fn listen(&mut self, _sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {

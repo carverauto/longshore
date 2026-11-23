@@ -32,12 +32,12 @@ fn accept_1000_and_arm_recv(
         while accepted.len() < target {
             ring.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
-                if c.token.0 == 1 {
-                    assert!(c.more && c.result >= 0);
-                    let sock = Sock(u32::try_from(c.result).unwrap());
+                if c.token().get() == 1 {
+                    assert!(c.more() && c.result() >= 0);
+                    let sock = Sock::new(u32::try_from(c.result()).unwrap());
                     let idx = accepted.len();
                     accepted.push(sock);
-                    ring.submit(Token(10_000 + idx as u64), Op::ArmedRecv { sock })
+                    ring.submit(Token::new(10_000 + idx as u64), Op::ArmedRecv { sock })
                         .unwrap();
                 }
             }
@@ -49,14 +49,15 @@ fn accept_1000_and_arm_recv(
 /// Under `alloc_guard::sealed`, only the timer completes while every connection is idle.
 fn idle_turn_sealed(ring: &mut UringIo, out: &mut Completions) {
     sealed(|| {
-        ring.submit(Token(500), Op::Timeout { nanos: 500_000 })
+        ring.submit(Token::new(500), Op::Timeout { nanos: 500_000 })
             .unwrap();
         let mut got_timer = false;
         for _ in 0..100 {
             ring.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
                 assert_eq!(
-                    c.token.0, 500,
+                    c.token().get(),
+                    500,
                     "idle connections must emit zero recv completions"
                 );
                 got_timer = true;
@@ -80,8 +81,8 @@ fn burst_64_receives(ring: &mut UringIo, out: &mut Completions, peers: &mut [Tcp
     while recvd < 64 {
         ring.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 >= 10_000 && c.result > 0 {
-                let bid = c.buf.expect("ring buf");
+            if c.token().get() >= 10_000 && c.result() > 0 {
+                let bid = c.buf().expect("ring buf");
                 ring.give_back(bid);
                 recvd += 1;
             }
@@ -91,27 +92,30 @@ fn burst_64_receives(ring: &mut UringIo, out: &mut Completions, peers: &mut [Tcp
 
 #[test]
 fn uring_server_1000_idle_connections_zero_ring_bufs_and_cq_burst_sealed() {
-    let lim = Limits {
-        sockets_max: 1100,
-        buffers: 2,
-        buffer_size: 1024,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        accept_range_start: 1,
-        accept_range_len: 1024,
-        ring_buffers: 64,
-        ring_buffer_size: 256,
-        ops_max: 1200,
-        ..Limits::BASE
-    };
+    let lim = Limits::BASE
+        .with_sockets_max(1100)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_accept_range_start(1)
+        .with_accept_range_len(1024)
+        .with_ring_buffers(64)
+        .with_ring_buffer_size(256)
+        .with_ops_max(1200);
     let mut ring = UringIo::new(lim).unwrap();
     let mut out = Completions::new(256);
     let addr = ring
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .unwrap();
 
-    ring.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    ring.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
 
     // Connect 1,000 real loopback TCP clients from OS sockets and arm Recv on every accepted slot.
     let (mut peers, accepted) = accept_1000_and_arm_recv(&mut ring, &mut out, addr);
@@ -127,7 +131,7 @@ fn uring_server_1000_idle_connections_zero_ring_bufs_and_cq_burst_sealed() {
     let _: Completion = submit_and_wait_one(
         &mut ring,
         &mut out,
-        Token(9000),
+        Token::new(9000),
         Op::Close { sock: accepted[0] },
         200,
     )
@@ -140,15 +144,20 @@ fn uring_server_1000_idle_connections_zero_ring_bufs_and_cq_burst_sealed() {
 /// Cancels the multishot accept (token 1) and waits until it is no longer armed.
 fn cancel_armed_accept(ring: &mut UringIo, out: &mut Completions, mut accept_armed: bool) {
     if accept_armed {
-        ring.submit(Token(3), Op::Cancel { target: Token(1) })
-            .unwrap();
+        ring.submit(
+            Token::new(3),
+            Op::Cancel {
+                target: Token::new(1),
+            },
+        )
+        .unwrap();
         let mut cancel_done = false;
         while accept_armed || !cancel_done {
             ring.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
-                if c.token.0 == 1 {
-                    accept_armed = c.more;
-                } else if c.token.0 == 3 {
+                if c.token().get() == 1 {
+                    accept_armed = c.more();
+                } else if c.token().get() == 3 {
                     cancel_done = true;
                 }
             }
@@ -158,16 +167,16 @@ fn cancel_armed_accept(ring: &mut UringIo, out: &mut Completions, mut accept_arm
 
 /// Sends eight messages while draining through a two-slot `Completions`.
 fn send_burst_small_cq(ring: &mut UringIo, accepted: Sock) {
-    ring.submit(Token(10), Op::ArmedRecv { sock: accepted })
+    ring.submit(Token::new(10), Op::ArmedRecv { sock: accepted })
         .unwrap();
     let mut small_out = Completions::new(2);
     for i in 0..8u64 {
-        write_pool_bytes(ring, BufId(0), 0, &[i as u8; 32]);
+        write_pool_bytes(ring, BufId::new(0), 0, &[i as u8; 32]);
         ring.submit(
-            Token(100 + i),
+            Token::new(100 + i),
             Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
+                sock: Sock::new(1),
+                buf: BufId::new(0),
                 off: 0,
                 len: 32,
                 zero_copy: false,
@@ -176,7 +185,7 @@ fn send_burst_small_cq(ring: &mut UringIo, accepted: Sock) {
         .unwrap();
         ring.tick(true, &mut small_out).unwrap();
         while let Some(c) = small_out.pop() {
-            if let Some(b) = c.buf {
+            if let Some(b) = c.buf() {
                 ring.give_back(b);
             }
         }
@@ -185,54 +194,57 @@ fn send_burst_small_cq(ring: &mut UringIo, accepted: Sock) {
 
 #[test]
 fn uring_tcp_nodelay_and_keepalive_getsockopt_and_cq_nodrop() {
-    let lim = Limits {
-        sockets_max: 16,
-        buffers: 2,
-        buffer_size: 1024,
-        accept_range_start: 4,
-        accept_range_len: 8,
-        ring_buffers: 8,
-        ring_buffer_size: 256,
-        ops_max: 16,
-        ..Limits::BASE
-    };
+    let lim = Limits::BASE
+        .with_sockets_max(16)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_accept_range_start(4)
+        .with_accept_range_len(8)
+        .with_ring_buffers(8)
+        .with_ring_buffer_size(256)
+        .with_ops_max(16);
     let mut ring = UringIo::new(lim).unwrap();
     ring.no_delay(true);
     ring.keep_alive(true);
 
     let mut out = Completions::new(32);
     let addr = ring
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
-        .unwrap();
-    ring.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .unwrap();
     ring.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    ring.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
 
     let cs = drive_until(&mut ring, &mut out, 200, |v| {
-        v.iter().any(|c| c.token.0 == 1 && c.result >= 0)
-            && v.iter().any(|c| c.token.0 == 2 && c.result == 0)
+        v.iter().any(|c| c.token().get() == 1 && c.result() >= 0)
+            && v.iter().any(|c| c.token().get() == 2 && c.result() == 0)
     })
     .unwrap();
-    let acc_c = cs.iter().find(|c| c.token.0 == 1).unwrap();
-    let accepted = Sock(u32::try_from(acc_c.result).unwrap());
+    let acc_c = cs.iter().find(|c| c.token().get() == 1).unwrap();
+    let accepted = Sock::new(u32::try_from(acc_c.result()).unwrap());
 
     assert_eq!(ring.last_listen_tcp_options(), Some((true, true)));
     assert_eq!(ring.last_connect_tcp_options(), Some((true, true)));
 
     // Drain in-flight armed accept before calling probe_tcp_options (requires in_flight == 0).
-    cancel_armed_accept(&mut ring, &mut out, acc_c.more);
+    cancel_armed_accept(&mut ring, &mut out, acc_c.more());
 
     if let Some((acc_nd, acc_ka)) = ring.probe_tcp_options(accepted).unwrap() {
         assert!(acc_nd && acc_ka, "accepted socket must inherit TCP options");
     }
-    if let Some((cli_nd, cli_ka)) = ring.probe_tcp_options(Sock(1)).unwrap() {
+    if let Some((cli_nd, cli_ka)) = ring.probe_tcp_options(Sock::new(1)).unwrap() {
         assert!(cli_nd && cli_ka, "connected socket must set TCP options");
     }
 

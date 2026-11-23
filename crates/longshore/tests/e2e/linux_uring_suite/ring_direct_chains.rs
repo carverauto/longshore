@@ -25,7 +25,7 @@ fn submit_wait_one_stack<IO: Io>(
     for _ in 0..max_ticks {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == token {
+            if c.token() == token {
                 return c;
             }
         }
@@ -34,19 +34,17 @@ fn submit_wait_one_stack<IO: Io>(
 }
 
 fn direct_limits() -> Limits {
-    Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        files_max: 4,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_files_max(4)
+        .with_ops_max(8)
 }
 
 fn open_file(
@@ -62,22 +60,20 @@ fn open_file(
         out,
         token,
         Op::FileOpen {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             path_buf,
             path_off: 0,
             path_len: plen,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                empty: true,
-                direct,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true)
+                .with_empty(true)
+                .with_direct(direct),
         },
         200,
     )
-    .result
+    .result()
 }
 
 /// Writes one block and syncs it in a linked chain; both must succeed.
@@ -85,9 +81,9 @@ fn write_sync_chain(ring: &mut UringIo, out: &mut Completions, w_buf: BufId) {
     write_pool_bytes(ring, w_buf, 0, &[0x4Du8; 4096]);
     ring.submit_chain(&[
         (
-            Token(10),
+            Token::new(10),
             Op::FileWrite {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 buf: w_buf,
                 off: 0,
                 len: 4096,
@@ -95,9 +91,9 @@ fn write_sync_chain(ring: &mut UringIo, out: &mut Completions, w_buf: BufId) {
             },
         ),
         (
-            Token(11),
+            Token::new(11),
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: true,
             },
         ),
@@ -107,10 +103,10 @@ fn write_sync_chain(ring: &mut UringIo, out: &mut Completions, w_buf: BufId) {
     for _ in 0..200 {
         ring.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 10 {
-                (w_res, gw) = (c.result, true);
-            } else if c.token.0 == 11 {
-                (s_res, gs) = (c.result, true);
+            if c.token().get() == 10 {
+                (w_res, gw) = (c.result(), true);
+            } else if c.token().get() == 11 {
+                (s_res, gs) = (c.result(), true);
             }
         }
         if gw && gs {
@@ -133,20 +129,20 @@ fn punch_stat_read(
     let punch = submit_wait_one_stack(
         ring,
         out,
-        Token(12),
+        Token::new(12),
         Op::FilePunch {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             file_off: 0,
             len: 4096,
         },
         200,
     );
-    assert!(punch.result == 0 || punch.result == -EOPNOTSUPP);
+    assert!(punch.result() == 0 || punch.result() == -EOPNOTSUPP);
 
     let st = submit_wait_one_stack(
         ring,
         out,
-        Token(13),
+        Token::new(13),
         Op::FileStatus {
             path_buf,
             path_off: 0,
@@ -156,16 +152,16 @@ fn punch_stat_read(
         },
         200,
     );
-    assert_eq!(st.result, 0);
+    assert_eq!(st.result(), 0);
     assert_eq!(file_size(ring.buf(stat_buf)), 4096);
 
-    if punch.result == 0 {
+    if punch.result() == 0 {
         let rd = submit_wait_one_stack(
             ring,
             out,
-            Token(14),
+            Token::new(14),
             Op::FileRead {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 buf: r_buf,
                 off: 0,
                 len: 4096,
@@ -173,7 +169,7 @@ fn punch_stat_read(
             },
             200,
         );
-        assert_eq!(rd.result, 4096);
+        assert_eq!(rd.result(), 4096);
         assert!(ring.buf(r_buf)[..4096].iter().all(|&b| b == 0));
     }
 }
@@ -197,9 +193,9 @@ fn uring_direct_io_chain_punch_statx_sealed() {
     let plen = write_nul_path(&mut ring, path_buf, 0, fpath.to_str().unwrap());
 
     // Open direct if filesystem supports O_DIRECT, else retry buffered on tmpfs.
-    let mut open_res = open_file(&mut ring, &mut out, Token(1), path_buf, plen, true);
+    let mut open_res = open_file(&mut ring, &mut out, Token::new(1), path_buf, plen, true);
     if open_res == -EINVAL {
-        open_res = open_file(&mut ring, &mut out, Token(2), path_buf, plen, false);
+        open_res = open_file(&mut ring, &mut out, Token::new(2), path_buf, plen, false);
     }
     assert_eq!(open_res, 0);
 
@@ -209,8 +205,10 @@ fn uring_direct_io_chain_punch_statx_sealed() {
         let _: Completion = submit_wait_one_stack(
             &mut ring,
             &mut out,
-            Token(15),
-            Op::FileClose { slot: FileSlot(0) },
+            Token::new(15),
+            Op::FileClose {
+                slot: FileSlot::new(0),
+            },
             200,
         );
     });

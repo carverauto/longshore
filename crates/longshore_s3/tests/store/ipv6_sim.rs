@@ -28,7 +28,7 @@ fn stored(token: u64, attempts: u32) -> Done {
 fn operations_complete_over_a_fixed_ipv6_endpoint() {
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
             .head_max(2048)
             .objects_max(8)
             .build()
@@ -39,7 +39,7 @@ fn operations_complete_over_a_fixed_ipv6_endpoint() {
     cfg.endpoint = Endpoint::Fixed(ADDR_V6);
     let mut s3 = S3::new(cfg);
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     let mut w = World {
         io,

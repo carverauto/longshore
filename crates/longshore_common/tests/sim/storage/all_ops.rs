@@ -29,14 +29,21 @@ impl FailEach {
 }
 
 fn path_op(sim: &mut SimIo, path: &str, make: fn(u32) -> Op) -> Op {
-    make(put_path(sim, BufId(0), path))
+    make(put_path(sim, BufId::new(0), path))
 }
 
 #[test]
 fn placed_fail_reaches_all_eleven_file_ops() {
     let (mut sim, mut out, tok) = make_storage(1, 512);
     assert_eq!(
-        open_file(&mut sim, &mut out, tok, FileSlot(0), "/d/f", rw_create()),
+        open_file(
+            &mut sim,
+            &mut out,
+            tok,
+            FileSlot::new(0),
+            "/d/f",
+            rw_create()
+        ),
         0
     );
     sync_dir(&mut sim, &mut out, tok + 1, "/d");
@@ -47,29 +54,29 @@ fn placed_fail_reaches_all_eleven_file_ops() {
     let (sim, out) = (&mut sim, &mut out);
 
     let open = path_op(sim, "/d/n", |path_len| Op::FileOpen {
-        slot: FileSlot(1),
-        path_buf: BufId(0),
+        slot: FileSlot::new(1),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
         flags: rw_create(),
     });
     steps.fail_once_then_retry(sim, out, open, 0);
 
-    sim.buf(BufId(1))[..3].copy_from_slice(b"abc");
+    sim.buf(BufId::new(1))[..3].copy_from_slice(b"abc");
     for (op, ok) in slot0_ops() {
         steps.fail_once_then_retry(sim, out, op, ok);
     }
 
     let status = path_op(sim, "/d/f", |path_len| Op::FileStatus {
-        path_buf: BufId(0),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
-        out_buf: BufId(1),
+        out_buf: BufId::new(1),
         out_off: 0,
     });
     steps.fail_once_then_retry(sim, out, status, 0);
     let mkdir = path_op(sim, "/d/e", |path_len| Op::FileMkdir {
-        path_buf: BufId(0),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
     });
@@ -77,7 +84,7 @@ fn placed_fail_reaches_all_eleven_file_ops() {
     let rename = rename_n_to_m(sim);
     steps.fail_once_then_retry(sim, out, rename, 0);
     let unlink = path_op(sim, "/d/m", |path_len| Op::FileUnlink {
-        path_buf: BufId(0),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
     });
@@ -85,20 +92,27 @@ fn placed_fail_reaches_all_eleven_file_ops() {
 
     sim.place_disk_fault(steps.next_op, PlacedFault::Fail);
     assert_eq!(
-        drive(sim, out, steps.tok, Op::FileClose { slot: FileSlot(1) }),
+        drive(
+            sim,
+            out,
+            steps.tok,
+            Op::FileClose {
+                slot: FileSlot::new(1)
+            }
+        ),
         -EIO
     );
-    assert_eq!(sim.disk_fault_counters().placed_fail, 11);
+    assert_eq!(sim.disk_fault_counters().placed_fail(), 11);
 }
 
 /// Write, read, sync, reserve and punch on slot 0 with their success results.
 fn slot0_ops() -> [(Op, i32); 5] {
-    let slot = FileSlot(0);
+    let slot = FileSlot::new(0);
     [
         (
             Op::FileWrite {
                 slot,
-                buf: BufId(1),
+                buf: BufId::new(1),
                 off: 0,
                 len: 3,
                 file_off: 0,
@@ -108,7 +122,7 @@ fn slot0_ops() -> [(Op, i32); 5] {
         (
             Op::FileRead {
                 slot,
-                buf: BufId(2),
+                buf: BufId::new(2),
                 off: 0,
                 len: 3,
                 file_off: 0,
@@ -143,13 +157,13 @@ fn slot0_ops() -> [(Op, i32); 5] {
 }
 
 fn rename_n_to_m(sim: &mut SimIo) -> Op {
-    let old_len = put_path(sim, BufId(0), "/d/n");
-    let new_len = put_path(sim, BufId(1), "/d/m");
+    let old_len = put_path(sim, BufId::new(0), "/d/n");
+    let new_len = put_path(sim, BufId::new(1), "/d/m");
     Op::FileRename {
-        old_buf: BufId(0),
+        old_buf: BufId::new(0),
         old_off: 0,
         old_len,
-        new_buf: BufId(1),
+        new_buf: BufId::new(1),
         new_off: 0,
         new_len,
     }

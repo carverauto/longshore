@@ -54,7 +54,7 @@ fn seed(
             io,
             u64::from(i),
             key,
-            BufId(first + i),
+            BufId::new(first + i),
             size,
             Checksum::None,
         )
@@ -136,7 +136,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
                 ring,
                 u64::from(i),
                 &keys[i as usize],
-                BufId(first + i),
+                BufId::new(first + i),
                 size,
                 checksum,
             )
@@ -146,7 +146,7 @@ fn run(job: Job, cpu: Option<usize>, thread: u32, start: &std::sync::Barrier) ->
                 u64::from(i),
                 &keys[i as usize],
                 None,
-                BufId(first + i),
+                BufId::new(first + i),
             )
         };
         if r.is_err() {

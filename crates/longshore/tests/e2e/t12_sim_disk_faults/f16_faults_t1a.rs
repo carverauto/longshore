@@ -18,23 +18,21 @@ fn t1_f16_1_zero_rates_zero_rng_draws_same_trace_hash() {
         let mut sim = make_fault_sim(111);
         sim.set_disk_faults(DiskFaults::default());
         let mut out = Completions::new(8);
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
+        let rw = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true);
         assert_eq!(
-            open_file(&mut sim, &mut out, 1, FileSlot(0), "/z.dat", rw),
+            open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/z.dat", rw),
             0
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0x12; 1024]),
+            write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0x12; 1024]),
             1024
         );
-        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-        let _: Vec<u8> = read_file_vec(&mut sim, &mut out, 4, FileSlot(0), 0, 1024).unwrap();
-        assert_eq!(close_file(&mut sim, &mut out, 5, FileSlot(0)), 0);
+        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+        let _: Vec<u8> = read_file_vec(&mut sim, &mut out, 4, FileSlot::new(0), 0, 1024).unwrap();
+        assert_eq!(close_file(&mut sim, &mut out, 5, FileSlot::new(0)), 0);
         assert_eq!(sim.disk_fault_counters(), Default::default());
         sim.trace_hash()
     };
@@ -47,41 +45,39 @@ fn t1_f16_1_zero_rates_zero_rng_draws_same_trace_hash() {
 ///
 /// Returns the write's result, the bytes read back and the sim.
 fn faulted_overwrite(seed: u64, faults: DiskFaults, fill: u8, len: usize) -> (i32, Vec<u8>, SimIo) {
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     let mut sim = make_fault_sim(seed);
     let mut out = Completions::new(8);
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/wf.dat", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/wf.dat", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0x11; 2048]),
+        write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0x11; 2048]),
         2048
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
+    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
     sim.set_disk_faults(faults);
-    let r = write_file(&mut sim, &mut out, 10, FileSlot(0), 0, &vec![fill; len]);
+    let r = write_file(
+        &mut sim,
+        &mut out,
+        10,
+        FileSlot::new(0),
+        0,
+        &vec![fill; len],
+    );
     sim.set_disk_faults(DiskFaults::default());
-    let got = read_file_vec(&mut sim, &mut out, 11, FileSlot(0), 0, 2048).unwrap();
+    let got = read_file_vec(&mut sim, &mut out, 11, FileSlot::new(0), 0, 2048).unwrap();
     (r, got, sim)
 }
 
 /// Write fault 1: `short_write` at the full rate.
 fn write_fault_short_write() {
-    let (r, got, sim) = faulted_overwrite(
-        1,
-        DiskFaults {
-            short_write: 1_000_000,
-            ..Default::default()
-        },
-        0x22,
-        2048,
-    );
+    let (r, got, sim) =
+        faulted_overwrite(1, DiskFaults::NONE.with_short_write(1_000_000), 0x22, 2048);
     assert!(r > 0 && r < 2048 && r % 512 == 0, "short_write={r}");
     assert!(got[..usize::try_from(r).unwrap()]
         .iter()
@@ -89,90 +85,67 @@ fn write_fault_short_write() {
     assert!(got[usize::try_from(r).unwrap()..]
         .iter()
         .all(|&b| b == 0x11));
-    assert_eq!(sim.disk_fault_counters().short_write, 1);
+    assert_eq!(sim.disk_fault_counters().short_write(), 1);
 }
 
 /// Write fault 2: `torn_reported` at the full rate.
 fn write_fault_torn_reported() {
     let (r, got, sim) = faulted_overwrite(
         2,
-        DiskFaults {
-            torn_reported: 1_000_000,
-            ..Default::default()
-        },
+        DiskFaults::NONE.with_torn_reported(1_000_000),
         0x33,
         2048,
     );
     assert_eq!(r, -LINUX_EIO);
     let prefix = got.iter().take_while(|&&b| b == 0x33).count();
     assert!(prefix > 0 && prefix < 2048 && prefix % 512 == 0);
-    assert_eq!(sim.disk_fault_counters().torn_reported, 1);
+    assert_eq!(sim.disk_fault_counters().torn_reported(), 1);
 }
 
 /// Write fault 3: `torn_silent` at the full rate.
 fn write_fault_torn_silent() {
-    let (r, got, sim) = faulted_overwrite(
-        3,
-        DiskFaults {
-            torn_silent: 1_000_000,
-            ..Default::default()
-        },
-        0x44,
-        2048,
-    );
+    let (r, got, sim) =
+        faulted_overwrite(3, DiskFaults::NONE.with_torn_silent(1_000_000), 0x44, 2048);
     assert_eq!(r, 2048);
     let prefix = got.iter().take_while(|&&b| b == 0x44).count();
     assert!(prefix > 0 && prefix < 2048 && prefix % 512 == 0);
-    assert_eq!(sim.disk_fault_counters().torn_silent, 1);
+    assert_eq!(sim.disk_fault_counters().torn_silent(), 1);
 }
 
 /// Write fault 4: `lost_reported` at the full rate.
 fn write_fault_lost_reported() {
     let (r, got, sim) = faulted_overwrite(
         4,
-        DiskFaults {
-            lost_reported: 1_000_000,
-            ..Default::default()
-        },
+        DiskFaults::NONE.with_lost_reported(1_000_000),
         0x55,
         2048,
     );
     assert_eq!(r, -LINUX_EIO);
     assert!(got.iter().all(|&b| b == 0x11));
-    assert_eq!(sim.disk_fault_counters().lost_reported, 1);
+    assert_eq!(sim.disk_fault_counters().lost_reported(), 1);
 }
 
 /// Write fault 5: `lost_silent` at the full rate.
 fn write_fault_lost_silent() {
-    let (r, got, sim) = faulted_overwrite(
-        5,
-        DiskFaults {
-            lost_silent: 1_000_000,
-            ..Default::default()
-        },
-        0x66,
-        2048,
-    );
+    let (r, got, sim) =
+        faulted_overwrite(5, DiskFaults::NONE.with_lost_silent(1_000_000), 0x66, 2048);
     assert_eq!(r, 2048);
     assert!(got.iter().all(|&b| b == 0x11));
-    assert_eq!(sim.disk_fault_counters().lost_silent, 1);
+    assert_eq!(sim.disk_fault_counters().lost_silent(), 1);
 }
 
 /// Write fault 6: `misdirected_write` at the full rate.
 fn write_fault_misdirected_write() {
     let (r, got, sim) = faulted_overwrite(
         6,
-        DiskFaults {
-            misdirected_write: 1_000_000,
-            ..Default::default()
-        },
+        DiskFaults::NONE.with_misdirected_write(1_000_000),
         0x77,
         512,
     );
     assert_eq!(r, 512);
     assert!(got[..512].iter().all(|&b| b == 0x11));
     assert!(got[512..].chunks(512).any(|s| s.iter().all(|&b| b == 0x77)));
-    assert_eq!(sim.disk_fault_counters().misdirected_write, 1);
+    assert_eq!(sim.disk_fault_counters().misdirected_write(), 1);
 }
 
 /// `T1-F16-2`: Each of the 6 write faults isolated at `1_000_000` ppm behaves per spec & increments counter.

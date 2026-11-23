@@ -26,7 +26,7 @@ impl<M: Copy> QueueReceiver<M> {
     /// Handle a completion; if it matches the receiver's wake token, re-arm
     /// `Op::AwaitWake` (unless closed) and return `Ok(true)`.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> Result<bool, Busy> {
-        if c.token != self.wake_token {
+        if c.token() != self.wake_token {
             return Ok(false);
         }
         self.armed = false;

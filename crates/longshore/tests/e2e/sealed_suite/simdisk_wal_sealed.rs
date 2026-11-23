@@ -31,8 +31,8 @@ fn drive_one_sync<IO: Io>(io: &mut IO, out: &mut Completions, tok: Token, op: Op
             return -1;
         }
         while let Some(c) = out.pop() {
-            if c.token == tok {
-                return c.result;
+            if c.token() == tok {
+                return c.result();
             }
         }
     }
@@ -42,39 +42,38 @@ fn drive_one_sync<IO: Io>(io: &mut IO, out: &mut Completions, tok: Token, op: Op
 const SEG_PATH: &[u8] = b"/wal_0001.log\0";
 
 fn wal_limits() -> Limits {
-    Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        files_max: 2,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_files_max(2)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(8)
 }
 
 /// A simulator with a small disk that shortens writes and flips bits.
 fn faulty_disk_sim(limits: Limits) -> SimIo {
     let mut sim = SimIo::new(limits, 9001, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 4,
-        max_dirs: 4,
-        max_bytes_per_file: 64 * 1024,
-        max_name_len: 64,
-        write_log_entries: 16,
-        write_log_bytes: 32 * 1024,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
-    sim.set_disk_faults(DiskFaults {
-        short_write: 50_000,
-        bit_flip: 50_000,
-        ..Default::default()
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(4)
+            .with_max_dirs(4)
+            .with_max_bytes_per_file(64 * 1024)
+            .with_max_name_len(64)
+            .with_write_log_entries(16)
+            .with_write_log_bytes(32 * 1024)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
+    sim.set_disk_faults(
+        DiskFaults::NONE
+            .with_short_write(50_000)
+            .with_bit_flip(50_000),
+    );
     sim
 }
 
@@ -90,7 +89,7 @@ fn open_segment(
         out,
         tok,
         Op::FileOpen {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             path_buf,
             path_off: 0,
             path_len: SEG_PATH.len() as u32,
@@ -117,17 +116,17 @@ fn append_record(
     b[16..24].copy_from_slice(&sum.to_le_bytes());
     b[HEADER_LEN..HEADER_LEN + payload.len()].copy_from_slice(&payload);
 
-    let tw = Token(10 + seq * 2);
-    let ts = Token(11 + seq * 2);
+    let tw = Token::new(10 + seq * 2);
+    let ts = Token::new(11 + seq * 2);
     let write = Op::FileWrite {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         buf: wbuf,
         off: 0,
         len: 4096,
         file_off: cursor,
     };
     let sync = Op::FileSync {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         datasync: true,
     };
     if sim.submit_chain(&[(tw, write), (ts, sync)]).is_err() {
@@ -140,11 +139,11 @@ fn append_record(
             break;
         }
         while let Some(c) = out.pop() {
-            if c.token == tw {
-                w_res = c.result;
+            if c.token() == tw {
+                w_res = c.result();
                 gw = true;
-            } else if c.token == ts {
-                s_res = c.result;
+            } else if c.token() == ts {
+                s_res = c.result();
                 gs = true;
             }
         }
@@ -177,9 +176,9 @@ fn recover_records(sim: &mut SimIo, out: &mut Completions, rbuf: BufId) -> u32 {
         let n = drive_one_sync(
             sim,
             out,
-            Token(200 + idx),
+            Token::new(200 + idx),
             Op::FileRead {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 buf: rbuf,
                 off: 0,
                 len: 4096,
@@ -216,14 +215,12 @@ pub fn run_simdisk_wal_recovery_sealed() {
     sim.buf(path_buf)[..SEG_PATH.len()].copy_from_slice(SEG_PATH);
 
     let (committed, recovered) = sealed(|| {
-        let open_flags = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            direct: true,
-            ..Default::default()
-        };
-        if open_segment(&mut sim, &mut out, Token(1), path_buf, open_flags) != 0 {
+        let open_flags = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true)
+            .with_direct(true);
+        if open_segment(&mut sim, &mut out, Token::new(1), path_buf, open_flags) != 0 {
             return (0u32, 0u32);
         }
         let committed_cnt = append_records(&mut sim, &mut out, wbuf);
@@ -231,12 +228,8 @@ pub fn run_simdisk_wal_recovery_sealed() {
         sim.power_loss();
         sim.set_disk_faults(DiskFaults::default());
         sim.buf(path_buf)[..SEG_PATH.len()].copy_from_slice(SEG_PATH);
-        let read_flags = OpenFlags {
-            read: true,
-            direct: true,
-            ..Default::default()
-        };
-        if open_segment(&mut sim, &mut out, Token(100), path_buf, read_flags) != 0 {
+        let read_flags = OpenFlags::NONE.with_read(true).with_direct(true);
+        if open_segment(&mut sim, &mut out, Token::new(100), path_buf, read_flags) != 0 {
             return (committed_cnt, 0);
         }
 
@@ -244,8 +237,10 @@ pub fn run_simdisk_wal_recovery_sealed() {
         let _: i32 = drive_one_sync(
             &mut sim,
             &mut out,
-            Token(300),
-            Op::FileClose { slot: FileSlot(0) },
+            Token::new(300),
+            Op::FileClose {
+                slot: FileSlot::new(0),
+            },
         );
         (committed_cnt, rec_cnt)
     });

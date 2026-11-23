@@ -17,16 +17,17 @@ use longshore::sim::{DiskConfig, Faults, SimIo};
 fn t4_03_cross_backend_parity_fileserver_sim() {
     let lim = parity_limits();
     let mut sim = SimIo::new(lim, 303, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 4,
-        max_dirs: 8,
-        max_bytes_per_file: 16 * 1024,
-        max_name_len: 128,
-        write_log_entries: 8,
-        write_log_bytes: 8 * 1024,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(4)
+            .with_max_dirs(8)
+            .with_max_bytes_per_file(16 * 1024)
+            .with_max_name_len(128)
+            .with_write_log_entries(8)
+            .with_write_log_bytes(8 * 1024)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
     run_mini_fileserver(
         &mut sim,
         lim,

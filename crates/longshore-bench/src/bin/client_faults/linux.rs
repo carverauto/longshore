@@ -59,16 +59,16 @@ pub fn main() {
 pub fn serve(connections: u32) -> SocketAddr {
     let (bound, listening) = channel();
     let _: std::thread::JoinHandle<()> = std::thread::spawn(move || {
-        let mut io = UringIo::new(Limits {
-            sockets_max: 1 + connections,
-            buffers: 2 * connections,
-            buffer_size: SIZE,
-            ops_max: connections * 3 + 2,
-            ..Limits::BASE
-        })
+        let mut io = UringIo::new(
+            Limits::BASE
+                .with_sockets_max(1 + connections)
+                .with_buffers(2 * connections)
+                .with_buffer_size(SIZE)
+                .with_ops_max(connections * 3 + 2),
+        )
         .or_die("server ring");
         let mut server = Server::new(
-            server::ServerConfig::builder(Sock(0), connections, 1, 0, SIZE, 2 << 40)
+            server::ServerConfig::builder(Sock::new(0), connections, 1, 0, SIZE, 2 << 40)
                 .head_max(4096)
                 .objects_max(64)
                 .build()

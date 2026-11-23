@@ -114,31 +114,28 @@ pub(crate) fn verify_record(buf: &[u8], rec_bytes: usize, seed: u64, expected_se
 }
 
 fn wal_limits() -> Limits {
-    Limits {
-        buffers: 4,
-        buffer_size: 16 * 1024,
-        small_buffers: 2,
-        small_buffer_size: 128,
-        files_max: 2,
-        aligned_buffers: 2,
-        aligned_buffer_size: 8192,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_buffers(4)
+        .with_buffer_size(16 * 1024)
+        .with_small_buffers(2)
+        .with_small_buffer_size(128)
+        .with_files_max(2)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(8192)
+        .with_block_size(4096)
+        .with_ops_max(8)
 }
 
 fn wal_disk(sector_size: u32) -> DiskConfig {
-    DiskConfig {
-        max_files: 4,
-        max_dirs: 2,
-        max_bytes_per_file: 256 * 1024,
-        max_name_len: 64,
-        write_log_entries: 32,
-        write_log_bytes: 128 * 1024,
-        read_error_sectors: 32,
-        sector_size,
-    }
+    DiskConfig::BASE
+        .with_max_files(4)
+        .with_max_dirs(2)
+        .with_max_bytes_per_file(256 * 1024)
+        .with_max_name_len(64)
+        .with_write_log_entries(32)
+        .with_write_log_bytes(128 * 1024)
+        .with_read_error_sectors(32)
+        .with_sector_size(sector_size)
 }
 
 fn open_op(slot: FileSlot, path_buf: BufId, path: &[u8], flags: OpenFlags) -> Op {
@@ -153,39 +150,32 @@ fn open_op(slot: FileSlot, path_buf: BufId, path: &[u8], flags: OpenFlags) -> Op
 
 /// A disk with `/wal.log` open in slot 0 and its directory entry synced.
 pub(crate) fn setup_wal(seed: u64, sector_size: u32, delay: u32) -> (SimIo, Completions) {
-    let faults = Faults {
-        delay,
-        ..Default::default()
-    };
+    let faults = Faults::NONE.with_delay(delay);
     let mut sim = SimIo::new(wal_limits(), seed, faults);
     sim.setup_disk(wal_disk(sector_size));
     let mut out = Completions::new(8);
     let p = b"/wal.log\0";
     let d = b"/\0";
-    sim.buf(BufId(0))[..p.len()].copy_from_slice(p);
-    sim.buf(BufId(3))[..d.len()].copy_from_slice(d);
-    let rw_create = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
-    let dir = OpenFlags {
-        read: true,
-        directory: true,
-        ..Default::default()
-    };
+    sim.buf(BufId::new(0))[..p.len()].copy_from_slice(p);
+    sim.buf(BufId::new(3))[..d.len()].copy_from_slice(d);
+    let rw_create = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
+    let dir = OpenFlags::NONE.with_read(true).with_directory(true);
     let mut tok = 1u64;
-    let open_log = open_op(FileSlot(0), BufId(0), p, rw_create);
+    let open_log = open_op(FileSlot::new(0), BufId::new(0), p, rw_create);
     assert_eq!(drive_one(&mut sim, &mut out, &mut tok, open_log), 0);
-    let open_dir = open_op(FileSlot(1), BufId(3), d, dir);
+    let open_dir = open_op(FileSlot::new(1), BufId::new(3), d, dir);
     assert_eq!(drive_one(&mut sim, &mut out, &mut tok, open_dir), 0);
     let sync_dir = Op::FileSync {
-        slot: FileSlot(1),
+        slot: FileSlot::new(1),
         datasync: false,
     };
     assert_eq!(drive_one(&mut sim, &mut out, &mut tok, sync_dir), 0);
-    let close_dir = Op::FileClose { slot: FileSlot(1) };
+    let close_dir = Op::FileClose {
+        slot: FileSlot::new(1),
+    };
     assert_eq!(drive(&mut sim, &mut out, &mut tok, close_dir), 0);
     (sim, out)
 }
@@ -196,14 +186,14 @@ fn drive(sim: &mut SimIo, out: &mut Completions, tok: &mut u64, op: Op) -> i32 {
 
 #[cfg(test)]
 pub(crate) fn drive_one(sim: &mut SimIo, out: &mut Completions, tok: &mut u64, op: Op) -> i32 {
-    let t = Token(*tok);
+    let t = Token::new(*tok);
     *tok += 1;
     sim.submit(t, op).unwrap();
     for _ in 0..20_000 {
         sim.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == t {
-                return c.result;
+            if c.token() == t {
+                return c.result();
             }
         }
     }
@@ -220,19 +210,24 @@ pub(crate) fn wal_append(
     seq: u64,
     sync_failed: &mut bool,
 ) -> bool {
-    encode_record(&mut sim.buf(BufId(1))[..rec_bytes], rec_bytes, seed, seq);
+    encode_record(
+        &mut sim.buf(BufId::new(1))[..rec_bytes],
+        rec_bytes,
+        seed,
+        seq,
+    );
     let mut off = 0usize;
     let file_base = seq * rec_bytes as u64;
     while off < rec_bytes {
-        let wt = Token(*tok);
-        let st = Token(*tok + 1);
+        let wt = Token::new(*tok);
+        let st = Token::new(*tok + 1);
         *tok += 2;
         sim.submit_chain(&[
             (
                 wt,
                 Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
+                    slot: FileSlot::new(0),
+                    buf: BufId::new(1),
                     off: off as u32,
                     len: (rec_bytes - off) as u32,
                     file_off: file_base + off as u64,
@@ -241,7 +236,7 @@ pub(crate) fn wal_append(
             (
                 st,
                 Op::FileSync {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     datasync: false,
                 },
             ),
@@ -252,10 +247,10 @@ pub(crate) fn wal_append(
         while wr.is_none() || sr.is_none() {
             sim.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
-                if c.token == wt {
-                    wr = Some(c.result);
-                } else if c.token == st {
-                    sr = Some(c.result);
+                if c.token() == wt {
+                    wr = Some(c.result());
+                } else if c.token() == st {
+                    sr = Some(c.result());
                 }
             }
         }

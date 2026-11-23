@@ -53,27 +53,20 @@ fn lookups_always_have_an_address_whatever_was_measured(tc: TestCase) {
                 r.set_prefer_large_segments(keep);
             }
             1 => {
-                let _: u32 = r.connected(
-                    0,
-                    stranger,
-                    Segment {
-                        size: size(&tc),
-                        path_limit: 0,
-                    },
-                );
+                let _: u32 = r.connected(0, stranger, Segment::new(size(&tc), 0));
             }
             _ => {
                 let k = tc.draw(gs::integers::<usize>().max_value(2));
-                let segment = Segment {
-                    size: size(&tc),
-                    path_limit: if tc.draw(gs::booleans()) {
+                let segment = Segment::new(
+                    size(&tc),
+                    if tc.draw(gs::booleans()) {
                         size(&tc)
                     } else {
                         0
                     },
-                };
+                );
                 let floor = r.connected(0, all[k], segment);
-                sizes[k] = segment.size;
+                sizes[k] = segment.size();
                 assert_eq!(floor, r.segment_floor(0));
             }
         }

@@ -30,63 +30,58 @@ const ENOSYS: i32 = 38;
 
 #[test]
 fn t1_f20_1_completion_new_clears_more_and_buf() {
-    let c = Completion::new(Token(7), 42);
-    assert_eq!(
-        c,
-        Completion {
-            token: Token(7),
-            result: 42,
-            more: false,
-            buf: None,
-        }
-    );
-    assert!(!c.more);
-    assert!(c.buf.is_none());
+    let c = Completion::new(Token::new(7), 42);
+    assert_eq!(c.token(), Token::new(7));
+    assert_eq!(c.result(), 42);
+    assert!(!c.more());
+    assert!(c.buf().is_none());
 }
 
 #[cfg(feature = "sim")]
 #[test]
 fn t1_f20_2_single_shot_ops_always_deliver_final_without_buf() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_ops_max(8);
     let mut io = SimIo::new(limits, 2002, Faults::default());
     let mut out = Completions::new(16);
 
-    io.submit(Token(1), Op::Timeout { nanos: 1000 }).unwrap();
-    let addr = io.listen(Sock(0), ADDR).unwrap();
+    io.submit(Token::new(1), Op::Timeout { nanos: 1000 })
+        .unwrap();
+    let addr = io.listen(Sock::new(0), ADDR).unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
     let cs = drive_until(&mut io, &mut out, 50, |v| v.len() == 3).unwrap();
     for c in cs {
-        assert!(!c.more, "single-shot op must have more=false: {c:?}");
-        assert!(c.buf.is_none(), "single-shot op must have buf=None: {c:?}");
+        assert!(!c.more(), "single-shot op must have more=false: {c:?}");
+        assert!(
+            c.buf().is_none(),
+            "single-shot op must have buf=None: {c:?}"
+        );
     }
 
-    write_pool_bytes(&mut io, BufId(0), 0, b"single-shot");
+    write_pool_bytes(&mut io, BufId::new(0), 0, b"single-shot");
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 11,
             zero_copy: false,
@@ -94,19 +89,17 @@ fn t1_f20_2_single_shot_ops_always_deliver_final_without_buf() {
     )
     .unwrap();
     let sent = drive_until(&mut io, &mut out, 20, |v| v.len() == 1).unwrap();
-    assert_eq!(sent[0], Completion::new(Token(4), 11));
+    assert_eq!(sent[0], Completion::new(Token::new(4), 11));
 }
 
 #[cfg(feature = "sim")]
 #[test]
 fn t1_f20_3_non_armed_trace_hash_parity_preserved() {
-    let limits = Limits {
-        sockets_max: 3,
-        buffers: 3,
-        buffer_size: 4096,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(3)
+        .with_buffers(3)
+        .with_buffer_size(4096)
+        .with_ops_max(4);
     let mut hashes = Vec::new();
     for seed in 0..5u64 {
         let mut a = SimIo::new(limits, seed, Faults::default());
@@ -128,30 +121,28 @@ fn t1_f20_3_non_armed_trace_hash_parity_preserved() {
 /// Accepts `Sock(2)` from a `Sock(1)` connect on a fresh simulator.
 #[cfg(feature = "sim")]
 fn sim_with_pair() -> (SimIo, Completions) {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 1024,
-        ops_max: 8,
-        ring_buffers: 4,
-        ring_buffer_size: 1024,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_ops_max(8)
+        .with_ring_buffers(4)
+        .with_ring_buffer_size(1024);
     let mut io = SimIo::new(limits, 2004, Faults::default());
     let mut out = Completions::new(16);
-    let addr = io.listen(Sock(0), ADDR).unwrap();
+    let addr = io.listen(Sock::new(0), ADDR).unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -168,37 +159,37 @@ fn send_and_await_armed_recv(
     token: Token,
     bytes: &[u8],
 ) -> Vec<Completion> {
-    write_pool_bytes(io, BufId(0), 0, bytes);
+    write_pool_bytes(io, BufId::new(0), 0, bytes);
     io.submit(
         token,
         Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: u32::try_from(bytes.len()).unwrap(),
             zero_copy: false,
         },
     )
     .unwrap();
-    drive_until(io, out, 30, |v| v.iter().any(|c| c.token == Token(3))).unwrap()
+    drive_until(io, out, 30, |v| v.iter().any(|c| c.token().get() == 3)).unwrap()
 }
 
 /// Trace hash after two armed receives, either holding or returning the first ring buffer.
 #[cfg(feature = "sim")]
 fn armed_recv_trace_hash(consume_one_first: bool) -> u64 {
     let (mut io, mut out) = sim_with_pair();
-    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
+    io.submit(Token::new(3), Op::ArmedRecv { sock: Sock::new(2) })
         .unwrap();
-    let cs = send_and_await_armed_recv(&mut io, &mut out, Token(4), b"first");
-    let r = cs.iter().find(|c| c.token == Token(3)).unwrap();
-    assert!(r.more);
-    let id = r.buf.expect("ring buf id");
+    let cs = send_and_await_armed_recv(&mut io, &mut out, Token::new(4), b"first");
+    let r = cs.iter().find(|c| c.token().get() == 3).unwrap();
+    assert!(r.more());
+    let id = r.buf().expect("ring buf id");
     if consume_one_first {
         let _: BufId = id;
     } else {
         io.give_back(id);
     }
-    let _: Vec<Completion> = send_and_await_armed_recv(&mut io, &mut out, Token(5), b"second");
+    let _: Vec<Completion> = send_and_await_armed_recv(&mut io, &mut out, Token::new(5), b"second");
     io.trace_hash()
 }
 
@@ -211,17 +202,15 @@ fn t1_f20_4_armed_completion_more_and_buf_affect_trace_hash() {
 #[cfg(target_os = "linux")]
 #[test]
 fn t1_f20_5_uring_cq_sized_with_nodrop_handles_burst_without_drop() {
-    let limits = Limits {
-        sockets_max: 16,
-        buffers: 4,
-        buffer_size: 4096,
-        ops_max: 16,
-        accept_range_start: 4,
-        accept_range_len: 8,
-        ring_buffers: 16,
-        ring_buffer_size: 1024,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(16)
+        .with_buffers(4)
+        .with_buffer_size(4096)
+        .with_ops_max(16)
+        .with_accept_range_start(4)
+        .with_accept_range_len(8)
+        .with_ring_buffers(16)
+        .with_ring_buffer_size(1024);
     let mut io = match UringIo::new(limits) {
         Ok(u) => u,
         Err(e) if e.raw_os_error() == Some(EPERM) || e.raw_os_error() == Some(ENOSYS) => {
@@ -231,24 +220,29 @@ fn t1_f20_5_uring_cq_sized_with_nodrop_handles_burst_without_drop() {
     };
     let mut out = Completions::new(64);
     let addr = io
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .expect("listen");
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
     for i in 0..4u32 {
         io.submit(
-            Token(10 + u64::from(i)),
+            Token::new(10 + u64::from(i)),
             Op::Connect {
-                sock: Sock(12 + i),
+                sock: Sock::new(12 + i),
                 addr,
             },
         )
         .unwrap();
     }
     let cs = drive_until(&mut io, &mut out, 100, |v| {
-        v.iter().filter(|c| c.token == Token(1)).count() == 4
-            && v.iter().filter(|c| c.token.0 >= 10).count() == 4
+        v.iter().filter(|c| c.token().get() == 1).count() == 4
+            && v.iter().filter(|c| c.token().get() >= 10).count() == 4
     })
     .expect("all 8 completions arrive without drop");
-    assert_eq!(cs.iter().filter(|c| c.token == Token(1)).count(), 4);
+    assert_eq!(cs.iter().filter(|c| c.token().get() == 1).count(), 4);
 }

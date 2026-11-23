@@ -74,23 +74,19 @@ fn send_op(sock: Sock, buf: BufId, off: u32, len: u32) -> Op {
 }
 
 fn io_limits() -> Limits {
-    Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 1024,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_ops_max(8)
 }
 
 fn small_limits() -> Limits {
-    Limits {
-        sockets_max: 1,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(1)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4)
 }
 
 fn close_sockets<IO: Io>(io: &mut IO, out: &mut Completions, socks: &[Sock]) {
@@ -102,12 +98,10 @@ fn close_sockets<IO: Io>(io: &mut IO, out: &mut Completions, socks: &[Sock]) {
 
 /// Echo scenario with `zero_copy: false` and `zero_copy: true`, plus single-completion check.
 pub fn one_completion_and_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
-    let limits = Limits {
-        buffers: 3,
-        buffer_size: 4096,
-        ops_max: 4,
-        ..io_limits()
-    };
+    let limits = io_limits()
+        .with_buffers(3)
+        .with_buffer_size(4096)
+        .with_ops_max(4);
     for zc in [false, true] {
         let mut io = make(limits);
         let mut out = Completions::new(8);
@@ -124,10 +118,7 @@ pub fn one_completion_and_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr
 
 /// `submit` refuses with `Busy` when `ops_max` are in flight and delivers no extra completion.
 pub fn capacity_busy<IO: Io>(make: &mut impl FnMut(Limits) -> IO) {
-    let mut io = make(Limits {
-        ops_max: 3,
-        ..small_limits()
-    });
+    let mut io = make(small_limits().with_ops_max(3));
     let mut out = Completions::new(8);
     for t in 1..=3 {
         io.must_submit(Token(t), Op::Timeout { nanos: 5_000_000 });

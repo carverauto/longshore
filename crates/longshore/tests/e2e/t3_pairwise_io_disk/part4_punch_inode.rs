@@ -34,7 +34,7 @@ fn run_op_under(
 /// A punch of the second 4 KiB block of `FileSlot(0)`.
 fn punch_second_block() -> Op {
     Op::FilePunch {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         file_off: 4096,
         len: 4096,
     }
@@ -46,34 +46,28 @@ fn t3_09_read_error_and_refused_punch_interaction() {
     let mut sim = SimIo::new(limits, 309, Faults::default());
     sim.setup_disk(disk_config());
     let mut out = Completions::new(16);
-    let read_second_block = read_op(FileSlot(0), BufId(1), 4096, 4096);
+    let read_second_block = read_op(FileSlot::new(0), BufId::new(1), 4096, 4096);
 
     assert_eq!(
         open_at(
             &mut sim,
             &mut out,
             1,
-            FileSlot(0),
+            FileSlot::new(0),
             "/t3_09.dat",
             rw_create()
         ),
         0
     );
-    write_pool_bytes(&mut sim, BufId(0), 0, &[0x55; 8192]);
-    let write = write_op(FileSlot(0), BufId(0), 8192, 0);
+    write_pool_bytes(&mut sim, BufId::new(0), 0, &[0x55; 8192]);
+    let write = write_op(FileSlot::new(0), BufId::new(0), 8192, 0);
     assert_eq!(run_op(&mut sim, &mut out, 2, write, 1000), 8192);
 
-    let read_errors = DiskFaults {
-        read_error: 1_000_000,
-        ..Default::default()
-    };
+    let read_errors = DiskFaults::NONE.with_read_error(1_000_000);
     let err_r = run_op_under(&mut sim, &mut out, read_errors, 3, read_second_block);
     assert_eq!(err_r, -EIO);
 
-    let refused_punch = DiskFaults {
-        punch_refused: 1_000_000,
-        ..Default::default()
-    };
+    let refused_punch = DiskFaults::NONE.with_punch_refused(1_000_000);
     let p_err = run_op_under(&mut sim, &mut out, refused_punch, 4, punch_second_block());
     assert_eq!(p_err, -EOPNOTSUPP);
 
@@ -85,20 +79,20 @@ fn t3_09_read_error_and_refused_punch_interaction() {
 
     let after_r = run_op(&mut sim, &mut out, 7, read_second_block, 1000);
     assert_eq!(after_r, 4096);
-    assert!(read_pool_bytes(&mut sim, BufId(1), 0, 4096)
+    assert!(read_pool_bytes(&mut sim, BufId::new(1), 0, 4096)
         .iter()
         .all(|&b| b == 0));
 }
 
 /// Renames `/a.dat` to `/b.dat` without syncing the directory.
 fn rename_a_to_b(sim: &mut SimIo, out: &mut Completions) {
-    let old_len = write_path(sim, BufId(4), "/a.dat");
-    let new_len = write_path(sim, BufId(5), "/b.dat");
+    let old_len = write_path(sim, BufId::new(4), "/a.dat");
+    let new_len = write_path(sim, BufId::new(5), "/b.dat");
     let rename = Op::FileRename {
-        old_buf: BufId(4),
+        old_buf: BufId::new(4),
         old_off: 0,
         old_len,
-        new_buf: BufId(5),
+        new_buf: BufId::new(5),
         new_off: 0,
         new_len,
     };
@@ -113,37 +107,62 @@ fn t3_10_open_inode_survives_unsynced_rename_and_power_loss() {
     let mut out = Completions::new(16);
 
     assert_eq!(
-        open_at(&mut sim, &mut out, 1, FileSlot(0), "/a.dat", rw_create()),
+        open_at(
+            &mut sim,
+            &mut out,
+            1,
+            FileSlot::new(0),
+            "/a.dat",
+            rw_create()
+        ),
         0
     );
-    sync_root_dir(&mut sim, &mut out, 2, FileSlot(1));
+    sync_root_dir(&mut sim, &mut out, 2, FileSlot::new(1));
     rename_a_to_b(&mut sim, &mut out);
 
     let expected = [0x9A; 512];
-    write_pool_bytes(&mut sim, BufId(0), 0, &expected);
-    let write = write_op(FileSlot(0), BufId(0), 512, 0);
+    write_pool_bytes(&mut sim, BufId::new(0), 0, &expected);
+    let write = write_op(FileSlot::new(0), BufId::new(0), 512, 0);
     assert_eq!(run_op(&mut sim, &mut out, 6, write, 1000), 512);
-    let sync = sync_op(FileSlot(0), true);
+    let sync = sync_op(FileSlot::new(0), true);
     assert_eq!(run_op(&mut sim, &mut out, 7, sync, 1000), 0);
 
     sim.power_loss();
-    let a_ok = open_at(&mut sim, &mut out, 8, FileSlot(0), "/a.dat", read_only());
-    let b_ok = open_at(&mut sim, &mut out, 9, FileSlot(1), "/b.dat", read_only());
+    let a_ok = open_at(
+        &mut sim,
+        &mut out,
+        8,
+        FileSlot::new(0),
+        "/a.dat",
+        read_only(),
+    );
+    let b_ok = open_at(
+        &mut sim,
+        &mut out,
+        9,
+        FileSlot::new(1),
+        "/b.dat",
+        read_only(),
+    );
     assert_ne!(
         a_ok == 0,
         b_ok == 0,
         "exactly one of /a.dat or /b.dat must exist: a={a_ok} b={b_ok}"
     );
-    let slot = if a_ok == 0 { FileSlot(0) } else { FileSlot(1) };
+    let slot = if a_ok == 0 {
+        FileSlot::new(0)
+    } else {
+        FileSlot::new(1)
+    };
     let r = run_op(
         &mut sim,
         &mut out,
         10,
-        read_op(slot, BufId(1), 512, 0),
+        read_op(slot, BufId::new(1), 512, 0),
         1000,
     );
     assert_eq!(r, 512);
-    assert_eq!(read_pool_bytes(&mut sim, BufId(1), 0, 512), expected);
+    assert_eq!(read_pool_bytes(&mut sim, BufId::new(1), 0, 512), expected);
     if a_ok != 0 {
         assert_eq!(a_ok, -ENOENT);
     }

@@ -68,13 +68,11 @@ fn t2_f05_2_test_linux_sh_fails_when_hosts_file_empty_or_comments() {
 #[test]
 fn t2_f05_3_connect_unbound_port_refused_and_slot_free() {
     for_each_backend(|make, addr| {
-        let limits = Limits {
-            sockets_max: 4,
-            buffers: 2,
-            buffer_size: 256,
-            ops_max: 4,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(4)
+            .with_buffers(2)
+            .with_buffer_size(256)
+            .with_ops_max(4);
         let mut io = make(limits);
         let mut out = Completions::new(8);
         #[cfg(unix)]
@@ -88,38 +86,42 @@ fn t2_f05_3_connect_unbound_port_refused_and_slot_free() {
         let c = submit_and_wait_one(
             &mut *io,
             &mut out,
-            Token(1),
+            Token::new(1),
             Op::Connect {
-                sock: Sock(1),
+                sock: Sock::new(1),
                 addr: ref_addr,
             },
             1_000,
         )
         .unwrap();
-        assert_eq!(c.result, -ECONNREFUSED);
+        assert_eq!(c.result(), -ECONNREFUSED);
 
         // Slot Sock(1) must be free without Close: bind listener and connect immediately.
-        let bound = io.listen(Sock(0), addr).expect("listen");
+        let bound = io.listen(Sock::new(0), addr).expect("listen");
         io.submit(
-            Token(2),
+            Token::new(2),
             Op::Accept {
-                listener: Sock(0),
-                sock: Sock(2),
+                listener: Sock::new(0),
+                sock: Sock::new(2),
             },
         )
         .unwrap();
         io.submit(
-            Token(3),
+            Token::new(3),
             Op::Connect {
-                sock: Sock(1),
+                sock: Sock::new(1),
                 addr: bound,
             },
         )
         .unwrap();
         let cs = drive_until(&mut *io, &mut out, 1_000, |v| v.len() == 2).unwrap();
-        assert!(cs.iter().all(|x| x.result == 0), "reuse failed: {cs:?}");
-        for (k, sock) in [Sock(1), Sock(2), Sock(0)].into_iter().enumerate() {
-            io.submit(Token(10 + k as u64), Op::Close { sock }).unwrap();
+        assert!(cs.iter().all(|x| x.result() == 0), "reuse failed: {cs:?}");
+        for (k, sock) in [Sock::new(1), Sock::new(2), Sock::new(0)]
+            .into_iter()
+            .enumerate()
+        {
+            io.submit(Token::new(10 + k as u64), Op::Close { sock })
+                .unwrap();
         }
         // Teardown: the checks are done, and a slow close does not change them.
         let _: Option<Vec<longshore::io::Completion>> =
@@ -148,19 +150,19 @@ fn t2_f05_4_send_to_closed_peer_fails_without_sigpipe() {
 
 /// Accepts `Sock(1)` on a listener at `addr` and connects `Sock(2)` to it.
 fn accept_and_connect(io: &mut dyn Io, out: &mut Completions, addr: SocketAddr) {
-    let bound = io.listen(Sock(0), addr).unwrap();
+    let bound = io.listen(Sock::new(0), addr).unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
+            listener: Sock::new(0),
+            sock: Sock::new(1),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(2),
+            sock: Sock::new(2),
             addr: bound,
         },
     )
@@ -173,10 +175,10 @@ fn recv_now(io: &mut dyn Io, out: &mut Completions, tok: u64) -> Completion {
     submit_and_wait_one(
         io,
         out,
-        Token(tok),
+        Token::new(tok),
         Op::RecvNow {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
@@ -187,14 +189,14 @@ fn recv_now(io: &mut dyn Io, out: &mut Completions, tok: u64) -> Completion {
 
 /// Sends `msg` from `Sock(2)` through `BufId(1)` and checks it went out whole.
 fn send_from_client(io: &mut dyn Io, out: &mut Completions, msg: &[u8]) {
-    write_pool_bytes(io, BufId(1), 0, msg);
+    write_pool_bytes(io, BufId::new(1), 0, msg);
     let s = submit_and_wait_one(
         io,
         out,
-        Token(4),
+        Token::new(4),
         Op::Send {
-            sock: Sock(2),
-            buf: BufId(1),
+            sock: Sock::new(2),
+            buf: BufId::new(1),
             off: 0,
             len: msg.len() as u32,
             zero_copy: false,
@@ -202,7 +204,7 @@ fn send_from_client(io: &mut dyn Io, out: &mut Completions, msg: &[u8]) {
         100,
     )
     .unwrap();
-    assert_eq!(s.result, i32::try_from(msg.len()).unwrap());
+    assert_eq!(s.result(), i32::try_from(msg.len()).unwrap());
 }
 
 /// Polls `RecvNow` until `len` bytes arrived, skipping `EAGAIN`.
@@ -211,11 +213,11 @@ fn recv_now_all(io: &mut dyn Io, out: &mut Completions, len: usize, tok: &mut u6
     while got.len() < len {
         let r = recv_now(io, out, *tok);
         *tok += 1;
-        if r.result == -EAGAIN {
+        if r.result() == -EAGAIN {
             continue;
         }
-        assert!(r.result > 0);
-        got.extend_from_slice(&io.buf(BufId(0))[..usize::try_from(r.result).unwrap()]);
+        assert!(r.result() > 0);
+        got.extend_from_slice(&io.buf(BufId::new(0))[..usize::try_from(r.result()).unwrap()]);
     }
     got
 }
@@ -223,17 +225,29 @@ fn recv_now_all(io: &mut dyn Io, out: &mut Completions, len: usize, tok: &mut u6
 /// Closes the client and polls `RecvNow` (with short sleeps) for the first
 /// non-`EAGAIN` result, which it returns.
 fn close_client_and_poll_eof(io: &mut dyn Io, out: &mut Completions, tok: &mut u64) -> i32 {
-    let _: Completion =
-        submit_and_wait_one(io, out, Token(*tok), Op::Close { sock: Sock(2) }, 100).unwrap();
+    let _: Completion = submit_and_wait_one(
+        io,
+        out,
+        Token::new(*tok),
+        Op::Close { sock: Sock::new(2) },
+        100,
+    )
+    .unwrap();
     *tok += 1;
     for _ in 0..64 {
         let r = recv_now(io, out, *tok);
         *tok += 1;
-        if r.result != -EAGAIN {
-            return r.result;
+        if r.result() != -EAGAIN {
+            return r.result();
         }
-        let _: Completion =
-            submit_and_wait_one(io, out, Token(*tok), Op::Timeout { nanos: 500_000 }, 100).unwrap();
+        let _: Completion = submit_and_wait_one(
+            io,
+            out,
+            Token::new(*tok),
+            Op::Timeout { nanos: 500_000 },
+            100,
+        )
+        .unwrap();
         *tok += 1;
     }
     -EAGAIN
@@ -242,19 +256,17 @@ fn close_client_and_poll_eof(io: &mut dyn Io, out: &mut Completions, tok: &mut u
 #[test]
 fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
     for_each_backend(|make, addr| {
-        let limits = Limits {
-            sockets_max: 4,
-            buffers: 2,
-            buffer_size: 256,
-            ops_max: 4,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(4)
+            .with_buffers(2)
+            .with_buffer_size(256)
+            .with_ops_max(4);
         let mut io = make(limits);
         let mut out = Completions::new(8);
         accept_and_connect(&mut *io, &mut out, addr);
 
         let idle = recv_now(&mut *io, &mut out, 3);
-        assert_eq!(idle.result, -EAGAIN);
+        assert_eq!(idle.result(), -EAGAIN);
 
         let msg = b"hello-world";
         send_from_client(&mut *io, &mut out, msg);
@@ -265,8 +277,8 @@ fn t2_f05_5_recv_now_eagain_bytes_and_eof() {
         let eof = close_client_and_poll_eof(&mut *io, &mut out, &mut tok);
         assert_eq!(eof, 0);
 
-        for (k, sock) in [Sock(1), Sock(0)].into_iter().enumerate() {
-            io.submit(Token(200 + k as u64), Op::Close { sock })
+        for (k, sock) in [Sock::new(1), Sock::new(0)].into_iter().enumerate() {
+            io.submit(Token::new(200 + k as u64), Op::Close { sock })
                 .unwrap();
         }
         // Teardown: the checks are done, and a slow close does not change them.

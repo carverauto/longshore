@@ -15,31 +15,29 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 static ALLOC: Guard = Guard;
 
 const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)), 8080);
-const LISTENER: Sock = Sock(0);
-const CLIENT: Sock = Sock(1);
-const SERVER: Sock = Sock(2);
+const LISTENER: Sock = Sock::new(0);
+const CLIENT: Sock = Sock::new(1);
+const SERVER: Sock = Sock::new(2);
 
-const C_CONN: Token = Token(1);
-const C_SEND: Token = Token(2);
-const C_RECV: Token = Token(3);
-const S_ACCEPT: Token = Token(4);
-const S_SEND: Token = Token(5);
-const S_RECV: Token = Token(6);
-const C_CLOSE: Token = Token(7);
-const S_CLOSE: Token = Token(8);
+const C_CONN: Token = Token::new(1);
+const C_SEND: Token = Token::new(2);
+const C_RECV: Token = Token::new(3);
+const S_ACCEPT: Token = Token::new(4);
+const S_SEND: Token = Token::new(5);
+const S_RECV: Token = Token::new(6);
+const C_CLOSE: Token = Token::new(7);
+const S_CLOSE: Token = Token::new(8);
 
-const C_TX: BufId = BufId(0);
-const C_RX: BufId = BufId(1);
-const S_BUF: BufId = BufId(2);
-const SCRATCH: BufId = BufId(3);
+const C_TX: BufId = BufId::new(0);
+const C_RX: BufId = BufId::new(1);
+const S_BUF: BufId = BufId::new(2);
+const SCRATCH: BufId = BufId::new(3);
 
-const LIMITS: Limits = Limits {
-    sockets_max: 3,
-    buffers: 4,
-    buffer_size: 8192,
-    ops_max: 8,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(3)
+    .with_buffers(4)
+    .with_buffer_size(8192)
+    .with_ops_max(8);
 
 #[cfg(test)]
 fn connect_pair(seed: u64, faults: Faults) -> (SimIo, Stream, Stream) {
@@ -68,11 +66,11 @@ fn connect_pair(seed: u64, faults: Faults) -> (SimIo, Stream, Stream) {
         while !(c_up && s_up) {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                if c.token == C_CONN {
-                    assert!(c.result >= 0, "connect failed: {}", c.result);
+                if c.token() == C_CONN {
+                    assert!(c.result() >= 0, "connect failed: {}", c.result());
                     c_up = true;
-                } else if c.token == S_ACCEPT {
-                    assert!(c.result >= 0, "accept failed: {}", c.result);
+                } else if c.token() == S_ACCEPT {
+                    assert!(c.result() >= 0, "accept failed: {}", c.result());
                     s_up = true;
                 }
             }
@@ -110,15 +108,15 @@ impl Echo {
 
     fn on(&mut self, io: &mut SimIo, client: &mut Stream, server: &mut Stream, c: Completion) {
         let total = self.total;
-        match c.token {
+        match c.token() {
             C_SEND => {
-                self.c_sent += sent(client.on_send(io, c.result));
+                self.c_sent += sent(client.on_send(io, c.result()));
                 if self.c_sent < total {
                     client.send(io, C_TX, self.c_sent, total - self.c_sent, u32::MAX);
                 }
             }
             S_RECV => {
-                self.s_recvd += received(server.on_recv(io, c.result));
+                self.s_recvd += received(server.on_recv(io, c.result()));
                 if self.s_recvd < total {
                     assert_eq!(
                         server.recv(io, S_BUF, self.s_recvd, total - self.s_recvd),
@@ -130,13 +128,13 @@ impl Echo {
                 }
             }
             S_SEND => {
-                self.s_sent += sent(server.on_send(io, c.result));
+                self.s_sent += sent(server.on_send(io, c.result()));
                 if self.s_sent < total {
                     server.send(io, S_BUF, self.s_sent, total - self.s_sent, 1024);
                 }
             }
             C_RECV => {
-                self.c_recvd += received(client.on_recv(io, c.result));
+                self.c_recvd += received(client.on_recv(io, c.result()));
                 if self.c_recvd < total {
                     assert_eq!(
                         client.recv(io, C_RX, self.c_recvd, total - self.c_recvd),
@@ -171,12 +169,10 @@ fn received(step: Step) -> u32 {
 
 #[test]
 fn plain_stream_echo_survives_short_writes_and_partial_reads() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 300_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(300_000)
+        .with_delay(200_000);
     let (mut io, mut client, mut server) = connect_pair(7, faults);
     assert!(!client.is_tls());
     assert!(!client.has_unread_plaintext());
@@ -212,50 +208,50 @@ fn plain_stream_idle_check_eof_and_reset() {
         assert_eq!(client.check_idle(&mut io, SCRATCH, 0), IdleCheck::Pending);
         io.tick(true, &mut out).unwrap();
         let c = out.pop().unwrap();
-        assert_eq!(c.token, C_RECV);
-        assert_eq!(client.on_idle_check(&mut io, c.result), IdleCheck::Clean);
+        assert_eq!(c.token(), C_RECV);
+        assert_eq!(client.on_idle_check(&mut io, c.result()), IdleCheck::Clean);
 
         // 2. Unsolicited byte -> Dirty.
         io.buf(S_BUF)[0] = b'!';
         server.send(&mut io, S_BUF, 0, 1, u32::MAX);
         io.tick(true, &mut out).unwrap();
         let sent = out.pop().unwrap();
-        assert_eq!(sent.token, S_SEND);
-        assert_eq!(server.on_send(&mut io, sent.result), Step::Done(1));
+        assert_eq!(sent.token(), S_SEND);
+        assert_eq!(server.on_send(&mut io, sent.result()), Step::Done(1));
 
         assert_eq!(client.check_idle(&mut io, SCRATCH, 0), IdleCheck::Pending);
         io.tick(true, &mut out).unwrap();
         let dirty = out.pop().unwrap();
-        assert_eq!(dirty.token, C_RECV);
+        assert_eq!(dirty.token(), C_RECV);
         assert_eq!(
-            client.on_idle_check(&mut io, dirty.result),
+            client.on_idle_check(&mut io, dirty.result()),
             IdleCheck::Dirty
         );
 
         // 3. Peer closes -> check_idle sees Closed, recv sees Done(0).
         io.submit(S_CLOSE, Op::Close { sock: SERVER }).unwrap();
         io.tick(true, &mut out).unwrap();
-        assert_eq!(out.pop().unwrap().token, S_CLOSE);
+        assert_eq!(out.pop().unwrap().token(), S_CLOSE);
 
         assert_eq!(client.check_idle(&mut io, SCRATCH, 0), IdleCheck::Pending);
         io.tick(true, &mut out).unwrap();
         let closed = out.pop().unwrap();
         assert_eq!(
-            client.on_idle_check(&mut io, closed.result),
+            client.on_idle_check(&mut io, closed.result()),
             IdleCheck::Closed
         );
 
         assert_eq!(client.recv(&mut io, C_RX, 0, 16), Step::Pending);
         io.tick(true, &mut out).unwrap();
         let eof = out.pop().unwrap();
-        assert_eq!(client.on_recv(&mut io, eof.result), Step::Done(0));
+        assert_eq!(client.on_recv(&mut io, eof.result()), Step::Done(0));
 
         client.reset();
         assert!(!client.is_tls());
         assert_eq!(client.records(), 0);
         io.submit(C_CLOSE, Op::Close { sock: CLIENT }).unwrap();
         io.tick(true, &mut out).unwrap();
-        assert_eq!(out.pop().unwrap().token, C_CLOSE);
+        assert_eq!(out.pop().unwrap().token(), C_CLOSE);
     });
 
     // TlsError and KEY_RECORDS_RETIRE are available even when `tls` is disabled.
@@ -273,8 +269,8 @@ fn plain_stream_send_alert_submits_zero_len_and_error_passes_through() {
         client.send_alert(&mut io, C_TX, 0, 1, 0);
         io.tick(true, &mut out).unwrap();
         let c = out.pop().unwrap();
-        assert_eq!(c.token, C_SEND);
-        assert_eq!(client.on_send(&mut io, c.result), Step::Done(0));
+        assert_eq!(c.token(), C_SEND);
+        assert_eq!(client.on_send(&mut io, c.result()), Step::Done(0));
 
         assert_eq!(
             client.on_send(&mut io, -longshore_common::io::EPIPE),

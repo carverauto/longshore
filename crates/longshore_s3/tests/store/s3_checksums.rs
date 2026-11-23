@@ -84,12 +84,10 @@ fn assert_refusal_of_damage(seed: u64, f: Fatal) {
 /// exactly the bytes stored. Damage is retried or reported, never accepted.
 #[test]
 fn bit_flips_never_become_silent_corruption_with_checksums_on() {
-    let faults = Faults {
-        bit_flip: 150_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_bit_flip(150_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000);
     let mut t = Tally::default();
     for seed in 0..80 {
         let mut w = world_with(seed, faults, 8, true);
@@ -208,12 +206,10 @@ fn fetch_never_returns_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tal
 /// the test above would look like if the checksum path did nothing.
 #[test]
 fn the_same_bit_flips_do_corrupt_data_with_checksums_off() {
-    let faults = Faults {
-        bit_flip: 150_000,
-        short_send: 200_000,
-        partial_recv: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_bit_flip(150_000)
+        .with_short_send(200_000)
+        .with_partial_recv(200_000);
     let mut damaged = 0;
     for seed in 0..80 {
         let mut w = world_with(seed, faults, 8, false);

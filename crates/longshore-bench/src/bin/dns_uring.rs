@@ -72,13 +72,13 @@ fn main() {
     let family = family();
     println!("nameservers: {servers:?}");
 
-    let mut io = UringIo::new(Limits {
-        sockets_max: 2,
-        buffers: 3,
-        buffer_size: 1024,
-        ops_max: 8,
-        ..Limits::BASE
-    })
+    let mut io = UringIo::new(
+        Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(3)
+            .with_buffer_size(1024)
+            .with_ops_max(8),
+    )
     .unwrap_or_else(|e| die::die(e));
     let n = hosts.len();
     let mut r = Resolver::new(Config {
@@ -88,9 +88,9 @@ fn main() {
         prefer_large_segments: None,
         refresh_ns: 30_000_000_000,
         timeout_ns: 1_000_000_000,
-        socks: [Sock(0), Sock(1)],
-        rx_bufs: [BufId(0), BufId(1)],
-        tx_buf: BufId(2),
+        socks: [Sock::new(0), Sock::new(1)],
+        rx_bufs: [BufId::new(0), BufId::new(1)],
+        tx_buf: BufId::new(2),
         token_base: 1 << 40,
     })
     .unwrap_or_else(|e| die::die(e));

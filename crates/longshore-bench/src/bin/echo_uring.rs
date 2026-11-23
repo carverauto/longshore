@@ -90,13 +90,11 @@ fn main() {
         v6,
         measure,
     } = args();
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 3,
-        buffer_size: chunk,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(3)
+        .with_buffer_size(chunk)
+        .with_ops_max(4);
     let mut io = match UringIo::new(limits) {
         Ok(io) => io,
         Err(e) => {
@@ -121,7 +119,7 @@ fn main() {
     let r = sealed(|| echo(&mut io, addr, total, chunk, zc, &mut out));
     let secs = start.elapsed().as_secs_f64();
     match r {
-        Ok(s) => println!("ok total={total} chunk={chunk} zero_copy={zc} sends={} recvs={} ticks={} enters={} secs={secs:.3}", s.sends, s.recvs, s.ticks, io.enters()),
+        Ok(s) => println!("ok total={total} chunk={chunk} zero_copy={zc} sends={} recvs={} ticks={} enters={} secs={secs:.3}", s.sends(), s.recvs(), s.ticks(), io.enters()),
         Err(e) => {
             eprintln!("echo_uring: FAILED {e:?}");
             std::process::exit(1);

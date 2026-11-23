@@ -194,7 +194,7 @@ pub(super) fn multipart(size: u32) {
         s3,
         out: Completions::new(32),
     };
-    let bufs: Vec<BufId> = (0..PARTS + 1).map(|i| BufId(first + i)).collect();
+    let bufs: Vec<BufId> = (0..PARTS + 1).map(|i| BufId::new(first + i)).collect();
     let key = format!(
         "selftest/multipart-{}-{}.bin",
         std::process::id(),

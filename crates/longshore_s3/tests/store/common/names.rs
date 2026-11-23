@@ -14,13 +14,11 @@ pub const NS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 5
 
 // The shared layout, plus two sockets and three small buffers for the
 // resolver and one of each for the nameserver.
-pub const WIDE: Limits = Limits {
-    sockets_max: LIMITS.sockets_max + 3,
-    small_buffers: LIMITS.small_buffers + 4,
-    ops_max: 64,
-    ..LIMITS
-};
-pub const NS_SOCK: Sock = Sock(LIMITS.sockets_max + 2);
+pub const WIDE: Limits = LIMITS
+    .with_sockets_max(LIMITS.sockets_max() + 3)
+    .with_small_buffers(LIMITS.small_buffers() + 4)
+    .with_ops_max(64);
+pub const NS_SOCK: Sock = Sock::new(LIMITS.sockets_max() + 2);
 /// The nameserver's buffer: the small buffer after the resolver's three.
 pub fn ns_buf() -> BufId {
     WIDE.small(CONNS + 3)
@@ -37,7 +35,7 @@ pub struct Nameserver {
 impl Nameserver {
     pub fn recv(io: &mut SimIo) {
         io.submit(
-            Token(NS_RECV),
+            Token::new(NS_RECV),
             Op::Recv {
                 sock: NS_SOCK,
                 buf: ns_buf(),
@@ -91,7 +89,7 @@ impl Nameserver {
                 }
                 m[7] = count;
                 io.submit(
-                    Token(NS_SEND),
+                    Token::new(NS_SEND),
                     Op::Send {
                         sock: NS_SOCK,
                         buf: ns_buf(),
@@ -118,7 +116,7 @@ pub fn resolved_world(
 ) -> (World, Nameserver) {
     let mut io = SimIo::new(WIDE, 7, Faults::default());
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
             .head_max(2048)
             .objects_max(8)
             .build()
@@ -136,7 +134,10 @@ pub fn resolved_world(
             prefer_large_segments,
             refresh_ns: 30_000 * MS,
             timeout_ns: 200 * MS,
-            socks: [Sock(LIMITS.sockets_max), Sock(LIMITS.sockets_max + 1)],
+            socks: [
+                Sock::new(LIMITS.sockets_max()),
+                Sock::new(LIMITS.sockets_max() + 1),
+            ],
             rx_bufs: [WIDE.small(CONNS), WIDE.small(CONNS + 1)],
             tx_buf: WIDE.small(CONNS + 2),
             token_base: 3 << 40,
@@ -145,7 +146,7 @@ pub fn resolved_world(
     );
     let mut s3 = S3::new(cfg);
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     let world = World {
         io,
@@ -180,11 +181,11 @@ pub fn next_done(w: &mut World, ns: &Nameserver) -> Done {
         }
         io.tick(true, out).expect("simulation deadlock");
         while let Some(c) = out.pop() {
-            if c.token.0 == HEARTBEAT {
+            if c.token().get() == HEARTBEAT {
                 s3.tick(io);
-                io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                     .unwrap();
-            } else if !s3.on_completion(io, c) && !ns.on(io, c.token.0, c.result) {
+            } else if !s3.on_completion(io, c) && !ns.on(io, c.token().get(), c.result()) {
                 assert!(server.on_completion(io, c), "unrouted completion {c:?}");
             }
         }

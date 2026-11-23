@@ -94,7 +94,7 @@ impl Client {
         }
         self.conns[i].opened_at = io.now_ns();
         let segment = Segment::decode(result);
-        self.conns[i].segment = segment.map_or(0, |s| s.size);
+        self.conns[i].segment = segment.map_or(0, |s| s.size());
         if let Some(segment) = segment {
             self.connected = Some((self.conns[i].addr, segment));
         }

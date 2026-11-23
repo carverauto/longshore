@@ -79,7 +79,7 @@ fn poisoned_rename_then_recreate_file_and_sync_survives_power_loss() {
 
         assert_file_byte(&mut sim, &mut out, 60, "/x", 0xBB);
         assert_eq!(
-            open_path(&mut sim, &mut out, 70, FileSlot(1), "/y", rw_open()),
+            open_path(&mut sim, &mut out, 70, FileSlot::new(1), "/y", rw_open()),
             -ENOENT
         );
     });
@@ -87,6 +87,8 @@ fn poisoned_rename_then_recreate_file_and_sync_survives_power_loss() {
 
 #[test]
 fn poisoned_unlink_or_nonempty_dir_rename_then_mkdir_or_replace_survives() {
+    const SLOT_0: FileSlot = FileSlot::new(0);
+    const SLOT_1: FileSlot = FileSlot::new(1);
     // 1. Poisoned Unlink("/x") -> Mkdir("/x") -> sync -> power_loss preserves dir "/x".
     let mut sim = make_sim(71, 512, 16, 16 * 1024);
     let mut out = Completions::new(16);
@@ -102,11 +104,11 @@ fn poisoned_unlink_or_nonempty_dir_rename_then_mkdir_or_replace_survives() {
         sim.power_loss();
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 60, FileSlot(0), "/x", dir_open()),
+            open_path(&mut sim, &mut out, 60, SLOT_0, "/x", dir_open()),
             0
         );
         assert_eq!(
-            drive(&mut sim, &mut out, 61, Op::FileClose { slot: FileSlot(0) }),
+            drive(&mut sim, &mut out, 61, Op::FileClose { slot: SLOT_0 }),
             0
         );
     });
@@ -128,15 +130,15 @@ fn poisoned_unlink_or_nonempty_dir_rename_then_mkdir_or_replace_survives() {
 
         assert_file_byte(&mut sim, &mut out, 80, "/d", 0xDD);
         assert_eq!(
-            open_path(&mut sim, &mut out, 90, FileSlot(1), "/d/f", rw_open()),
+            open_path(&mut sim, &mut out, 90, SLOT_1, "/d/f", rw_open()),
             -ENOENT
         );
         assert_eq!(
-            open_path(&mut sim, &mut out, 91, FileSlot(1), "/d/f", rw_create()),
+            open_path(&mut sim, &mut out, 91, SLOT_1, "/d/f", rw_create()),
             -ENOTDIR
         );
         assert_eq!(
-            open_path(&mut sim, &mut out, 92, FileSlot(1), "/z", dir_open()),
+            open_path(&mut sim, &mut out, 92, SLOT_1, "/z", dir_open()),
             -ENOENT
         );
     });
@@ -162,7 +164,7 @@ fn poisoned_unlink_or_nonempty_dir_rename_then_mkdir_or_replace_survives() {
 
         assert_file_byte(&mut sim, &mut out, 100, "/d/f", 0xEE);
         assert_eq!(
-            open_path(&mut sim, &mut out, 110, FileSlot(1), "/d/other", rw_open()),
+            open_path(&mut sim, &mut out, 110, SLOT_1, "/d/other", rw_open()),
             -ENOENT
         );
     });
@@ -189,16 +191,17 @@ fn dir_log_overflow_and_sync_dir_reclaim_overwritten_durable_inodes() {
 /// A disk with room for only two files and `max_dirs` directories.
 fn two_file_disk(seed: u64, max_dirs: u32) -> SimIo {
     let mut sim = SimIo::new(base_limits(), seed, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 2,
-        max_dirs,
-        max_bytes_per_file: 4096,
-        max_name_len: 64,
-        write_log_entries: 8,
-        write_log_bytes: 4096,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(2)
+            .with_max_dirs(max_dirs)
+            .with_max_bytes_per_file(4096)
+            .with_max_name_len(64)
+            .with_write_log_entries(8)
+            .with_write_log_bytes(4096)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
     sim
 }
 

@@ -219,15 +219,15 @@ impl Server {
     }
 
     fn sock(&self, i: usize) -> Sock {
-        Sock(self.cfg.first_sock() + i as u32)
+        Sock::new(self.cfg.first_sock() + i as u32)
     }
 
     fn head_buf(&self, i: usize) -> BufId {
-        BufId(self.cfg.first_buf() + i as u32 * 2)
+        BufId::new(self.cfg.first_buf() + i as u32 * 2)
     }
 
     fn body_buf(&self, i: usize) -> BufId {
-        BufId(self.cfg.first_buf() + i as u32 * 2 + 1)
+        BufId::new(self.cfg.first_buf() + i as u32 * 2 + 1)
     }
 
     fn accept_token(&self) -> u64 {
@@ -235,7 +235,11 @@ impl Server {
     }
 
     fn submit<IO: Io>(&self, io: &mut IO, i: usize, kind: u64, op: Op) {
-        Self::submit_as(io, Token(self.cfg.token_base() + i as u64 * 8 + kind), op);
+        Self::submit_as(
+            io,
+            Token::new(self.cfg.token_base() + i as u64 * 8 + kind),
+            op,
+        );
     }
 
     #[expect(

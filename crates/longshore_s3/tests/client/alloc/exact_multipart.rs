@@ -21,14 +21,12 @@ fn threaded_client_exact_and_multipart_allocate_nothing_under_sealed() {
     const CONNS: u32 = 2;
 
     let server = ServerThread::start(
-        Limits {
-            sockets_max: 1 + CONNS * 2,
-            buffers: 2 * CONNS * 2,
-            buffer_size: SIZE,
-            ops_max: CONNS * 6 + 3,
-            ..Limits::BASE
-        },
-        server::ServerConfig::builder(Sock(0), CONNS * 2, 1, 0, SIZE, 2 << 40)
+        Limits::BASE
+            .with_sockets_max(1 + CONNS * 2)
+            .with_buffers(2 * CONNS * 2)
+            .with_buffer_size(SIZE)
+            .with_ops_max(CONNS * 6 + 3),
+        server::ServerConfig::builder(Sock::new(0), CONNS * 2, 1, 0, SIZE, 2 << 40)
             .head_max(4096)
             .objects_max(8)
             .checksum(|body: &[u8]| {

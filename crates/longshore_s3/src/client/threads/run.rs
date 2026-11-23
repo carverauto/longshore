@@ -143,7 +143,7 @@ fn setup<B: Backend>(b: &Builder) -> std::io::Result<(B, Worker, Arc<Lane>)> {
     let s3 = S3::new(config);
     let layout = Layout {
         operations: b.operations,
-        first_buffer: BufId(tls_buffers),
+        first_buffer: BufId::new(tls_buffers),
         buffers: b.buffers,
         token_base: 7 << 40,
         heartbeat_ns: 50 * MS,
@@ -171,18 +171,16 @@ fn limits(b: &Builder) -> (Limits, u32) {
     } else {
         8192
     });
-    let limits = Limits {
-        sockets_max: conns + 2,
-        buffers: tls_buffers + b.buffers,
-        buffer_size,
-        small_buffers: conns + 4,
-        small_buffer_size: 8192,
+    let limits = Limits::BASE
+        .with_sockets_max(conns + 2)
+        .with_buffers(tls_buffers + b.buffers)
+        .with_buffer_size(buffer_size)
+        .with_small_buffers(conns + 4)
+        .with_small_buffer_size(8192)
         // Per connection: a send, a receive and a close or cancel. Then
         // the resolver's four, the store's timer, the worker's two and
         // the read of the credentials file.
-        ops_max: conns * 3 + 4 + 1 + 2 + 1,
-        ..Limits::BASE
-    };
+        .with_ops_max(conns * 3 + 4 + 1 + 2 + 1);
     (limits, tls_buffers)
 }
 
@@ -218,7 +216,7 @@ fn endpoint(b: &Builder, limits: Limits) -> std::io::Result<Endpoint> {
         prefer_large_segments: b.prefer_large_segments,
         refresh_ns: 30_000 * MS,
         timeout_ns: 2_000 * MS,
-        socks: [Sock(conns), Sock(conns + 1)],
+        socks: [Sock::new(conns), Sock::new(conns + 1)],
         rx_bufs: [limits.small(conns), limits.small(conns + 1)],
         tx_buf: limits.small(conns + 2),
         token_base: 3 << 40,
@@ -236,8 +234,8 @@ fn store_config(b: &Builder, limits: Limits, endpoint: Endpoint) -> std::io::Res
     let http = http::ClientConfig::builder(
         b.connections,
         0,
-        limits.small(0).0,
-        limits.buffer_size,
+        limits.small(0).get(),
+        limits.buffer_size(),
         1 << 40,
     )
     .build()

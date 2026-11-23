@@ -93,8 +93,8 @@ fn an_aged_connection_is_replaced_before_a_free_slot_is_used() {
     while w.io.now_ns() < until {
         w.io.tick(true, &mut w.out).unwrap();
         while let Some(c) = w.out.pop() {
-            if c.token.0 == HEARTBEAT {
-                w.io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+            if c.token().get() == HEARTBEAT {
+                w.io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                     .unwrap();
             } else if !matches!(
                 w.client.on_completion(&mut w.io, c),
@@ -333,8 +333,5 @@ fn connections_that_were_not_measured_are_never_retired() {
 }
 
 fn seg(size: u32) -> longshore_common::io::Segment {
-    longshore_common::io::Segment {
-        size,
-        path_limit: 0,
-    }
+    longshore_common::io::Segment::new(size, 0)
 }

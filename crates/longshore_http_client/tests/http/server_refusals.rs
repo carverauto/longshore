@@ -11,7 +11,7 @@
 mod common;
 use common::*;
 
-const SOCK: Sock = Sock(1 + CONNS * 2);
+const SOCK: Sock = Sock::new(1 + CONNS * 2);
 const CONNECT: u64 = 3 << 40;
 const SEND: u64 = CONNECT + 1;
 const RECV: u64 = CONNECT + 2;
@@ -22,7 +22,7 @@ fn answer_to(request: &[u8]) -> String {
     let mut w = world(50, Faults::default());
     w.io.buf(TX)[..request.len()].copy_from_slice(request);
     w.io.submit(
-        Token(CONNECT),
+        Token::new(CONNECT),
         Op::Connect {
             sock: SOCK,
             addr: ADDR,
@@ -50,12 +50,12 @@ fn read_answer_head(w: &mut World, request_len: u32) -> u32 {
         while !head_complete(io, got) {
             io.tick(true, out).expect("simulation deadlock");
             while let Some(c) = out.pop() {
-                match c.token.0 {
+                match c.token().get() {
                     HEARTBEAT => io
-                        .submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        .submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                         .unwrap(),
                     CONNECT => {
-                        assert_eq!(c.result, 0, "connect");
+                        assert_eq!(c.result(), 0, "connect");
                         let send = Op::Send {
                             sock: SOCK,
                             buf: TX,
@@ -63,13 +63,13 @@ fn read_answer_head(w: &mut World, request_len: u32) -> u32 {
                             len: request_len,
                             zero_copy: false,
                         };
-                        io.submit(Token(SEND), send).unwrap();
+                        io.submit(Token::new(SEND), send).unwrap();
                         recv_answer(io, 0);
                     }
                     SEND => {}
                     RECV => {
-                        assert!(c.result > 0, "closed before answering: {}", c.result);
-                        got += u32::try_from(c.result).unwrap();
+                        assert!(c.result() > 0, "closed before answering: {}", c.result());
+                        got += u32::try_from(c.result()).unwrap();
                         if !head_complete(io, got) {
                             recv_answer(io, got);
                         }
@@ -98,7 +98,7 @@ fn recv_answer(io: &mut SimIo, off: u32) {
         off,
         len: 1024,
     };
-    io.submit(Token(RECV), recv).unwrap();
+    io.submit(Token::new(RECV), recv).unwrap();
 }
 
 fn status_of(request: &[u8]) -> String {

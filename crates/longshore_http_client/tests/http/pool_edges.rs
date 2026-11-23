@@ -200,13 +200,7 @@ fn a_close_reports_whether_the_connection_had_been_used() {
 /// connection never opened.
 #[test]
 fn only_a_failed_connect_names_the_address() {
-    let mut w = world(
-        7,
-        Faults {
-            connect_refused: 1_000_000,
-            ..Faults::default()
-        },
-    );
+    let mut w = world(7, Faults::NONE.with_connect_refused(1_000_000));
     assert_eq!(w.client.connect_failure(), None);
     assert_eq!(
         w.request("GET", "/k", None),

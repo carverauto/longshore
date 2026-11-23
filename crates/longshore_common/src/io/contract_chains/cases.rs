@@ -28,12 +28,10 @@ fn refusal_at_each_position<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
     let mut io = make(base_limits());
     let mut out = Completions::new(16);
     let p = format!("{root}c_refuse.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p, rw),
         0
@@ -88,12 +86,10 @@ fn atomic_busy_on_full_slots<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: 
     let mut io = make(limits);
     let mut out = Completions::new(8);
     let p = format!("{root}c_busy.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p, rw),
         0
@@ -146,10 +142,7 @@ fn chain_among_other_ops<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str
                 path_buf: BufId(0),
                 path_off: 0,
                 path_len: plen,
-                flags: OpenFlags {
-                    read: true,
-                    ..Default::default()
-                },
+                flags: OpenFlags::NONE.with_read(true),
             },
         ),
         (Token(11), Op::FileClose { slot: FileSlot(0) }),
@@ -180,12 +173,10 @@ fn cancel_unstarted_member<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &s
                 path_buf: BufId(0),
                 path_off: 0,
                 path_len: plen,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    ..Default::default()
-                },
+                flags: OpenFlags::NONE
+                    .with_read(true)
+                    .with_write(true)
+                    .with_create(true),
             },
         ),
         (
@@ -231,16 +222,11 @@ fn pipelined_open_fail_then_close_open_chain<IO: Io>(
     let valid = format!("{root}c_pipe_valid.dat");
     let mlen = write_path(&mut io, BufId(0), 0, &missing);
     let vlen = write_path(&mut io, BufId(1), 0, &valid);
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let ro = OpenFlags::NONE.with_read(true);
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
 
     io.must_submit(
         Token(100),
@@ -285,10 +271,7 @@ fn aborted_reopen_preserves_direct_flag<IO: Io>(make: &mut impl FnMut(Limits) ->
     let f2 = format!("{root}c_direct_next.dat");
     let missing = format!("{root}c_direct_missing.dat");
 
-    let rw_direct = OpenFlags {
-        direct: true,
-        ..rw_create()
-    };
+    let rw_direct = rw_create().with_direct(true);
     assert_eq!(
         open_file(&mut io, &mut out, 2, FileSlot(0), BufId(0), &f1, rw_direct),
         0
@@ -325,14 +308,8 @@ fn aborted_buffered_reopen(
     missing: &str,
     f2: &str,
 ) -> Vec<Completion> {
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
-    let rw_buf = OpenFlags {
-        direct: false,
-        ..rw_create()
-    };
+    let ro = OpenFlags::NONE.with_read(true);
+    let rw_buf = rw_create().with_direct(false);
     let mlen = write_path(io, BufId(0), 0, missing);
     let f2len = write_path(io, BufId(1), 0, f2);
     collect_chain(

@@ -121,12 +121,10 @@ fn a_file_longer_than_one_read_is_refused() {
 /// request may fail.
 #[test]
 fn rotation_under_load_fails_no_request() {
-    let faults = Faults {
-        short_send: 200_000,
-        partial_recv: 200_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(200_000)
+        .with_partial_recv(200_000)
+        .with_delay(200_000);
     for seed in 0..20 {
         let mut w = world(seed, faults);
         let mut stage = 0;

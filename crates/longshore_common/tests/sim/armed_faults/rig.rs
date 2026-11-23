@@ -15,7 +15,7 @@ pub(crate) const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192
 pub(crate) fn send_op(sock: Sock, len: u32) -> Op {
     Op::Send {
         sock,
-        buf: BufId(0),
+        buf: BufId::new(0),
         off: 0,
         len,
         zero_copy: false,
@@ -43,8 +43,8 @@ pub(crate) fn drain_until(
 /// its ring buffer back.
 #[cfg(test)]
 pub(crate) fn take_recv(sim: &mut SimIo, c: &Completion, got: &mut Vec<u8>) {
-    let b = c.buf.unwrap();
-    got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result).unwrap()]);
+    let b = c.buf().unwrap();
+    got.extend_from_slice(&sim.buf(b)[..usize::try_from(c.result()).unwrap()]);
     sim.give_back(b);
 }
 
@@ -59,10 +59,15 @@ pub(crate) fn armed_accept_and_connect(
     bound: SocketAddr,
     strict: bool,
 ) -> Sock {
-    sim.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
     sim.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    sim.submit(
+        Token::new(2),
         Op::Connect {
             sock: client,
             addr: bound,
@@ -72,14 +77,14 @@ pub(crate) fn armed_accept_and_connect(
     let mut srv = None;
     let mut connected = false;
     drain_until(sim, out, |_, c| {
-        if c.token.0 == 1 {
+        if c.token().get() == 1 {
             if strict {
-                assert!(c.more && c.result >= 0);
+                assert!(c.more() && c.result() >= 0);
             }
-            srv = Some(Sock(u32::try_from(c.result).unwrap()));
-        } else if c.token.0 == 2 {
+            srv = Some(Sock::new(u32::try_from(c.result()).unwrap()));
+        } else if c.token().get() == 2 {
             if strict {
-                assert_eq!(c.result, 0);
+                assert_eq!(c.result(), 0);
             }
             connected = true;
         }
@@ -103,29 +108,31 @@ pub(crate) fn echo_payload(
     while sent < payload.len() || got.len() < payload.len() {
         if sent < payload.len() {
             let n = (payload.len() - sent).min(2048);
-            sim.buf(BufId(0))[..n].copy_from_slice(&payload[sent..sent + n]);
+            sim.buf(BufId::new(0))[..n].copy_from_slice(&payload[sent..sent + n]);
             let t = tok;
             tok += 1;
-            sim.submit(Token(t), send_op(Sock(5), n as u32)).unwrap();
+            sim.submit(Token::new(t), send_op(Sock::new(5), n as u32))
+                .unwrap();
             let mut send_done = false;
             drain_until(sim, out, |sim, c| {
-                if c.token.0 == 3 {
-                    if c.result > 0 {
+                if c.token().get() == 3 {
+                    if c.result() > 0 {
                         take_recv(sim, &c, got);
                     }
-                    if !c.more && got.len() < payload.len() {
-                        sim.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
+                    if !c.more() && got.len() < payload.len() {
+                        sim.submit(Token::new(3), Op::ArmedRecv { sock: srv })
+                            .unwrap();
                     }
-                } else if c.token.0 == t {
-                    assert!(c.result > 0);
-                    sent += usize::try_from(c.result).unwrap();
+                } else if c.token().get() == t {
+                    assert!(c.result() > 0);
+                    sent += usize::try_from(c.result()).unwrap();
                     send_done = true;
                 }
                 send_done
             });
         } else {
             drain_until(sim, out, |sim, c| {
-                if c.token.0 == 3 && c.result > 0 {
+                if c.token().get() == 3 && c.result() > 0 {
                     take_recv(sim, &c, got);
                 }
                 got.len() == payload.len()
@@ -138,12 +145,12 @@ pub(crate) fn echo_payload(
 #[cfg(test)]
 pub(crate) fn close_three(sim: &mut SimIo, out: &mut Completions, socks: [Sock; 3]) {
     for (k, &s) in socks.iter().enumerate() {
-        sim.submit(Token(900 + k as u64), Op::Close { sock: s })
+        sim.submit(Token::new(900 + k as u64), Op::Close { sock: s })
             .unwrap();
     }
     let mut closed = 0;
     drain_until(sim, out, |_, c| {
-        if c.token.0 >= 900 {
+        if c.token().get() >= 900 {
             closed += 1;
         }
         closed == 3

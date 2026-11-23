@@ -16,12 +16,12 @@ fn several_accepts_on_one_armed_accept<IO: Io>(
     make: &mut impl FnMut(Limits) -> IO,
     addr: SocketAddr,
 ) {
-    let mut io = make(Limits {
-        sockets_max: 8,
-        accept_range_start: 1,
-        accept_range_len: 4,
-        ..net_limits()
-    });
+    let mut io = make(
+        net_limits()
+            .with_sockets_max(8)
+            .with_accept_range_start(1)
+            .with_accept_range_len(4),
+    );
     let mut out = Completions::new(8);
     let bound = io.must_listen(Sock(0), addr);
     io.must_submit(Token(1), Op::ArmedAccept { listener: Sock(0) });
@@ -92,12 +92,12 @@ fn accept_range_full_and_armed_again<IO: Io>(
     make: &mut impl FnMut(Limits) -> IO,
     addr: SocketAddr,
 ) {
-    let mut io = make(Limits {
-        sockets_max: 7,
-        accept_range_start: 1,
-        accept_range_len: 2,
-        ..net_limits()
-    });
+    let mut io = make(
+        net_limits()
+            .with_sockets_max(7)
+            .with_accept_range_start(1)
+            .with_accept_range_len(2),
+    );
     let mut out = Completions::new(8);
     let bound = io.must_listen(Sock(0), addr);
     let accepted = fill_accept_range(&mut io, &mut out, bound);
@@ -212,12 +212,12 @@ fn accept_range_len_zero_returns_enfile<IO: Io>(
     make: &mut impl FnMut(Limits) -> IO,
     addr: SocketAddr,
 ) {
-    let mut io = make(Limits {
-        sockets_max: 4,
-        accept_range_start: 0,
-        accept_range_len: 0,
-        ..net_limits()
-    });
+    let mut io = make(
+        net_limits()
+            .with_sockets_max(4)
+            .with_accept_range_start(0)
+            .with_accept_range_len(0),
+    );
     let mut out = Completions::new(8);
     let bound = io.must_listen(Sock(0), addr);
 

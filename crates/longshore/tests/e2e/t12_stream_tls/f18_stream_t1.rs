@@ -39,10 +39,10 @@ fn plain_echo(
     let mut echoed = Vec::with_capacity(payload.len());
 
     let first_chunk = payload.len().min(4096);
-    write_pool_bytes(io, BufId(0), 0, &payload[..first_chunk]);
-    client.send(io, BufId(0), 0, first_chunk as u32, 2048);
-    assert_eq!(server.recv(io, BufId(1), 0, 4096), Step::Pending);
-    assert_eq!(client.recv(io, BufId(2), 0, 4096), Step::Pending);
+    write_pool_bytes(io, BufId::new(0), 0, &payload[..first_chunk]);
+    client.send(io, BufId::new(0), 0, first_chunk as u32, 2048);
+    assert_eq!(server.recv(io, BufId::new(1), 0, 4096), Step::Pending);
+    assert_eq!(client.recv(io, BufId::new(2), 0, 4096), Step::Pending);
 
     for _ in 0..500 {
         if c_recvd >= payload.len() {
@@ -50,48 +50,49 @@ fn plain_echo(
         }
         io.tick(true, out).expect("tick");
         while let Some(c) = out.pop() {
-            match c.token.0 {
+            match c.token().get() {
                 1 => {
-                    if let Step::Done(n) = client.on_send(io, c.result) {
+                    if let Step::Done(n) = client.on_send(io, c.result()) {
                         assert!(n > 0);
                         c_sent += usize::try_from(n).unwrap();
                         if c_sent < payload.len() {
                             let rem = (payload.len() - c_sent).min(4096);
-                            write_pool_bytes(io, BufId(0), 0, &payload[c_sent..c_sent + rem]);
-                            client.send(io, BufId(0), 0, rem as u32, 2048);
+                            write_pool_bytes(io, BufId::new(0), 0, &payload[c_sent..c_sent + rem]);
+                            client.send(io, BufId::new(0), 0, rem as u32, 2048);
                         }
                     }
                 }
                 4 => {
-                    if let Step::Done(n) = server.on_recv(io, c.result) {
+                    if let Step::Done(n) = server.on_recv(io, c.result()) {
                         assert!(n > 0);
-                        let got = read_pool_bytes(io, BufId(1), 0, usize::try_from(n).unwrap());
+                        let got =
+                            read_pool_bytes(io, BufId::new(1), 0, usize::try_from(n).unwrap());
                         s_recvd += got.len();
-                        write_pool_bytes(io, BufId(3), 0, &got);
-                        server.send(io, BufId(3), 0, got.len() as u32, 4096);
+                        write_pool_bytes(io, BufId::new(3), 0, &got);
+                        server.send(io, BufId::new(3), 0, got.len() as u32, 4096);
                     }
                 }
                 3 => {
-                    if let Step::Done(n) = server.on_send(io, c.result) {
+                    if let Step::Done(n) = server.on_send(io, c.result()) {
                         assert!(n > 0);
                         s_sent += usize::try_from(n).unwrap();
                         if s_recvd < payload.len() && s_sent == s_recvd {
-                            assert_eq!(server.recv(io, BufId(1), 0, 4096), Step::Pending);
+                            assert_eq!(server.recv(io, BufId::new(1), 0, 4096), Step::Pending);
                         }
                     }
                 }
                 2 => {
-                    if let Step::Done(n) = client.on_recv(io, c.result) {
+                    if let Step::Done(n) = client.on_recv(io, c.result()) {
                         assert!(n > 0);
                         echoed.extend_from_slice(&read_pool_bytes(
                             io,
-                            BufId(2),
+                            BufId::new(2),
                             0,
                             usize::try_from(n).unwrap(),
                         ));
                         c_recvd += usize::try_from(n).unwrap();
                         if c_recvd < payload.len() {
-                            assert_eq!(client.recv(io, BufId(2), 0, 4096), Step::Pending);
+                            assert_eq!(client.recv(io, BufId::new(2), 0, 4096), Step::Pending);
                         }
                     }
                 }
@@ -105,19 +106,17 @@ fn plain_echo(
 #[cfg(feature = "sim")]
 #[test]
 fn t1_f18_1_plain_stream_bidirectional_echo() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 4,
-        buffer_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(4)
+        .with_buffer_size(4096)
+        .with_ops_max(8);
     let mut io = SimIo::new(limits, 1801, Faults::default());
     let mut out = Completions::new(16);
     connect_pair_sim(&mut io, &mut out);
 
-    let mut client = Stream::new(CLIENT, Token(1), Token(2));
-    let mut server = Stream::new(SERVER, Token(3), Token(4));
+    let mut client = Stream::new(CLIENT, Token::new(1), Token::new(2));
+    let mut server = Stream::new(SERVER, Token::new(3), Token::new(4));
     assert!(!client.is_tls() && client.records() == 0);
 
     let payload: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
@@ -130,27 +129,25 @@ fn t1_f18_1_plain_stream_bidirectional_echo() {
 fn t1_f18_2_tls_stream_client_and_server_handshake_and_echo() {
     let ident: TestIdentity = make_tls_identity(&["stream.test"]);
     let cap = 64 * 1024;
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 6,
-        buffer_size: cap,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(6)
+        .with_buffer_size(cap)
+        .with_ops_max(8);
     let mut io = SimIo::new(limits, 1802, Faults::default());
     let mut out = Completions::new(16);
     connect_pair_sim(&mut io, &mut out);
 
-    let mut client = Stream::new(CLIENT, Token(1), Token(2)).with_tls_buffers(
-        BufId(0),
-        BufId(1),
+    let mut client = Stream::new(CLIENT, Token::new(1), Token::new(2)).with_tls_buffers(
+        BufId::new(0),
+        BufId::new(1),
         cap,
         cap,
         4096,
     );
-    let mut server = Stream::new(SERVER, Token(3), Token(4)).with_tls_buffers(
-        BufId(2),
-        BufId(3),
+    let mut server = Stream::new(SERVER, Token::new(3), Token::new(4)).with_tls_buffers(
+        BufId::new(2),
+        BufId::new(3),
         cap,
         cap,
         4096,
@@ -163,9 +160,9 @@ fn t1_f18_2_tls_stream_client_and_server_handshake_and_echo() {
     assert!(client.is_tls() && server.is_tls());
 
     let msg = b"hello from opaque-box tls stream";
-    write_pool_bytes(&mut io, BufId(4), 0, msg);
-    client.send(&mut io, BufId(4), 0, msg.len() as u32, 4096);
-    let mut s_step = server.recv(&mut io, BufId(5), 0, cap);
+    write_pool_bytes(&mut io, BufId::new(4), 0, msg);
+    client.send(&mut io, BufId::new(4), 0, msg.len() as u32, 4096);
+    let mut s_step = server.recv(&mut io, BufId::new(5), 0, cap);
     let mut c_step = Step::Pending;
     for _ in 0..100 {
         if matches!(c_step, Step::Done(_)) && matches!(s_step, Step::Done(_)) {
@@ -173,16 +170,16 @@ fn t1_f18_2_tls_stream_client_and_server_handshake_and_echo() {
         }
         io.tick(true, &mut out).expect("tick");
         while let Some(c) = out.pop() {
-            match c.token.0 {
-                1 => c_step = client.on_send(&mut io, c.result),
-                4 => s_step = server.on_recv(&mut io, c.result),
+            match c.token().get() {
+                1 => c_step = client.on_send(&mut io, c.result()),
+                4 => s_step = server.on_recv(&mut io, c.result()),
                 _ => {}
             }
         }
     }
     assert_eq!(c_step, Step::Done(i32::try_from(msg.len()).unwrap()));
     assert_eq!(s_step, Step::Done(i32::try_from(msg.len()).unwrap()));
-    assert_eq!(read_pool_bytes(&mut io, BufId(5), 0, msg.len()), msg);
+    assert_eq!(read_pool_bytes(&mut io, BufId::new(5), 0, msg.len()), msg);
     assert!(client.records() > 0 && server.records() > 0);
 }
 
@@ -199,11 +196,11 @@ fn recv_big(
 ) -> (bool, Vec<u8>) {
     let mut c_done = false;
     let mut recvd = Vec::new();
-    let mut s_step = server.recv(io, BufId(5), 0, cap);
+    let mut s_step = server.recv(io, BufId::new(5), 0, cap);
     if let Step::Done(n) = s_step {
         recvd.extend_from_slice(&read_pool_bytes(
             io,
-            BufId(5),
+            BufId::new(5),
             0,
             usize::try_from(n).unwrap(),
         ));
@@ -214,24 +211,24 @@ fn recv_big(
         }
         io.tick(true, out).expect("tick");
         while let Some(c) = out.pop() {
-            match c.token.0 {
+            match c.token().get() {
                 1 => {
-                    if matches!(client.on_send(io, c.result), Step::Done(_)) {
+                    if matches!(client.on_send(io, c.result()), Step::Done(_)) {
                         c_done = true;
                     }
                 }
                 4 => {
-                    s_step = server.on_recv(io, c.result);
+                    s_step = server.on_recv(io, c.result());
                     if let Step::Done(n) = s_step {
                         assert!(n > 0);
                         recvd.extend_from_slice(&read_pool_bytes(
                             io,
-                            BufId(5),
+                            BufId::new(5),
                             0,
                             usize::try_from(n).unwrap(),
                         ));
                         if recvd.len() < len {
-                            let _: Step = server.recv(io, BufId(5), 0, cap);
+                            let _: Step = server.recv(io, BufId::new(5), 0, cap);
                         }
                     }
                 }
@@ -247,22 +244,25 @@ fn recv_big(
 fn t1_f18_3_tls_stream_batch_clamping_and_zero_copy_threshold() {
     let ident = make_tls_identity(&["batch.test"]);
     let cap = 64 * 1024;
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 6,
-        buffer_size: cap,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(6)
+        .with_buffer_size(cap)
+        .with_ops_max(8);
     let mut io = SimIo::new(limits, 1803, Faults::default());
     let mut out = Completions::new(16);
     connect_pair_sim(&mut io, &mut out);
 
-    let mut client =
-        Stream::new(CLIENT, Token(1), Token(2)).with_tls_buffers(BufId(0), BufId(1), cap, 1, 4096);
-    let mut server = Stream::new(SERVER, Token(3), Token(4)).with_tls_buffers(
-        BufId(2),
-        BufId(3),
+    let mut client = Stream::new(CLIENT, Token::new(1), Token::new(2)).with_tls_buffers(
+        BufId::new(0),
+        BufId::new(1),
+        cap,
+        1,
+        4096,
+    );
+    let mut server = Stream::new(SERVER, Token::new(3), Token::new(4)).with_tls_buffers(
+        BufId::new(2),
+        BufId::new(3),
         cap,
         u32::MAX,
         4096,
@@ -275,8 +275,8 @@ fn t1_f18_3_tls_stream_batch_clamping_and_zero_copy_threshold() {
     );
 
     let big: Vec<u8> = (0..(20 * 1024u32)).map(|i| (i * 7) as u8).collect();
-    write_pool_bytes(&mut io, BufId(4), 0, &big);
-    client.send(&mut io, BufId(4), 0, big.len() as u32, 4096);
+    write_pool_bytes(&mut io, BufId::new(4), 0, &big);
+    client.send(&mut io, BufId::new(4), 0, big.len() as u32, 4096);
     let (c_done, recvd) = recv_big(&mut io, &mut out, &mut client, &mut server, big.len(), cap);
     assert!(c_done);
     assert_eq!(recvd, big);
@@ -285,45 +285,53 @@ fn t1_f18_3_tls_stream_batch_clamping_and_zero_copy_threshold() {
 #[cfg(feature = "sim")]
 #[test]
 fn t1_f18_4_stream_idle_check_clean_dirty_and_closed() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_ops_max(8);
     let mut io = SimIo::new(limits, 1804, Faults::default());
     let mut out = Completions::new(16);
     connect_pair_sim(&mut io, &mut out);
 
-    let mut client = Stream::new(CLIENT, Token(1), Token(2));
-    let mut server = Stream::new(SERVER, Token(3), Token(4));
+    let mut client = Stream::new(CLIENT, Token::new(1), Token::new(2));
+    let mut server = Stream::new(SERVER, Token::new(3), Token::new(4));
 
-    assert_eq!(client.check_idle(&mut io, BufId(0), 0), IdleCheck::Pending);
+    assert_eq!(
+        client.check_idle(&mut io, BufId::new(0), 0),
+        IdleCheck::Pending
+    );
     io.tick(true, &mut out).expect("tick");
     let c = out.pop().expect("idle completion");
-    assert_eq!(client.on_idle_check(&mut io, c.result), IdleCheck::Clean);
+    assert_eq!(client.on_idle_check(&mut io, c.result()), IdleCheck::Clean);
 
-    write_pool_bytes(&mut io, BufId(1), 0, b"X");
-    server.send(&mut io, BufId(1), 0, 1, 4096);
+    write_pool_bytes(&mut io, BufId::new(1), 0, b"X");
+    server.send(&mut io, BufId::new(1), 0, 1, 4096);
     let _: Vec<longshore::io::Completion> =
         drive_until(&mut io, &mut out, 20, |v| !v.is_empty()).unwrap();
-    assert_eq!(client.check_idle(&mut io, BufId(0), 0), IdleCheck::Pending);
+    assert_eq!(
+        client.check_idle(&mut io, BufId::new(0), 0),
+        IdleCheck::Pending
+    );
     io.tick(true, &mut out).expect("tick");
     let dirty = out.pop().expect("dirty completion");
     assert_eq!(
-        client.on_idle_check(&mut io, dirty.result),
+        client.on_idle_check(&mut io, dirty.result()),
         IdleCheck::Dirty
     );
 
-    io.submit(Token(99), Op::Close { sock: SERVER }).unwrap();
+    io.submit(Token::new(99), Op::Close { sock: SERVER })
+        .unwrap();
     let _: Vec<longshore::io::Completion> =
         drive_until(&mut io, &mut out, 20, |v| !v.is_empty()).unwrap();
-    assert_eq!(client.check_idle(&mut io, BufId(0), 0), IdleCheck::Pending);
+    assert_eq!(
+        client.check_idle(&mut io, BufId::new(0), 0),
+        IdleCheck::Pending
+    );
     io.tick(true, &mut out).expect("tick");
     let closed = out.pop().expect("closed completion");
     assert_eq!(
-        client.on_idle_check(&mut io, closed.result),
+        client.on_idle_check(&mut io, closed.result()),
         IdleCheck::Closed
     );
 }

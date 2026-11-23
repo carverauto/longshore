@@ -29,12 +29,12 @@ fn a_segment_survives_its_trip_through_a_connect_result(tc: TestCase) {
     } else {
         tc.draw(gs::integers::<u32>())
     };
-    let r = Segment { size, path_limit }.encode();
+    let r = Segment::new(size, path_limit).encode();
     assert!(r >= 0, "{r} would read as an error");
-    let want = (size != 0).then_some(Segment {
-        size: size.min(65_535),
-        path_limit: path_limit.min(65_535) / 8 * 8,
-    });
+    let want = (size != 0).then_some(Segment::new(
+        size.min(65_535),
+        path_limit.min(65_535) / 8 * 8,
+    ));
     assert_eq!(Segment::decode(r), want);
     if size != 0 {
         assert!(r > 0, "0 is an unmeasured connect");
@@ -55,8 +55,8 @@ fn decoding_any_result_gives_a_usable_segment_or_none(tc: TestCase) {
     let r = tc.draw(gs::integers::<i32>());
     if let Some(s) = Segment::decode(r) {
         assert!(r > 0);
-        assert!((1..=65_535).contains(&s.size));
-        assert_eq!(s.path_limit % 8, 0);
+        assert!((1..=65_535).contains(&s.size()));
+        assert_eq!(s.path_limit() % 8, 0);
         // Encoding caps the limit at 65,535, which is 13 bits of eights. A
         // result with more than that set is one no encoder here produced.
         if r < 1 << 29 {
@@ -75,12 +75,13 @@ fn completions_come_out_in_the_order_they_went_in(tc: TestCase) {
     let steps = tc.draw(gs::integers::<usize>().max_value(60));
     for _ in 0..steps {
         if tc.draw(gs::booleans()) && !buf.is_full() {
-            let c = Completion {
-                token: Token(tc.draw(gs::integers::<u64>())),
-                result: tc.draw(gs::integers::<i32>()),
-                more: tc.draw(gs::booleans()),
-                buf: tc.draw(gs::optional(gs::integers::<u32>())).map(BufId),
-            };
+            let token = Token::new(tc.draw(gs::integers::<u64>()));
+            let result = tc.draw(gs::integers::<i32>());
+            let more = tc.draw(gs::booleans());
+            let selected = tc.draw(gs::optional(gs::integers::<u32>())).map(BufId::new);
+            let c = Completion::new(token, result)
+                .with_more(more)
+                .with_buf(selected);
             buf.push(c);
             model.push_back(c);
         } else {
@@ -107,22 +108,21 @@ fn limits(tc: &TestCase) -> Limits {
         tc.draw(gs::integers::<u32>().max_value(sockets_max - accept_range_len));
     let ring_buffers = tc.draw(gs::integers::<u32>().max_value(6));
     let ring_buffer_size = tc.draw(gs::integers::<u32>().min_value(1).max_value(700));
-    Limits {
-        sockets_max,
-        accept_range_start,
-        accept_range_len,
-        buffers: tc.draw(gs::integers::<u32>().max_value(6)),
-        buffer_size: tc.draw(gs::integers::<u32>().min_value(1).max_value(5000)),
-        small_buffers: tc.draw(gs::integers::<u32>().max_value(6)),
-        small_buffer_size: tc.draw(gs::integers::<u32>().min_value(1).max_value(700)),
-        files_max: 0,
-        aligned_buffers,
-        aligned_buffer_size: block_size * mult,
-        block_size,
-        ring_buffers,
-        ring_buffer_size,
-        ops_max: 1,
-    }
+    Limits::BASE
+        .with_sockets_max(sockets_max)
+        .with_accept_range_start(accept_range_start)
+        .with_accept_range_len(accept_range_len)
+        .with_buffers(tc.draw(gs::integers::<u32>().max_value(6)))
+        .with_buffer_size(tc.draw(gs::integers::<u32>().min_value(1).max_value(5000)))
+        .with_small_buffers(tc.draw(gs::integers::<u32>().max_value(6)))
+        .with_small_buffer_size(tc.draw(gs::integers::<u32>().min_value(1).max_value(700)))
+        .with_files_max(0)
+        .with_aligned_buffers(aligned_buffers)
+        .with_aligned_buffer_size(block_size * mult)
+        .with_block_size(block_size)
+        .with_ring_buffers(ring_buffers)
+        .with_ring_buffer_size(ring_buffer_size)
+        .with_ops_max(1)
 }
 
 /// Buffers of all four classes lie in order in the pool, with optional
@@ -131,46 +131,49 @@ fn limits(tc: &TestCase) -> Limits {
 fn buffers_tile_the_pool_for_any_limits(tc: TestCase) {
     let l = limits(&tc);
     let mut at = 0usize;
-    let aligned_start = l.buffers + l.small_buffers;
+    let aligned_start = l.buffers() + l.small_buffers();
     let ring_start = l.ring_base();
     for id in 0..l.buffer_count() {
-        if id == aligned_start && l.aligned_buffers > 0 {
-            at = at.next_multiple_of(l.block_size as usize);
+        if id == aligned_start && l.aligned_buffers() > 0 {
+            at = at.next_multiple_of(l.block_size() as usize);
         }
-        let (start, len) = l.span(BufId(id));
+        let (start, len) = l.span(BufId::new(id));
         assert_eq!(start, at, "buffer {id} starts where expected");
-        let want = if id < l.buffers {
-            l.buffer_size
+        let want = if id < l.buffers() {
+            l.buffer_size()
         } else if id < aligned_start {
-            l.small_buffer_size
+            l.small_buffer_size()
         } else if id < ring_start {
-            assert_eq!(start % l.block_size as usize, 0);
-            l.aligned_buffer_size
+            assert_eq!(start % l.block_size() as usize, 0);
+            l.aligned_buffer_size()
         } else {
-            l.ring_buffer_size
+            l.ring_buffer_size()
         };
         assert_eq!(len, want as usize);
-        assert_eq!(l.range(BufId(id), 0, want), start..start + len);
+        assert_eq!(l.range(BufId::new(id), 0, want), start..start + len);
         assert_eq!(
-            l.is_aligned_buf(BufId(id)),
+            l.is_aligned_buf(BufId::new(id)),
             id >= aligned_start && id < ring_start
         );
-        assert_eq!(l.is_ring_buf(BufId(id)), id >= ring_start);
+        assert_eq!(l.is_ring_buf(BufId::new(id)), id >= ring_start);
         at += len;
     }
     if l.buffer_count() == 0 {
         assert_eq!(l.pool_bytes(), 0);
     } else {
-        assert_eq!(at + l.block_size as usize, l.pool_bytes());
+        assert_eq!(at + l.block_size() as usize, l.pool_bytes());
     }
-    for i in 0..l.small_buffers {
-        assert_eq!(l.small(i), BufId(l.buffers + i));
+    for i in 0..l.small_buffers() {
+        assert_eq!(l.small(i), BufId::new(l.buffers() + i));
     }
-    for i in 0..l.aligned_buffers {
-        assert_eq!(l.aligned(i), BufId(l.buffers + l.small_buffers + i));
+    for i in 0..l.aligned_buffers() {
+        assert_eq!(
+            l.aligned(i),
+            BufId::new(l.buffers() + l.small_buffers() + i)
+        );
     }
-    for i in 0..l.ring_buffers {
-        assert_eq!(l.ring(i), BufId(l.ring_base() + i));
+    for i in 0..l.ring_buffers() {
+        assert_eq!(l.ring(i), BufId::new(l.ring_base() + i));
     }
 }
 
@@ -188,12 +191,12 @@ fn a_pair_is_the_two_buffers_asked_for(tc: TestCase) {
     }
     let mut pool = vec![0u8; l.pool_bytes()];
     {
-        let (x, y) = l.pair(&mut pool, BufId(a), BufId(b));
+        let (x, y) = l.pair(&mut pool, BufId::new(a), BufId::new(b));
         x.fill(1);
         y.fill(2);
     }
     for id in 0..l.buffer_count() {
-        let (start, len) = l.span(BufId(id));
+        let (start, len) = l.span(BufId::new(id));
         let want = if id == a {
             1
         } else if id == b {

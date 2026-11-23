@@ -262,7 +262,7 @@ fn report(gcs: bool, results: &[Step; 8], url: &[u8], url_len: Option<usize>, ms
 pub(super) fn objects(size: u32) {
     let gcs = std::env::var("S3_VENDOR").is_ok_and(|v| v == "gcs");
     let (mut io, mut s3, first) = setup(1, 2, size, 2);
-    let (tx, rx) = (BufId(first), BufId(first + 1));
+    let (tx, rx) = (BufId::new(first), BufId::new(first + 1));
     for (i, b) in io.buf(tx)[..size as usize].iter_mut().enumerate() {
         *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[2];
     }

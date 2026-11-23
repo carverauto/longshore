@@ -100,7 +100,7 @@ impl ServerConfigBuilder {
                 connections_max: conns,
             });
         };
-        if (self.first_sock..socks_end).contains(&listener.0) {
+        if (self.first_sock..socks_end).contains(&listener.get()) {
             return Err(ServerConfigError::ListenerInConnectionSockets {
                 listener,
                 first_sock: self.first_sock,

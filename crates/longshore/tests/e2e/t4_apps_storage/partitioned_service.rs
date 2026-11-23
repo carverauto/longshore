@@ -15,8 +15,8 @@ use std::future::Future;
 use std::pin::{pin, Pin};
 use std::task::{Context, Poll, Waker};
 
-const LISTENER: Sock = Sock(0);
-const CLIENT_SOCK: Sock = Sock(1);
+const LISTENER: Sock = Sock::new(0);
+const CLIENT_SOCK: Sock = Sock::new(1);
 const ACCEPT_START: u32 = 2;
 const ACCEPT_LEN: u32 = 4;
 
@@ -24,19 +24,17 @@ const ACCEPT_LEN: u32 = 4;
 type PutFuture<'a> = Pin<Box<dyn Future<Output = DiskResp> + 'a>>;
 
 fn net_limits() -> Limits {
-    Limits {
-        sockets_max: 8,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        accept_range_start: ACCEPT_START,
-        accept_range_len: ACCEPT_LEN,
-        ring_buffers: 8,
-        ring_buffer_size: 512,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(8)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_accept_range_start(ACCEPT_START)
+        .with_accept_range_len(ACCEPT_LEN)
+        .with_ring_buffers(8)
+        .with_ring_buffer_size(512)
+        .with_ops_max(16)
 }
 
 /// The network core: its simulator, completions, and reassembly buffer.
@@ -50,10 +48,10 @@ impl NetCore {
     /// Appends the bytes of a server armed recv (`Token(3)`) completion and
     /// gives its ring buffer back.
     fn take_recv(&mut self, c: &Completion) {
-        if c.token.0 == 3 && c.result > 0 {
-            if let Some(bid) = c.buf {
+        if c.token().get() == 3 && c.result() > 0 {
+            if let Some(bid) = c.buf() {
                 self.rx_accum
-                    .extend_from_slice(&self.net.buf(bid)[..usize::try_from(c.result).unwrap()]);
+                    .extend_from_slice(&self.net.buf(bid)[..usize::try_from(c.result()).unwrap()]);
                 self.net.give_back(bid);
             }
         }
@@ -63,12 +61,10 @@ impl NetCore {
 /// Connects the client through an armed accept and arms recv on the server
 /// side (`Token(3)`).
 fn connect_net(net_seed: u64) -> NetCore {
-    let net_faults = Faults {
-        delay: 150_000,
-        partial_recv: 200_000,
-        short_send: 200_000,
-        ..Faults::default()
-    };
+    let net_faults = Faults::NONE
+        .with_delay(150_000)
+        .with_partial_recv(200_000)
+        .with_short_send(200_000);
     let mut nc = NetCore {
         net: SimIo::new(net_limits(), net_seed, net_faults),
         out: Completions::new(16),
@@ -79,11 +75,11 @@ fn connect_net(net_seed: u64) -> NetCore {
         .listen(LISTENER, "127.0.0.1:9100".parse().unwrap())
         .unwrap();
     nc.net
-        .submit(Token(1), Op::ArmedAccept { listener: LISTENER })
+        .submit(Token::new(1), Op::ArmedAccept { listener: LISTENER })
         .unwrap();
     nc.net
         .submit(
-            Token(2),
+            Token::new(2),
             Op::Connect {
                 sock: CLIENT_SOCK,
                 addr,
@@ -96,9 +92,9 @@ fn connect_net(net_seed: u64) -> NetCore {
     for _ in 0..100 {
         nc.net.tick(false, &mut nc.out).unwrap();
         while let Some(c) = nc.out.pop() {
-            if c.token.0 == 1 && c.result >= 0 {
-                accepted = Some(Sock(u32::try_from(c.result).unwrap()));
-            } else if c.token.0 == 2 && c.result == 0 {
+            if c.token().get() == 1 && c.result() >= 0 {
+                accepted = Some(Sock::new(u32::try_from(c.result()).unwrap()));
+            } else if c.token().get() == 2 && c.result() == 0 {
                 connected = true;
             }
         }
@@ -108,7 +104,7 @@ fn connect_net(net_seed: u64) -> NetCore {
     }
     let srv_sock = accepted.expect("accepted");
     nc.net
-        .submit(Token(3), Op::ArmedRecv { sock: srv_sock })
+        .submit(Token::new(3), Op::ArmedRecv { sock: srv_sock })
         .unwrap();
     nc
 }
@@ -152,15 +148,15 @@ fn send_put_frame<'a>(
     frame[0] = 1; // PUT
     frame[4..8].copy_from_slice(&key.to_le_bytes());
     frame[8..16].copy_from_slice(&(0xA000_0000 + u64::from(key)).to_le_bytes());
-    write_pool_bytes(&mut nc.net, BufId(0), 0, &frame);
+    write_pool_bytes(&mut nc.net, BufId::new(0), 0, &frame);
     let mut sent = 0usize;
     while sent < frame.len() {
         nc.net
             .submit(
-                Token(10 + u64::from(key) * 10 + sent as u64),
+                Token::new(10 + u64::from(key) * 10 + sent as u64),
                 Op::Send {
                     sock: CLIENT_SOCK,
-                    buf: BufId(0),
+                    buf: BufId::new(0),
                     off: sent as u32,
                     len: (frame.len() - sent) as u32,
                     zero_copy: false,
@@ -171,8 +167,8 @@ fn send_put_frame<'a>(
         while !got_send {
             nc.net.tick(false, &mut nc.out).unwrap();
             while let Some(c) = nc.out.pop() {
-                if c.token.0 >= 10 && c.token.0 < 900 && c.result > 0 {
-                    sent += usize::try_from(c.result).unwrap();
+                if c.token().get() >= 10 && c.token().get() < 900 && c.result() > 0 {
+                    sent += usize::try_from(c.result()).unwrap();
                     got_send = true;
                 } else {
                     nc.take_recv(&c);

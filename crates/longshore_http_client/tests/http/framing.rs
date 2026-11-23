@@ -54,11 +54,9 @@ fn an_interim_response_that_declares_a_body_or_close_is_rejected() {
 fn an_unexpected_response_body_is_discarded_and_the_connection_survives() {
     let mut w = world(
         11,
-        Faults {
-            short_send: 300_000,
-            partial_recv: 300_000,
-            ..Faults::default()
-        },
+        Faults::NONE
+            .with_short_send(300_000)
+            .with_partial_recv(300_000),
     );
     w.fill_tx(100, 0);
     for body in [1u32, 300, 5000, 20_000] {
@@ -98,12 +96,10 @@ fn an_unexpected_response_body_is_discarded_and_the_connection_survives() {
 /// size and however the network splits chunk headers and data.
 #[test]
 fn chunked_responses_decode_to_the_stored_bytes() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 400_000,
-        delay: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(400_000)
+        .with_delay(100_000);
     for seed in 0..12u64 {
         let mut w = world(seed, faults);
         // Leave room in the server's buffer for the chunk framing.
@@ -169,13 +165,7 @@ fn chunked_edge_cases() {
 /// be: bodyless and not ending the connection.
 #[test]
 fn interim_responses_are_skipped_only_when_bodyless() {
-    let mut w = world(
-        50,
-        Faults {
-            partial_recv: 300_000,
-            ..Faults::default()
-        },
-    );
+    let mut w = world(50, Faults::NONE.with_partial_recv(300_000));
     w.server.script(Behavior::Raw(
         b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
     ));

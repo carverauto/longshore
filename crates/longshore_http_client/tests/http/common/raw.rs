@@ -22,8 +22,8 @@ pub struct RawExchange {
 /// The address of the hand-driven peer.
 pub const RAW_PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 82)), 80);
 
-const LISTEN: Sock = Sock(1 + CONNS * 2);
-const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
+const LISTEN: Sock = Sock::new(1 + CONNS * 2);
+const PEER_SOCK: Sock = Sock::new(2 + CONNS * 2);
 const ACCEPT: u64 = 3 << 40;
 const RECV: u64 = ACCEPT + 1;
 const SEND: u64 = ACCEPT + 2;
@@ -44,7 +44,7 @@ pub fn raw_exchange(
     let mut w = world_with(12, Faults::default(), cfg);
     let _: SocketAddr = w.io.listen(LISTEN, RAW_PEER).unwrap();
     w.io.submit(
-        Token(ACCEPT),
+        Token::new(ACCEPT),
         Op::Accept {
             listener: LISTEN,
             sock: PEER_SOCK,
@@ -84,10 +84,10 @@ fn run_until_answered(w: &mut World, peer: &mut RawPeer) -> Result<Response, Err
         while result.is_none() {
             io.tick(true, out).expect("simulation deadlock");
             while let Some(c) = out.pop() {
-                match c.token.0 {
+                match c.token().get() {
                     HEARTBEAT => {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     }
                     ACCEPT | RECV | SEND => peer.on(io, c),
@@ -114,10 +114,10 @@ struct RawPeer {
 
 impl RawPeer {
     fn on(&mut self, io: &mut SimIo, c: Completion) {
-        match c.token.0 {
+        match c.token().get() {
             ACCEPT => self.recv(io),
-            RECV if c.result > 0 => {
-                self.got += u32::try_from(c.result).unwrap();
+            RECV if c.result() > 0 => {
+                self.got += u32::try_from(c.result()).unwrap();
                 if !self.sent {
                     let send = Op::Send {
                         sock: PEER_SOCK,
@@ -126,7 +126,7 @@ impl RawPeer {
                         len: self.reply_len,
                         zero_copy: false,
                     };
-                    io.submit(Token(SEND), send).unwrap();
+                    io.submit(Token::new(SEND), send).unwrap();
                     self.sent = true;
                 }
                 self.recv(io);
@@ -143,7 +143,7 @@ impl RawPeer {
             off: at,
             len: IN_MAX - at,
         };
-        io.submit(Token(RECV), recv).unwrap();
+        io.submit(Token::new(RECV), recv).unwrap();
     }
 }
 
@@ -154,7 +154,7 @@ pub fn raw_reply_with(cfg: client::ClientConfig, reply: &'static [u8]) -> Result
     let mut w = world_with(12, Faults::default(), cfg);
     let _: SocketAddr = w.io.listen(LISTEN, RAW_PEER).unwrap();
     w.io.submit(
-        Token(ACCEPT),
+        Token::new(ACCEPT),
         Op::Accept {
             listener: LISTEN,
             sock: PEER_SOCK,
@@ -182,14 +182,14 @@ fn run_with_raw_peer(w: &mut World, reply_len: u32) -> Result<Response, Error> {
         while result.is_none() {
             io.tick(true, out).expect("simulation deadlock");
             while let Some(c) = out.pop() {
-                match c.token.0 {
+                match c.token().get() {
                     HEARTBEAT => {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     }
                     ACCEPT => peer_recv(io),
-                    RECV if c.result > 0 => {
+                    RECV if c.result() > 0 => {
                         if !sent {
                             let send = Op::Send {
                                 sock: PEER_SOCK,
@@ -198,7 +198,7 @@ fn run_with_raw_peer(w: &mut World, reply_len: u32) -> Result<Response, Error> {
                                 len: reply_len,
                                 zero_copy: false,
                             };
-                            io.submit(Token(SEND), send).unwrap();
+                            io.submit(Token::new(SEND), send).unwrap();
                             sent = true;
                         }
                         peer_recv(io);
@@ -226,5 +226,5 @@ fn peer_recv(io: &mut SimIo) {
         off: 0,
         len: 1024,
     };
-    io.submit(Token(RECV), recv).unwrap();
+    io.submit(Token::new(RECV), recv).unwrap();
 }

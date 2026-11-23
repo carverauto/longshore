@@ -33,7 +33,7 @@ fn seed(c: &mut Client, kind: &str, conns: u32, run: &str) {
                 &mut c.io,
                 u64::from(i),
                 &key,
-                BufId(c.first + i),
+                BufId::new(c.first + i),
                 seed_len,
                 Checksum::None,
             )
@@ -91,7 +91,7 @@ impl Starter<'_> {
     fn start(&mut self, c: &mut Client, i: u32, start_ns: &mut [u64]) {
         let (client, ring, size) = (&mut c.s3, &mut c.io, c.size);
         let mut key = [0u8; 96];
-        let buf = BufId(c.first + i);
+        let buf = BufId::new(c.first + i);
         let r = match self.kind {
             "put-new" => {
                 self.seq += 1;

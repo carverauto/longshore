@@ -26,38 +26,37 @@ pub(super) enum DiskResp {
 }
 
 fn disk_limits() -> Limits {
-    Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        aligned_buffers: 4,
-        aligned_buffer_size: BLOCK,
-        block_size: BLOCK,
-        files_max: 4,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_aligned_buffers(4)
+        .with_aligned_buffer_size(BLOCK)
+        .with_block_size(BLOCK)
+        .with_files_max(4)
+        .with_ops_max(16)
 }
 
 fn setup_disk_sim(seed: u64) -> SimIo {
     let mut sim = SimIo::new(disk_limits(), seed, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 8,
-        max_dirs: 8,
-        max_bytes_per_file: (BLOCK as usize) * 16,
-        max_name_len: 64,
-        write_log_entries: 16,
-        write_log_bytes: (BLOCK as usize) * 8,
-        read_error_sectors: 8,
-        sector_size: 512,
-    });
-    sim.set_disk_faults(DiskFaults {
-        short_write: 50_000,
-        bit_flip: 20_000,
-        ..DiskFaults::default()
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(8)
+            .with_max_dirs(8)
+            .with_max_bytes_per_file((BLOCK as usize) * 16)
+            .with_max_name_len(64)
+            .with_write_log_entries(16)
+            .with_write_log_bytes((BLOCK as usize) * 8)
+            .with_read_error_sectors(8)
+            .with_sector_size(512),
+    );
+    sim.set_disk_faults(
+        DiskFaults::NONE
+            .with_short_write(50_000)
+            .with_bit_flip(20_000),
+    );
     sim
 }
 
@@ -80,7 +79,7 @@ impl DiskCore {
                 capacity: 8,
                 slots: 8,
                 waiters_prealloc: 8,
-                wake_token: Token(900),
+                wake_token: Token::new(900),
             },
         )
         .expect("mailbox");
@@ -134,22 +133,27 @@ impl DiskCore {
         block[4..12].copy_from_slice(&val.to_le_bytes());
         write_pool_bytes(&mut self.disk, data_buf, 0, &block);
         let wr = Op::FileWrite {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: data_buf,
             off: 0,
             len: BLOCK,
             file_off: u64::from(key) * u64::from(BLOCK),
         };
         let sy = Op::FileSync {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             datasync: true,
         };
         self.disk
             .submit_chain(&[
-                (Token(100), open_op(path_buf, path_len, true)),
-                (Token(101), wr),
-                (Token(102), sy),
-                (Token(103), Op::FileClose { slot: FileSlot(0) }),
+                (Token::new(100), open_op(path_buf, path_len, true)),
+                (Token::new(101), wr),
+                (Token::new(102), sy),
+                (
+                    Token::new(103),
+                    Op::FileClose {
+                        slot: FileSlot::new(0),
+                    },
+                ),
             ])
             .unwrap();
         let (write_res, sync_res) = pump_until(&mut self.disk, &mut self.out, 103);
@@ -167,7 +171,7 @@ impl DiskCore {
     fn get(&mut self, path_buf: BufId, path_len: u32, key: u32) -> (i32, u64) {
         let data_buf = self.lim.aligned(0);
         let rd = Op::FileRead {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: data_buf,
             off: 0,
             len: BLOCK,
@@ -175,9 +179,14 @@ impl DiskCore {
         };
         self.disk
             .submit_chain(&[
-                (Token(200), open_op(path_buf, path_len, false)),
-                (Token(201), rd),
-                (Token(202), Op::FileClose { slot: FileSlot(0) }),
+                (Token::new(200), open_op(path_buf, path_len, false)),
+                (Token::new(201), rd),
+                (
+                    Token::new(202),
+                    Op::FileClose {
+                        slot: FileSlot::new(0),
+                    },
+                ),
             ])
             .unwrap();
         let (read_res, _) = pump_until(&mut self.disk, &mut self.out, 202);
@@ -193,17 +202,15 @@ impl DiskCore {
 /// The direct-I/O open of the partition file (created only when writing).
 fn open_op(path_buf: BufId, path_len: u32, write: bool) -> Op {
     Op::FileOpen {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         path_buf,
         path_off: 0,
         path_len,
-        flags: OpenFlags {
-            read: true,
-            write,
-            create: write,
-            direct: true,
-            ..Default::default()
-        },
+        flags: OpenFlags::NONE
+            .with_read(true)
+            .with_write(write)
+            .with_create(write)
+            .with_direct(true),
     }
 }
 
@@ -214,12 +221,12 @@ fn pump_until(d: &mut SimIo, o: &mut Completions, end_tok: u64) -> (i32, i32) {
     while !done {
         d.tick(true, o).unwrap();
         while let Some(c) = o.pop() {
-            if c.token.0 % 100 == 1 {
-                r1 = c.result;
-            } else if c.token.0 % 100 == 2 && c.token.0 != end_tok {
-                r2 = c.result;
+            if c.token().get() % 100 == 1 {
+                r1 = c.result();
+            } else if c.token().get() % 100 == 2 && c.token().get() != end_tok {
+                r2 = c.result();
             }
-            if c.token.0 == end_tok {
+            if c.token().get() == end_tok {
                 done = true;
             }
         }

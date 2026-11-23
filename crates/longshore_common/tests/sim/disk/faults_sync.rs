@@ -20,10 +20,7 @@ fn fail_sync(
     tok: u64,
     slot: FileSlot,
 ) {
-    sim.set_disk_faults(DiskFaults {
-        sync_fail: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_sync_fail(1_000_000));
     assert_eq!(sync_slot(sim, out, tok, slot), -EIO);
     sim.set_disk_faults(DiskFaults::default());
 }
@@ -33,44 +30,67 @@ fn sync_fail_as_eio_poisoned_writes_never_become_durable_unless_overwritten() {
     let mut sim = make_sim(23, 512, 16, 16 * 1024);
     let mut out = Completions::new(16);
     assert_eq!(
-        open_path(&mut sim, &mut out, 1, FileSlot(0), "/eio.dat", rw_create()),
+        open_path(
+            &mut sim,
+            &mut out,
+            1,
+            FileSlot::new(0),
+            "/eio.dat",
+            rw_create()
+        ),
         0
     );
     sync_dir_path(&mut sim, &mut out, 10, "/");
     assert_eq!(
-        write_fill(&mut sim, &mut out, 20, FileSlot(0), 0, 1536, 0x11),
+        write_fill(&mut sim, &mut out, 20, FileSlot::new(0), 0, 1536, 0x11),
         1536
     );
-    assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot(0)), 0);
+    assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot::new(0)), 0);
 
     assert_eq!(
-        write_fill(&mut sim, &mut out, 22, FileSlot(0), 0, 1536, 0x22),
+        write_fill(&mut sim, &mut out, 22, FileSlot::new(0), 0, 1536, 0x22),
         1536
     );
-    fail_sync(&mut sim, &mut out, 23, FileSlot(0));
-
-    assert_eq!(read_at(&mut sim, &mut out, 24, FileSlot(0), 0, 1536), 1536);
-    assert!(sim.buf(BufId(2))[..1536].iter().all(|&b| b == 0x22));
+    fail_sync(&mut sim, &mut out, 23, FileSlot::new(0));
 
     assert_eq!(
-        write_fill(&mut sim, &mut out, 25, FileSlot(0), 512, 512, 0x33),
+        read_at(&mut sim, &mut out, 24, FileSlot::new(0), 0, 1536),
+        1536
+    );
+    assert!(sim.buf(BufId::new(2))[..1536].iter().all(|&b| b == 0x22));
+
+    assert_eq!(
+        write_fill(&mut sim, &mut out, 25, FileSlot::new(0), 512, 512, 0x33),
         512
     );
-    assert_eq!(sync_slot(&mut sim, &mut out, 26, FileSlot(0)), 0);
+    assert_eq!(sync_slot(&mut sim, &mut out, 26, FileSlot::new(0)), 0);
 
-    assert_eq!(read_at(&mut sim, &mut out, 27, FileSlot(0), 0, 1536), 1536);
-    let live = sim.buf(BufId(2));
+    assert_eq!(
+        read_at(&mut sim, &mut out, 27, FileSlot::new(0), 0, 1536),
+        1536
+    );
+    let live = sim.buf(BufId::new(2));
     assert!(live[..512].iter().all(|&b| b == 0x22));
     assert!(live[512..1024].iter().all(|&b| b == 0x33));
     assert!(live[1024..1536].iter().all(|&b| b == 0x22));
 
     sim.power_loss();
     assert_eq!(
-        open_path(&mut sim, &mut out, 30, FileSlot(0), "/eio.dat", rw_open()),
+        open_path(
+            &mut sim,
+            &mut out,
+            30,
+            FileSlot::new(0),
+            "/eio.dat",
+            rw_open()
+        ),
         0
     );
-    assert_eq!(read_at(&mut sim, &mut out, 31, FileSlot(0), 0, 1536), 1536);
-    let dur = sim.buf(BufId(2));
+    assert_eq!(
+        read_at(&mut sim, &mut out, 31, FileSlot::new(0), 0, 1536),
+        1536
+    );
+    let dur = sim.buf(BufId::new(2));
     assert!(dur[..512].iter().all(|&b| b == 0x11));
     assert!(dur[512..1024].iter().all(|&b| b == 0x33));
     assert!(dur[1024..1536].iter().all(|&b| b == 0x11));
@@ -81,45 +101,59 @@ fn sync_fail_poisoned_write_followed_by_overwrite_and_disjoint_clean_write() {
     let mut sim = make_sim(5, 512, 16, 16 * 1024);
     let mut out = Completions::new(16);
     assert_eq!(
-        open_path(&mut sim, &mut out, 1, FileSlot(0), "/s1.dat", rw_create()),
+        open_path(
+            &mut sim,
+            &mut out,
+            1,
+            FileSlot::new(0),
+            "/s1.dat",
+            rw_create()
+        ),
         0
     );
     sync_dir_path(&mut sim, &mut out, 10, "/");
     sealed(|| {
         assert_eq!(
-            write_fill(&mut sim, &mut out, 20, FileSlot(0), 0, 1024, 0x11),
+            write_fill(&mut sim, &mut out, 20, FileSlot::new(0), 0, 1024, 0x11),
             1024
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot::new(0)), 0);
 
         assert_eq!(
-            write_fill(&mut sim, &mut out, 22, FileSlot(0), 0, 512, 0x22),
+            write_fill(&mut sim, &mut out, 22, FileSlot::new(0), 0, 512, 0x22),
             512
         );
-        sim.set_disk_faults(DiskFaults {
-            sync_fail: 1_000_000,
-            ..Default::default()
-        });
-        assert_eq!(sync_slot(&mut sim, &mut out, 23, FileSlot(0)), -EIO);
+        sim.set_disk_faults(DiskFaults::NONE.with_sync_fail(1_000_000));
+        assert_eq!(sync_slot(&mut sim, &mut out, 23, FileSlot::new(0)), -EIO);
         sim.set_disk_faults(DiskFaults::default());
 
         assert_eq!(
-            write_fill(&mut sim, &mut out, 24, FileSlot(0), 0, 512, 0x33),
+            write_fill(&mut sim, &mut out, 24, FileSlot::new(0), 0, 512, 0x33),
             512
         );
         assert_eq!(
-            write_fill(&mut sim, &mut out, 25, FileSlot(0), 512, 512, 0x44),
+            write_fill(&mut sim, &mut out, 25, FileSlot::new(0), 512, 512, 0x44),
             512
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 26, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 26, FileSlot::new(0)), 0);
 
         sim.power_loss();
         assert_eq!(
-            open_path(&mut sim, &mut out, 30, FileSlot(0), "/s1.dat", rw_open()),
+            open_path(
+                &mut sim,
+                &mut out,
+                30,
+                FileSlot::new(0),
+                "/s1.dat",
+                rw_open()
+            ),
             0
         );
-        assert_eq!(read_at(&mut sim, &mut out, 31, FileSlot(0), 0, 1024), 1024);
-        let dur = sim.buf(BufId(2));
+        assert_eq!(
+            read_at(&mut sim, &mut out, 31, FileSlot::new(0), 0, 1024),
+            1024
+        );
+        let dur = sim.buf(BufId::new(2));
         assert!(dur[..512].iter().all(|&b| b == 0x33));
         assert!(dur[512..1024].iter().all(|&b| b == 0x44));
     });
@@ -130,16 +164,23 @@ fn sync_fail_poisoned_punch_followed_by_partial_write_and_sync() {
     let mut sim = make_sim(7, 512, 16, 16 * 1024);
     let mut out = Completions::new(16);
     assert_eq!(
-        open_path(&mut sim, &mut out, 1, FileSlot(0), "/pun.dat", rw_create()),
+        open_path(
+            &mut sim,
+            &mut out,
+            1,
+            FileSlot::new(0),
+            "/pun.dat",
+            rw_create()
+        ),
         0
     );
     sync_dir_path(&mut sim, &mut out, 10, "/");
     sealed(|| {
         assert_eq!(
-            write_fill(&mut sim, &mut out, 20, FileSlot(0), 0, 4096, 0xAA),
+            write_fill(&mut sim, &mut out, 20, FileSlot::new(0), 0, 4096, 0xAA),
             4096
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot::new(0)), 0);
 
         assert_eq!(
             drive(
@@ -147,39 +188,49 @@ fn sync_fail_poisoned_punch_followed_by_partial_write_and_sync() {
                 &mut out,
                 22,
                 Op::FilePunch {
-                    slot: FileSlot(0),
+                    slot: FileSlot::new(0),
                     file_off: 0,
                     len: 4096,
                 },
             ),
             0
         );
-        sim.set_disk_faults(DiskFaults {
-            sync_fail: 1_000_000,
-            ..Default::default()
-        });
-        assert_eq!(sync_slot(&mut sim, &mut out, 23, FileSlot(0)), -EIO);
+        sim.set_disk_faults(DiskFaults::NONE.with_sync_fail(1_000_000));
+        assert_eq!(sync_slot(&mut sim, &mut out, 23, FileSlot::new(0)), -EIO);
         sim.set_disk_faults(DiskFaults::default());
 
         assert_eq!(
-            write_fill(&mut sim, &mut out, 24, FileSlot(0), 512, 512, 0xBB),
+            write_fill(&mut sim, &mut out, 24, FileSlot::new(0), 512, 512, 0xBB),
             512
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 25, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 25, FileSlot::new(0)), 0);
 
-        assert_eq!(read_at(&mut sim, &mut out, 26, FileSlot(0), 0, 4096), 4096);
-        let live = sim.buf(BufId(2));
+        assert_eq!(
+            read_at(&mut sim, &mut out, 26, FileSlot::new(0), 0, 4096),
+            4096
+        );
+        let live = sim.buf(BufId::new(2));
         assert!(live[..512].iter().all(|&b| b == 0));
         assert!(live[512..1024].iter().all(|&b| b == 0xBB));
         assert!(live[1024..4096].iter().all(|&b| b == 0));
 
         sim.power_loss();
         assert_eq!(
-            open_path(&mut sim, &mut out, 30, FileSlot(0), "/pun.dat", rw_open()),
+            open_path(
+                &mut sim,
+                &mut out,
+                30,
+                FileSlot::new(0),
+                "/pun.dat",
+                rw_open()
+            ),
             0
         );
-        assert_eq!(read_at(&mut sim, &mut out, 31, FileSlot(0), 0, 4096), 4096);
-        let dur = sim.buf(BufId(2));
+        assert_eq!(
+            read_at(&mut sim, &mut out, 31, FileSlot::new(0), 0, 4096),
+            4096
+        );
+        let dur = sim.buf(BufId::new(2));
         assert!(dur[..512].iter().all(|&b| b == 0xAA));
         assert!(dur[512..1024].iter().all(|&b| b == 0xBB));
         assert!(dur[1024..4096].iter().all(|&b| b == 0xAA));
@@ -188,25 +239,31 @@ fn sync_fail_poisoned_punch_followed_by_partial_write_and_sync() {
 
 #[test]
 fn sync_fail_poisoned_truncate_followed_by_zero_and_nonzero_writes() {
+    const SLOT_0: FileSlot = FileSlot::new(0);
     let mut sim = make_sim(9, 512, 16, 16 * 1024);
     let mut out = Completions::new(16);
     assert_eq!(
-        open_path(&mut sim, &mut out, 1, FileSlot(0), "/tr0.dat", rw_create()),
+        open_path(&mut sim, &mut out, 1, SLOT_0, "/tr0.dat", rw_create()),
         0
     );
     assert_eq!(
-        open_path(&mut sim, &mut out, 2, FileSlot(1), "/tr1.dat", rw_create()),
+        open_path(
+            &mut sim,
+            &mut out,
+            2,
+            FileSlot::new(1),
+            "/tr1.dat",
+            rw_create()
+        ),
         0
     );
     sync_dir_path(&mut sim, &mut out, 10, "/");
-    let trunc_flags = OpenFlags {
-        read: true,
-        write: true,
-        empty: true,
-        ..Default::default()
-    };
+    let trunc_flags = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_empty(true);
     sealed(|| {
-        for (idx, (slot, path)) in [(FileSlot(0), "/tr0.dat"), (FileSlot(1), "/tr1.dat")]
+        for (idx, (slot, path)) in [(SLOT_0, "/tr0.dat"), (FileSlot::new(1), "/tr1.dat")]
             .into_iter()
             .enumerate()
         {
@@ -222,22 +279,25 @@ fn sync_fail_poisoned_truncate_followed_by_zero_and_nonzero_writes() {
         }
 
         assert_eq!(
-            write_fill(&mut sim, &mut out, 50, FileSlot(0), 0, 512, 0x22),
+            write_fill(&mut sim, &mut out, 50, SLOT_0, 0, 512, 0x22),
             512
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 51, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 51, SLOT_0), 0);
         assert_eq!(stat_size(&mut sim, &mut out, 52, "/tr0.dat"), 512);
-        assert_eq!(read_at(&mut sim, &mut out, 53, FileSlot(0), 0, 4096), 512);
-        assert!(sim.buf(BufId(2))[..512].iter().all(|&b| b == 0x22));
+        assert_eq!(read_at(&mut sim, &mut out, 53, SLOT_0, 0, 4096), 512);
+        assert!(sim.buf(BufId::new(2))[..512].iter().all(|&b| b == 0x22));
 
         assert_eq!(
-            write_fill(&mut sim, &mut out, 60, FileSlot(1), 1024, 512, 0x33),
+            write_fill(&mut sim, &mut out, 60, FileSlot::new(1), 1024, 512, 0x33),
             512
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 61, FileSlot(1)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 61, FileSlot::new(1)), 0);
         assert_eq!(stat_size(&mut sim, &mut out, 62, "/tr1.dat"), 1536);
-        assert_eq!(read_at(&mut sim, &mut out, 63, FileSlot(1), 0, 4096), 1536);
-        let live1 = sim.buf(BufId(2));
+        assert_eq!(
+            read_at(&mut sim, &mut out, 63, FileSlot::new(1), 0, 4096),
+            1536
+        );
+        let live1 = sim.buf(BufId::new(2));
         assert!(live1[..1024].iter().all(|&b| b == 0));
         assert!(live1[1024..1536].iter().all(|&b| b == 0x33));
 
@@ -251,21 +311,21 @@ fn sync_fail_poisoned_truncate_followed_by_zero_and_nonzero_writes() {
 fn assert_poisoned_truncates_rolled_back(sim: &mut SimIo, out: &mut Completions) {
     assert_eq!(stat_size(sim, out, 70, "/tr0.dat"), 4096);
     assert_eq!(
-        open_path(sim, out, 71, FileSlot(0), "/tr0.dat", rw_open()),
+        open_path(sim, out, 71, FileSlot::new(0), "/tr0.dat", rw_open()),
         0
     );
-    assert_eq!(read_at(sim, out, 72, FileSlot(0), 0, 4096), 4096);
-    let dur0 = sim.buf(BufId(2));
+    assert_eq!(read_at(sim, out, 72, FileSlot::new(0), 0, 4096), 4096);
+    let dur0 = sim.buf(BufId::new(2));
     assert!(dur0[..512].iter().all(|&b| b == 0x22));
     assert!(dur0[512..4096].iter().all(|&b| b == 0x11));
 
     assert_eq!(stat_size(sim, out, 80, "/tr1.dat"), 4096);
     assert_eq!(
-        open_path(sim, out, 81, FileSlot(1), "/tr1.dat", rw_open()),
+        open_path(sim, out, 81, FileSlot::new(1), "/tr1.dat", rw_open()),
         0
     );
-    assert_eq!(read_at(sim, out, 82, FileSlot(1), 0, 4096), 4096);
-    let dur1 = sim.buf(BufId(2));
+    assert_eq!(read_at(sim, out, 82, FileSlot::new(1), 0, 4096), 4096);
+    let dur1 = sim.buf(BufId::new(2));
     assert!(dur1[..1024].iter().all(|&b| b == 0x11));
     assert!(dur1[1024..1536].iter().all(|&b| b == 0x33));
     assert!(dur1[1536..4096].iter().all(|&b| b == 0x11));
@@ -273,43 +333,41 @@ fn assert_poisoned_truncates_rolled_back(sim: &mut SimIo, out: &mut Completions)
 
 #[test]
 fn sync_fail_many_non_adjacent_clean_writes_never_truncate_poisoned_tail() {
+    const SLOT_0: FileSlot = FileSlot::new(0);
     let mut sim = make_sim(13, 512, 2, 16 * 1024);
     let mut out = Completions::new(16);
     assert_eq!(
-        open_path(&mut sim, &mut out, 1, FileSlot(0), "/frag.dat", rw_create()),
+        open_path(&mut sim, &mut out, 1, SLOT_0, "/frag.dat", rw_create()),
         0
     );
     sync_dir_path(&mut sim, &mut out, 10, "/");
     sealed(|| {
         assert_eq!(
-            write_fill(&mut sim, &mut out, 20, FileSlot(0), 0, 4096, 0x11),
+            write_fill(&mut sim, &mut out, 20, SLOT_0, 0, 4096, 0x11),
             4096
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 21, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 21, SLOT_0), 0);
 
         assert_eq!(
-            write_fill(&mut sim, &mut out, 22, FileSlot(0), 0, 4096, 0x22),
+            write_fill(&mut sim, &mut out, 22, SLOT_0, 0, 4096, 0x22),
             4096
         );
-        sim.set_disk_faults(DiskFaults {
-            sync_fail: 1_000_000,
-            ..Default::default()
-        });
-        assert_eq!(sync_slot(&mut sim, &mut out, 23, FileSlot(0)), -EIO);
+        sim.set_disk_faults(DiskFaults::NONE.with_sync_fail(1_000_000));
+        assert_eq!(sync_slot(&mut sim, &mut out, 23, SLOT_0), -EIO);
         sim.set_disk_faults(DiskFaults::default());
 
         let patches = [100u64, 500, 900, 1300, 1700, 2100];
         for (idx, &off) in patches.iter().enumerate() {
             let b = 30 + idx as u64 * 2;
             assert_eq!(
-                write_fill(&mut sim, &mut out, b, FileSlot(0), off, 100, 0x33),
+                write_fill(&mut sim, &mut out, b, SLOT_0, off, 100, 0x33),
                 100
             );
-            assert_eq!(sync_slot(&mut sim, &mut out, b + 1, FileSlot(0)), 0);
+            assert_eq!(sync_slot(&mut sim, &mut out, b + 1, SLOT_0), 0);
         }
 
-        assert_eq!(read_at(&mut sim, &mut out, 60, FileSlot(0), 0, 4096), 4096);
-        let live = sim.buf(BufId(2));
+        assert_eq!(read_at(&mut sim, &mut out, 60, SLOT_0, 0, 4096), 4096);
+        let live = sim.buf(BufId::new(2));
         for (i, &byte) in live[..4096].iter().enumerate() {
             let in_patch = patches
                 .iter()
@@ -323,11 +381,11 @@ fn sync_fail_many_non_adjacent_clean_writes_never_truncate_poisoned_tail() {
 
         sim.power_loss();
         assert_eq!(
-            open_path(&mut sim, &mut out, 70, FileSlot(0), "/frag.dat", rw_open()),
+            open_path(&mut sim, &mut out, 70, SLOT_0, "/frag.dat", rw_open()),
             0
         );
-        assert_eq!(read_at(&mut sim, &mut out, 71, FileSlot(0), 0, 4096), 4096);
-        let dur = sim.buf(BufId(2));
+        assert_eq!(read_at(&mut sim, &mut out, 71, SLOT_0, 0, 4096), 4096);
+        let dur = sim.buf(BufId::new(2));
         for (i, &byte) in dur[..4096].iter().enumerate() {
             let in_patch = patches
                 .iter()

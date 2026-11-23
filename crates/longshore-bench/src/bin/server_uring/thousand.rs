@@ -30,24 +30,20 @@ pub(super) fn thousand_idle_connections<IO: Io>(
     make: &mut impl FnMut(Limits) -> IO,
     addr: SocketAddr,
 ) {
-    let srv_limits = Limits {
-        sockets_max: 1002,
-        accept_range_start: 1,
-        accept_range_len: 1000,
-        buffers: 1,
-        buffer_size: 256,
-        ring_buffers: 16,
-        ring_buffer_size: 256,
-        ops_max: 1024,
-        ..Limits::BASE
-    };
-    let cli_limits = Limits {
-        sockets_max: HALF as u32,
-        buffers: 2,
-        buffer_size: 256,
-        ops_max: 512,
-        ..Limits::BASE
-    };
+    let srv_limits = Limits::BASE
+        .with_sockets_max(1002)
+        .with_accept_range_start(1)
+        .with_accept_range_len(1000)
+        .with_buffers(1)
+        .with_buffer_size(256)
+        .with_ring_buffers(16)
+        .with_ring_buffer_size(256)
+        .with_ops_max(1024);
+    let cli_limits = Limits::BASE
+        .with_sockets_max(HALF as u32)
+        .with_buffers(2)
+        .with_buffer_size(256)
+        .with_ops_max(512);
     let mut rig = Rig {
         srv: make(srv_limits),
         c0: make(cli_limits),
@@ -58,20 +54,20 @@ pub(super) fn thousand_idle_connections<IO: Io>(
         recv_armed: [false; TOTAL],
     };
 
-    let bound = rig.srv.listen(Sock(0), addr).or_die("listen");
+    let bound = rig.srv.listen(Sock::new(0), addr).or_die("listen");
     let mut client_socks = Vec::with_capacity(TOTAL);
     for k in 0..HALF {
-        client_socks.push((0u8, Sock(k as u32)));
+        client_socks.push((0u8, Sock::new(k as u32)));
     }
     for k in 0..HALF {
-        client_socks.push((1u8, Sock(k as u32)));
+        client_socks.push((1u8, Sock::new(k as u32)));
     }
 
     sealed(|| {
         let accept_armed = rig.connect_all(bound, &client_socks);
         // Cancel ArmedAccept so only 1,000 armed receives remain in flight.
         if accept_armed {
-            cancel_armed(&mut rig.srv, &mut rig.srv_out, Token(2), Token(1));
+            cancel_armed(&mut rig.srv, &mut rig.srv_out, Token::new(2), Token::new(1));
         }
         rig.arm_receives();
         rig.send_and_hold();
@@ -85,7 +81,12 @@ impl<IO: Io> Rig<IO> {
     /// server accepts them. Returns whether the armed accept is still armed.
     fn connect_all(&mut self, bound: SocketAddr, client_socks: &[(u8, Sock)]) -> bool {
         self.srv
-            .submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
+            .submit(
+                Token::new(1),
+                Op::ArmedAccept {
+                    listener: Sock::new(0),
+                },
+            )
             .or_die("submit");
         let mut accept_armed = true;
 
@@ -94,11 +95,11 @@ impl<IO: Io> Rig<IO> {
                 let op = Op::Connect { sock, addr: bound };
                 if which == 0 {
                     self.c0
-                        .submit(Token(1000 + idx as u64), op)
+                        .submit(Token::new(1000 + idx as u64), op)
                         .or_die("submit");
                 } else {
                     self.c1
-                        .submit(Token(1000 + idx as u64), op)
+                        .submit(Token::new(1000 + idx as u64), op)
                         .or_die("submit");
                 }
             }
@@ -115,26 +116,32 @@ impl<IO: Io> Rig<IO> {
                 );
                 if !accept_armed && self.accepted.len() < want_s {
                     self.srv
-                        .submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
+                        .submit(
+                            Token::new(1),
+                            Op::ArmedAccept {
+                                listener: Sock::new(0),
+                            },
+                        )
                         .or_die("submit");
                     accept_armed = true;
                 }
                 self.c0.tick(false, &mut self.c_out).or_die("tick");
                 while let Some(c) = self.c_out.pop() {
-                    assert_eq!(c.result, 0, "c0 connect: {c:?}");
+                    assert_eq!(c.result(), 0, "c0 connect: {c:?}");
                     want_c -= 1;
                 }
                 self.c1.tick(false, &mut self.c_out).or_die("tick");
                 while let Some(c) = self.c_out.pop() {
-                    assert_eq!(c.result, 0, "c1 connect: {c:?}");
+                    assert_eq!(c.result(), 0, "c1 connect: {c:?}");
                     want_c -= 1;
                 }
                 self.srv.tick(false, &mut self.srv_out).or_die("tick");
                 while let Some(c) = self.srv_out.pop() {
-                    assert!(c.token.0 == 1 && c.result >= 1, "{c:?}");
-                    accept_armed = c.more;
-                    self.accepted
-                        .push(Sock(u32::try_from(c.result).or_die("accepted socket")));
+                    assert!(c.token().get() == 1 && c.result() >= 1, "{c:?}");
+                    accept_armed = c.more();
+                    self.accepted.push(Sock::new(
+                        u32::try_from(c.result()).or_die("accepted socket"),
+                    ));
                 }
             }
         }
@@ -146,7 +153,7 @@ impl<IO: Io> Rig<IO> {
     fn arm_receives(&mut self) {
         for (k, &s) in self.accepted.iter().enumerate() {
             self.srv
-                .submit(Token(10_000 + k as u64), Op::ArmedRecv { sock: s })
+                .submit(Token::new(10_000 + k as u64), Op::ArmedRecv { sock: s })
                 .or_die("submit");
             self.recv_armed[k] = true;
         }
@@ -161,12 +168,12 @@ impl<IO: Io> Rig<IO> {
     /// with the byte `tag + k` and tokens from `token`.
     fn send16(cli: &mut IO, first: u32, tag: u32, token: u64) {
         for k in 0..16u32 {
-            cli.buf(BufId(0))[0] = (tag + k) as u8;
+            cli.buf(BufId::new(0))[0] = (tag + k) as u8;
             cli.submit(
-                Token(token + u64::from(k)),
+                Token::new(token + u64::from(k)),
                 Op::Send {
-                    sock: Sock(first + k),
-                    buf: BufId(0),
+                    sock: Sock::new(first + k),
+                    buf: BufId::new(0),
                     off: 0,
                     len: 1,
                     zero_copy: false,
@@ -178,10 +185,10 @@ impl<IO: Io> Rig<IO> {
 
     /// Note a server receive completion: one byte, and whether still armed.
     fn on_recv(&mut self, c: &Completion) -> BufId {
-        let idx = (c.token.0 - 10_000) as usize;
-        self.recv_armed[idx] = c.more;
-        assert_eq!(c.result, 1);
-        c.buf.or_die("a ring buffer in the completion")
+        let idx = (c.token().get() - 10_000) as usize;
+        self.recv_armed[idx] = c.more();
+        assert_eq!(c.result(), 1);
+        c.buf().or_die("a ring buffer in the completion")
     }
 
     /// Send 16 bytes across c0[0..16] proving all 16 ring buffers are free,
@@ -197,7 +204,7 @@ impl<IO: Io> Rig<IO> {
             assert!(spins < 500_000, "send16 stalled: sent={sent} recvd={recvd}");
             self.c0.tick(false, &mut self.c_out).or_die("tick");
             while let Some(c) = self.c_out.pop() {
-                assert_eq!(c.result, 1);
+                assert_eq!(c.result(), 1);
                 sent += 1;
             }
             self.srv.tick(false, &mut self.srv_out).or_die("tick");
@@ -223,7 +230,7 @@ impl<IO: Io> Rig<IO> {
             );
             self.c1.tick(false, &mut self.c_out).or_die("tick");
             while let Some(c) = self.c_out.pop() {
-                assert_eq!(c.result, 1);
+                assert_eq!(c.result(), 1);
                 sent2 += 1;
             }
             self.srv.tick(false, &mut self.srv_out).or_die("tick");
@@ -247,16 +254,16 @@ impl<IO: Io> Rig<IO> {
                     need_cancel += 1;
                 }
                 self.srv
-                    .submit(Token(90_000 + o as u64), Op::Close { sock: s })
+                    .submit(Token::new(90_000 + o as u64), Op::Close { sock: s })
                     .or_die("submit");
             }
             while need_close > 0 || need_cancel > 0 {
                 self.srv.tick(true, &mut self.srv_out).or_die("tick");
                 while let Some(c) = self.srv_out.pop() {
-                    if c.token.0 >= 90_000 {
+                    if c.token().get() >= 90_000 {
                         need_close -= 1;
-                    } else if (10_000..11_000).contains(&c.token.0) && !c.more {
-                        let idx = (c.token.0 - 10_000) as usize;
+                    } else if (10_000..11_000).contains(&c.token().get()) && !c.more() {
+                        let idx = (c.token().get() - 10_000) as usize;
                         if self.recv_armed[idx] {
                             self.recv_armed[idx] = false;
                             need_cancel -= 1;
@@ -266,11 +273,11 @@ impl<IO: Io> Rig<IO> {
             }
         }
         self.srv
-            .submit(Token(99_999), Op::Close { sock: Sock(0) })
+            .submit(Token::new(99_999), Op::Close { sock: Sock::new(0) })
             .or_die("submit");
         self.srv.tick(true, &mut self.srv_out).or_die("tick");
         assert!(self.srv_out.pop().is_some());
-        let c_socks: [Sock; HALF] = core::array::from_fn(|k| Sock(k as u32));
+        let c_socks: [Sock; HALF] = core::array::from_fn(|k| Sock::new(k as u32));
         close_batch(&mut self.c0, &mut self.c_out, &c_socks);
         close_batch(&mut self.c1, &mut self.c_out, &c_socks);
     }

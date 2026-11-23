@@ -12,10 +12,7 @@ use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-const WIDE: Limits = Limits {
-    ops_max: LIMITS.ops_max + 2,
-    ..LIMITS
-};
+const WIDE: Limits = LIMITS.with_ops_max(LIMITS.ops_max() + 2);
 pub const LEN: usize = 1000;
 
 /// One I/O lane: what would be one thread, with the server it talks to.
@@ -42,7 +39,7 @@ pub fn rig_with(lanes: usize, operations: u32) -> Rig {
         .map(|n| {
             let mut io = SimIo::new(WIDE, 40 + n as u64, Faults::default());
             let mut server = Server::new(
-                server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+                server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
                     .head_max(2048)
                     .objects_max(8)
                     .checksum(|body: &[u8]| {

@@ -18,7 +18,7 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
     }
     const CONNS: u32 = 8;
     let (mut io, mut s3, first) = setup(CONNS, 1, 1 << 20, CONNS);
-    let page = BufId(first);
+    let page = BufId::new(first);
     let mut out = Completions::new(64);
     let (mut count, mut bytes, mut failed) = (0u64, 0u64, 0u64);
     let mut after: Option<String> = None;
@@ -90,7 +90,7 @@ pub(super) fn sweep(prefix: &str, erase: bool) {
 /// attempt, and the object must not exist afterwards.
 pub(super) fn bad_checksum(size: u32) {
     let (mut io, mut s3, first) = setup(1, 2, size, 2);
-    let (tx, rx) = (BufId(first), BufId(first + 1));
+    let (tx, rx) = (BufId::new(first), BufId::new(first + 1));
     io.buf(tx)[..size as usize].fill(0x5a);
     let key = format!(
         "selftest/badcrc-{}-{}.bin",
@@ -116,7 +116,7 @@ pub(super) fn bad_checksum(size: u32) {
 
 pub(super) fn selftest(size: u32) {
     let (mut io, mut s3, first) = setup(1, 2, size, 2);
-    let (tx, rx) = (BufId(first), BufId(first + 1));
+    let (tx, rx) = (BufId::new(first), BufId::new(first + 1));
     for (i, b) in io.buf(tx)[..size as usize].iter_mut().enumerate() {
         *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[2];
     }

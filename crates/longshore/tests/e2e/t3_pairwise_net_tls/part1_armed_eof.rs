@@ -9,7 +9,7 @@
 
 use super::super::harness::{drive_until, read_pool_bytes, submit_and_wait_one, write_pool_bytes};
 use super::net_limits;
-use longshore::io::{BufId, Completions, Io, Op, Sock, Token};
+use longshore::io::{BufId, Completion, Completions, Io, Op, Sock, Token};
 
 /// Connects four clients to an armed accept on `Sock(0)`; returns the
 /// accepted server sockets once all four sides have completed.
@@ -19,13 +19,18 @@ fn accept_four_armed<IO: Io>(
     tiny_out: &mut Completions,
     addr: std::net::SocketAddr,
 ) -> Vec<Sock> {
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
     for i in 0..4u32 {
         io.submit(
-            Token(10 + u64::from(i)),
+            Token::new(10 + u64::from(i)),
             Op::Connect {
-                sock: Sock(1 + i),
+                sock: Sock::new(1 + i),
                 addr,
             },
         )
@@ -35,20 +40,23 @@ fn accept_four_armed<IO: Io>(
     let mut accepted = Vec::new();
     let mut connected = 0usize;
     let cs = drive_until(io, tiny_out, 10_000, |v| {
-        connected = v.iter().filter(|c| (10..14).contains(&c.token.0)).count();
+        connected = v
+            .iter()
+            .filter(|c| (10..14).contains(&c.token().get()))
+            .count();
         accepted.clear();
-        for c in v.iter().filter(|c| c.token == Token(1)) {
-            assert!(c.more, "armed accept must stay armed with more=true");
-            assert!(c.result >= 8 && c.result < 14);
-            accepted.push(Sock(u32::try_from(c.result).unwrap()));
+        for c in v.iter().filter(|c| c.token().get() == 1) {
+            assert!(c.more(), "armed accept must stay armed with more=true");
+            assert!(c.result() >= 8 && c.result() < 14);
+            accepted.push(Sock::new(u32::try_from(c.result()).unwrap()));
         }
         connected == 4 && accepted.len() == 4
     })
     .unwrap();
     assert!(cs
         .iter()
-        .filter(|c| (10..14).contains(&c.token.0))
-        .all(|c| c.result >= 0));
+        .filter(|c| (10..14).contains(&c.token().get()))
+        .all(|c| c.result() >= 0));
     accepted
 }
 
@@ -56,15 +64,15 @@ fn accept_four_armed<IO: Io>(
 #[cfg(unix)]
 fn arm_and_send_greetings<IO: Io>(io: &mut IO, accepted: &[Sock]) {
     for (idx, &srv) in accepted.iter().enumerate() {
-        io.submit(Token(100 + idx as u64), Op::ArmedRecv { sock: srv })
+        io.submit(Token::new(100 + idx as u64), Op::ArmedRecv { sock: srv })
             .unwrap();
         let msg = format!("msg-{idx}");
-        write_pool_bytes(io, BufId(0), idx * 16, msg.as_bytes());
+        write_pool_bytes(io, BufId::new(0), idx * 16, msg.as_bytes());
         io.submit(
-            Token(200 + idx as u64),
+            Token::new(200 + idx as u64),
             Op::Send {
-                sock: Sock(1 + idx as u32),
-                buf: BufId(0),
+                sock: Sock::new(1 + idx as u32),
+                buf: BufId::new(0),
                 off: (idx * 16) as u32,
                 len: msg.len() as u32,
                 zero_copy: false,
@@ -80,17 +88,25 @@ fn arm_and_send_greetings<IO: Io>(io: &mut IO, accepted: &[Sock]) {
 fn recv_greetings<IO: Io>(io: &mut IO, tiny_out: &mut Completions) -> Vec<BufId> {
     let mut seen_ids = Vec::new();
     let recv_cs = drive_until(io, tiny_out, 10_000, |v| {
-        v.iter().filter(|c| (100..104).contains(&c.token.0)).count() == 4
+        v.iter()
+            .filter(|c| (100..104).contains(&c.token().get()))
+            .count()
+            == 4
     })
     .unwrap();
-    for c in recv_cs.iter().filter(|c| (100..104).contains(&c.token.0)) {
-        assert!(c.more);
-        let id = c.buf.expect("armed recv completion must name ring buffer");
+    for c in recv_cs
+        .iter()
+        .filter(|c| (100..104).contains(&c.token().get()))
+    {
+        assert!(c.more());
+        let id = c
+            .buf()
+            .expect("armed recv completion must name ring buffer");
         seen_ids.push(id);
-        let idx = (c.token.0 - 100) as usize;
+        let idx = (c.token().get() - 100) as usize;
         let expected = format!("msg-{idx}");
         assert_eq!(
-            read_pool_bytes(io, id, 0, usize::try_from(c.result).unwrap()),
+            read_pool_bytes(io, id, 0, usize::try_from(c.result()).unwrap()),
             expected.as_bytes()
         );
         io.give_back(id);
@@ -103,12 +119,12 @@ fn recv_greetings<IO: Io>(io: &mut IO, tiny_out: &mut Completions) -> Vec<BufId>
 #[cfg(unix)]
 fn second_wave_recycles<IO: Io>(io: &mut IO, tiny_out: &mut Completions, seen_ids: &[BufId]) {
     for idx in 0..4usize {
-        write_pool_bytes(io, BufId(0), 0, b"wave2");
+        write_pool_bytes(io, BufId::new(0), 0, b"wave2");
         io.submit(
-            Token(300 + idx as u64),
+            Token::new(300 + idx as u64),
             Op::Send {
-                sock: Sock(1 + idx as u32),
-                buf: BufId(0),
+                sock: Sock::new(1 + idx as u32),
+                buf: BufId::new(0),
                 off: 0,
                 len: 5,
                 zero_copy: false,
@@ -117,14 +133,20 @@ fn second_wave_recycles<IO: Io>(io: &mut IO, tiny_out: &mut Completions, seen_id
         .unwrap();
     }
     let wave2 = drive_until(io, tiny_out, 10_000, |v| {
-        v.iter().filter(|c| (100..104).contains(&c.token.0)).count() == 4
+        v.iter()
+            .filter(|c| (100..104).contains(&c.token().get()))
+            .count()
+            == 4
     })
     .unwrap();
-    for c in wave2.iter().filter(|c| (100..104).contains(&c.token.0)) {
-        let id = c.buf.expect("recycled ring buf");
+    for c in wave2
+        .iter()
+        .filter(|c| (100..104).contains(&c.token().get()))
+    {
+        let id = c.buf().expect("recycled ring buf");
         assert!(seen_ids.contains(&id), "ring buffer should recycle");
         assert_eq!(
-            read_pool_bytes(io, id, 0, usize::try_from(c.result).unwrap()),
+            read_pool_bytes(io, id, 0, usize::try_from(c.result()).unwrap()),
             b"wave2"
         );
         io.give_back(id);
@@ -139,7 +161,7 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
     let limits = net_limits(16, 8, 6, 4, 1024);
     let mut io = posix_backend(limits).expect("posix");
     let addr = io
-        .listen(Sock(0), "127.0.0.1:0".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .expect("listen");
     let mut tiny_out = Completions::new(1);
 
@@ -149,74 +171,80 @@ fn t3_11_posix_armed_accept_recv_small_completions_and_ring_recycle() {
     second_wave_recycles(&mut io, &mut tiny_out, &seen_ids);
 }
 
+/// The completion for token `t` among `cs`.
+fn completion_of(cs: &[Completion], t: u64) -> Completion {
+    *cs.iter().find(|c| c.token().get() == t).unwrap()
+}
+
 fn verify_shutdown_before_close<IO: Io>(io: &mut IO, addr: std::net::SocketAddr) {
     let mut out = Completions::new(16);
-    let bound = io.listen(Sock(0), addr).unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    let bound = io.listen(Sock::new(0), addr).unwrap();
     io.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr: bound,
         },
     )
     .unwrap();
     let cs = drive_until(io, &mut out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
+        [1, 2]
+            .iter()
+            .all(|&t| v.iter().any(|c| c.token().get() == t))
     })
     .unwrap();
-    let srv = Sock(u32::try_from(cs.iter().find(|c| c.token == Token(1)).unwrap().result).unwrap());
-    assert_eq!(cs.iter().find(|c| c.token == Token(2)).unwrap().result, 0);
+    let srv = Sock::new(u32::try_from(completion_of(&cs, 1).result()).unwrap());
+    assert_eq!(completion_of(&cs, 2).result(), 0);
 
-    io.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
-    write_pool_bytes(io, BufId(0), 0, b"hold");
+    io.submit(Token::new(3), Op::ArmedRecv { sock: srv })
+        .unwrap();
+    write_pool_bytes(io, BufId::new(0), 0, b"hold");
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::Send {
             sock: srv,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
         },
     )
     .unwrap();
-    io.submit(Token(5), Op::Close { sock: srv }).unwrap();
+    io.submit(Token::new(5), Op::Close { sock: srv }).unwrap();
     let close_cs = drive_until(io, &mut out, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(3) && !c.more)
-            && v.iter().any(|c| c.token == Token(5) && !c.more)
+        v.iter().any(|c| c.token().get() == 3 && !c.more())
+            && v.iter().any(|c| c.token().get() == 5 && !c.more())
     })
     .unwrap();
-    assert!(!close_cs.iter().find(|c| c.token == Token(3)).unwrap().more);
-    assert_eq!(
-        close_cs
-            .iter()
-            .find(|c| c.token == Token(5))
-            .unwrap()
-            .result,
-        0
-    );
+    assert!(!completion_of(&close_cs, 3).more());
+    assert_eq!(completion_of(&close_cs, 5).result(), 0);
 
     loop {
         let r = submit_and_wait_one(
             io,
             &mut out,
-            Token(6),
+            Token::new(6),
             Op::Recv {
-                sock: Sock(1),
-                buf: BufId(1),
+                sock: Sock::new(1),
+                buf: BufId::new(1),
                 off: 0,
                 len: 64,
             },
             10_000,
         )
         .unwrap();
-        assert!(!r.more && r.buf.is_none());
-        if r.result == 0 {
+        assert!(!r.more() && r.buf().is_none());
+        if r.result() == 0 {
             break;
         }
-        assert!(r.result > 0);
+        assert!(r.result() > 0);
     }
 }
 

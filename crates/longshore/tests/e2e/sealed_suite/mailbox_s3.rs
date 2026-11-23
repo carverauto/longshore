@@ -24,13 +24,11 @@ struct SealedMsg {
 }
 
 pub fn run_mailbox_queue_and_waiters_sealed() {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4);
     let mut sim = SimIo::new(limits, 9003, Faults::default());
     let mut out = Completions::new(8);
     let (tx, mut io_rx) = mailbox::<SealedMsg, u64, _>(
@@ -39,7 +37,7 @@ pub fn run_mailbox_queue_and_waiters_sealed() {
             capacity: 8,
             slots: 2,
             waiters_prealloc: 8,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         },
     )
     .expect("mailbox");

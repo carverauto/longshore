@@ -25,18 +25,16 @@ pub const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2,
 pub const HEARTBEAT: u64 = 1 << 50;
 pub const REREAD_MS: u64 = 200;
 // Large buffers: server pairs 0..6, user tx 6, rx 7, token file 8. Small buffers: client heads.
-pub const TX: BufId = BufId(6);
-pub const RX: BufId = BufId(7);
-pub const TOKEN_BUF: BufId = BufId(8);
-pub const LIMITS: Limits = Limits {
-    sockets_max: 1 + CONNS * 2,
-    buffers: 9,
-    buffer_size: BUF,
-    small_buffers: CONNS,
-    small_buffer_size: HEAD_MAX,
-    ops_max: CONNS * 3 + CONNS + 1 + 2,
-    ..Limits::BASE
-};
+pub const TX: BufId = BufId::new(6);
+pub const RX: BufId = BufId::new(7);
+pub const TOKEN_BUF: BufId = BufId::new(8);
+pub const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(1 + CONNS * 2)
+    .with_buffers(9)
+    .with_buffer_size(BUF)
+    .with_small_buffers(CONNS)
+    .with_small_buffer_size(HEAD_MAX)
+    .with_ops_max(CONNS * 3 + CONNS + 1 + 2);
 
 pub const TOKEN_A: &str = "ya29.first-token_0123456789abcdefghijklmnopqrstuvwxyz";
 pub const TOKEN_B: &str = "ya29.second-token_ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210";
@@ -62,7 +60,7 @@ pub struct World {
 pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
             .head_max(HEAD_MAX)
             .objects_max(8)
             .checksum(crc32c_form)
@@ -72,7 +70,7 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
     let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
     server.allow_access_keys(&[TOKEN_A]);
     let token_file = io.register_file("/var/run/token").unwrap();
-    let http = client::ClientConfig::builder(CONNS, 1, LIMITS.buffers, BUF, 1 << 40)
+    let http = client::ClientConfig::builder(CONNS, 1, LIMITS.buffers(), BUF, 1 << 40)
         .head_max(HEAD_MAX)
         .max_age_ns(60_000 * MS)
         .max_requests(1000)
@@ -106,7 +104,7 @@ pub fn world(seed: u64, faults: Faults, attempts_max: u32) -> World {
         endpoint: Endpoint::Fixed(ADDR),
     });
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     World {
         io,
@@ -132,9 +130,9 @@ impl World {
             while done.len() < n || io.now_ns() < until {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         s3.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     } else if !s3.on_completion(io, c) {
                         assert!(server.on_completion(io, c), "unrouted completion {c:?}");

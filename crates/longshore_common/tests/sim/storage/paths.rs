@@ -16,37 +16,36 @@ use longshore_common::sim::{DiskConfig, Faults, SimIo};
 fn mkdir_not_synced_into_parent_can_be_lost() {
     let mut saw_lost = false;
     for seed in 0..16u64 {
-        let limits = Limits {
-            buffers: 2,
-            buffer_size: 4096,
-            files_max: 2,
-            ops_max: 8,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_buffers(2)
+            .with_buffer_size(4096)
+            .with_files_max(2)
+            .with_ops_max(8);
         let mut sim = SimIo::new(limits, seed, Faults::default());
-        sim.setup_disk(DiskConfig {
-            max_files: 4,
-            max_dirs: 4,
-            max_bytes_per_file: 4096,
-            max_name_len: 64,
-            write_log_entries: 8,
-            write_log_bytes: 4096,
-            read_error_sectors: 4,
-            sector_size: 512,
-        });
+        sim.setup_disk(
+            DiskConfig::BASE
+                .with_max_files(4)
+                .with_max_dirs(4)
+                .with_max_bytes_per_file(4096)
+                .with_max_name_len(64)
+                .with_write_log_entries(8)
+                .with_write_log_bytes(4096)
+                .with_read_error_sectors(4)
+                .with_sector_size(512),
+        );
         let mut out = Completions::new(8);
         assert_eq!(mkdir(&mut sim, &mut out, 1, "/x"), 0);
         sim.power_loss();
-        let len = put_path(&mut sim, BufId(0), "/x");
+        let len = put_path(&mut sim, BufId::new(0), "/x");
         let r = drive(
             &mut sim,
             &mut out,
             2,
             Op::FileStatus {
-                path_buf: BufId(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: len,
-                out_buf: BufId(1),
+                out_buf: BufId::new(1),
                 out_off: 0,
             },
         );
@@ -63,11 +62,18 @@ fn seeded_file_and_parents_synced_survive_power_loss() {
     assert_eq!(mkdir(&mut sim, &mut out, 10, "/d/a"), 0);
     assert_eq!(mkdir(&mut sim, &mut out, 11, "/d/a/b"), 0);
     assert_eq!(
-        open_file(&mut sim, &mut out, 12, FileSlot(0), "/d/a/b/c", rw_create()),
+        open_file(
+            &mut sim,
+            &mut out,
+            12,
+            FileSlot::new(0),
+            "/d/a/b/c",
+            rw_create()
+        ),
         0
     );
     assert_eq!(
-        write_bytes(&mut sim, &mut out, 13, FileSlot(0), 0, b"seeded"),
+        write_bytes(&mut sim, &mut out, 13, FileSlot::new(0), 0, b"seeded"),
         6
     );
     assert_eq!(
@@ -76,14 +82,21 @@ fn seeded_file_and_parents_synced_survive_power_loss() {
             &mut out,
             14,
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: false,
             },
         ),
         0
     );
     assert_eq!(
-        drive(&mut sim, &mut out, 15, Op::FileClose { slot: FileSlot(0) }),
+        drive(
+            &mut sim,
+            &mut out,
+            15,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
     sync_dir(&mut sim, &mut out, 20, "/d");
@@ -100,11 +113,18 @@ fn seeded_file_and_parents_synced_survive_power_loss() {
 fn corrupt_medium_bit_flips_both_views_and_rejects_oob_and_missing() {
     let (mut sim, mut out, _) = make_storage(1, 512);
     assert_eq!(
-        open_file(&mut sim, &mut out, 10, FileSlot(0), "/d/f", rw_create()),
+        open_file(
+            &mut sim,
+            &mut out,
+            10,
+            FileSlot::new(0),
+            "/d/f",
+            rw_create()
+        ),
         0
     );
     assert_eq!(
-        write_bytes(&mut sim, &mut out, 11, FileSlot(0), 0, &[0x0F, 0x0F]),
+        write_bytes(&mut sim, &mut out, 11, FileSlot::new(0), 0, &[0x0F, 0x0F]),
         2
     );
     assert_eq!(
@@ -113,18 +133,25 @@ fn corrupt_medium_bit_flips_both_views_and_rejects_oob_and_missing() {
             &mut out,
             12,
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: false,
             },
         ),
         0
     );
     assert_eq!(
-        write_bytes(&mut sim, &mut out, 13, FileSlot(0), 0, &[0x0F, 0x0F]),
+        write_bytes(&mut sim, &mut out, 13, FileSlot::new(0), 0, &[0x0F, 0x0F]),
         2
     );
     assert_eq!(
-        drive(&mut sim, &mut out, 14, Op::FileClose { slot: FileSlot(0) }),
+        drive(
+            &mut sim,
+            &mut out,
+            14,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
     sync_dir(&mut sim, &mut out, 15, "/d");
@@ -148,16 +175,17 @@ fn corrupt_medium_bit_flips_both_views_and_rejects_oob_and_missing() {
 
 #[test]
 fn invalid_paths_and_dir_vs_file_errors() {
+    const SLOT_0: FileSlot = FileSlot::new(0);
     let (mut sim, mut out, _) = make_storage(1, 512);
-    sim.buf(BufId(0))[0] = 0;
+    sim.buf(BufId::new(0))[0] = 0;
     assert_eq!(
         drive(
             &mut sim,
             &mut out,
             10,
             Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
+                slot: SLOT_0,
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: 1,
                 flags: rw_create(),
@@ -166,15 +194,15 @@ fn invalid_paths_and_dir_vs_file_errors() {
         -EINVAL
     );
     assert_eq!(
-        open_file(&mut sim, &mut out, 11, FileSlot(0), "/d/f", rw_create()),
+        open_file(&mut sim, &mut out, 11, SLOT_0, "/d/f", rw_create()),
         0
     );
     assert_eq!(
-        drive(&mut sim, &mut out, 12, Op::FileClose { slot: FileSlot(0) }),
+        drive(&mut sim, &mut out, 12, Op::FileClose { slot: SLOT_0 }),
         0
     );
     assert_eq!(
-        open_file(&mut sim, &mut out, 13, FileSlot(0), "/d/f/g", rw_create()),
+        open_file(&mut sim, &mut out, 13, SLOT_0, "/d/f/g", rw_create()),
         -ENOTDIR
     );
     assert_eq!(
@@ -182,21 +210,18 @@ fn invalid_paths_and_dir_vs_file_errors() {
             &mut sim,
             &mut out,
             14,
-            FileSlot(0),
+            SLOT_0,
             "/",
-            OpenFlags {
-                read: true,
-                ..Default::default()
-            },
+            OpenFlags::NONE.with_read(true),
         ),
         0
     );
     assert_eq!(
-        drive(&mut sim, &mut out, 15, Op::FileClose { slot: FileSlot(0) }),
+        drive(&mut sim, &mut out, 15, Op::FileClose { slot: SLOT_0 }),
         0
     );
     assert_eq!(
-        open_file(&mut sim, &mut out, 16, FileSlot(0), "/", rw_create()),
+        open_file(&mut sim, &mut out, 16, SLOT_0, "/", rw_create()),
         -EISDIR
     );
 }
@@ -205,18 +230,18 @@ fn invalid_paths_and_dir_vs_file_errors() {
 fn directory_is_not_a_file_across_open_corrupt_unlink_rename() {
     let (mut sim, mut out, _) = make_storage(1, 512);
     assert_eq!(
-        open_file(&mut sim, &mut out, 10, FileSlot(0), "/d", rw_create()),
+        open_file(&mut sim, &mut out, 10, FileSlot::new(0), "/d", rw_create()),
         -EISDIR
     );
     assert_eq!(sim.corrupt_medium_bit("/d", 0, 0), Err(-EISDIR));
-    let ul = put_path(&mut sim, BufId(0), "/d");
+    let ul = put_path(&mut sim, BufId::new(0), "/d");
     assert_eq!(
         drive(
             &mut sim,
             &mut out,
             11,
             Op::FileUnlink {
-                path_buf: BufId(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: ul,
             },
@@ -224,26 +249,40 @@ fn directory_is_not_a_file_across_open_corrupt_unlink_rename() {
         -EISDIR
     );
     assert_eq!(
-        open_file(&mut sim, &mut out, 12, FileSlot(0), "/d/f", rw_create()),
+        open_file(
+            &mut sim,
+            &mut out,
+            12,
+            FileSlot::new(0),
+            "/d/f",
+            rw_create()
+        ),
         0
     );
     assert_eq!(
-        drive(&mut sim, &mut out, 13, Op::FileClose { slot: FileSlot(0) }),
+        drive(
+            &mut sim,
+            &mut out,
+            13,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
     assert_eq!(mkdir(&mut sim, &mut out, 14, "/d/sub"), 0);
-    let ol = put_path(&mut sim, BufId(0), "/d/f");
-    let nl = put_path(&mut sim, BufId(1), "/d/sub");
+    let ol = put_path(&mut sim, BufId::new(0), "/d/f");
+    let nl = put_path(&mut sim, BufId::new(1), "/d/sub");
     assert_eq!(
         drive(
             &mut sim,
             &mut out,
             15,
             Op::FileRename {
-                old_buf: BufId(0),
+                old_buf: BufId::new(0),
                 old_off: 0,
                 old_len: ol,
-                new_buf: BufId(1),
+                new_buf: BufId::new(1),
                 new_off: 0,
                 new_len: nl,
             },

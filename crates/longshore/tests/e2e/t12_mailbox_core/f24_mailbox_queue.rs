@@ -75,16 +75,14 @@ impl World for NoWakerWorld {
 #[cfg(unix)]
 #[test]
 fn t1_f24_1_io_receiver_wakes_blocked_tick_and_drains_message() {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 256,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(256)
+        .with_ops_max(4);
     let mut io = posix_backend(limits).expect("posix");
     let mut out = Completions::new(8);
-    let (tx, mut io_rx) = queue::<u64, _>(&mut io, 8, Token(77)).expect("queue");
+    let (tx, mut io_rx) = queue::<u64, _>(&mut io, 8, Token::new(77)).expect("queue");
     io_rx.arm(&mut io).unwrap();
 
     let h = thread::spawn(move || {
@@ -95,8 +93,8 @@ fn t1_f24_1_io_receiver_wakes_blocked_tick_and_drains_message() {
 
     io.tick(true, &mut out).unwrap();
     let c = out.pop().expect("AwaitWake completion");
-    assert_eq!(c.token, Token(77));
-    assert_eq!(c.result, 0);
+    assert_eq!(c.token(), Token::new(77));
+    assert_eq!(c.result(), 0);
     assert!(io_rx.on_completion(&mut io, c).unwrap());
     assert_eq!(io_rx.try_recv(), TryRecv::Message(0xdead_beef_u64));
     assert_eq!(io_rx.try_recv(), TryRecv::Empty);
@@ -275,16 +273,14 @@ fn t2_f24_4_send_after_receiver_close_immediately_returns_closed() {
 
 #[test]
 fn t2_f24_5_io_receiver_fails_cleanly_when_backend_has_no_waker() {
-    let limits = Limits {
-        sockets_max: 1,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 2,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(1)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(2);
     let mut engine = Engine::with_world(limits, NoWakerWorld(TestWorld::new()));
     assert!(engine.waker().is_none());
-    let err = match queue::<u64, _>(&mut engine, 4, Token(1)) {
+    let err = match queue::<u64, _>(&mut engine, 4, Token::new(1)) {
         Ok(_) => panic!("expected error when Io::waker returns None"),
         Err(e) => e,
     };

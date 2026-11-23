@@ -15,15 +15,13 @@ use longshore::mailbox::{mailbox, queue, Config, TryRecv, TrySendError};
 fn t3_21_posix_waker_mailbox_await_wake_100_msgs() {
     use super::super::harness::posix_backend;
 
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4);
     let mut io = posix_backend(limits).expect("posix");
-    let (tx, mut io_rx) = queue::<PingMsg, _>(&mut io, 32, Token(1)).expect("queue");
+    let (tx, mut io_rx) = queue::<PingMsg, _>(&mut io, 32, Token::new(1)).expect("queue");
     io_rx.arm(&mut io).expect("arm initial AwaitWake");
 
     let producer = std::thread::spawn(move || {
@@ -79,13 +77,11 @@ fn t3_22_two_virtual_engines_mailbox_pool_future_trace_parity() {
     use std::task::{Context, Poll, Waker};
 
     fn run_once(seed_a: u64, seed_b: u64) -> (u64, u64, Vec<u64>) {
-        let limits = Limits {
-            sockets_max: 2,
-            buffers: 1,
-            buffer_size: 64,
-            ops_max: 4,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(1)
+            .with_buffer_size(64)
+            .with_ops_max(4);
         let mut core_a = SimIo::new(limits, seed_a, Faults::default());
         let mut core_b = SimIo::new(limits, seed_b, Faults::default());
         let (tx_b, mut io_rx_b) = mailbox::<PingMsg, u64, _>(
@@ -94,7 +90,7 @@ fn t3_22_two_virtual_engines_mailbox_pool_future_trace_parity() {
                 capacity: 8,
                 slots: 4,
                 waiters_prealloc: 8,
-                wake_token: Token(1),
+                wake_token: Token::new(1),
             },
         )
         .unwrap();

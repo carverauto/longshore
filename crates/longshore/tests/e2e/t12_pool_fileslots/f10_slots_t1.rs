@@ -22,26 +22,24 @@ fn t1_f10_1_open_write_close_reopen_same_slot() {
         let mut out = Completions::new(8);
         let p1 = format!("{prefix}slot0_first.dat");
         let p2 = format!("{prefix}slot0_second.dat");
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
+        let rw = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true);
         assert_eq!(
-            open_slot(io, &mut out, 1, FileSlot(0), BufId(0), &p1, rw),
+            open_slot(io, &mut out, 1, FileSlot::new(0), BufId::new(0), &p1, rw),
             0
         );
 
         let mut dyn_io = DynIo(io);
-        write_pool_bytes(&mut dyn_io, BufId(1), 0, b"alpha-slot");
+        write_pool_bytes(&mut dyn_io, BufId::new(1), 0, b"alpha-slot");
         let wr = submit_and_wait_one(
             &mut dyn_io,
             &mut out,
-            Token(2),
+            Token::new(2),
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 10,
                 file_off: 0,
@@ -49,23 +47,23 @@ fn t1_f10_1_open_write_close_reopen_same_slot() {
             10_000,
         )
         .expect("write");
-        assert_eq!(wr.result, 10);
-        assert_eq!(close_slot(io, &mut out, 3, FileSlot(0)), 0);
+        assert_eq!(wr.result(), 10);
+        assert_eq!(close_slot(io, &mut out, 3, FileSlot::new(0)), 0);
 
         // Reuse FileSlot(0) immediately for a second distinct file.
         assert_eq!(
-            open_slot(io, &mut out, 4, FileSlot(0), BufId(0), &p2, rw),
+            open_slot(io, &mut out, 4, FileSlot::new(0), BufId::new(0), &p2, rw),
             0
         );
         dyn_io = DynIo(io);
-        write_pool_bytes(&mut dyn_io, BufId(1), 0, b"beta!");
+        write_pool_bytes(&mut dyn_io, BufId::new(1), 0, b"beta!");
         let wr2 = submit_and_wait_one(
             &mut dyn_io,
             &mut out,
-            Token(5),
+            Token::new(5),
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 5,
                 file_off: 0,
@@ -73,38 +71,37 @@ fn t1_f10_1_open_write_close_reopen_same_slot() {
             10_000,
         )
         .expect("write2");
-        assert_eq!(wr2.result, 5);
-        assert_eq!(close_slot(io, &mut out, 6, FileSlot(0)), 0);
+        assert_eq!(wr2.result(), 5);
+        assert_eq!(close_slot(io, &mut out, 6, FileSlot::new(0)), 0);
     });
 }
 
 /// `T1-F10-2`: Reopening an existing non-empty file with `empty: true` truncates it to size 0.
 #[test]
 fn t1_f10_2_open_empty_truncates_existing_file_to_zero() {
+    const SLOT_0: FileSlot = FileSlot::new(0);
     let limits = file_limits(4, 0, 0, 4096);
     run_on_backends(limits, |io, prefix| {
         let mut out = Completions::new(8);
         let path = format!("{prefix}truncate_me.dat");
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
+        let rw = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true);
         assert_eq!(
-            open_slot(io, &mut out, 1, FileSlot(0), BufId(0), &path, rw),
+            open_slot(io, &mut out, 1, SLOT_0, BufId::new(0), &path, rw),
             0
         );
         let mut dyn_io = DynIo(io);
-        write_pool_bytes(&mut dyn_io, BufId(1), 0, b"non-empty-payload");
+        write_pool_bytes(&mut dyn_io, BufId::new(1), 0, b"non-empty-payload");
         assert_eq!(
             submit_and_wait_one(
                 &mut dyn_io,
                 &mut out,
-                Token(2),
+                Token::new(2),
                 Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
+                    slot: SLOT_0,
+                    buf: BufId::new(1),
                     off: 0,
                     len: 17,
                     file_off: 0,
@@ -112,72 +109,72 @@ fn t1_f10_2_open_empty_truncates_existing_file_to_zero() {
                 10_000,
             )
             .expect("write")
-            .result,
+            .result(),
             17
         );
-        assert_eq!(close_slot(io, &mut out, 3, FileSlot(0)), 0);
+        assert_eq!(close_slot(io, &mut out, 3, SLOT_0), 0);
 
-        let empty_flags = OpenFlags {
-            read: true,
-            write: true,
-            empty: true,
-            ..Default::default()
-        };
+        let empty_flags = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_empty(true);
         assert_eq!(
-            open_slot(io, &mut out, 4, FileSlot(0), BufId(0), &path, empty_flags),
+            open_slot(io, &mut out, 4, SLOT_0, BufId::new(0), &path, empty_flags),
             0
         );
-        assert_eq!(close_slot(io, &mut out, 5, FileSlot(0)), 0);
+        assert_eq!(close_slot(io, &mut out, 5, SLOT_0), 0);
 
         dyn_io = DynIo(io);
-        let path_len = write_nul_path(&mut dyn_io, BufId(0), 0, &path);
+        let path_len = write_nul_path(&mut dyn_io, BufId::new(0), 0, &path);
         let st = submit_and_wait_one(
             &mut dyn_io,
             &mut out,
-            Token(6),
+            Token::new(6),
             Op::FileStatus {
-                path_buf: BufId(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len,
-                out_buf: BufId(1),
+                out_buf: BufId::new(1),
                 out_off: 0,
             },
             10_000,
         )
         .expect("status");
-        assert_eq!(st.result, 0);
-        assert_eq!(longshore::io::files::file_size(dyn_io.buf(BufId(1))), 0);
+        assert_eq!(st.result(), 0);
+        assert_eq!(
+            longshore::io::files::file_size(dyn_io.buf(BufId::new(1))),
+            0
+        );
     });
 }
 
 /// `T1-F10-3`: `create | exclusive | read | write` creates new file, then `empty` clears it.
 #[test]
 fn t1_f10_3_open_create_exclusive_then_empty() {
+    const SLOT_0: FileSlot = FileSlot::new(0);
     let limits = file_limits(4, 0, 0, 4096);
     run_on_backends(limits, |io, prefix| {
         let mut out = Completions::new(8);
         let path = format!("{prefix}excl_empty.dat");
-        let excl = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            exclusive: true,
-            ..Default::default()
-        };
+        let excl = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true)
+            .with_exclusive(true);
         assert_eq!(
-            open_slot(io, &mut out, 1, FileSlot(0), BufId(0), &path, excl),
+            open_slot(io, &mut out, 1, SLOT_0, BufId::new(0), &path, excl),
             0
         );
         let mut dyn_io = DynIo(io);
-        write_pool_bytes(&mut dyn_io, BufId(1), 0, b"created-exclusively");
+        write_pool_bytes(&mut dyn_io, BufId::new(1), 0, b"created-exclusively");
         assert_eq!(
             submit_and_wait_one(
                 &mut dyn_io,
                 &mut out,
-                Token(2),
+                Token::new(2),
                 Op::FileWrite {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
+                    slot: SLOT_0,
+                    buf: BufId::new(1),
                     off: 0,
                     len: 19,
                     file_off: 0,
@@ -185,29 +182,27 @@ fn t1_f10_3_open_create_exclusive_then_empty() {
                 10_000,
             )
             .expect("write")
-            .result,
+            .result(),
             19
         );
-        assert_eq!(close_slot(io, &mut out, 3, FileSlot(0)), 0);
+        assert_eq!(close_slot(io, &mut out, 3, SLOT_0), 0);
 
-        let empty = OpenFlags {
-            read: true,
-            write: true,
-            empty: true,
-            ..Default::default()
-        };
+        let empty = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_empty(true);
         assert_eq!(
-            open_slot(io, &mut out, 4, FileSlot(0), BufId(0), &path, empty),
+            open_slot(io, &mut out, 4, SLOT_0, BufId::new(0), &path, empty),
             0
         );
         dyn_io = DynIo(io);
         let rd = submit_and_wait_one(
             &mut dyn_io,
             &mut out,
-            Token(5),
+            Token::new(5),
             Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: SLOT_0,
+                buf: BufId::new(1),
                 off: 0,
                 len: 32,
                 file_off: 0,
@@ -215,8 +210,8 @@ fn t1_f10_3_open_create_exclusive_then_empty() {
             10_000,
         )
         .expect("read");
-        assert_eq!(rd.result, 0, "emptied file must read 0 bytes");
-        assert_eq!(close_slot(io, &mut out, 6, FileSlot(0)), 0);
+        assert_eq!(rd.result(), 0, "emptied file must read 0 bytes");
+        assert_eq!(close_slot(io, &mut out, 6, SLOT_0), 0);
     });
 }
 
@@ -228,17 +223,17 @@ fn t1_f10_4_ready_list_drains_without_blocking() {
         let mut out = Completions::new(8);
         // Submit a long timer alongside a shared-check-refused read on an unopened FileSlot.
         io.submit(
-            Token(1),
+            Token::new(1),
             Op::Timeout {
                 nanos: 5_000_000_000,
             },
         )
         .expect("timer");
         io.submit(
-            Token(2),
+            Token::new(2),
             Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(0),
+                slot: FileSlot::new(0),
+                buf: BufId::new(0),
                 off: 0,
                 len: 16,
                 file_off: 0,
@@ -252,18 +247,27 @@ fn t1_f10_4_ready_list_drains_without_blocking() {
         let c = out
             .pop()
             .expect("ready-list completion must arrive immediately");
-        assert_eq!(c.token, Token(2));
-        assert!(c.result < 0, "expected negative refusal, got {}", c.result);
+        assert_eq!(c.token(), Token::new(2));
+        assert!(
+            c.result() < 0,
+            "expected negative refusal, got {}",
+            c.result()
+        );
         assert!(
             elapsed < std::time::Duration::from_secs(1),
             "ready list must prevent kernel sleep behind 5s timer (took {elapsed:?})"
         );
         // Cancel the 5s timer so drop/teardown is instantaneous.
-        io.submit(Token(3), Op::Cancel { target: Token(1) })
-            .expect("cancel");
+        io.submit(
+            Token::new(3),
+            Op::Cancel {
+                target: Token::new(1),
+            },
+        )
+        .expect("cancel");
         let mut dyn_io = DynIo(io);
         let _: Option<Vec<Completion>> = drive_until_nonblocking(&mut dyn_io, &mut out, 100, |v| {
-            v.iter().any(|x| x.token == Token(1))
+            v.iter().any(|x| x.token().get() == 1)
         })
         .ok();
         let _: i32 = LINUX_EINVAL;
@@ -273,19 +277,19 @@ fn t1_f10_4_ready_list_drains_without_blocking() {
 /// Accepts `Sock(1)` from a `Sock(2)` loopback connect; both must succeed.
 fn connect_loopback_pair(io: &mut dyn Io, out: &mut Completions) {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-    let bound = io.listen(Sock(0), addr).expect("listen");
+    let bound = io.listen(Sock::new(0), addr).expect("listen");
     io.submit(
-        Token(100),
+        Token::new(100),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
+            listener: Sock::new(0),
+            sock: Sock::new(1),
         },
     )
     .unwrap();
     io.submit(
-        Token(101),
+        Token::new(101),
         Op::Connect {
-            sock: Sock(2),
+            sock: Sock::new(2),
             addr: bound,
         },
     )
@@ -297,30 +301,33 @@ fn connect_loopback_pair(io: &mut dyn Io, out: &mut Completions) {
             seen.push(c);
         }
     }
-    assert!(seen.iter().all(|c| c.result >= 0));
+    assert!(seen.iter().all(|c| c.result() >= 0));
 }
 
 /// Writes and reads back seven bytes on `FileSlot(2)`.
 fn round_trip_slot_2(io: &mut dyn Io, out: &mut Completions) {
     let mut dyn_io = DynIo(io);
-    write_pool_bytes(&mut dyn_io, BufId(0), 0, b"coexist");
+    write_pool_bytes(&mut dyn_io, BufId::new(0), 0, b"coexist");
     let write = Op::FileWrite {
-        slot: FileSlot(2),
-        buf: BufId(0),
+        slot: FileSlot::new(2),
+        buf: BufId::new(0),
         off: 0,
         len: 7,
         file_off: 0,
     };
     assert_eq!(run_op(&mut dyn_io, out, 200, write, "write"), 7);
     let read = Op::FileRead {
-        slot: FileSlot(2),
-        buf: BufId(1),
+        slot: FileSlot::new(2),
+        buf: BufId::new(1),
         off: 0,
         len: 7,
         file_off: 0,
     };
     assert_eq!(run_op(&mut dyn_io, out, 201, read, "read"), 7);
-    assert_eq!(read_pool_bytes(&mut dyn_io, BufId(1), 0, 7), b"coexist");
+    assert_eq!(
+        read_pool_bytes(&mut dyn_io, BufId::new(1), 0, 7),
+        b"coexist"
+    );
 }
 
 /// `T1-F10-5`: Open files in `0..files_max` simultaneously alongside sockets in `0..sockets_max`.
@@ -329,7 +336,7 @@ fn t1_f10_5_concurrent_file_and_socket_slots_independent() {
     let limits = file_limits(3, 0, 0, 4096);
     run_on_backends(limits, |io, prefix| {
         let mut out = Completions::new(16);
-        for s in 0..limits.files_max {
+        for s in 0..limits.files_max() {
             let p = format!("{prefix}multi_{s}.dat");
             let tok = 10 + u64::from(s);
             assert_eq!(
@@ -337,8 +344,8 @@ fn t1_f10_5_concurrent_file_and_socket_slots_independent() {
                     io,
                     &mut out,
                     tok,
-                    FileSlot(s),
-                    BufId(0),
+                    FileSlot::new(s),
+                    BufId::new(0),
                     &p,
                     rw_create(false)
                 ),
@@ -350,14 +357,17 @@ fn t1_f10_5_concurrent_file_and_socket_slots_independent() {
         // Write & read on FileSlot(2) while sockets 0, 1, 2 remain open.
         round_trip_slot_2(io, &mut out);
 
-        for s in 0..limits.files_max {
-            assert_eq!(close_slot(io, &mut out, 300 + u64::from(s), FileSlot(s)), 0);
+        for s in 0..limits.files_max() {
+            assert_eq!(
+                close_slot(io, &mut out, 300 + u64::from(s), FileSlot::new(s)),
+                0
+            );
         }
-        for sock in [Sock(0), Sock(1), Sock(2)] {
+        for sock in [Sock::new(0), Sock::new(1), Sock::new(2)] {
             let _: Completion = submit_and_wait_one(
                 &mut DynIo(io),
                 &mut out,
-                Token(400 + u64::from(sock.0)),
+                Token::new(400 + u64::from(sock.get())),
                 Op::Close { sock },
                 10_000,
             )

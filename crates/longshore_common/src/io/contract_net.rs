@@ -16,17 +16,15 @@ mod unix;
 mod unix_closed;
 
 pub(crate) fn net_limits() -> Limits {
-    Limits {
-        sockets_max: 8,
-        accept_range_start: 2,
-        accept_range_len: 4,
-        buffers: 2,
-        buffer_size: 512,
-        ring_buffers: 2,
-        ring_buffer_size: 128,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(8)
+        .with_accept_range_start(2)
+        .with_accept_range_len(4)
+        .with_buffers(2)
+        .with_buffer_size(512)
+        .with_ring_buffers(2)
+        .with_ring_buffer_size(128)
+        .with_ops_max(16)
 }
 
 pub(crate) fn drain_until<IO: Io>(

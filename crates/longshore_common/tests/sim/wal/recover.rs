@@ -25,15 +25,11 @@ pub(crate) fn wal_recover(
             out,
             tok,
             Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
+                slot: FileSlot::new(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    ..Default::default()
-                },
+                flags: OpenFlags::NONE.with_read(true).with_write(true),
             },
         ),
         0
@@ -49,13 +45,13 @@ pub(crate) fn wal_recover(
         if r < i32::try_from(rec_bytes).unwrap() {
             break;
         }
-        if verify_record(&sim.buf(BufId(2))[..rec_bytes], rec_bytes, seed, seq) {
+        if verify_record(&sim.buf(BufId::new(2))[..rec_bytes], rec_bytes, seed, seq) {
             recovered += 1;
             continue;
         }
         let r2 = read_record(sim, out, tok, rec_bytes, file_off);
         if r2 == i32::try_from(rec_bytes).unwrap()
-            && verify_record(&sim.buf(BufId(2))[..rec_bytes], rec_bytes, seed, seq)
+            && verify_record(&sim.buf(BufId::new(2))[..rec_bytes], rec_bytes, seed, seq)
         {
             recovered += 1;
         } else {
@@ -78,8 +74,8 @@ fn read_record(
         out,
         tok,
         Op::FileRead {
-            slot: FileSlot(0),
-            buf: BufId(2),
+            slot: FileSlot::new(0),
+            buf: BufId::new(2),
             off: 0,
             len: rec_bytes as u32,
             file_off,
@@ -101,20 +97,20 @@ fn clear_unreadable_record(
             out,
             tok,
             Op::FilePunch {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 file_off,
                 len: rec_bytes as u64,
             },
         );
     } else {
-        sim.buf(BufId(2))[..rec_bytes].fill(0);
+        sim.buf(BufId::new(2))[..rec_bytes].fill(0);
         let _: i32 = drive_one(
             sim,
             out,
             tok,
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(2),
+                slot: FileSlot::new(0),
+                buf: BufId::new(2),
                 off: 0,
                 len: rec_bytes as u32,
                 file_off,

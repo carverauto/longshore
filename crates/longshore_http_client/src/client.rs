@@ -123,13 +123,17 @@ impl Client {
         let first_tls_buf = tls.as_ref().map(|t| t.1);
         let streams = (0..cfg.connections_max())
             .map(|i| {
-                let token = |kind| Token(cfg.token_base() + u64::from(i) * 8 + kind);
-                let s = Stream::new(Sock(cfg.first_sock() + i), token(K_SEND), token(K_RECV));
+                let token = |kind| Token::new(cfg.token_base() + u64::from(i) * 8 + kind);
+                let s = Stream::new(
+                    Sock::new(cfg.first_sock() + i),
+                    token(K_SEND),
+                    token(K_RECV),
+                );
                 #[cfg(feature = "tls")]
                 let s = match first_tls_buf {
                     Some(first) => s.with_tls_buffers(
-                        BufId(first + 2 * i),
-                        BufId(first + 2 * i + 1),
+                        BufId::new(first + 2 * i),
+                        BufId::new(first + 2 * i + 1),
                         cfg.buffer_size(),
                         cfg.tls_batch(),
                         cfg.zero_copy_min(),
@@ -161,15 +165,15 @@ impl Client {
     }
 
     fn sock(&self, i: usize) -> Sock {
-        Sock(self.cfg.first_sock() + i as u32)
+        Sock::new(self.cfg.first_sock() + i as u32)
     }
 
     fn head_buf(&self, i: usize) -> BufId {
-        BufId(self.cfg.first_buf() + i as u32)
+        BufId::new(self.cfg.first_buf() + i as u32)
     }
 
     fn token(&self, i: usize, kind: u64) -> Token {
-        Token(self.cfg.token_base() + i as u64 * 8 + kind)
+        Token::new(self.cfg.token_base() + i as u64 * 8 + kind)
     }
 
     #[expect(

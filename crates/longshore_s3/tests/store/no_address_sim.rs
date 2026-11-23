@@ -20,24 +20,22 @@ static ALLOC: Guard = Guard;
 const MS: u64 = 1_000_000;
 const HEARTBEAT: u64 = 1 << 50;
 // Large buffers: user tx 0. Small buffers: one HTTP head, three for name resolution.
-const LIMITS: Limits = Limits {
-    sockets_max: 3,
-    buffers: 1,
-    buffer_size: 4096,
-    small_buffers: 4,
-    small_buffer_size: 2048,
-    ops_max: 16,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(3)
+    .with_buffers(1)
+    .with_buffer_size(4096)
+    .with_small_buffers(4)
+    .with_small_buffer_size(2048)
+    .with_ops_max(16);
 
 #[test]
 fn operations_end_when_the_name_never_resolves() {
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
     let mut s3 = s3_behind_a_silent_nameserver();
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
-    s3.store(&mut io, 1, "a", BufId(0), 100, Checksum::None)
+    s3.store(&mut io, 1, "a", BufId::new(0), 100, Checksum::None)
         .unwrap();
     s3.erase(&mut io, 2, "b").unwrap();
     assert_eq!(s3.erase(&mut io, 3, "c"), Err(SubmitError::Busy));
@@ -74,13 +72,13 @@ fn s3_behind_a_silent_nameserver() -> S3 {
         prefer_large_segments: None,
         refresh_ns: 30_000 * MS,
         timeout_ns: 200 * MS,
-        socks: [Sock(1), Sock(2)],
+        socks: [Sock::new(1), Sock::new(2)],
         rx_bufs: [LIMITS.small(1), LIMITS.small(2)],
         tx_buf: LIMITS.small(3),
         token_base: 3 << 40,
     })
     .expect("resolver config");
-    let http = client::ClientConfig::builder(1, 0, LIMITS.small(0).0, 4096, 1 << 40)
+    let http = client::ClientConfig::builder(1, 0, LIMITS.small(0).get(), 4096, 1 << 40)
         .head_max(2048)
         .max_age_ns(60_000 * MS)
         .max_requests(1000)
@@ -123,9 +121,9 @@ fn run_until_done(io: &mut SimIo, s3: &mut S3, n: usize) -> Vec<Done> {
             );
             io.tick(true, &mut out).expect("simulation deadlock");
             while let Some(c) = out.pop() {
-                if c.token.0 == HEARTBEAT {
+                if c.token().get() == HEARTBEAT {
                     s3.tick(io);
-                    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                         .unwrap();
                 } else {
                     assert!(s3.on_completion(io, c), "unrouted completion {c:?}");

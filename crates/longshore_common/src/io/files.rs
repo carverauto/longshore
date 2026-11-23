@@ -7,23 +7,38 @@
 
 use crate::io::{Limits, Op, Token, EBADF, EBUSY, EINVAL};
 
+mod open_flags;
 mod validate;
 pub(crate) use validate::check_unix_path;
 
 /// Index into the fixed file table (`0..limits.files_max`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct FileSlot(pub u32);
+pub struct FileSlot(pub(crate) u32);
+
+impl FileSlot {
+    /// Fixed file slot `index`.
+    #[inline]
+    pub const fn new(index: u32) -> FileSlot {
+        FileSlot(index)
+    }
+
+    /// The slot's index in the fixed file table.
+    #[inline]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
 
 /// Portable open flags mapped to kernel values per platform and architecture.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OpenFlags {
-    pub read: bool,
-    pub write: bool,
-    pub create: bool,
-    pub exclusive: bool,
-    pub empty: bool,
-    pub direct: bool,
-    pub directory: bool,
+    pub(crate) read: bool,
+    pub(crate) write: bool,
+    pub(crate) create: bool,
+    pub(crate) exclusive: bool,
+    pub(crate) empty: bool,
+    pub(crate) direct: bool,
+    pub(crate) directory: bool,
 }
 
 /// Byte size of a Linux `struct statx` buffer.

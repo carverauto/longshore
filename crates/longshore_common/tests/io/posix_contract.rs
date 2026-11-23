@@ -15,13 +15,11 @@ use longshore_common::io::{
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const LIMITS: Limits = Limits {
-    sockets_max: 12,
-    buffers: 4,
-    buffer_size: 65536,
-    ops_max: 16,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(12)
+    .with_buffers(4)
+    .with_buffer_size(65536)
+    .with_ops_max(16);
 
 fn v4() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
@@ -37,7 +35,7 @@ fn drain_n(io: &mut PosixIo, out: &mut Completions, want: usize) -> Vec<(u64, i3
     while got.len() < want {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            got.push((c.token.0, c.result));
+            got.push((c.token().get(), c.result()));
         }
     }
     got
@@ -83,10 +81,10 @@ fn read_file_and_errno_translation() {
     let f = io.register_file(path.to_str().unwrap()).unwrap();
 
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::ReadFile {
             file: f,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 32,
         },
@@ -96,17 +94,17 @@ fn read_file_and_errno_translation() {
 
     std::fs::write(&path, b"posix-file-body").unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::ReadFile {
             file: f,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 32,
         },
     )
     .unwrap();
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(2, 15)]);
-    assert_eq!(&io.buf(BufId(0))[..15], b"posix-file-body");
+    assert_eq!(&io.buf(BufId::new(0))[..15], b"posix-file-body");
     // Best-effort cleanup: a leftover temporary file does not change the result.
     let _: Option<()> = std::fs::remove_file(&path).ok();
 
@@ -137,21 +135,21 @@ fn udp_connect_send_and_recv() {
     let mut out = Completions::new(4);
 
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::ConnectUdp {
-            sock: Sock(0),
+            sock: Sock::new(0),
             addr: srv_addr,
         },
     )
     .unwrap();
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(1, 0)]);
 
-    io.buf(BufId(0))[..4].copy_from_slice(b"ping");
+    io.buf(BufId::new(0))[..4].copy_from_slice(b"ping");
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Send {
-            sock: Sock(0),
-            buf: BufId(0),
+            sock: Sock::new(0),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -166,17 +164,17 @@ fn udp_connect_send_and_recv() {
     let _: usize = srv.send_to(b"pong", from).unwrap();
 
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Recv {
-            sock: Sock(0),
-            buf: BufId(1),
+            sock: Sock::new(0),
+            buf: BufId::new(1),
             off: 0,
             len: 16,
         },
     )
     .unwrap();
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(3, 4)]);
-    assert_eq!(&io.buf(BufId(1))[..4], b"pong");
+    assert_eq!(&io.buf(BufId::new(1))[..4], b"pong");
 }
 
 #[test]
@@ -188,49 +186,54 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
     let path = std::env::temp_dir().join(format!("longshore-posix-closed-{unique}.sock"));
     // A file left by an earlier run would get in the way; usually there is none.
     let _: Option<()> = std::fs::remove_file(&path).ok();
-    let limits = Limits {
-        accept_range_start: 2,
-        accept_range_len: 4,
-        ring_buffers: 2,
-        ring_buffer_size: 128,
-        ..LIMITS
-    };
+    let limits = LIMITS
+        .with_accept_range_start(2)
+        .with_accept_range_len(4)
+        .with_ring_buffers(2)
+        .with_ring_buffer_size(128);
     let mut io = PosixIo::new(limits).unwrap();
     let mut out = Completions::new(8);
-    io.listen_unix(Sock(0), path.to_str().unwrap()).unwrap();
+    io.listen_unix(Sock::new(0), path.to_str().unwrap())
+        .unwrap();
 
     let mut with_nul = path.to_str().unwrap().as_bytes().to_vec();
     with_nul.push(0);
-    io.buf(BufId(0))[..with_nul.len()].copy_from_slice(&with_nul);
+    io.buf(BufId::new(0))[..with_nul.len()].copy_from_slice(&with_nul);
 
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
+            sock: Sock::new(1),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: with_nul.len() as u32,
         },
     )
     .unwrap();
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(1, 0)]);
-    io.submit(Token(2), Op::Close { sock: Sock(1) }).unwrap();
+    io.submit(Token::new(2), Op::Close { sock: Sock::new(1) })
+        .unwrap();
     assert_eq!(drain_n(&mut io, &mut out, 1), vec![(2, 0)]);
 
-    io.submit(Token(3), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io.submit(
+        Token::new(3),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
     io.tick(true, &mut out).unwrap();
     let c = out.pop().expect("armed accept completion");
-    assert!(c.token.0 == 3 && c.result >= 0 && c.more, "{c:?}");
-    let accepted = Sock(u32::try_from(c.result).unwrap());
+    assert!(c.token().get() == 3 && c.result() >= 0 && c.more(), "{c:?}");
+    let accepted = Sock::new(u32::try_from(c.result()).unwrap());
 
     // Send on the accepted closed-peer socket must return negative errno without SIGPIPE.
-    io.buf(BufId(1))[..4].copy_from_slice(b"test");
+    io.buf(BufId::new(1))[..4].copy_from_slice(b"test");
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::Send {
             sock: accepted,
-            buf: BufId(1),
+            buf: BufId::new(1),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -240,10 +243,17 @@ fn unix_closed_peer_accept_and_send_no_sigpipe() {
     let send_res = drain_n(&mut io, &mut out, 1)[0].1;
     assert!(send_res < 0, "expected negative errno, got {send_res}");
 
-    io.submit(Token(5), Op::Close { sock: accepted }).unwrap();
-    io.submit(Token(6), Op::Cancel { target: Token(3) })
+    io.submit(Token::new(5), Op::Close { sock: accepted })
         .unwrap();
-    io.submit(Token(7), Op::Close { sock: Sock(0) }).unwrap();
+    io.submit(
+        Token::new(6),
+        Op::Cancel {
+            target: Token::new(3),
+        },
+    )
+    .unwrap();
+    io.submit(Token::new(7), Op::Close { sock: Sock::new(0) })
+        .unwrap();
     let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 4);
     // Best-effort cleanup: a leftover temporary file does not change the result.
     let _: Option<()> = std::fs::remove_file(&path).ok();

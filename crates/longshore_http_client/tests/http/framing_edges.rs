@@ -210,11 +210,9 @@ fn the_request_on_the_wire_is_exactly_this() {
 fn a_discarded_body_is_kept_intact_when_it_fits_beside_the_head() {
     let mut w = world(
         11,
-        Faults {
-            short_send: 300_000,
-            partial_recv: 300_000,
-            ..Faults::default()
-        },
+        Faults::NONE
+            .with_short_send(300_000)
+            .with_partial_recv(300_000),
     );
     for (i, body) in [1u32, 2, 300, 1500, 5000, 20_000].into_iter().enumerate() {
         w.server.script(Behavior::StatusWithBody(412, body));
@@ -248,12 +246,10 @@ fn a_discarded_body_is_kept_intact_when_it_fits_beside_the_head() {
 /// would not fit the server's buffer.
 #[test]
 fn tiny_chunks_decode_to_the_stored_bytes() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 400_000,
-        delay: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(400_000)
+        .with_delay(100_000);
     for seed in 0..8u64 {
         let mut w = world(seed, faults);
         let len = 2_000u32;

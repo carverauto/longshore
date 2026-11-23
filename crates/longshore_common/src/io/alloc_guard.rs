@@ -18,6 +18,11 @@ thread_local! {
     static SEALED: Cell<bool> = const { Cell::new(false) };
 }
 
+/// The global allocator that aborts on any heap use while [`sealed`].
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a unit struct has no fields to make private"
+)]
 pub struct Guard;
 
 extern "C" {

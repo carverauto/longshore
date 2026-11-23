@@ -7,20 +7,20 @@
 //! flight on [`SimIo`].
 
 use super::{ADDR, LIMITS};
-use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
+use longshore_common::io::{BufId, Completions, Io, Op, Sock, Token};
 use longshore_common::sim::{Faults, SimIo};
 use std::net::SocketAddr;
 
 /// Submits `ops`, ticks until each has completed; their sorted tokens and results.
 fn run(sim: &mut SimIo, out: &mut Completions, ops: &[(u64, Op)]) -> Vec<(u64, i32)> {
     for (t, op) in ops {
-        sim.submit(Token(*t), *op).unwrap();
+        sim.submit(Token::new(*t), *op).unwrap();
     }
     let mut seen = vec![];
     while seen.len() < ops.len() {
         sim.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            seen.push((c.token.0, c.result));
+            seen.push((c.token().get(), c.result()));
         }
     }
     seen.sort();
@@ -55,7 +55,7 @@ fn hello(client: Sock, server: Sock) -> [(u64, Op); 2] {
             7,
             Op::Send {
                 sock: client,
-                buf: BufId(0),
+                buf: BufId::new(0),
                 off: 0,
                 len: 5,
                 zero_copy: false,
@@ -65,7 +65,7 @@ fn hello(client: Sock, server: Sock) -> [(u64, Op); 2] {
             8,
             Op::Recv {
                 sock: server,
-                buf: BufId(1),
+                buf: BufId::new(1),
                 off: 0,
                 len: 16,
             },
@@ -77,16 +77,10 @@ fn hello(client: Sock, server: Sock) -> [(u64, Op); 2] {
 /// be paired with it must not be able to disturb the new one.
 #[test]
 fn a_stale_peer_cannot_disturb_a_reused_slot() {
-    let mut io = SimIo::new(
-        Limits {
-            sockets_max: 5,
-            ..LIMITS
-        },
-        11,
-        Faults::default(),
-    );
+    let mut io = SimIo::new(LIMITS.with_sockets_max(5), 11, Faults::default());
     let mut out = Completions::new(8);
-    let (listener, client, old_server, new_server) = (Sock(0), Sock(1), Sock(2), Sock(3));
+    let (listener, client, old_server, new_server) =
+        (Sock::new(0), Sock::new(1), Sock::new(2), Sock::new(3));
     let _: SocketAddr = io.listen(listener, ADDR).unwrap();
     let old = accept_connect(listener, old_server, client, 1);
     let _: Vec<(u64, i32)> = run(&mut io, &mut out, &old);
@@ -97,14 +91,14 @@ fn a_stale_peer_cannot_disturb_a_reused_slot() {
     // Only now does the old server-side socket close.
     let close_old = [(6, Op::Close { sock: old_server })];
     let _: Vec<(u64, i32)> = run(&mut io, &mut out, &close_old);
-    io.buf(BufId(0))[..5].copy_from_slice(b"hello");
+    io.buf(BufId::new(0))[..5].copy_from_slice(b"hello");
     let r = run(&mut io, &mut out, &hello(client, new_server));
     assert_eq!(
         r,
         [(7, 5), (8, 5)],
         "the new connection must be unaffected by the old peer closing"
     );
-    assert_eq!(&io.buf(BufId(1))[..5], b"hello");
+    assert_eq!(&io.buf(BufId::new(1))[..5], b"hello");
 }
 
 /// A connect that the far end has accepted but that has not yet been reported
@@ -112,14 +106,15 @@ fn a_stale_peer_cannot_disturb_a_reused_slot() {
 /// over on the now free slot and succeed through a later accept.
 #[test]
 fn close_ends_an_accepted_connect_not_yet_reported() {
-    let (listener, client, server, later) = (Sock(0), Sock(1), Sock(2), Sock(3));
+    let (listener, client, server, later) =
+        (Sock::new(0), Sock::new(1), Sock::new(2), Sock::new(3));
     let mut hit = 0;
     for seed in 0..200u64 {
         let mut io = SimIo::new(LIMITS, seed, Faults::default());
         let mut out = Completions::new(8);
         let _: SocketAddr = io.listen(listener, ADDR).unwrap();
         io.submit(
-            Token(1),
+            Token::new(1),
             Op::Connect {
                 sock: client,
                 addr: ADDR,
@@ -127,7 +122,7 @@ fn close_ends_an_accepted_connect_not_yet_reported() {
         )
         .unwrap();
         io.submit(
-            Token(2),
+            Token::new(2),
             Op::Accept {
                 listener,
                 sock: server,
@@ -138,16 +133,17 @@ fn close_ends_an_accepted_connect_not_yet_reported() {
         while !seen.iter().any(|&(t, _)| t == 2) {
             io.tick(true, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                seen.push((c.token.0, c.result));
+                seen.push((c.token().get(), c.result()));
             }
         }
         if seen.iter().any(|&(t, _)| t == 1) {
             continue; // the connect was reported in the same pass
         }
         hit += 1;
-        io.submit(Token(3), Op::Close { sock: client }).unwrap();
+        io.submit(Token::new(3), Op::Close { sock: client })
+            .unwrap();
         io.submit(
-            Token(4),
+            Token::new(4),
             Op::Accept {
                 listener,
                 sock: later,
@@ -157,7 +153,7 @@ fn close_ends_an_accepted_connect_not_yet_reported() {
         for _ in 0..50 {
             io.tick(false, &mut out).unwrap();
             while let Some(c) = out.pop() {
-                seen.push((c.token.0, c.result));
+                seen.push((c.token().get(), c.result()));
             }
         }
         let connect = seen.iter().find(|&&(t, _)| t == 1).map(|&(_, r)| r);

@@ -20,9 +20,9 @@ pub enum EchoError {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct EchoStats {
-    pub sends: u64,
-    pub recvs: u64,
-    pub ticks: u64,
+    pub(crate) sends: u64,
+    pub(crate) recvs: u64,
+    pub(crate) ticks: u64,
 }
 
 const LISTENER: Sock = Sock(0);
@@ -241,4 +241,24 @@ fn fill<IO: Io>(io: &mut IO, sent: u64, total: u64, chunk: u32) -> u32 {
         *b = pattern(sent + k as u64);
     }
     n
+}
+
+impl EchoStats {
+    /// Sends the client submitted.
+    #[inline]
+    pub const fn sends(self) -> u64 {
+        self.sends
+    }
+
+    /// Receives the client submitted.
+    #[inline]
+    pub const fn recvs(self) -> u64 {
+        self.recvs
+    }
+
+    /// Ticks the run took.
+    #[inline]
+    pub const fn ticks(self) -> u64 {
+        self.ticks
+    }
 }

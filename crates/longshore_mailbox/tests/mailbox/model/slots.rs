@@ -22,7 +22,7 @@ fn slots_two_waiters_on_one_slot() {
             capacity: 1,
             slots: 1,
             waiters_prealloc: 2,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         };
         let (tx1, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let tx2 = tx1.clone();
@@ -46,7 +46,7 @@ fn slots_future_and_blocking_caller() {
             capacity: 1,
             slots: 1,
             waiters_prealloc: 2,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         };
         let (tx1, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let tx2 = tx1.clone();
@@ -70,7 +70,7 @@ fn slots_detach_frees_slot_before_returning_tag() {
             capacity: 1,
             slots: 1,
             waiters_prealloc: 2,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         };
         let (tx1, mut rx) = mailbox_parked::<(u32, u32), u32>(cfg);
         let tx2 = tx1.clone();
@@ -132,7 +132,7 @@ fn slots_close_answers_first_then_unanswered_without_overwriting() {
             capacity: 4,
             slots: 4,
             waiters_prealloc: 4,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         };
         let (tx1, mut rx) = mailbox_parked::<(u32, u32), Result<u32, ()>>(cfg);
         let tx2 = tx1.clone();
@@ -201,7 +201,7 @@ fn slots_poll_many_races_give_and_stop() {
             capacity: 1,
             slots: 1,
             waiters_prealloc: 2,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         };
         let (tx0, mut rx0) = mailbox_parked::<u32, u32>(cfg);
         let (tx1, mut rx1) = mailbox_parked::<u32, u32>(cfg);
@@ -264,7 +264,7 @@ fn slots_poll_one_races_stop_and_give() {
             capacity: 1,
             slots: 1,
             waiters_prealloc: 2,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         };
         let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let mut cx = Context::from_waker(Waker::noop());
@@ -302,7 +302,7 @@ fn slots_call_future_drop_detach_races_answer_and_close() {
             capacity: 1,
             slots: 1,
             waiters_prealloc: 2,
-            wake_token: Token(1),
+            wake_token: Token::new(1),
         };
         let (tx, mut rx) = mailbox_parked::<u32, u32>(cfg);
         let tx2 = tx.clone();

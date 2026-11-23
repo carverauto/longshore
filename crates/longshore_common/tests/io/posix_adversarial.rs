@@ -23,26 +23,29 @@ mod files_udp;
 static ALLOC: Guard = Guard;
 
 /// Eight sockets, two of them for accepted connections, and two small buffers.
-const ARMED_LIMITS: Limits = Limits {
-    sockets_max: 8,
-    accept_range_start: 4,
-    accept_range_len: 2,
-    buffers: 2,
-    buffer_size: 256,
-    ops_max: 8,
-    ..Limits::BASE
-};
+const ARMED_LIMITS: Limits = Limits::BASE
+    .with_sockets_max(8)
+    .with_accept_range_start(4)
+    .with_accept_range_len(2)
+    .with_buffers(2)
+    .with_buffer_size(256)
+    .with_ops_max(8);
 
 /// Arms an accept on Sock(0) as token 1 and connects Sock(1) to it as token
 /// 2; the accepted socket.
 #[cfg(test)]
 fn armed_accept_and_connect(io: &mut PosixIo, out: &mut Completions, addr: SocketAddr) -> Sock {
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
     io.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -52,10 +55,10 @@ fn armed_accept_and_connect(io: &mut PosixIo, out: &mut Completions, addr: Socke
     while srv_armed.is_none() || !cli_ok {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(1) {
-                srv_armed = Some(Sock(u32::try_from(c.result).unwrap()));
-            } else if c.token == Token(2) {
-                assert_eq!(c.result, 0);
+            if c.token().get() == 1 {
+                srv_armed = Some(Sock::new(u32::try_from(c.result()).unwrap()));
+            } else if c.token().get() == 2 {
+                assert_eq!(c.result(), 0);
                 cli_ok = true;
             }
         }
@@ -66,15 +69,20 @@ fn armed_accept_and_connect(io: &mut PosixIo, out: &mut Completions, addr: Socke
 /// Cancels the armed accept (token 1) and waits for its final completion.
 #[cfg(test)]
 fn disarm_accept(io: &mut PosixIo, out: &mut Completions) {
-    io.submit(Token(10), Op::Cancel { target: Token(1) })
-        .unwrap();
+    io.submit(
+        Token::new(10),
+        Op::Cancel {
+            target: Token::new(1),
+        },
+    )
+    .unwrap();
     let (mut c1, mut c10) = (false, false);
     while !c1 || !c10 {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(1) && !c.more {
+            if c.token().get() == 1 && !c.more() {
                 c1 = true;
-            } else if c.token == Token(10) {
+            } else if c.token().get() == 10 {
                 c10 = true;
             }
         }
@@ -85,17 +93,17 @@ fn disarm_accept(io: &mut PosixIo, out: &mut Completions) {
 #[cfg(test)]
 fn accept_and_connect(io: &mut PosixIo, out: &mut Completions, addr: SocketAddr) {
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::Connect {
-            sock: Sock(3),
+            sock: Sock::new(3),
             addr,
         },
     )
@@ -104,11 +112,11 @@ fn accept_and_connect(io: &mut PosixIo, out: &mut Completions, addr: SocketAddr)
     while !acc_ok || !cli2_ok {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(3) {
-                assert_eq!(c.result, 0);
+            if c.token().get() == 3 {
+                assert_eq!(c.result(), 0);
                 acc_ok = true;
-            } else if c.token == Token(4) {
-                assert_eq!(c.result, 0);
+            } else if c.token().get() == 4 {
+                assert_eq!(c.result(), 0);
                 cli2_ok = true;
             }
         }
@@ -121,12 +129,14 @@ fn posix_tcp_options_inherited_and_verified_via_getsockopt() {
     io.no_delay(true);
     io.keep_alive(true);
     let mut out = Completions::new(8);
-    let addr = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = io
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
+        .unwrap();
 
     // Verify ArmedAccept path inherits options.
     let srv_armed = armed_accept_and_connect(&mut io, &mut out, addr);
-    assert_eq!(io.tcp_options(Sock(0)).unwrap(), (true, true));
-    assert_eq!(io.tcp_options(Sock(1)).unwrap(), (true, true));
+    assert_eq!(io.tcp_options(Sock::new(0)).unwrap(), (true, true));
+    assert_eq!(io.tcp_options(Sock::new(1)).unwrap(), (true, true));
     assert_eq!(io.tcp_options(srv_armed).unwrap(), (true, true));
 
     // Disarm ArmedAccept before testing plain Op::Accept on the same listener.
@@ -134,19 +144,24 @@ fn posix_tcp_options_inherited_and_verified_via_getsockopt() {
 
     // Also verify plain Op::Accept inherits options.
     accept_and_connect(&mut io, &mut out, addr);
-    assert_eq!(io.tcp_options(Sock(2)).unwrap(), (true, true));
-    assert_eq!(io.tcp_options(Sock(3)).unwrap(), (true, true));
+    assert_eq!(io.tcp_options(Sock::new(2)).unwrap(), (true, true));
+    assert_eq!(io.tcp_options(Sock::new(3)).unwrap(), (true, true));
 }
 
 /// Like `armed_accept_and_connect`, without checking the connect's result.
 #[cfg(test)]
 fn armed_accept_of_a_connect(io: &mut PosixIo, out: &mut Completions, addr: SocketAddr) -> Sock {
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
     io.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -155,10 +170,10 @@ fn armed_accept_of_a_connect(io: &mut PosixIo, out: &mut Completions, addr: Sock
     while srv.is_none() || !cli_ok {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(1) {
-                srv = Some(Sock(u32::try_from(c.result).unwrap()));
+            if c.token().get() == 1 {
+                srv = Some(Sock::new(u32::try_from(c.result()).unwrap()));
             }
-            if c.token == Token(2) {
+            if c.token().get() == 2 {
                 cli_ok = true;
             }
         }
@@ -170,13 +185,14 @@ fn armed_accept_of_a_connect(io: &mut PosixIo, out: &mut Completions, addr: Sock
 /// 4); the ring buffer the recv landed in.
 #[cfg(test)]
 fn armed_recv_ping(io: &mut PosixIo, out: &mut Completions, srv: Sock) -> BufId {
-    io.submit(Token(3), Op::ArmedRecv { sock: srv }).unwrap();
-    io.buf(BufId(0))[..4].copy_from_slice(b"ping");
+    io.submit(Token::new(3), Op::ArmedRecv { sock: srv })
+        .unwrap();
+    io.buf(BufId::new(0))[..4].copy_from_slice(b"ping");
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -187,8 +203,8 @@ fn armed_recv_ping(io: &mut PosixIo, out: &mut Completions, srv: Sock) -> BufId 
     while got_buf.is_none() {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(3) {
-                got_buf = c.buf;
+            if c.token().get() == 3 {
+                got_buf = c.buf();
             }
         }
     }
@@ -199,15 +215,16 @@ fn armed_recv_ping(io: &mut PosixIo, out: &mut Completions, srv: Sock) -> BufId 
 /// cancelled, both closes succeed.
 #[cfg(test)]
 fn close_ends_armed_ops(io: &mut PosixIo, out: &mut Completions, srv: Sock) {
-    io.submit(Token(5), Op::Close { sock: srv }).unwrap();
-    io.submit(Token(6), Op::Close { sock: Sock(0) }).unwrap();
+    io.submit(Token::new(5), Op::Close { sock: srv }).unwrap();
+    io.submit(Token::new(6), Op::Close { sock: Sock::new(0) })
+        .unwrap();
     let mut closed = [0i32; 6];
     let mut seen = 0usize;
     while seen < 4 {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            closed[(c.token.0 - 1) as usize] = c.result;
-            assert!(!c.more);
+            closed[(c.token().get() - 1) as usize] = c.result();
+            assert!(!c.more());
             seen += 1;
         }
     }
@@ -219,14 +236,12 @@ fn close_ends_armed_ops(io: &mut PosixIo, out: &mut Completions, srv: Sock) {
 
 #[test]
 fn posix_sealed_armed_accept_recv_give_back_and_close_cap1() {
-    let mut io = PosixIo::new(Limits {
-        ring_buffers: 2,
-        ring_buffer_size: 128,
-        ..ARMED_LIMITS
-    })
-    .unwrap();
+    let mut io =
+        PosixIo::new(ARMED_LIMITS.with_ring_buffers(2).with_ring_buffer_size(128)).unwrap();
     let mut out = Completions::new(1);
-    let addr = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = io
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
+        .unwrap();
 
     sealed(|| {
         let srv = armed_accept_of_a_connect(&mut io, &mut out, addr);
@@ -238,29 +253,24 @@ fn posix_sealed_armed_accept_recv_give_back_and_close_cap1() {
 
 #[test]
 fn posix_huge_timeout_does_not_fail_kevent_with_einval() {
-    let mut io = PosixIo::new(Limits {
-        sockets_max: 2,
-        ops_max: 4,
-        ..Limits::BASE
-    })
-    .unwrap();
+    let mut io = PosixIo::new(Limits::BASE.with_sockets_max(2).with_ops_max(4)).unwrap();
     let mut out = Completions::new(4);
     let waker = io.waker().unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Timeout {
             nanos: u64::MAX / 2,
         },
     )
     .unwrap();
-    io.submit(Token(2), Op::AwaitWake).unwrap();
+    io.submit(Token::new(2), Op::AwaitWake).unwrap();
     let h = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(10));
         waker.wake();
     });
     io.tick(true, &mut out).unwrap();
     h.join().unwrap();
-    assert_eq!(out.pop().unwrap().token, Token(2));
+    assert_eq!(out.pop().unwrap().token(), Token::new(2));
 }
 
 /// Connects `sock` to the Unix socket whose NUL-terminated path, `path_len`
@@ -269,7 +279,7 @@ fn posix_huge_timeout_does_not_fail_kevent_with_einval() {
 fn connect_unix(sock: Sock, path_len: usize) -> Op {
     Op::ConnectUnix {
         sock,
-        path_buf: BufId(0),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len: path_len as u32,
     }
@@ -282,7 +292,7 @@ fn armed_accept_fails_with_enfile(io: &mut PosixIo, out: &mut Completions) -> bo
     for _ in 0..50 {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(10) && c.result == -ENFILE {
+            if c.token().get() == 10 && c.result() == -ENFILE {
                 got_enfile = true;
             }
         }
@@ -298,48 +308,58 @@ fn armed_accept_fails_with_enfile(io: &mut PosixIo, out: &mut Completions) -> bo
 /// failure ignored cleanly).
 #[cfg(test)]
 fn unix_armed_accept_range_full(path_str: &str, out: &mut Completions) {
-    let mut io2 = PosixIo::new(Limits {
-        sockets_max: 4,
-        accept_range_start: 2,
-        accept_range_len: 1,
-        buffers: 2,
-        buffer_size: 256,
-        ops_max: 8,
-        ..Limits::BASE
-    })
+    let mut io2 = PosixIo::new(
+        Limits::BASE
+            .with_sockets_max(4)
+            .with_accept_range_start(2)
+            .with_accept_range_len(1)
+            .with_buffers(2)
+            .with_buffer_size(256)
+            .with_ops_max(8),
+    )
     .unwrap();
-    io2.listen_unix(Sock(0), path_str).unwrap();
-    io2.submit(Token(10), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io2.listen_unix(Sock::new(0), path_str).unwrap();
+    io2.submit(
+        Token::new(10),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
     let mut p = path_str.as_bytes().to_vec();
     p.push(0);
-    io2.buf(BufId(0))[..p.len()].copy_from_slice(&p);
-    io2.submit(Token(11), connect_unix(Sock(1), p.len()))
+    io2.buf(BufId::new(0))[..p.len()].copy_from_slice(&p);
+    io2.submit(Token::new(11), connect_unix(Sock::new(1), p.len()))
         .unwrap();
-    io2.submit(Token(12), connect_unix(Sock(3), p.len()))
+    io2.submit(Token::new(12), connect_unix(Sock::new(3), p.len()))
         .unwrap();
     assert!(armed_accept_fails_with_enfile(&mut io2, out));
 }
 
 #[test]
 fn posix_armed_zero_limits_and_unix_armed_range_full_enfile() {
-    let mut io = PosixIo::new(Limits {
-        sockets_max: 4,
-        buffers: 1,
-        buffer_size: 256,
-        ops_max: 4,
-        ..Limits::BASE
-    })
+    let mut io = PosixIo::new(
+        Limits::BASE
+            .with_sockets_max(4)
+            .with_buffers(1)
+            .with_buffer_size(256)
+            .with_ops_max(4),
+    )
     .unwrap();
     let mut out = Completions::new(4);
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
-    io.submit(Token(2), Op::ArmedRecv { sock: Sock(0) })
+    io.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    io.submit(Token::new(2), Op::ArmedRecv { sock: Sock::new(0) })
         .unwrap();
     io.tick(false, &mut out).unwrap();
     let mut res = Vec::new();
     while let Some(c) = out.pop() {
-        res.push((c.token.0, c.result));
+        res.push((c.token().get(), c.result()));
     }
     res.sort();
     assert_eq!(res, vec![(1, -ENFILE), (2, -ENOBUFS)]);

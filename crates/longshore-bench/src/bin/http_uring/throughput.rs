@@ -77,7 +77,7 @@ impl Load<'_> {
     /// Start the request on connection `i`, with body or response buffer `i`.
     fn start(&self, http: &mut Client, ring: &mut UringIo, i: u32) -> Result<(), Error> {
         let (put, size, host) = (self.put, self.size, self.host);
-        let body = BufId(i);
+        let body = BufId::new(i);
         let link = i as usize % self.addrs.len();
         let (addr, host_id) = (self.addrs[link], link as u16);
         // With --crc every PUT is checksummed the way a store would be asked
@@ -133,9 +133,9 @@ fn measure(
         while io.now_ns() < deadline {
             io.tick(true, out).or_die("tick");
             while let Some(c) = out.pop() {
-                if c.token.0 == HEARTBEAT {
+                if c.token().get() == HEARTBEAT {
                     client.tick(io);
-                    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
+                    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
                         .or_die("submit");
                     continue;
                 }
@@ -172,17 +172,15 @@ pub(super) fn bench(a: &Args, put: bool) {
     let n = a.conns;
     // Large buffers: one body buffer per connection, then two record
     // buffers per connection for TLS. Small buffers: one head per connection.
-    let limits = Limits {
-        sockets_max: n,
-        buffers: n * 3,
-        buffer_size: a.size.max(256 * 1024),
-        small_buffers: n,
-        small_buffer_size: 4096,
-        ops_max: n * 3 + 1,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(n)
+        .with_buffers(n * 3)
+        .with_buffer_size(a.size.max(256 * 1024))
+        .with_small_buffers(n)
+        .with_small_buffer_size(4096)
+        .with_ops_max(n * 3 + 1);
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
-    let cfg = client_cfg(n, limits.buffer_size, 0, limits.small(0).0)
+    let cfg = client_cfg(n, limits.buffer_size(), 0, limits.small(0).get())
         .tls_batch(a.batch)
         .build()
         .or_die("the client configuration");
@@ -209,7 +207,7 @@ pub(super) fn bench(a: &Args, put: bool) {
     // A peer that closes after a response leaves its slot Closing until the
     // close completes, so a restart can see Busy; retry it after the next tick.
     let mut waiting = vec![false; n as usize];
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
         .or_die("submit");
 
     let deadline = io.now_ns() + a.secs * 1000 * MS;

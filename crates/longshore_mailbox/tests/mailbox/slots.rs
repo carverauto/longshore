@@ -113,7 +113,7 @@ fn call_future_await_wait_and_detach_tag_order() {
         capacity: 4,
         slots: 2,
         waiters_prealloc: 4,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     };
     let (tx, mut rx) = mailbox_parked::<(u32, u32), Result<u32, ()>>(cfg);
 

@@ -15,16 +15,15 @@ use longshore_common::io::posix::errno::linux::ENOENT;
 use longshore_common::io::{Completions, FileSlot};
 use longshore_common::sim::{DiskConfig, Faults, SimIo};
 
-const CFG: DiskConfig = DiskConfig {
-    max_files: 8,
-    max_dirs: 4,
-    max_bytes_per_file: 16 * 1024,
-    max_name_len: 128,
-    write_log_entries: 16,
-    write_log_bytes: 16 * 1024,
-    read_error_sectors: 8,
-    sector_size: 512,
-};
+const CFG: DiskConfig = DiskConfig::BASE
+    .with_max_files(8)
+    .with_max_dirs(4)
+    .with_max_bytes_per_file(16 * 1024)
+    .with_max_name_len(128)
+    .with_write_log_entries(16)
+    .with_write_log_bytes(16 * 1024)
+    .with_read_error_sectors(8)
+    .with_sector_size(512);
 
 fn sim_with(seed: u64) -> SimIo {
     let mut sim = SimIo::new(base_limits(), seed, Faults::default());
@@ -90,7 +89,7 @@ fn cross_dir_rename_of_poisoned_nonempty_dir(sim: &mut SimIo, out: &mut Completi
     assert_open_reads(sim, out, 230, "/d2/sub/keep", 0x55);
     assert_missing(sim, out, 232, "/d2/sub/lost");
     assert_eq!(
-        open_path(sim, out, 233, FileSlot(1), "/d1/sub", dir_open()),
+        open_path(sim, out, 233, FileSlot::new(1), "/d1/sub", dir_open()),
         -ENOENT
     );
 }

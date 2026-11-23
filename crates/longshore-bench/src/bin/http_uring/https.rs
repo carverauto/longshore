@@ -21,9 +21,9 @@ fn exchange(
     let result = sealed(|| loop {
         io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
-            if c.token.0 == HEARTBEAT {
+            if c.token().get() == HEARTBEAT {
                 client.tick(io);
-                io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
+                io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
                     .or_die("submit");
                 continue;
             }
@@ -31,7 +31,11 @@ fn exchange(
             if trace {
                 // Tracing allocates; it is a debugging aid only.
                 longshore::io::alloc_guard::allow_alloc(|| {
-                    eprintln!("completion token={:#x} result={}", c.token.0, c.result)
+                    eprintln!(
+                        "completion token={:#x} result={}",
+                        c.token().get(),
+                        c.result()
+                    )
                 });
             }
             if let Handled::Done(d) = client.on_completion(io, c) {
@@ -50,13 +54,13 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
             .unwrap_or_else(|_| die("IPV4 must be an address")),
         443,
     );
-    let mut io = UringIo::new(Limits {
-        sockets_max: 1,
-        buffers: 4,
-        buffer_size: SIZE,
-        ops_max: 8,
-        ..Limits::BASE
-    })
+    let mut io = UringIo::new(
+        Limits::BASE
+            .with_sockets_max(1)
+            .with_buffers(4)
+            .with_buffer_size(SIZE)
+            .with_ops_max(8),
+    )
     .unwrap_or_else(|e| die(e));
     let cfg = client_cfg(1, SIZE, 0, 0)
         .request_timeout_ns(10_000 * MS)
@@ -68,11 +72,11 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
         1,
     );
     let mut out = Completions::new(16);
-    let req = Request::new("GET", path, host, 0, addr).with_response_buf(Some(BufId(3)));
+    let req = Request::new("GET", path, host, 0, addr).with_response_buf(Some(BufId::new(3)));
     client
         .start(&mut io, 1, &req)
         .unwrap_or_else(|e| die(format_args!("start: {e:?}")));
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 100 * MS })
         .or_die("submit");
     let t0 = io.now_ns();
     // Read before sealing: looking up an environment variable allocates.
@@ -82,7 +86,8 @@ pub(super) fn https(host: &str, ip: &str, path: &str) {
     match result {
         Ok(r) => {
             let n = (r.body_len() as usize).min(120);
-            let body = String::from_utf8_lossy(&io.buf(BufId(3))[..n]).replace(['\n', '\r'], " ");
+            let body =
+                String::from_utf8_lossy(&io.buf(BufId::new(3))[..n]).replace(['\n', '\r'], " ");
             println!("https://{host}{path} -> {} ({} bytes) in {ms} ms, {completions} completions: {body}", r.status(), r.body_len());
         }
         Err(e) => {

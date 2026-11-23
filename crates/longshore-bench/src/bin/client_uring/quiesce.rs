@@ -44,15 +44,13 @@ pub fn check(loopback: IpAddr) {
 /// Connect `SOCKS` sockets to `peer`, leave a receive and a timer on each,
 /// a connect to nowhere and the wake-up read in flight, and quiesce.
 fn one_round(round: u32, peer: SocketAddr, round_accepted: &Receiver<()>) {
-    let limits = Limits {
-        sockets_max: SOCKS + 1,
-        buffers: 1,
-        buffer_size: 8192,
-        small_buffers: SOCKS,
-        small_buffer_size: 64,
-        ops_max: 2 * SOCKS + 2,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(SOCKS + 1)
+        .with_buffers(1)
+        .with_buffer_size(8192)
+        .with_small_buffers(SOCKS)
+        .with_small_buffer_size(64)
+        .with_ops_max(2 * SOCKS + 2);
     let mut io = UringIo::new(limits).or_die("ring");
     let _wake = io.waker().or_die("waker");
     let mut out = Completions::new(SOCKS as usize);
@@ -63,8 +61,8 @@ fn one_round(round: u32, peer: SocketAddr, round_accepted: &Receiver<()>) {
     // A host with no route at all refuses the connect at once.
     while let Some(c) = out.pop() {
         assert_eq!(
-            c.token,
-            Token(9998),
+            c.token(),
+            Token::new(9998),
             "round {round}: an idle operation ended early"
         );
     }
@@ -85,16 +83,16 @@ fn one_round(round: u32, peer: SocketAddr, round_accepted: &Receiver<()>) {
 fn connect_all(io: &mut UringIo, peer: SocketAddr, out: &mut Completions) {
     for n in 0..SOCKS {
         let to = Op::Connect {
-            sock: Sock(n),
+            sock: Sock::new(n),
             addr: peer,
         };
-        io.submit(Token(u64::from(n)), to).or_die("submit");
+        io.submit(Token::new(u64::from(n)), to).or_die("submit");
     }
     let mut connected = 0;
     while connected < SOCKS {
         io.tick(true, out).or_die("connect");
         while let Some(c) = out.pop() {
-            assert!(c.result >= 0, "connect failed: {}", c.result);
+            assert!(c.result() >= 0, "connect failed: {}", c.result());
             connected += 1;
         }
     }
@@ -104,28 +102,30 @@ fn connect_all(io: &mut UringIo, peer: SocketAddr, out: &mut Completions) {
 /// that waits, and the wake-up read.
 fn arm_idle(io: &mut UringIo, limits: Limits) {
     for n in 0..SOCKS {
-        let (sock, buf) = (Sock(n), limits.small(n));
+        let (sock, buf) = (Sock::new(n), limits.small(n));
         let recv = Op::Recv {
             sock,
             buf,
             off: 0,
             len: 64,
         };
-        io.submit(Token(1000 + u64::from(n)), recv).or_die("submit");
+        io.submit(Token::new(1000 + u64::from(n)), recv)
+            .or_die("submit");
         let hour = Op::Timeout {
             nanos: 3_600 * 1_000_000_000,
         };
-        io.submit(Token(2000 + u64::from(n)), hour).or_die("submit");
+        io.submit(Token::new(2000 + u64::from(n)), hour)
+            .or_die("submit");
     }
     // TEST-NET-1: routed nowhere, so the connect waits.
     let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
     io.submit(
-        Token(9998),
+        Token::new(9998),
         Op::Connect {
-            sock: Sock(SOCKS),
+            sock: Sock::new(SOCKS),
             addr: nowhere,
         },
     )
     .or_die("submit");
-    io.submit(Token(9999), Op::AwaitWake).or_die("submit");
+    io.submit(Token::new(9999), Op::AwaitWake).or_die("submit");
 }

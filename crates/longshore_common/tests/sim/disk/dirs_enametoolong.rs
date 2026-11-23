@@ -18,45 +18,79 @@ use longshore_common::io::{BufId, Completions, FileSlot, Io, Op};
 use longshore_common::sim::{DiskConfig, Faults, SimIo};
 
 fn create_write_sync_close(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str, byte: u8) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, rw_create()), 0);
-    assert_eq!(write_fill(sim, out, tok + 1, FileSlot(0), 0, 16, byte), 16);
-    assert_eq!(sync_slot(sim, out, tok + 2, FileSlot(0)), 0);
     assert_eq!(
-        drive(sim, out, tok + 3, Op::FileClose { slot: FileSlot(0) }),
+        open_path(sim, out, tok, FileSlot::new(0), path, rw_create()),
+        0
+    );
+    assert_eq!(
+        write_fill(sim, out, tok + 1, FileSlot::new(0), 0, 16, byte),
+        16
+    );
+    assert_eq!(sync_slot(sim, out, tok + 2, FileSlot::new(0)), 0);
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok + 3,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
 }
 
 fn assert_file_byte(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str, byte: u8) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, rw_open()), 0);
-    assert_eq!(read_at(sim, out, tok + 1, FileSlot(0), 0, 16), 16);
-    assert!(sim.buf(BufId(2))[..16].iter().all(|&b| b == byte));
     assert_eq!(
-        drive(sim, out, tok + 2, Op::FileClose { slot: FileSlot(0) }),
+        open_path(sim, out, tok, FileSlot::new(0), path, rw_open()),
+        0
+    );
+    assert_eq!(read_at(sim, out, tok + 1, FileSlot::new(0), 0, 16), 16);
+    assert!(sim.buf(BufId::new(2))[..16].iter().all(|&b| b == byte));
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok + 2,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
 }
 
 fn assert_dir_exists(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, dir_open()), 0);
     assert_eq!(
-        drive(sim, out, tok + 1, Op::FileClose { slot: FileSlot(0) }),
+        open_path(sim, out, tok, FileSlot::new(0), path, dir_open()),
+        0
+    );
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok + 1,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
 }
 
 fn setup_enametoolong_sim(seed: u64, max_name_len: usize, max_files: u32) -> SimIo {
     let mut sim = SimIo::new(base_limits(), seed, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files,
-        max_dirs: 4,
-        max_bytes_per_file: 4096,
-        max_name_len,
-        write_log_entries: 8,
-        write_log_bytes: 4096,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(max_files)
+            .with_max_dirs(4)
+            .with_max_bytes_per_file(4096)
+            .with_max_name_len(max_name_len)
+            .with_write_log_entries(8)
+            .with_write_log_bytes(4096)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
     sim
 }
 
@@ -82,14 +116,14 @@ fn zero_fault_unlink_long_child_then_rename_dir_and_sync_survives_power_loss() {
                 &mut sim,
                 &mut out,
                 75,
-                FileSlot(1),
+                FileSlot::new(1),
                 "/longdir/1234567890123",
                 rw_open(),
             ),
             -ENAMETOOLONG
         );
         assert_eq!(
-            open_path(&mut sim, &mut out, 76, FileSlot(1), "/d", dir_open()),
+            open_path(&mut sim, &mut out, 76, FileSlot::new(1), "/d", dir_open()),
             -ENOENT
         );
         assert_eq!(
@@ -97,14 +131,21 @@ fn zero_fault_unlink_long_child_then_rename_dir_and_sync_survives_power_loss() {
                 &mut sim,
                 &mut out,
                 77,
-                FileSlot(1),
+                FileSlot::new(1),
                 "/longdir/new",
                 rw_create(),
             ),
             0
         );
         assert_eq!(
-            drive(&mut sim, &mut out, 78, Op::FileClose { slot: FileSlot(1) }),
+            drive(
+                &mut sim,
+                &mut out,
+                78,
+                Op::FileClose {
+                    slot: FileSlot::new(1)
+                }
+            ),
             0
         );
     });
@@ -176,6 +217,7 @@ fn zero_fault_nested_subdir_long_child_unlink_or_rename_then_rename_dir_survives
 
 #[test]
 fn poisoned_or_unsynced_unlink_long_child_then_rename_dir_and_sync_root_survives() {
+    const SLOT_1: FileSlot = FileSlot::new(1);
     let mut sim = setup_enametoolong_sim(113, 16, 2);
     let mut out = Completions::new(16);
     sealed(|| {
@@ -196,11 +238,11 @@ fn poisoned_or_unsynced_unlink_long_child_then_rename_dir_and_sync_root_survives
         assert_file_byte(&mut sim, &mut out, 85, "/longdir/keep", 0xAB);
         // Dropped over-long child's inode and data_used slot (max_files = 2) must be freed.
         assert_eq!(
-            open_path(&mut sim, &mut out, 90, FileSlot(1), "/new", rw_create()),
+            open_path(&mut sim, &mut out, 90, SLOT_1, "/new", rw_create()),
             0
         );
         assert_eq!(
-            drive(&mut sim, &mut out, 91, Op::FileClose { slot: FileSlot(1) }),
+            drive(&mut sim, &mut out, 91, Op::FileClose { slot: SLOT_1 }),
             0
         );
     });
@@ -221,11 +263,11 @@ fn poisoned_or_unsynced_unlink_long_child_then_rename_dir_and_sync_root_survives
 
             assert_dir_exists(&mut sim, &mut out, 60, "/longdir");
             assert_eq!(
-                open_path(&mut sim, &mut out, 70, FileSlot(1), "/new", rw_create()),
+                open_path(&mut sim, &mut out, 70, SLOT_1, "/new", rw_create()),
                 0
             );
             assert_eq!(
-                drive(&mut sim, &mut out, 71, Op::FileClose { slot: FileSlot(1) }),
+                drive(&mut sim, &mut out, 71, Op::FileClose { slot: SLOT_1 }),
                 0
             );
         });
@@ -235,16 +277,17 @@ fn poisoned_or_unsynced_unlink_long_child_then_rename_dir_and_sync_root_survives
 #[test]
 fn evict_one_dir_change_else_branch_reclaims_parent_dir_inode() {
     let mut sim = SimIo::new(base_limits(), 127, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 1,
-        max_dirs: 2,
-        max_bytes_per_file: 4096,
-        max_name_len: 64,
-        write_log_entries: 8,
-        write_log_bytes: 4096,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(1)
+            .with_max_dirs(2)
+            .with_max_bytes_per_file(4096)
+            .with_max_name_len(64)
+            .with_write_log_entries(8)
+            .with_write_log_bytes(4096)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
     let mut out = Completions::new(16);
     sealed(|| {
         mkdir_path(&mut sim, &mut out, 1, "/d1");
@@ -274,11 +317,25 @@ fn evict_one_dir_change_else_branch_reclaims_parent_dir_inode() {
 
         mkdir_path(&mut sim, &mut out, 200, "/extra");
         assert_eq!(
-            open_path(&mut sim, &mut out, 210, FileSlot(0), "/file1", rw_create()),
+            open_path(
+                &mut sim,
+                &mut out,
+                210,
+                FileSlot::new(0),
+                "/file1",
+                rw_create()
+            ),
             0
         );
         assert_eq!(
-            drive(&mut sim, &mut out, 211, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                211,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
     });

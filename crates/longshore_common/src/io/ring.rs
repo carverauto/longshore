@@ -72,6 +72,10 @@ pub struct Ring {
 
 /// The submission queue has no free slot; call `enter` first.
 #[derive(Debug)]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a unit struct has no fields to make private"
+)]
 pub struct SqFull;
 
 impl Ring {

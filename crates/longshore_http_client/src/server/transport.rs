@@ -17,7 +17,7 @@ impl Server {
             self.accepting = true;
             Self::submit_as(
                 io,
-                Token(self.accept_token()),
+                Token::new(self.accept_token()),
                 Op::Accept {
                     listener: self.cfg.listener(),
                     sock: self.sock(i),

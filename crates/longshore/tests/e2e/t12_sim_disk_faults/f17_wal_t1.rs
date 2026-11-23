@@ -19,56 +19,54 @@ use longshore::sim::{DiskFaults, PlacedFault};
 fn t1_f17_1_ported_sim_storage_core_durability_parity() {
     let mut sim = make_fault_sim(171);
     let mut out = Completions::new(16);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/seg1.bin", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/seg1.bin", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0xA1; 4096]),
+        write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0xA1; 4096]),
         4096
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-    assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot(0)), 0);
+    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot::new(0)), 0);
 
     assert_eq!(
-        open_file(&mut sim, &mut out, 5, FileSlot(0), "/seg2.bin", rw),
+        open_file(&mut sim, &mut out, 5, FileSlot::new(0), "/seg2.bin", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 6, FileSlot(0), 0, &[0xB2; 4096]),
+        write_file(&mut sim, &mut out, 6, FileSlot::new(0), 0, &[0xB2; 4096]),
         4096
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 7, FileSlot(0), false), 0);
-    assert_eq!(close_file(&mut sim, &mut out, 8, FileSlot(0)), 0);
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 9, FileSlot(1)), 0);
+    assert_eq!(sync_file(&mut sim, &mut out, 7, FileSlot::new(0), false), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 8, FileSlot::new(0)), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 9, FileSlot::new(1)), 0);
 
     sim.power_loss();
 
     assert_eq!(
-        open_file(&mut sim, &mut out, 10, FileSlot(0), "/seg1.bin", rw),
+        open_file(&mut sim, &mut out, 10, FileSlot::new(0), "/seg1.bin", rw),
         0
     );
     assert_eq!(
-        read_file_vec(&mut sim, &mut out, 11, FileSlot(0), 0, 4096).unwrap(),
+        read_file_vec(&mut sim, &mut out, 11, FileSlot::new(0), 0, 4096).unwrap(),
         vec![0xA1; 4096]
     );
-    assert_eq!(close_file(&mut sim, &mut out, 12, FileSlot(0)), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 12, FileSlot::new(0)), 0);
 
     assert_eq!(
-        open_file(&mut sim, &mut out, 13, FileSlot(0), "/seg2.bin", rw),
+        open_file(&mut sim, &mut out, 13, FileSlot::new(0), "/seg2.bin", rw),
         0
     );
     assert_eq!(
-        read_file_vec(&mut sim, &mut out, 14, FileSlot(0), 0, 4096).unwrap(),
+        read_file_vec(&mut sim, &mut out, 14, FileSlot::new(0), 0, 4096).unwrap(),
         vec![0xB2; 4096]
     );
-    assert_eq!(close_file(&mut sim, &mut out, 15, FileSlot(0)), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 15, FileSlot::new(0)), 0);
 }
 
 /// `T1-F17-2`: `WalEngine` append + chained sync + `power_loss()` + `recover()` restores all records.
@@ -82,7 +80,7 @@ fn t1_f17_2_wal_append_sync_power_loss_recover_prefix() {
         wal.open_segment(&mut sim, &mut out, 1, true, true).unwrap(),
         0
     );
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot(2)), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot::new(2)), 0);
 
     for i in 1..=5u64 {
         let payload = format!("wal-record-{i}");
@@ -122,7 +120,7 @@ fn t1_f17_3_wal_detects_short_and_torn_reported_tail_continues() {
             wal.open_segment(&mut sim, &mut out, 1, true, true).unwrap(),
             0
         );
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot(2)), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot::new(2)), 0);
 
         for i in 1..=3u64 {
             let (w, s) = wal
@@ -133,20 +131,14 @@ fn t1_f17_3_wal_detects_short_and_torn_reported_tail_continues() {
 
         // Next append_chained submits FileWrite then FileSync; fault that FileWrite.
         sim.set_disk_faults(match mode {
-            PlacedFault::ShortWrite => DiskFaults {
-                short_write: 1_000_000,
-                ..Default::default()
-            },
+            PlacedFault::ShortWrite => DiskFaults::NONE.with_short_write(1_000_000),
             PlacedFault::Fail
             | PlacedFault::FailAfter
             | PlacedFault::TornReported
             | PlacedFault::TornSilent
             | PlacedFault::LostReported
             | PlacedFault::LostSilent
-            | PlacedFault::MisdirectedWrite => DiskFaults {
-                torn_reported: 1_000_000,
-                ..Default::default()
-            },
+            | PlacedFault::MisdirectedWrite => DiskFaults::NONE.with_torn_reported(1_000_000),
         });
         let (w4, s4) = wal
             .append_chained(&mut sim, &mut out, &[0x99; 3600])
@@ -200,7 +192,7 @@ fn t1_f17_4_wal_crc64_detects_silent_and_bit_flip_corruption() {
         wal.open_segment(&mut sim, &mut out, 1, true, true).unwrap(),
         0
     );
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot(2)), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot::new(2)), 0);
 
     for i in 1..=2u64 {
         assert_eq!(
@@ -210,10 +202,7 @@ fn t1_f17_4_wal_crc64_detects_silent_and_bit_flip_corruption() {
         );
     }
     // 3rd record is silently torn (claims 4096 written, only prefix lands -> CRC fails).
-    sim.set_disk_faults(DiskFaults {
-        torn_silent: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_torn_silent(1_000_000));
     assert_eq!(
         wal.append_chained(&mut sim, &mut out, &[0xEE; 3600])
             .unwrap(),
@@ -247,7 +236,7 @@ fn t1_f17_5_wal_recovery_20_seeds_zero_alloc_under_alloc_guard() {
             wal.open_segment(&mut sim, &mut out, 1, true, true).unwrap(),
             0
         );
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot(2)), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot::new(2)), 0);
 
         let mut payload = [0u8; 64];
         payload.fill(seed as u8);

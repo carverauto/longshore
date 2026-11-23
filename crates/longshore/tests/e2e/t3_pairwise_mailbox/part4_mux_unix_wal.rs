@@ -18,43 +18,43 @@ fn t3_28_stream_and_mailbox_receiver_multiplexed_on_one_io() {
     use super::super::harness::{drive_until, posix_backend, read_pool_bytes, write_pool_bytes};
     use longshore::stream::{Step, Stream};
 
-    const WAKE_TOKEN: Token = Token(1 << 63);
-    let limits = Limits {
-        sockets_max: 6,
-        buffers: 4,
-        buffer_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    const WAKE_TOKEN: Token = Token::new(1 << 63);
+    let limits = Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(4)
+        .with_buffer_size(4096)
+        .with_ops_max(8);
     let mut io = posix_backend(limits).unwrap();
     let mut out = Completions::new(16);
     let (tx, mut io_rx) = queue::<PingMsg, _>(&mut io, 8, WAKE_TOKEN).unwrap();
     io_rx.arm(&mut io).unwrap();
 
-    let addr = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = io
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
+        .unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
     let _: Vec<Completion> = drive_until(&mut io, &mut out, 10_000, |v| v.len() == 2).unwrap();
 
-    let mut cli = Stream::new(Sock(1), Token(10), Token(11));
-    let mut srv = Stream::new(Sock(2), Token(20), Token(21));
-    write_pool_bytes(&mut io, BufId(0), 0, b"mux-stream");
-    cli.send(&mut io, BufId(0), 0, 10, u32::MAX);
-    let _: Step = srv.recv(&mut io, BufId(1), 0, 16);
+    let mut cli = Stream::new(Sock::new(1), Token::new(10), Token::new(11));
+    let mut srv = Stream::new(Sock::new(2), Token::new(20), Token::new(21));
+    write_pool_bytes(&mut io, BufId::new(0), 0, b"mux-stream");
+    cli.send(&mut io, BufId::new(0), 0, 10, u32::MAX);
+    let _: Step = srv.recv(&mut io, BufId::new(1), 0, 16);
     tx.try_send(PingMsg { seq: 99, slot: 0 }).unwrap();
 
     let (mut got_msg, mut got_bytes) = (None, None);
@@ -68,17 +68,17 @@ fn t3_28_stream_and_mailbox_receiver_multiplexed_on_one_io() {
                 while let TryRecv::Message(m) = io_rx.try_recv() {
                     got_msg = Some(m);
                 }
-            } else if c.token == Token(21) {
-                if let Step::Done(n) = srv.on_recv(&mut io, c.result) {
+            } else if c.token().get() == 21 {
+                if let Step::Done(n) = srv.on_recv(&mut io, c.result()) {
                     got_bytes = Some(read_pool_bytes(
                         &mut io,
-                        BufId(1),
+                        BufId::new(1),
                         0,
                         usize::try_from(n).unwrap(),
                     ));
                 }
-            } else if c.token == Token(10) {
-                let _: Step = cli.on_send(&mut io, c.result);
+            } else if c.token().get() == 10 {
+                let _: Step = cli.on_send(&mut io, c.result());
             }
         }
     }
@@ -91,21 +91,21 @@ fn t3_28_stream_and_mailbox_receiver_multiplexed_on_one_io() {
 #[cfg(unix)]
 fn unix_pair<IO: Io>(io: &mut IO, out: &mut Completions, sock_p: &str) {
     use super::super::harness::{drive_until, write_nul_path};
-    io.listen_unix(Sock(0), sock_p).unwrap();
-    let plen = write_nul_path(io, BufId(0), 0, sock_p);
+    io.listen_unix(Sock::new(0), sock_p).unwrap();
+    let plen = write_nul_path(io, BufId::new(0), 0, sock_p);
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
+            sock: Sock::new(1),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: plen,
         },
@@ -154,18 +154,16 @@ fn t3_29_unix_socket_server_mailbox_stop_drains_and_closes() {
 
     let dir = TempDir::new("t3_29").unwrap();
     let sock_p = dir.socket_path("stop.sock");
-    let limits = Limits {
-        sockets_max: 6,
-        buffers: 2,
-        buffer_size: 1024,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_ops_max(8);
     let mut io = posix_backend(limits).unwrap();
     let mut out = Completions::new(16);
     unix_pair(&mut io, &mut out, sock_p.to_str().unwrap());
 
-    let (tx, mut io_rx) = queue::<PingMsg, _>(&mut io, 4, Token(100)).unwrap();
+    let (tx, mut io_rx) = queue::<PingMsg, _>(&mut io, 4, Token::new(100)).unwrap();
     io_rx.arm(&mut io).unwrap();
     tx.try_send(PingMsg { seq: 1, slot: 0 }).unwrap();
     tx.try_send(PingMsg { seq: 2, slot: 0 }).unwrap();
@@ -179,29 +177,29 @@ fn t3_29_unix_socket_server_mailbox_stop_drains_and_closes() {
         submit_and_wait_one(
             &mut io,
             &mut out,
-            Token(3),
-            Op::Close { sock: Sock(2) },
+            Token::new(3),
+            Op::Close { sock: Sock::new(2) },
             10_000
         )
         .unwrap()
-        .result,
+        .result(),
         0
     );
     assert_eq!(
         submit_and_wait_one(
             &mut io,
             &mut out,
-            Token(4),
+            Token::new(4),
             Op::Recv {
-                sock: Sock(1),
-                buf: BufId(1),
+                sock: Sock::new(1),
+                buf: BufId::new(1),
                 off: 0,
                 len: 16
             },
             10_000
         )
         .unwrap()
-        .result,
+        .result(),
         0
     );
 }
@@ -235,9 +233,9 @@ fn submit_append_chain(
     use longshore::io::FileSlot;
     sim.submit_chain(&[
         (
-            Token(1),
+            Token::new(1),
             Op::FileWrite {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 buf: write_buf,
                 off: 0,
                 len: 4096,
@@ -245,9 +243,9 @@ fn submit_append_chain(
             },
         ),
         (
-            Token(2),
+            Token::new(2),
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: true,
             },
         ),
@@ -281,11 +279,11 @@ fn serve_append(
                     }
                     pending_slot = Some(m.slot);
                 }
-            } else if c.token == Token(1) {
-                w_res = c.result;
+            } else if c.token().get() == 1 {
+                w_res = c.result();
                 got_w = true;
-            } else if c.token == Token(2) {
-                s_res = c.result;
+            } else if c.token().get() == 2 {
+                s_res = c.result();
                 got_s = true;
             }
         }
@@ -306,16 +304,17 @@ fn sim_with_open_wal_segment(limits: Limits) -> (SimIo, Completions) {
     use longshore::sim::Faults;
 
     let mut sim = SimIo::new(limits, 330, Faults::default());
-    sim.setup_disk(longshore::sim::DiskConfig {
-        max_files: 8,
-        max_dirs: 4,
-        max_bytes_per_file: 64 * 1024,
-        max_name_len: 128,
-        write_log_entries: 16,
-        write_log_bytes: 32 * 1024,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        longshore::sim::DiskConfig::BASE
+            .with_max_files(8)
+            .with_max_dirs(4)
+            .with_max_bytes_per_file(64 * 1024)
+            .with_max_name_len(128)
+            .with_write_log_entries(16)
+            .with_write_log_bytes(32 * 1024)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
     let mut out = Completions::new(8);
     let wal_cfg = WalConfig::new("", 4096).with_io_bufs(limits.aligned(0), limits.aligned(1));
     let mut wal = WalEngine::new(wal_cfg);
@@ -334,17 +333,15 @@ fn t3_30_sealed_wal_append_over_mailbox_within_prealloc_waiters() {
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 4,
-        buffer_size: 4096,
-        files_max: 2,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(4)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(8);
     let (mut sim, mut out) = sim_with_open_wal_segment(limits);
     let (tx, mut io_rx) = mailbox::<PingMsg, (i32, i32), _>(
         &mut sim,
@@ -352,7 +349,7 @@ fn t3_30_sealed_wal_append_over_mailbox_within_prealloc_waiters() {
             capacity: 8,
             slots: 4,
             waiters_prealloc: 8,
-            wake_token: Token(900),
+            wake_token: Token::new(900),
         },
     )
     .unwrap();

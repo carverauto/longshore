@@ -23,7 +23,7 @@ fn t2_f17_1_wal_failed_sync_mid_batch_excludes_uncommitted_after_crash() {
         wal.open_segment(&mut sim, &mut out, 1, true, true).unwrap(),
         0
     );
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot(2)), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot::new(2)), 0);
 
     for i in 1..=2u64 {
         assert_eq!(
@@ -32,10 +32,7 @@ fn t2_f17_1_wal_failed_sync_mid_batch_excludes_uncommitted_after_crash() {
             (4096, 0)
         );
     }
-    sim.set_disk_faults(DiskFaults {
-        sync_fail: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_sync_fail(1_000_000));
     let (w3, s3) = wal.append_chained(&mut sim, &mut out, &[3; 32]).unwrap();
     assert_eq!((w3, s3), (4096, -LINUX_EIO));
     sim.set_disk_faults(DiskFaults::default());
@@ -97,7 +94,7 @@ fn t2_f17_2_wal_segment_rename_rotation_with_and_without_dir_sync() {
             (4096, 0)
         );
         assert_eq!(wal.close_segment(&mut sim, &mut out).unwrap(), 0);
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot(2)), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot::new(2)), 0);
         assert_eq!(
             wal.rename_segment(&mut sim, &mut out, 1, 2, false).unwrap(),
             0
@@ -121,7 +118,7 @@ fn t2_f17_3_wal_sector_read_error_stops_cleanly() {
         wal.open_segment(&mut sim, &mut out, 1, true, true).unwrap(),
         0
     );
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot(2)), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 900, FileSlot::new(2)), 0);
     for i in 1..=3u64 {
         assert_eq!(
             wal.append_chained(&mut sim, &mut out, &[i as u8; 40])
@@ -132,24 +129,25 @@ fn t2_f17_3_wal_sector_read_error_stops_cleanly() {
     assert_eq!(wal.close_segment(&mut sim, &mut out).unwrap(), 0);
 
     // Mark record #2's sector (offset 4096) with a persistent read error.
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
+    let ro = OpenFlags::NONE.with_read(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 50, FileSlot(0), "/wal_0001.log", ro),
+        open_file(
+            &mut sim,
+            &mut out,
+            50,
+            FileSlot::new(0),
+            "/wal_0001.log",
+            ro
+        ),
         0
     );
-    sim.set_disk_faults(DiskFaults {
-        read_error: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_read_error(1_000_000));
     assert!(
-        super::helpers::read_file_vec(&mut sim, &mut out, 51, FileSlot(0), 4096, 512).is_err(),
+        super::helpers::read_file_vec(&mut sim, &mut out, 51, FileSlot::new(0), 4096, 512).is_err(),
         "the injected read error must fire"
     );
     sim.set_disk_faults(DiskFaults::default());
-    assert_eq!(close_file(&mut sim, &mut out, 52, FileSlot(0)), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 52, FileSlot::new(0)), 0);
 
     let stats = wal.recover(&mut sim, &mut out, 2, &mut |_| {}).unwrap();
     assert_eq!(stats.valid_records, 1);
@@ -162,20 +160,18 @@ fn t2_f17_4_wal_empty_segment_and_mid_header_torn_write() {
     let mut sim = make_fault_sim(184);
     let mut out = Completions::new(16);
     let mut wal = WalEngine::new(wal_config());
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
 
     // Empty segment wal_0001.log.
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/wal_0001.log", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/wal_0001.log", rw),
         0
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 2, FileSlot(0), false), 0);
-    assert_eq!(close_file(&mut sim, &mut out, 3, FileSlot(0)), 0);
+    assert_eq!(sync_file(&mut sim, &mut out, 2, FileSlot::new(0), false), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 3, FileSlot::new(0)), 0);
 
     // Segment 2 has 1 valid record + 12-byte mid-header garbage at offset 4096.
     assert_eq!(
@@ -189,15 +185,25 @@ fn t2_f17_4_wal_empty_segment_and_mid_header_torn_write() {
     );
     assert_eq!(wal.close_segment(&mut sim, &mut out).unwrap(), 0);
     assert_eq!(
-        open_file(&mut sim, &mut out, 10, FileSlot(0), "/wal_0002.log", rw),
+        open_file(
+            &mut sim,
+            &mut out,
+            10,
+            FileSlot::new(0),
+            "/wal_0002.log",
+            rw
+        ),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 11, FileSlot(0), 4096, &[0xFF; 12]),
+        write_file(&mut sim, &mut out, 11, FileSlot::new(0), 4096, &[0xFF; 12]),
         12
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 12, FileSlot(0), false), 0);
-    assert_eq!(close_file(&mut sim, &mut out, 13, FileSlot(0)), 0);
+    assert_eq!(
+        sync_file(&mut sim, &mut out, 12, FileSlot::new(0), false),
+        0
+    );
+    assert_eq!(close_file(&mut sim, &mut out, 13, FileSlot::new(0)), 0);
 
     let stats = wal.recover(&mut sim, &mut out, 2, &mut |_| {}).unwrap();
     assert_eq!(stats.segments_found, 2);

@@ -12,8 +12,8 @@ impl Client {
     /// Feed a completion.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> Handled {
         let Some(rel) = c
-            .token
-            .0
+            .token()
+            .get()
             .checked_sub(self.cfg.token_base())
             .filter(|r| *r < u64::from(self.cfg.connections_max()) * 8)
         else {
@@ -28,11 +28,11 @@ impl Client {
             return self.fail(io, i, Error::Timeout);
         }
         if !matches!(kind, K_SEND | K_RECV) || !busy {
-            return self.on_plain(io, i, kind, c.result);
+            return self.on_plain(io, i, kind, c.result());
         }
         if state == State::CheckIdle {
             if kind == K_RECV {
-                let found = self.streams[i].on_idle_check(io, c.result);
+                let found = self.streams[i].on_idle_check(io, c.result());
                 self.after_idle_check(io, i, found);
             }
             return Handled::Pending;
@@ -41,7 +41,7 @@ impl Client {
         // into plaintext results.
         #[cfg(feature = "tls")]
         if state == State::TlsHandshake {
-            return match self.streams[i].on_handshake(io, kind == K_SEND, c.result) {
+            return match self.streams[i].on_handshake(io, kind == K_SEND, c.result()) {
                 Step::Pending => Handled::Pending,
                 Step::Done(0) => {
                     self.send_head(io, i, 0);
@@ -60,9 +60,9 @@ impl Client {
             };
         }
         let step = if kind == K_SEND {
-            self.streams[i].on_send(io, c.result)
+            self.streams[i].on_send(io, c.result())
         } else {
-            self.streams[i].on_recv(io, c.result)
+            self.streams[i].on_recv(io, c.result())
         };
         match step {
             Step::Pending => Handled::Pending,

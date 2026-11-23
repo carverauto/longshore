@@ -21,7 +21,7 @@ const K_SEND: u64 = BASE + 16;
 const NOWHERE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 99)), 53);
 
 fn completion(token: u64, result: i32) -> Completion {
-    Completion::new(Token(token), result)
+    Completion::new(Token::new(token), result)
 }
 
 /// On a real kernel an answer can be reaped before the completion of the
@@ -35,15 +35,15 @@ fn a_query_waits_for_the_previous_send_to_complete_then_goes_out() {
     while io.now_ns() < 40 * MS {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == K_SEND {
+            if c.token().get() == K_SEND {
                 // Keep the send's completion back until its answer is in.
                 assert!(held.is_none(), "one send in flight at a time");
                 held = Some(c);
                 continue;
             }
-            let answer = c.token.0 == K_RECV;
+            let answer = c.token().get() == K_RECV;
             if !r.on_completion(&mut io, c) {
-                s.on(&mut io, c.token.0, c.result);
+                s.on(&mut io, c.token().get(), c.result());
             }
             if answer {
                 if let Some(send) = held.take() {
@@ -160,7 +160,7 @@ fn a_completion_for_a_server_it_does_not_have_is_ignored() {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
             if !r.on_completion(&mut io, c) {
-                s.on(&mut io, c.token.0, c.result);
+                s.on(&mut io, c.token().get(), c.result());
             }
         }
     }
@@ -192,10 +192,7 @@ fn a_host_is_found_by_name_whatever_its_case_or_trailing_dot() {
 #[test]
 #[should_panic(expected = "rx_bufs")]
 fn a_receive_buffer_smaller_than_a_message_is_refused_at_start() {
-    let limits = Limits {
-        buffer_size: 511,
-        ..LIMITS
-    };
+    let limits = LIMITS.with_buffer_size(511);
     let mut io = SimIo::new(limits, 1, Faults::default());
     Resolver::new(config(&[NS1], SEC, Family::V4))
         .expect("resolver config")
@@ -207,11 +204,7 @@ fn a_receive_buffer_smaller_than_a_message_is_refused_at_start() {
 fn a_send_buffer_smaller_than_the_longest_query_is_refused_at_start() {
     // Room for a whole answer in the large buffers, and a small one of 20
     // bytes to send from: less than any query for these hosts.
-    let limits = Limits {
-        small_buffers: 1,
-        small_buffer_size: 20,
-        ..LIMITS
-    };
+    let limits = LIMITS.with_small_buffers(1).with_small_buffer_size(20);
     let mut io = SimIo::new(limits, 1, Faults::default());
     let mut cfg = config(&[NS1], SEC, Family::V4);
     cfg.tx_buf = limits.small(0);

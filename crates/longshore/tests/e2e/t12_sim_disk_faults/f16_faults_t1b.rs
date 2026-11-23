@@ -16,16 +16,13 @@ use longshore::sim::{DiskFaults, PlacedFault, SimIo};
 /// With `reserve_refused` and then `punch_refused` at the full rate, a
 /// `FileReserve` fails with `ENOSPC` and a `FilePunch` with `EOPNOTSUPP`.
 fn reserve_and_punch_refused(sim: &mut SimIo, out: &mut Completions) {
-    sim.set_disk_faults(DiskFaults {
-        reserve_refused: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_reserve_refused(1_000_000));
     let res_r = submit_and_wait_one(
         sim,
         out,
-        Token(4),
+        Token::new(4),
         Op::FileReserve {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             file_off: 4096,
             len: 4096,
             keep_size: false,
@@ -33,27 +30,24 @@ fn reserve_and_punch_refused(sim: &mut SimIo, out: &mut Completions) {
         10_000,
     )
     .unwrap();
-    assert_eq!(res_r.result, -LINUX_ENOSPC);
-    assert_eq!(sim.disk_fault_counters().reserve_refused, 1);
+    assert_eq!(res_r.result(), -LINUX_ENOSPC);
+    assert_eq!(sim.disk_fault_counters().reserve_refused(), 1);
 
-    sim.set_disk_faults(DiskFaults {
-        punch_refused: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_punch_refused(1_000_000));
     let res_p = submit_and_wait_one(
         sim,
         out,
-        Token(5),
+        Token::new(5),
         Op::FilePunch {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             file_off: 0,
             len: 4096,
         },
         10_000,
     )
     .unwrap();
-    assert_eq!(res_p.result, -LINUX_EOPNOTSUPP);
-    assert_eq!(sim.disk_fault_counters().punch_refused, 1);
+    assert_eq!(res_p.result(), -LINUX_EOPNOTSUPP);
+    assert_eq!(sim.disk_fault_counters().punch_refused(), 1);
 }
 
 /// `T1-F16-3`: Isolate `read_error`, `read_bit_flip`, `failed_sync`, `refused_reserve`, `refused_punch`.
@@ -61,71 +55,60 @@ fn reserve_and_punch_refused(sim: &mut SimIo, out: &mut Completions) {
 fn t1_f16_3_read_error_bit_flip_sync_fail_reserve_punch_faults() {
     let mut sim = make_fault_sim(30);
     let mut out = Completions::new(8);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/f5.dat", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/f5.dat", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0xAA; 4096]),
+        write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0xAA; 4096]),
         4096
     );
 
-    sim.set_disk_faults(DiskFaults {
-        sync_fail: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_sync_fail(1_000_000));
     assert_eq!(
-        sync_file(&mut sim, &mut out, 3, FileSlot(0), false),
+        sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false),
         -LINUX_EIO
     );
-    assert_eq!(sim.disk_fault_counters().sync_fail, 1);
+    assert_eq!(sim.disk_fault_counters().sync_fail(), 1);
 
     reserve_and_punch_refused(&mut sim, &mut out);
 
-    sim.set_disk_faults(DiskFaults {
-        bit_flip: 1_000_000,
-        ..Default::default()
-    });
-    let flipped = read_file_vec(&mut sim, &mut out, 6, FileSlot(0), 0, 512).unwrap();
+    sim.set_disk_faults(DiskFaults::NONE.with_bit_flip(1_000_000));
+    let flipped = read_file_vec(&mut sim, &mut out, 6, FileSlot::new(0), 0, 512).unwrap();
     let bit_diffs: u32 = flipped.iter().map(|&b| (b ^ 0xAA).count_ones()).sum();
     assert_eq!(bit_diffs, 1);
-    assert_eq!(sim.disk_fault_counters().bit_flip, 1);
+    assert_eq!(sim.disk_fault_counters().bit_flip(), 1);
 
-    sim.set_disk_faults(DiskFaults {
-        read_error: 1_000_000,
-        ..Default::default()
-    });
+    sim.set_disk_faults(DiskFaults::NONE.with_read_error(1_000_000));
     assert_eq!(
-        read_file_vec(&mut sim, &mut out, 7, FileSlot(0), 0, 512),
+        read_file_vec(&mut sim, &mut out, 7, FileSlot::new(0), 0, 512),
         Err(-LINUX_EIO)
     );
-    assert_eq!(sim.disk_fault_counters().read_error, 1);
+    assert_eq!(sim.disk_fault_counters().read_error(), 1);
 }
 
 /// Stats `path` (staged in `BufId(0)`) and returns the result.
 fn status_of(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) -> i32 {
-    let len = write_nul_path(sim, BufId(0), 0, path);
+    let len = write_nul_path(sim, BufId::new(0), 0, path);
     submit_and_wait_one(
         sim,
         out,
-        Token(tok),
+        Token::new(tok),
         Op::FileStatus {
-            path_buf: BufId(0),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: len,
-            out_buf: BufId(2),
+            out_buf: BufId::new(2),
             out_off: 0,
         },
         10_000,
     )
     .unwrap()
-    .result
+    .result()
 }
 
 /// `T1-F16-4`: `PlacedFault::FailAfter` on op #5 (`FileRename`) applies rename and returns `-EIO`.
@@ -135,45 +118,43 @@ fn t1_f16_4_placed_fail_after_on_rename_takes_effect_and_returns_eio() {
     let mut out = Completions::new(8);
     sim.place_disk_fault(5, PlacedFault::FailAfter);
 
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/p_old.dat", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/p_old.dat", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 2, FileSlot(0), 0, b"fail-after"),
+        write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, b"fail-after"),
         10
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-    assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot(0)), 0);
+    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot::new(0)), 0);
 
-    let l_old = write_nul_path(&mut sim, BufId(0), 0, "/p_old.dat");
-    let l_new = write_nul_path(&mut sim, BufId(1), 0, "/p_new.dat");
+    let l_old = write_nul_path(&mut sim, BufId::new(0), 0, "/p_old.dat");
+    let l_new = write_nul_path(&mut sim, BufId::new(1), 0, "/p_new.dat");
     let rn = submit_and_wait_one(
         &mut sim,
         &mut out,
-        Token(5),
+        Token::new(5),
         Op::FileRename {
-            old_buf: BufId(0),
+            old_buf: BufId::new(0),
             old_off: 0,
             old_len: l_old,
-            new_buf: BufId(1),
+            new_buf: BufId::new(1),
             new_off: 0,
             new_len: l_new,
         },
         10_000,
     )
     .unwrap();
-    assert_eq!(rn.result, -LINUX_EIO);
+    assert_eq!(rn.result(), -LINUX_EIO);
 
     assert_eq!(status_of(&mut sim, &mut out, 6, "/p_old.dat"), -ENOENT);
     assert_eq!(status_of(&mut sim, &mut out, 7, "/p_new.dat"), 0);
-    let _: i32 = sync_root_dir(&mut sim, &mut out, 8, FileSlot(1));
+    let _: i32 = sync_root_dir(&mut sim, &mut out, 8, FileSlot::new(1));
 }
 
 /// `T1-F16-5`: `corrupt_medium_bit` mutates durable/log bytes persistently across reads until rewritten.
@@ -181,32 +162,30 @@ fn t1_f16_4_placed_fail_after_on_rename_takes_effect_and_returns_eio() {
 fn t1_f16_5_corrupt_medium_bit_persists_until_rewritten() {
     let mut sim = make_fault_sim(50);
     let mut out = Completions::new(8);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/bit.dat", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/bit.dat", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0x00; 512]),
+        write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0x00; 512]),
         512
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
+    assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
 
     sim.corrupt_medium_bit("/bit.dat", 10, 3).unwrap();
     for tok in [10u64, 11] {
-        let got = read_file_vec(&mut sim, &mut out, tok, FileSlot(0), 0, 512).unwrap();
+        let got = read_file_vec(&mut sim, &mut out, tok, FileSlot::new(0), 0, 512).unwrap();
         assert_eq!(got[10], 1 << 3);
     }
 
     assert_eq!(
-        write_file(&mut sim, &mut out, 12, FileSlot(0), 0, &[0x00; 512]),
+        write_file(&mut sim, &mut out, 12, FileSlot::new(0), 0, &[0x00; 512]),
         512
     );
-    let fixed = read_file_vec(&mut sim, &mut out, 13, FileSlot(0), 0, 512).unwrap();
+    let fixed = read_file_vec(&mut sim, &mut out, 13, FileSlot::new(0), 0, 512).unwrap();
     assert_eq!(fixed[10], 0);
 }

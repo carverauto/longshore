@@ -20,31 +20,39 @@ fn plain_idle_connections_hold_no_ring_buffers() {
     let mut sim = SimIo::new(limits, 316, Faults::default());
     let mut out = Completions::new(32);
     let addr = sim
-        .listen(Sock(0), "192.0.2.36:9316".parse().unwrap())
+        .listen(Sock::new(0), "192.0.2.36:9316".parse().unwrap())
         .unwrap();
-    sim.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    sim.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
 
     for i in 0..4u32 {
         sim.submit(
-            Token(10 + u64::from(i)),
+            Token::new(10 + u64::from(i)),
             Op::Connect {
-                sock: Sock(1 + i),
+                sock: Sock::new(1 + i),
                 addr,
             },
         )
         .unwrap();
     }
     let cs = drive_until(&mut sim, &mut out, 1000, |v| {
-        v.iter().filter(|c| c.token == Token(1)).count() == 4
-            && v.iter().filter(|c| (10..14).contains(&c.token.0)).count() == 4
+        v.iter().filter(|c| c.token().get() == 1).count() == 4
+            && v.iter()
+                .filter(|c| (10..14).contains(&c.token().get()))
+                .count()
+                == 4
     })
     .unwrap();
-    for (idx, c) in cs.iter().filter(|c| c.token == Token(1)).enumerate() {
+    for (idx, c) in cs.iter().filter(|c| c.token().get() == 1).enumerate() {
         sim.submit(
-            Token(100 + idx as u64),
+            Token::new(100 + idx as u64),
             Op::ArmedRecv {
-                sock: Sock(u32::try_from(c.result).unwrap()),
+                sock: Sock::new(u32::try_from(c.result()).unwrap()),
             },
         )
         .unwrap();
@@ -66,20 +74,20 @@ fn tls_stream_pair(
     let mut tsim = SimIo::new(tls_limits, 3160, Faults::default());
     let mut tout = Completions::new(32);
     let taddr = tsim
-        .listen(Sock(0), "192.0.2.37:9317".parse().unwrap())
+        .listen(Sock::new(0), "192.0.2.37:9317".parse().unwrap())
         .unwrap();
     tsim.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     tsim.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr: taddr,
         },
     )
@@ -87,17 +95,17 @@ fn tls_stream_pair(
     let _: Vec<longshore::io::Completion> =
         drive_until(&mut tsim, &mut tout, 1000, |v| v.len() == 2).unwrap();
 
-    let cap = tls_limits.buffer_size;
-    let cli = Stream::new(Sock(1), Token(10), Token(11)).with_tls_buffers(
-        BufId(0),
-        BufId(1),
+    let cap = tls_limits.buffer_size();
+    let cli = Stream::new(Sock::new(1), Token::new(10), Token::new(11)).with_tls_buffers(
+        BufId::new(0),
+        BufId::new(1),
         cap,
         cap,
         u32::MAX,
     );
-    let srv = Stream::new(Sock(2), Token(20), Token(21)).with_tls_buffers(
-        BufId(2),
-        BufId(3),
+    let srv = Stream::new(Sock::new(2), Token::new(20), Token::new(21)).with_tls_buffers(
+        BufId::new(2),
+        BufId::new(3),
         cap,
         cap,
         u32::MAX,
@@ -122,15 +130,15 @@ fn drive_handshakes(
         }
         tsim.tick(true, tout).unwrap();
         while let Some(c) = tout.pop() {
-            let step = match c.token.0 {
-                10 => cli.on_handshake(tsim, true, c.result),
-                11 => cli.on_handshake(tsim, false, c.result),
-                20 => srv.on_handshake(tsim, true, c.result),
-                21 => srv.on_handshake(tsim, false, c.result),
+            let step = match c.token().get() {
+                10 => cli.on_handshake(tsim, true, c.result()),
+                11 => cli.on_handshake(tsim, false, c.result()),
+                20 => srv.on_handshake(tsim, true, c.result()),
+                21 => srv.on_handshake(tsim, false, c.result()),
                 _ => continue,
             };
             if matches!(step, Step::Done(0)) {
-                if c.token.0 < 20 {
+                if c.token().get() < 20 {
                     cli_done = true;
                 } else {
                     srv_done = true;
@@ -151,8 +159,8 @@ fn tls_streams_complete_handshake() {
 
     let id = make_tls_identity(&["localhost"]);
     let mut tls_limits = net_limits(20, 10, 8, 4, 1024);
-    tls_limits.buffers = 6;
-    tls_limits.buffer_size = (2 * (FRAGMENT_MAX + OVERHEAD + 256) + 1024) as u32;
+    tls_limits = tls_limits.with_buffers(6);
+    tls_limits = tls_limits.with_buffer_size((2 * (FRAGMENT_MAX + OVERHEAD + 256) + 1024) as u32);
     let (mut tsim, mut tout, mut cli, mut srv) = tls_stream_pair(tls_limits);
     assert!(matches!(
         cli.start_handshake(
@@ -187,38 +195,40 @@ fn connect_tcp_and_unix<IO: Io>(
     limits: longshore::io::Limits,
     sock_p: &str,
 ) {
-    let tcp_addr = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
-    io.listen_unix(Sock(3), sock_p).unwrap();
+    let tcp_addr = io
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
+        .unwrap();
+    io.listen_unix(Sock::new(3), sock_p).unwrap();
 
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr: tcp_addr,
         },
     )
     .unwrap();
     let up_len = write_nul_path(io, limits.small(0), 0, sock_p);
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Accept {
-            listener: Sock(3),
-            sock: Sock(5),
+            listener: Sock::new(3),
+            sock: Sock::new(5),
         },
     )
     .unwrap();
     io.submit(
-        Token(4),
+        Token::new(4),
         Op::ConnectUnix {
-            sock: Sock(4),
+            sock: Sock::new(4),
             path_buf: limits.small(0),
             path_off: 0,
             path_len: up_len,
@@ -226,7 +236,7 @@ fn connect_tcp_and_unix<IO: Io>(
     )
     .unwrap();
     let cs = drive_until(io, out, 10_000, |v| v.len() == 4).unwrap();
-    assert!(cs.iter().all(|c| c.result == 0));
+    assert!(cs.iter().all(|c| c.result() == 0));
 }
 
 /// Receives up to 16 bytes on `sock` into `buf`; returns what arrived.
@@ -252,7 +262,7 @@ fn recv_bytes<IO: Io>(
         10_000,
     )
     .unwrap();
-    read_pool_bytes(io, buf, 0, usize::try_from(r.result).unwrap())
+    read_pool_bytes(io, buf, 0, usize::try_from(r.result()).unwrap())
 }
 
 #[test]
@@ -273,15 +283,27 @@ fn t3_17_plain_build_sockopts_tcp_and_unix_stream_echo() {
         let mut out = Completions::new(16);
         connect_tcp_and_unix(&mut io, &mut out, limits, sock_p.to_str().unwrap());
 
-        let mut tcp_s = Stream::new(Sock(1), Token(10), Token(11));
-        let mut unix_s = Stream::new(Sock(4), Token(12), Token(13));
+        let mut tcp_s = Stream::new(Sock::new(1), Token::new(10), Token::new(11));
+        let mut unix_s = Stream::new(Sock::new(4), Token::new(12), Token::new(13));
         assert!(!tcp_s.is_tls() && !unix_s.is_tls());
-        write_pool_bytes(&mut io, BufId(0), 0, b"tcp-plain");
-        write_pool_bytes(&mut io, BufId(1), 0, b"unix-plain");
-        tcp_s.send(&mut io, BufId(0), 0, 9, u32::MAX);
-        unix_s.send(&mut io, BufId(1), 0, 10, u32::MAX);
-        let r1 = recv_bytes(&mut io, &mut out, Token(20), Sock(2), BufId(2));
-        let r2 = recv_bytes(&mut io, &mut out, Token(21), Sock(5), BufId(3));
+        write_pool_bytes(&mut io, BufId::new(0), 0, b"tcp-plain");
+        write_pool_bytes(&mut io, BufId::new(1), 0, b"unix-plain");
+        tcp_s.send(&mut io, BufId::new(0), 0, 9, u32::MAX);
+        unix_s.send(&mut io, BufId::new(1), 0, 10, u32::MAX);
+        let r1 = recv_bytes(
+            &mut io,
+            &mut out,
+            Token::new(20),
+            Sock::new(2),
+            BufId::new(2),
+        );
+        let r2 = recv_bytes(
+            &mut io,
+            &mut out,
+            Token::new(21),
+            Sock::new(5),
+            BufId::new(3),
+        );
         assert_eq!(r1, b"tcp-plain");
         assert_eq!(r2, b"unix-plain");
     }

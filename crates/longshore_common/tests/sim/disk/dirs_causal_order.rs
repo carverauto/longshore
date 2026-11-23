@@ -16,45 +16,79 @@ use longshore_common::io::{BufId, Completions, FileSlot, Io, Op};
 use longshore_common::sim::{DiskConfig, Faults, SimIo};
 
 fn create_write_sync_close(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str, byte: u8) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, rw_create()), 0);
-    assert_eq!(write_fill(sim, out, tok + 1, FileSlot(0), 0, 16, byte), 16);
-    assert_eq!(sync_slot(sim, out, tok + 2, FileSlot(0)), 0);
     assert_eq!(
-        drive(sim, out, tok + 3, Op::FileClose { slot: FileSlot(0) }),
+        open_path(sim, out, tok, FileSlot::new(0), path, rw_create()),
+        0
+    );
+    assert_eq!(
+        write_fill(sim, out, tok + 1, FileSlot::new(0), 0, 16, byte),
+        16
+    );
+    assert_eq!(sync_slot(sim, out, tok + 2, FileSlot::new(0)), 0);
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok + 3,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
 }
 
 fn assert_file_byte(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str, byte: u8) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, rw_open()), 0);
-    assert_eq!(read_at(sim, out, tok + 1, FileSlot(0), 0, 16), 16);
-    assert!(sim.buf(BufId(2))[..16].iter().all(|&b| b == byte));
     assert_eq!(
-        drive(sim, out, tok + 2, Op::FileClose { slot: FileSlot(0) }),
+        open_path(sim, out, tok, FileSlot::new(0), path, rw_open()),
+        0
+    );
+    assert_eq!(read_at(sim, out, tok + 1, FileSlot::new(0), 0, 16), 16);
+    assert!(sim.buf(BufId::new(2))[..16].iter().all(|&b| b == byte));
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok + 2,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
 }
 
 fn assert_dir_exists(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, dir_open()), 0);
     assert_eq!(
-        drive(sim, out, tok + 1, Op::FileClose { slot: FileSlot(0) }),
+        open_path(sim, out, tok, FileSlot::new(0), path, dir_open()),
+        0
+    );
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok + 1,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
 }
 
 fn setup_causal_sim(seed: u64, max_name_len: usize) -> SimIo {
     let mut sim = SimIo::new(base_limits(), seed, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 6,
-        max_dirs: 8,
-        max_bytes_per_file: 4096,
-        max_name_len,
-        write_log_entries: 8,
-        write_log_bytes: 4096,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(6)
+            .with_max_dirs(8)
+            .with_max_bytes_per_file(4096)
+            .with_max_name_len(max_name_len)
+            .with_write_log_entries(8)
+            .with_write_log_bytes(4096)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
     sim
 }
 
@@ -134,15 +168,22 @@ fn rename_child_out_of_dst_then_replace_dst_with_open_dir_sync() {
         sync_dir_path(&mut sim, &mut out, 30, "/dst");
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 40, FileSlot(0), "/dst", dir_open()),
+            open_path(&mut sim, &mut out, 40, FileSlot::new(0), "/dst", dir_open()),
             0
         );
         rename_path(&mut sim, &mut out, 41, "/dst/child", "/saved");
         rename_path(&mut sim, &mut out, 42, "/x", "/dst");
         sync_dir_path(&mut sim, &mut out, 50, "/");
-        assert_eq!(sync_slot(&mut sim, &mut out, 60, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 60, FileSlot::new(0)), 0);
         assert_eq!(
-            drive(&mut sim, &mut out, 61, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                61,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         sim.power_loss();
@@ -166,25 +207,46 @@ fn nested_subdir_child_moved_out_before_dst_replaced_survives_power_loss() {
         sync_dir_path(&mut sim, &mut out, 35, "/dst/sub");
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 40, FileSlot(0), "/dst", dir_open()),
+            open_path(&mut sim, &mut out, 40, FileSlot::new(0), "/dst", dir_open()),
             0
         );
         assert_eq!(
-            open_path(&mut sim, &mut out, 41, FileSlot(1), "/dst/sub", dir_open()),
+            open_path(
+                &mut sim,
+                &mut out,
+                41,
+                FileSlot::new(1),
+                "/dst/sub",
+                dir_open()
+            ),
             0
         );
         rename_path(&mut sim, &mut out, 42, "/dst/sub/child", "/saved");
         rename_path(&mut sim, &mut out, 43, "/dst/sub", "/out_sub");
         rename_path(&mut sim, &mut out, 44, "/x", "/dst");
         sync_dir_path(&mut sim, &mut out, 50, "/");
-        assert_eq!(sync_slot(&mut sim, &mut out, 60, FileSlot(0)), 0);
-        assert_eq!(sync_slot(&mut sim, &mut out, 61, FileSlot(1)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 60, FileSlot::new(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 61, FileSlot::new(1)), 0);
         assert_eq!(
-            drive(&mut sim, &mut out, 62, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                62,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         assert_eq!(
-            drive(&mut sim, &mut out, 63, Op::FileClose { slot: FileSlot(1) }),
+            drive(
+                &mut sim,
+                &mut out,
+                63,
+                Op::FileClose {
+                    slot: FileSlot::new(1)
+                }
+            ),
             0
         );
         sim.power_loss();

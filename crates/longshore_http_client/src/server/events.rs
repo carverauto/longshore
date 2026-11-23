@@ -42,14 +42,14 @@ impl Server {
     /// Feed a completion. Returns false if the token is not the server's.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
         let Some(rel) = c
-            .token
-            .0
+            .token()
+            .get()
             .checked_sub(self.cfg.token_base())
             .filter(|r| *r <= u64::from(self.cfg.connections_max()) * 8)
         else {
             return false;
         };
-        if c.token.0 == self.accept_token() {
+        if c.token().get() == self.accept_token() {
             self.accepting = false;
             #[expect(
                 clippy::expect_used,
@@ -60,7 +60,7 @@ impl Server {
                 .iter()
                 .position(|conn| conn.state == State::Accepting)
                 .expect("an accept was in flight");
-            if c.result < 0 {
+            if c.result() < 0 {
                 self.conns[i].state = State::Free;
             } else {
                 self.accepted += 1;
@@ -84,13 +84,13 @@ impl Server {
         }
         let (i, kind) = ((rel / 8) as usize, rel % 8);
         if kind == K_CLOSE {
-            self.on_plain(io, i, kind, c.result);
+            self.on_plain(io, i, kind, c.result());
             return true;
         }
         // Sends and receives go through the stream.
         #[cfg(feature = "tls")]
         if self.conns[i].state == State::Handshake {
-            match self.streams[i].on_handshake(io, kind == K_SEND, c.result) {
+            match self.streams[i].on_handshake(io, kind == K_SEND, c.result()) {
                 Step::Pending => {}
                 Step::Done(0) => self.recv_head(io, i, 0),
                 Step::Done(_) | Step::Tls(_) => self.close(io, i),
@@ -98,9 +98,9 @@ impl Server {
             return true;
         }
         let step = if kind == K_SEND {
-            self.streams[i].on_send(io, c.result)
+            self.streams[i].on_send(io, c.result())
         } else {
-            self.streams[i].on_recv(io, c.result)
+            self.streams[i].on_recv(io, c.result())
         };
         match step {
             Step::Pending => {}
@@ -112,7 +112,7 @@ impl Server {
 
     /// Handle a completion in plaintext terms.
     pub(super) fn on_plain<IO: Io>(&mut self, io: &mut IO, i: usize, kind: u64, result: i32) {
-        let c = Completion::new(Token(0), result);
+        let c = Completion::new(Token::new(0), result);
         match (kind, self.conns[i].state) {
             (K_CLOSE, _) => {
                 self.closed += 1;
@@ -120,16 +120,16 @@ impl Server {
                 self.accept(io);
             }
             (K_RECV, State::RecvHead { have }) => {
-                if c.result <= 0 {
+                if c.result() <= 0 {
                     self.close(io, i);
                 } else {
-                    self.on_head_bytes(io, i, have + c.result.unsigned_abs());
+                    self.on_head_bytes(io, i, have + c.result().unsigned_abs());
                 }
             }
-            (K_RECV, State::RecvBody { have }) => self.on_body_bytes(io, i, have, c.result),
+            (K_RECV, State::RecvBody { have }) => self.on_body_bytes(io, i, have, c.result()),
             (K_RECV, State::Stalled) => self.close(io, i),
-            (K_SEND, State::SendHead { off }) => self.on_head_sent(io, i, off, c.result),
-            (K_SEND, State::SendBody { off }) => self.on_body_sent(io, i, off, c.result),
+            (K_SEND, State::SendHead { off }) => self.on_head_sent(io, i, off, c.result()),
+            (K_SEND, State::SendBody { off }) => self.on_body_sent(io, i, off, c.result()),
             _ => {}
         }
     }

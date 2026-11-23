@@ -14,29 +14,25 @@ mod ops;
 mod refusals;
 
 pub(crate) fn base_limits() -> Limits {
-    Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 8192,
-        small_buffers: 2,
-        small_buffer_size: 128,
-        files_max: 4,
-        aligned_buffers: 2,
-        aligned_buffer_size: 8192,
-        block_size: 4096,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(8192)
+        .with_small_buffers(2)
+        .with_small_buffer_size(128)
+        .with_files_max(4)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(8192)
+        .with_block_size(4096)
+        .with_ops_max(16)
 }
 
 /// Read-write flags that create the file if it is missing.
 pub(crate) fn rw_create() -> OpenFlags {
-    OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    }
+    OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
 }
 
 /// An open of the path at the start of `path_buf` into `slot`.
@@ -263,11 +259,7 @@ fn sync_root_dir(io: &mut impl Io, out: &mut Completions, root: &str) {
     } else {
         root.trim_end_matches('/')
     };
-    let df = OpenFlags {
-        read: true,
-        directory: true,
-        ..Default::default()
-    };
+    let df = OpenFlags::NONE.with_read(true).with_directory(true);
     assert_eq!(
         open_file(io, out, 10, FileSlot(1), BufId(0), dir_path, df),
         0

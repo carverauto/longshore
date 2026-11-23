@@ -21,14 +21,12 @@ fn client_stores_and_fetches_over_loopback_on_portable_backend() {
     const CONNS: u32 = 2;
 
     let server = ServerThread::start(
-        Limits {
-            sockets_max: 1 + CONNS,
-            buffers: 2 * CONNS,
-            buffer_size: SIZE,
-            ops_max: CONNS * 3 + 3,
-            ..Limits::BASE
-        },
-        server::ServerConfig::builder(Sock(0), CONNS, 1, 0, SIZE, 2 << 40)
+        Limits::BASE
+            .with_sockets_max(1 + CONNS)
+            .with_buffers(2 * CONNS)
+            .with_buffer_size(SIZE)
+            .with_ops_max(CONNS * 3 + 3),
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1, 0, SIZE, 2 << 40)
             .head_max(4096)
             .objects_max(4)
             .build()

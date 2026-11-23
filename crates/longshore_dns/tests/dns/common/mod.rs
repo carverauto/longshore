@@ -19,13 +19,11 @@ pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
-pub const LIMITS: Limits = Limits {
-    sockets_max: 4,
-    buffers: 4,
-    buffer_size: 1024,
-    ops_max: 8,
-    ..Limits::BASE
-};
+pub const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(4)
+    .with_buffers(4)
+    .with_buffer_size(1024)
+    .with_ops_max(8);
 pub const NS1: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)), 53);
 pub const NS2: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 54)), 53);
 pub const MS: u64 = 1_000_000;
@@ -96,15 +94,15 @@ impl Forge {
     }
 }
 
-const S_SOCK: Sock = Sock(3);
-const S_BUF: BufId = BufId(3);
+const S_SOCK: Sock = Sock::new(3);
+const S_BUF: BufId = BufId::new(3);
 const S_RECV: u64 = 1;
 const S_SEND: u64 = 2;
 
 impl Server {
     pub fn start(io: &mut SimIo, addr: SocketAddr) -> Server {
         io.bind_udp(S_SOCK, addr);
-        io.submit(Token(S_RECV), RECV).unwrap();
+        io.submit(Token::new(S_RECV), RECV).unwrap();
         Server {
             answering: true,
             v4: true,
@@ -155,7 +153,7 @@ impl Server {
         self.queries += 1;
         let n = usize::try_from(result).unwrap();
         if !self.answering {
-            return io.submit(Token(S_RECV), RECV).unwrap();
+            return io.submit(Token::new(S_RECV), RECV).unwrap();
         }
         let m = io.buf(S_BUF);
         let at = self.answer(m, n);
@@ -170,14 +168,14 @@ impl Server {
             len: self.forge.len(at),
             zero_copy: false,
         };
-        io.submit(Token(S_SEND), send).unwrap();
+        io.submit(Token::new(S_SEND), send).unwrap();
     }
 
     /// A response has gone: listen again, or send the true response
     /// after a forged one.
     fn on_sent(&mut self, io: &mut SimIo) {
         let Some(len) = self.resend.take() else {
-            return io.submit(Token(S_RECV), RECV).unwrap();
+            return io.submit(Token::new(S_RECV), RECV).unwrap();
         };
         // The forged response has gone; now the true one.
         self.forge.apply(io.buf(S_BUF));
@@ -188,7 +186,7 @@ impl Server {
             len,
             zero_copy: false,
         };
-        io.submit(Token(S_SEND), send).unwrap();
+        io.submit(Token::new(S_SEND), send).unwrap();
     }
 
     /// Turns the `n`-byte query in `m` into its answer in place. Returns
@@ -260,9 +258,9 @@ pub fn config(servers: &[SocketAddr], refresh_ns: u64, family: Family) -> Config
         prefer_large_segments: None,
         refresh_ns,
         timeout_ns: 50 * MS,
-        socks: [Sock(0), Sock(1)],
-        rx_bufs: [BufId(0), BufId(1)],
-        tx_buf: BufId(2),
+        socks: [Sock::new(0), Sock::new(1)],
+        rx_bufs: [BufId::new(0), BufId::new(1)],
+        tx_buf: BufId::new(2),
         token_base: 1 << 40,
     }
 }
@@ -274,7 +272,7 @@ pub fn pump(io: &mut SimIo, r: &mut Resolver, s: &mut Server, out: &mut Completi
             io.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
                 if !r.on_completion(io, c) {
-                    s.on(io, c.token.0, c.result);
+                    s.on(io, c.token().get(), c.result());
                 }
             }
         }

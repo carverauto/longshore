@@ -23,16 +23,16 @@ pub fn start(args: Args) -> SocketAddr {
     let (bound, listening) = channel();
     let server_conns = args.threads * CONNS_PER_THREAD;
     let _: std::thread::JoinHandle<()> = std::thread::spawn(move || {
-        let mut io = UringIo::new(Limits {
-            sockets_max: 1 + server_conns,
-            buffers: 2 * server_conns,
-            buffer_size: SIZE,
-            ops_max: server_conns * 3 + 2,
-            ..Limits::BASE
-        })
+        let mut io = UringIo::new(
+            Limits::BASE
+                .with_sockets_max(1 + server_conns)
+                .with_buffers(2 * server_conns)
+                .with_buffer_size(SIZE)
+                .with_ops_max(server_conns * 3 + 2),
+        )
         .or_die("server ring");
         let mut server = Server::new(
-            server::ServerConfig::builder(Sock(0), server_conns, 1, 0, SIZE, 2 << 40)
+            server::ServerConfig::builder(Sock::new(0), server_conns, 1, 0, SIZE, 2 << 40)
                 .head_max(4096)
                 .objects_max((CALLERS * 2) as u32)
                 // The server keeps and checks the checksum the client sends.

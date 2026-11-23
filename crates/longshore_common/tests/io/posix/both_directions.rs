@@ -35,7 +35,7 @@ fn completion_within(
 fn send(sock: Sock, buf: u32, len: u32) -> Op {
     Op::Send {
         sock,
-        buf: BufId(buf),
+        buf: BufId::new(buf),
         off: 0,
         len,
         zero_copy: false,
@@ -45,7 +45,7 @@ fn send(sock: Sock, buf: u32, len: u32) -> Op {
 fn recv(sock: Sock, buf: u32, len: u32) -> Op {
     Op::Recv {
         sock,
-        buf: BufId(buf),
+        buf: BufId::new(buf),
         off: 0,
         len,
     }
@@ -66,14 +66,15 @@ fn next(tok: &mut u64) -> u64 {
 /// while the kernel moves data into the peer and auto-tunes both buffers.
 /// A Send counts as stalled only when it stays pending for `SETTLE`.
 fn fill_until_a_send_stalls(io: &mut PosixIo, out: &mut Completions, tok: &mut u64) -> u64 {
-    io.buf(BufId(0)).fill(0xab);
+    io.buf(BufId::new(0)).fill(0xab);
     let mut pending_send_tok = None;
     for _ in 0..256 {
         let t = next(tok);
-        io.submit(Token(t), send(Sock(2), 0, 65536)).unwrap();
+        io.submit(Token::new(t), send(Sock::new(2), 0, 65536))
+            .unwrap();
         if let Some(c) = completion_within(io, out, SETTLE) {
-            assert_eq!(c.token.0, t);
-            assert!(c.result > 0, "send failed: {}", c.result);
+            assert_eq!(c.token().get(), t);
+            assert!(c.result() > 0, "send failed: {}", c.result());
         } else {
             pending_send_tok = Some(t);
             break;
@@ -102,14 +103,16 @@ fn until_both_pending(
                 both_pending = true;
                 break;
             }
-            Some(c) if c.token.0 == send_tok => {
-                assert!(c.result > 0, "send failed: {}", c.result);
+            Some(c) if c.token().get() == send_tok => {
+                assert!(c.result() > 0, "send failed: {}", c.result());
                 send_tok = next(tok);
-                io.submit(Token(send_tok), send(Sock(2), 0, 65536)).unwrap();
+                io.submit(Token::new(send_tok), send(Sock::new(2), 0, 65536))
+                    .unwrap();
             }
             Some(c) => panic!(
                 "unexpected completion: token {} result {}",
-                c.token.0, c.result
+                c.token().get(),
+                c.result()
             ),
         }
     }
@@ -128,11 +131,11 @@ fn recv_hello(io: &mut PosixIo, out: &mut Completions, recv_tok: u64, send_tok: 
     while !saw_recv {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == recv_tok {
-                assert_eq!(c.result, 5);
-                assert_eq!(&io.buf(BufId(1))[..5], b"hello");
+            if c.token().get() == recv_tok {
+                assert_eq!(c.result(), 5);
+                assert_eq!(&io.buf(BufId::new(1))[..5], b"hello");
                 saw_recv = true;
-            } else if c.token.0 == send_tok {
+            } else if c.token().get() == send_tok {
                 saw_send = true;
             }
         }
@@ -149,12 +152,12 @@ fn drain_until_send_completes(
     mut saw_send: bool,
 ) {
     while !saw_send {
-        io.submit(Token(next(tok)), recv(Sock(1), 3, 65536))
+        io.submit(Token::new(next(tok)), recv(Sock::new(1), 3, 65536))
             .unwrap();
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == send_tok {
-                assert!(c.result > 0, "stalled send failed: {}", c.result);
+            if c.token().get() == send_tok {
+                assert!(c.result() > 0, "stalled send failed: {}", c.result());
                 saw_send = true;
             }
         }
@@ -165,20 +168,21 @@ fn drain_until_send_completes(
 fn both_directions_wait_independently_on_one_socket() {
     let mut io = PosixIo::new(LIMITS).unwrap();
     let mut out = Completions::new(8);
-    pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
+    pair(&mut io, &mut out, Sock::new(0), Sock::new(1), Sock::new(2));
 
     let mut tok = 10u64;
     let stalled = fill_until_a_send_stalls(&mut io, &mut out, &mut tok);
 
     // Now submit Recv on the same Sock(2) while Send is still waiting.
     let recv_tok = next(&mut tok);
-    io.submit(Token(recv_tok), recv(Sock(2), 1, 64)).unwrap();
+    io.submit(Token::new(recv_tok), recv(Sock::new(2), 1, 64))
+        .unwrap();
     let send_tok = until_both_pending(&mut io, &mut out, &mut tok, stalled);
 
     // Send 5 bytes from peer Sock(1) -> Sock(2); Recv must complete although a
     // Send on the same socket is pending.
-    io.buf(BufId(2))[..5].copy_from_slice(b"hello");
-    io.submit(Token(next(&mut tok)), send(Sock(1), 2, 5))
+    io.buf(BufId::new(2))[..5].copy_from_slice(b"hello");
+    io.submit(Token::new(next(&mut tok)), send(Sock::new(1), 2, 5))
         .unwrap();
     // The stalled Send may complete here too, without Sock(1) reading: the
     // segment carrying the reply can also carry an acknowledgement that frees
@@ -186,8 +190,11 @@ fn both_directions_wait_independently_on_one_socket() {
     let saw_send = recv_hello(&mut io, &mut out, recv_tok, send_tok);
     drain_until_send_completes(&mut io, &mut out, &mut tok, send_tok, saw_send);
 
-    for (k, sock) in [Sock(0), Sock(1), Sock(2)].into_iter().enumerate() {
-        io.submit(Token(900 + k as u64), Op::Close { sock })
+    for (k, sock) in [Sock::new(0), Sock::new(1), Sock::new(2)]
+        .into_iter()
+        .enumerate()
+    {
+        io.submit(Token::new(900 + k as u64), Op::Close { sock })
             .unwrap();
     }
     let _: Vec<(u64, i32)> = drain_n(&mut io, &mut out, 3);

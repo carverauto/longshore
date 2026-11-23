@@ -13,11 +13,7 @@ use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ECANCELED};
 use std::net::SocketAddr;
 
 fn cancel_and_close_armed_recv<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
-    let limits = Limits {
-        ring_buffers: 1,
-        ring_buffer_size: 128,
-        ..net_limits()
-    };
+    let limits = net_limits().with_ring_buffers(1).with_ring_buffer_size(128);
     let mut io = make(limits);
     let mut out = Completions::new(8);
     let srv = connect_one(&mut io, &mut out, addr, Sock(0), Sock(1));
@@ -79,17 +75,15 @@ fn tens_of_idle_connections_and_small_out<IO: Io>(
     make: &mut impl FnMut(Limits) -> IO,
     addr: SocketAddr,
 ) {
-    let limits = Limits {
-        sockets_max: 2 + N * 2,
-        accept_range_start: 1,
-        accept_range_len: N,
-        buffers: 2,
-        buffer_size: 256,
-        ring_buffers: 1,
-        ring_buffer_size: 128,
-        ops_max: 64,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2 + N * 2)
+        .with_accept_range_start(1)
+        .with_accept_range_len(N)
+        .with_buffers(2)
+        .with_buffer_size(256)
+        .with_ring_buffers(1)
+        .with_ring_buffer_size(128)
+        .with_ops_max(64);
     let mut io = make(limits);
     let mut out = Completions::new(1);
     let accepted = accept_idle_connections(&mut io, &mut out, addr);

@@ -70,7 +70,7 @@ fn zero_length_and_failed_sends(io: &mut SimIo, out: &mut Completions, client: &
     client.send(io, C_TX, 0, 0, u32::MAX);
     io.tick(true, out).unwrap();
     let empty_send = out.pop().unwrap();
-    assert_eq!(client.on_send(io, empty_send.result), Step::Done(0));
+    assert_eq!(client.on_send(io, empty_send.result()), Step::Done(0));
     assert_eq!(client.on_send(io, -EPIPE), Step::Done(-EPIPE));
 }
 
@@ -85,8 +85,8 @@ fn spill_is_dirty_until_drained(
     client.send(io, C_TX, 0, 20, u32::MAX);
     io.tick(true, out).unwrap();
     while let Some(c) = out.pop() {
-        if c.token == C_SEND {
-            let _: Step = client.on_send(io, c.result);
+        if c.token() == C_SEND {
+            let _: Step = client.on_send(io, c.result());
         }
     }
     assert_eq!(recv_until_done(io, out, server, 0, 5), Step::Done(5));
@@ -111,9 +111,9 @@ fn full_rx_buffer_compacts(
     while queued < i32::try_from(BUF).unwrap() {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == C_SEND {
-                queued += c.result;
-                assert!(matches!(client.on_send(io, c.result), Step::Pending));
+            if c.token() == C_SEND {
+                queued += c.result();
+                assert!(matches!(client.on_send(io, c.result()), Step::Pending));
             }
         }
     }
@@ -145,14 +145,14 @@ fn recv_16k_finishing_send(
     while matches!(s, Step::Pending) {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            match c.token {
+            match c.token() {
                 C_SEND => {
                     *client_done =
-                        client.on_send(io, c.result) == Step::Done(i32::try_from(BUF).unwrap())
+                        client.on_send(io, c.result()) == Step::Done(i32::try_from(BUF).unwrap())
                 }
                 S_RECV => {
-                    rx_reads.push(c.result);
-                    s = server.on_recv(io, c.result);
+                    rx_reads.push(c.result());
+                    s = server.on_recv(io, c.result());
                 }
                 _ => {}
             }
@@ -171,7 +171,7 @@ fn send_until_done(io: &mut SimIo, out: &mut Completions, client: &mut Stream, b
     while io.tick(true, out).is_ok() {
         let mut sent = false;
         while let Some(c) = out.pop() {
-            if c.token == C_SEND && client.on_send(io, c.result) == done {
+            if c.token() == C_SEND && client.on_send(io, c.result()) == done {
                 sent = true;
             }
         }
@@ -193,8 +193,8 @@ fn recv_until_done(
     while matches!(step, Step::Pending) {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == S_RECV {
-                step = server.on_recv(io, c.result);
+            if c.token() == S_RECV {
+                step = server.on_recv(io, c.result());
             }
         }
     }

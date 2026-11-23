@@ -225,7 +225,7 @@ fn build_queue<M: Copy>(
 /// Build a bounded lock-free MPSC queue without an `Io` backend, for
 /// [`QueueReceiver::recv_parked`] / [`QueueReceiver::wait_stop`].
 pub fn queue_parked<M: Copy>(capacity: usize) -> (QueueSender<M>, QueueReceiver<M>) {
-    build_queue(Arc::new(NoopWake), capacity, Token(0), PARK_RECV)
+    build_queue(Arc::new(NoopWake), capacity, Token::new(0), PARK_RECV)
 }
 
 impl<M: Copy> QueueSender<M> {

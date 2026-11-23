@@ -18,42 +18,37 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[test]
 fn t1_f15_1_multi_sector_unsynced_write_three_outcomes_across_seeds() {
     let (mut saw_absent, mut saw_whole, mut saw_cut) = (false, false, false);
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let ro = OpenFlags::NONE.with_read(true);
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
 
     for seed in 0..64u64 {
         let mut sim = make_disk_sim(seed, 512, 32, 64 * 1024);
         let mut out = Completions::new(8);
         assert_eq!(
-            open_file(&mut sim, &mut out, 1, FileSlot(0), "/torn.dat", rw),
+            open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/torn.dat", rw),
             0
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0x11; 2048]),
+            write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0x11; 2048]),
             2048
         );
-        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot(1)), 0);
+        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot::new(1)), 0);
 
         assert_eq!(
-            write_file(&mut sim, &mut out, 10, FileSlot(0), 0, &[0x22; 2048]),
+            write_file(&mut sim, &mut out, 10, FileSlot::new(0), 0, &[0x22; 2048]),
             2048
         );
         sim.power_loss();
 
         assert_eq!(
-            open_file(&mut sim, &mut out, 20, FileSlot(0), "/torn.dat", ro),
+            open_file(&mut sim, &mut out, 20, FileSlot::new(0), "/torn.dat", ro),
             0
         );
-        let got = read_file_vec(&mut sim, &mut out, 21, FileSlot(0), 0, 2048).expect("read");
+        let got = read_file_vec(&mut sim, &mut out, 21, FileSlot::new(0), 0, 2048).expect("read");
         assert_eq!(got.len(), 2048);
         let prefix_new = got.iter().take_while(|&&b| b == 0x22).count();
         assert_eq!(
@@ -69,7 +64,7 @@ fn t1_f15_1_multi_sector_unsynced_write_three_outcomes_across_seeds() {
             2048 => saw_whole = true,
             _ => saw_cut = true,
         }
-        assert_eq!(close_file(&mut sim, &mut out, 22, FileSlot(0)), 0);
+        assert_eq!(close_file(&mut sim, &mut out, 22, FileSlot::new(0)), 0);
     }
     assert!(
         saw_absent && saw_whole && saw_cut,
@@ -80,41 +75,36 @@ fn t1_f15_1_multi_sector_unsynced_write_three_outcomes_across_seeds() {
 /// `T1-F15-2`: Single-sector unsynced write is atomic (wholly kept or wholly dropped).
 #[test]
 fn t1_f15_2_single_sector_write_atomic_whole_or_absent() {
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
+    let ro = OpenFlags::NONE.with_read(true);
     for seed in 0..40u64 {
         let mut sim = make_disk_sim(seed, 512, 32, 64 * 1024);
         let mut out = Completions::new(8);
         assert_eq!(
-            open_file(&mut sim, &mut out, 1, FileSlot(0), "/one_sec.dat", rw),
+            open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/one_sec.dat", rw),
             0
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0x33; 512]),
+            write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0x33; 512]),
             512
         );
-        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot(1)), 0);
+        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot::new(1)), 0);
 
         assert_eq!(
-            write_file(&mut sim, &mut out, 10, FileSlot(0), 0, &[0x44; 512]),
+            write_file(&mut sim, &mut out, 10, FileSlot::new(0), 0, &[0x44; 512]),
             512
         );
         sim.power_loss();
 
         assert_eq!(
-            open_file(&mut sim, &mut out, 20, FileSlot(0), "/one_sec.dat", ro),
+            open_file(&mut sim, &mut out, 20, FileSlot::new(0), "/one_sec.dat", ro),
             0
         );
-        let got = read_file_vec(&mut sim, &mut out, 21, FileSlot(0), 0, 512).expect("read");
+        let got = read_file_vec(&mut sim, &mut out, 21, FileSlot::new(0), 0, 512).expect("read");
         assert!(
             got.iter().all(|&b| b == 0x33) || got.iter().all(|&b| b == 0x44),
             "seed {seed}: single sector torn mid-sector"
@@ -125,45 +115,40 @@ fn t1_f15_2_single_sector_write_atomic_whole_or_absent() {
 /// `T1-F15-3`: Overlapping unsynced writes `W1` then `W2` settle sequentially at `power_loss()`.
 #[test]
 fn t1_f15_3_overlapping_unsynced_writes_sequential_settlement() {
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
+    let ro = OpenFlags::NONE.with_read(true);
     for seed in 0..40u64 {
         let mut sim = make_disk_sim(seed, 512, 32, 64 * 1024);
         let mut out = Completions::new(8);
         assert_eq!(
-            open_file(&mut sim, &mut out, 1, FileSlot(0), "/seq.dat", rw),
+            open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/seq.dat", rw),
             0
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0x00; 2048]),
+            write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0x00; 2048]),
             2048
         );
-        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot(1)), 0);
+        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot::new(1)), 0);
 
         assert_eq!(
-            write_file(&mut sim, &mut out, 10, FileSlot(0), 0, &[0xAA; 2048]),
+            write_file(&mut sim, &mut out, 10, FileSlot::new(0), 0, &[0xAA; 2048]),
             2048
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 11, FileSlot(0), 512, &[0xBB; 1024]),
+            write_file(&mut sim, &mut out, 11, FileSlot::new(0), 512, &[0xBB; 1024]),
             1024
         );
         sim.power_loss();
 
         assert_eq!(
-            open_file(&mut sim, &mut out, 20, FileSlot(0), "/seq.dat", ro),
+            open_file(&mut sim, &mut out, 20, FileSlot::new(0), "/seq.dat", ro),
             0
         );
-        let got = read_file_vec(&mut sim, &mut out, 21, FileSlot(0), 0, 2048).expect("read");
+        let got = read_file_vec(&mut sim, &mut out, 21, FileSlot::new(0), 0, 2048).expect("read");
         for sec in 0..4 {
             let chunk = &got[sec * 512..(sec + 1) * 512];
             let first = chunk[0];
@@ -186,32 +171,30 @@ fn t1_f15_4_same_seed_power_loss_bit_identical_recovery() {
     let run = || {
         let mut sim = make_disk_sim(777, 512, 32, 64 * 1024);
         let mut out = Completions::new(8);
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
+        let rw = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true);
         assert_eq!(
-            open_file(&mut sim, &mut out, 1, FileSlot(0), "/det.dat", rw),
+            open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/det.dat", rw),
             0
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0x11; 2048]),
+            write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0x11; 2048]),
             2048
         );
-        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot(1)), 0);
+        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 4, FileSlot::new(1)), 0);
         assert_eq!(
-            write_file(&mut sim, &mut out, 5, FileSlot(0), 0, &[0x22; 2048]),
+            write_file(&mut sim, &mut out, 5, FileSlot::new(0), 0, &[0x22; 2048]),
             2048
         );
         sim.power_loss();
         assert_eq!(
-            open_file(&mut sim, &mut out, 6, FileSlot(0), "/det.dat", rw),
+            open_file(&mut sim, &mut out, 6, FileSlot::new(0), "/det.dat", rw),
             0
         );
-        let got = read_file_vec(&mut sim, &mut out, 7, FileSlot(0), 0, 2048).unwrap();
+        let got = read_file_vec(&mut sim, &mut out, 7, FileSlot::new(0), 0, 2048).unwrap();
         (got, sim.trace_hash())
     };
     let (b1, h1) = run();
@@ -222,12 +205,12 @@ fn t1_f15_4_same_seed_power_loss_bit_identical_recovery() {
 
 /// Sends 14 bytes from `Sock(2)` to `Sock(1)` and checks they arrive.
 fn tcp_round_trip_after_crash(sim: &mut SimIo, out: &mut Completions) {
-    write_pool_bytes(sim, BufId(0), 0, b"post-crash-tcp");
+    write_pool_bytes(sim, BufId::new(0), 0, b"post-crash-tcp");
     sim.submit(
-        Token(12),
+        Token::new(12),
         Op::Send {
-            sock: Sock(2),
-            buf: BufId(0),
+            sock: Sock::new(2),
+            buf: BufId::new(0),
             off: 0,
             len: 14,
             zero_copy: false,
@@ -235,18 +218,21 @@ fn tcp_round_trip_after_crash(sim: &mut SimIo, out: &mut Completions) {
     )
     .unwrap();
     sim.submit(
-        Token(13),
+        Token::new(13),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(1),
+            sock: Sock::new(1),
+            buf: BufId::new(1),
             off: 0,
             len: 14,
         },
     )
     .unwrap();
     let io_done = drive_until(sim, out, 100, |v| v.len() == 2).unwrap();
-    assert!(io_done.iter().all(|c| c.result == 14));
-    assert_eq!(read_pool_bytes(sim, BufId(1), 0, 14), b"post-crash-tcp");
+    assert!(io_done.iter().all(|c| c.result() == 14));
+    assert_eq!(
+        read_pool_bytes(sim, BufId::new(1), 0, 14),
+        b"post-crash-tcp"
+    );
 }
 
 /// `T1-F15-5`: Network and storage callers can be rebuilt on the same `SimIo` after `power_loss()`.
@@ -257,43 +243,41 @@ fn t1_f15_5_rebuild_network_and_storage_after_power_loss() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001);
     let _: Vec<Completion> = listen_accept_connect(&mut sim, &mut out, addr, 1);
 
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 3, FileSlot(0), "/srv.dat", rw),
+        open_file(&mut sim, &mut out, 3, FileSlot::new(0), "/srv.dat", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 4, FileSlot(0), 0, b"before-crash"),
+        write_file(&mut sim, &mut out, 4, FileSlot::new(0), 0, b"before-crash"),
         12
     );
-    assert_eq!(sync_file(&mut sim, &mut out, 5, FileSlot(0), false), 0);
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 6, FileSlot(1)), 0);
+    assert_eq!(sync_file(&mut sim, &mut out, 5, FileSlot::new(0), false), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 6, FileSlot::new(1)), 0);
 
     sim.power_loss();
 
     // Rebuild listener + connection + file handle on the same SimIo.
     let conn = listen_accept_connect(&mut sim, &mut out, addr, 10);
-    assert!(conn.iter().all(|c| c.result == 0));
+    assert!(conn.iter().all(|c| c.result() == 0));
     tcp_round_trip_after_crash(&mut sim, &mut out);
 
     assert_eq!(
-        open_file(&mut sim, &mut out, 20, FileSlot(0), "/srv.dat", rw),
+        open_file(&mut sim, &mut out, 20, FileSlot::new(0), "/srv.dat", rw),
         0
     );
     assert_eq!(
-        read_file_vec(&mut sim, &mut out, 21, FileSlot(0), 0, 12).unwrap(),
+        read_file_vec(&mut sim, &mut out, 21, FileSlot::new(0), 0, 12).unwrap(),
         b"before-crash"
     );
     let _: Completion = submit_and_wait_one(
         &mut sim,
         &mut out,
-        Token(22),
-        Op::Close { sock: Sock(1) },
+        Token::new(22),
+        Op::Close { sock: Sock::new(1) },
         100,
     )
     .unwrap();

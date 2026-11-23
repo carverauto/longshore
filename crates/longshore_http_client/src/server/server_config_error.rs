@@ -68,7 +68,7 @@ impl fmt::Display for ServerConfigError {
             } => write!(
                 f,
                 "listener slot {} is inside the connection slots {first_sock}..{}",
-                listener.0,
+                listener.get(),
                 u64::from(first_sock) + u64::from(connections_max)
             ),
             ServerConfigError::BuffersOverflow {

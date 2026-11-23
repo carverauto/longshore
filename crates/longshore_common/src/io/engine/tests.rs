@@ -131,13 +131,11 @@ impl World for MockWorld {
 }
 
 fn limits(ops_max: u32) -> Limits {
-    Limits {
-        sockets_max: 8,
-        buffers: 4,
-        buffer_size: 64,
-        ops_max,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(8)
+        .with_buffers(4)
+        .with_buffer_size(64)
+        .with_ops_max(ops_max)
 }
 
 fn recv_op(sock: u32) -> Op {
@@ -375,13 +373,11 @@ fn conditional_trace_hash_changes_only_when_more_or_buf_is_set() {
 
 #[test]
 fn close_cancels_armed_accept_and_armed_recv_and_give_back_forwards() {
-    let l = Limits {
-        accept_range_start: 2,
-        accept_range_len: 2,
-        ring_buffers: 2,
-        ring_buffer_size: 64,
-        ..limits(8)
-    };
+    let l = limits(8)
+        .with_accept_range_start(2)
+        .with_accept_range_len(2)
+        .with_ring_buffers(2)
+        .with_ring_buffer_size(64);
     let mut engine = Engine::with_world(l, MockWorld::new(0));
     engine
         .submit(Token(1), Op::ArmedAccept { listener: Sock(0) })

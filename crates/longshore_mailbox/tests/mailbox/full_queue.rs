@@ -37,7 +37,7 @@ fn a_call_waits_for_room_when_other_messages_fill_the_queue() {
         capacity: 1,
         slots: 2,
         waiters_prealloc: 2,
-        wake_token: Token(1),
+        wake_token: Token::new(1),
     };
     let (tx, mut rx) = mailbox_parked::<(u32, u32), Result<u32, ()>>(cfg);
     let (cnt, w) = counted_waker();

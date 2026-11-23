@@ -90,23 +90,21 @@ fn t1_f05_3_shared_timers_and_wake_across_backends() {
         contract::timers(&mut |l| posix_backend(l).expect("posix"));
         contract::wake_ready(&mut |l| posix_backend(l).expect("posix"));
 
-        let limits = Limits {
-            sockets_max: 1,
-            buffers: 1,
-            buffer_size: 64,
-            ops_max: 2,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(1)
+            .with_buffers(1)
+            .with_buffer_size(64)
+            .with_ops_max(2);
         let mut io = posix_backend(limits).expect("posix");
         let mut out = Completions::new(4);
         let waker = io.waker().expect("waker");
-        io.submit(Token(1), Op::AwaitWake).unwrap();
+        io.submit(Token::new(1), Op::AwaitWake).unwrap();
         let h = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(10));
             waker.wake();
         });
         let cs = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-        assert_eq!((cs[0].token, cs[0].result), (Token(1), 0));
+        assert_eq!((cs[0].token(), cs[0].result()), (Token::new(1), 0));
         h.join().unwrap();
     }
     #[cfg(target_os = "linux")]
@@ -118,27 +116,23 @@ fn t1_f05_3_shared_timers_and_wake_across_backends() {
 
 #[test]
 fn t1_f05_4_shared_loopback_echo_short_sends_partial_recvs() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 3,
-        buffer_size: 4096,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(3)
+        .with_buffer_size(4096)
+        .with_ops_max(4);
     #[cfg(feature = "sim")]
     {
         let addr: SocketAddr = "192.0.2.52:443".parse().unwrap();
-        let faults = Faults {
-            short_send: 250_000,
-            partial_recv: 250_000,
-            delay: 150_000,
-            ..Faults::default()
-        };
+        let faults = Faults::NONE
+            .with_short_send(250_000)
+            .with_partial_recv(250_000)
+            .with_delay(150_000);
         for zc in [false, true] {
             let mut io = SimIo::new(limits, 19, faults);
             let mut out = Completions::new(8);
             let stats = echo(&mut io, addr, 64 * 1024, 4096, zc, &mut out).expect("sim echo");
-            assert!(stats.sends > 0 && stats.recvs > 0);
+            assert!(stats.sends() > 0 && stats.recvs() > 0);
         }
     }
     #[cfg(unix)]
@@ -147,7 +141,7 @@ fn t1_f05_4_shared_loopback_echo_short_sends_partial_recvs() {
         let mut out = Completions::new(8);
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let stats = echo(&mut io, addr, 64 * 1024, 4096, zc, &mut out).expect("posix echo");
-        assert!(stats.sends > 0 && stats.recvs > 0);
+        assert!(stats.sends() > 0 && stats.recvs() > 0);
     }
     #[cfg(target_os = "linux")]
     for zc in [false, true] {
@@ -155,7 +149,7 @@ fn t1_f05_4_shared_loopback_echo_short_sends_partial_recvs() {
         let mut out = Completions::new(8);
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let stats = echo(&mut io, addr, 64 * 1024, 4096, zc, &mut out).expect("uring echo");
-        assert!(stats.sends > 0 && stats.recvs > 0);
+        assert!(stats.sends() > 0 && stats.recvs() > 0);
     }
 }
 

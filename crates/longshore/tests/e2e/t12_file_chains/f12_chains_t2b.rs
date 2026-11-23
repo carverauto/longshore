@@ -18,12 +18,12 @@ use longshore::io::{
 /// in completion order.
 fn chain_results(io: &mut dyn Io, out: &mut Completions, base: u64, ops: [Op; 3]) -> [i32; 3] {
     let chain = [
-        (Token(base), ops[0]),
-        (Token(base + 1), ops[1]),
-        (Token(base + 2), ops[2]),
+        (Token::new(base), ops[0]),
+        (Token::new(base + 1), ops[1]),
+        (Token::new(base + 2), ops[2]),
     ];
     let cs = submit_chain_and_collect(io, out, &chain);
-    [cs[0].result, cs[1].result, cs[2].result]
+    [cs[0].result(), cs[1].result(), cs[2].result()]
 }
 
 /// `T2-F12-3`: Failure at position 0, 1, or 2 in a 3-op chain cancels only subsequent members.
@@ -33,41 +33,44 @@ fn t2_f12_3_chain_failure_at_each_position_cancels_tail() {
         let mut out = Completions::new(16);
         let ok_path = format!("{prefix}chain_pos_ok.bin");
         let missing = format!("{prefix}chain_pos_missing.bin");
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
-        let ro = OpenFlags {
-            read: true,
-            ..Default::default()
-        };
+        let rw = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true);
+        let ro = OpenFlags::NONE.with_read(true);
         assert_eq!(
-            open_slot(io, &mut out, 1, FileSlot(0), BufId(0), &ok_path, rw),
+            open_slot(
+                io,
+                &mut out,
+                1,
+                FileSlot::new(0),
+                BufId::new(0),
+                &ok_path,
+                rw
+            ),
             0
         );
 
         let mut d = DynIo(io);
-        let mlen = write_nul_path(&mut d, BufId(0), 0, &missing);
-        write_pool_bytes(&mut d, BufId(1), 0, b"before-fail");
+        let mlen = write_nul_path(&mut d, BufId::new(0), 0, &missing);
+        write_pool_bytes(&mut d, BufId::new(1), 0, b"before-fail");
 
         let fail_open = Op::FileOpen {
-            slot: FileSlot(1),
-            path_buf: BufId(0),
+            slot: FileSlot::new(1),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: mlen,
             flags: ro,
         };
         let write_ok = Op::FileWrite {
-            slot: FileSlot(0),
-            buf: BufId(1),
+            slot: FileSlot::new(0),
+            buf: BufId::new(1),
             off: 0,
             len: 11,
             file_off: 0,
         };
         let sync_ok = Op::FileSync {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             datasync: true,
         };
 
@@ -82,7 +85,7 @@ fn t2_f12_3_chain_failure_at_each_position_cancels_tail() {
         // Position 2 fails: pos 0 and pos 1 succeed.
         let c2 = chain_results(io, &mut out, 30, [write_ok, sync_ok, fail_open]);
         assert_eq!(c2, [11, 0, -ENOENT]);
-        assert_eq!(close_slot(io, &mut out, 40, FileSlot(0)), 0);
+        assert_eq!(close_slot(io, &mut out, 40, FileSlot::new(0)), 0);
     });
 }
 
@@ -90,35 +93,33 @@ fn t2_f12_3_chain_failure_at_each_position_cancels_tail() {
 fn direct_open_unaligned_write_sync(plen: u32) -> [(Token, Op); 3] {
     [
         (
-            Token(1),
+            Token::new(1),
             Op::FileOpen {
-                slot: FileSlot(0),
-                path_buf: BufId(0),
+                slot: FileSlot::new(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: plen,
-                flags: OpenFlags {
-                    read: true,
-                    write: true,
-                    create: true,
-                    direct: true,
-                    ..Default::default()
-                },
+                flags: OpenFlags::NONE
+                    .with_read(true)
+                    .with_write(true)
+                    .with_create(true)
+                    .with_direct(true),
             },
         ),
         (
-            Token(2),
+            Token::new(2),
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 100,
                 file_off: 0,
             },
         ),
         (
-            Token(3),
+            Token::new(3),
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: true,
             },
         ),
@@ -132,10 +133,15 @@ fn t2_f12_4_chain_shared_check_refusal_cancels_all_without_mutation() {
         let mut out = Completions::new(16);
         let never_created = format!("{prefix}must_not_exist.bin");
         let mut d = DynIo(io);
-        let plen = write_nul_path(&mut d, BufId(0), 0, &never_created);
+        let plen = write_nul_path(&mut d, BufId::new(0), 0, &never_created);
 
         let cs = submit_chain_and_collect(io, &mut out, &direct_open_unaligned_write_sync(plen));
-        let result_of = |t: u64| cs.iter().find(|c| c.token == Token(t)).unwrap().result;
+        let result_of = |t: u64| {
+            cs.iter()
+                .find(|c| c.token() == Token::new(t))
+                .unwrap()
+                .result()
+        };
         assert_eq!(result_of(1), -ECANCELED);
         assert_eq!(result_of(2), -LINUX_EINVAL);
         assert_eq!(result_of(3), -ECANCELED);
@@ -144,18 +150,18 @@ fn t2_f12_4_chain_shared_check_refusal_cancels_all_without_mutation() {
         let st = submit_and_wait_one(
             &mut d,
             &mut out,
-            Token(4),
+            Token::new(4),
             Op::FileStatus {
-                path_buf: BufId(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: plen,
-                out_buf: BufId(1),
+                out_buf: BufId::new(1),
                 out_off: 0,
             },
             10_000,
         )
         .expect("status");
-        assert_eq!(st.result, -ENOENT);
+        assert_eq!(st.result(), -ENOENT);
     });
 }
 
@@ -173,27 +179,31 @@ fn t2_f12_5_chain_rejects_non_file_ops_and_empty_slice() {
             assert!(out.is_empty());
         }
 
-        for bad_op in [Op::Timeout { nanos: 1_000 }, Op::Close { sock: Sock(0) }] {
+        for bad_op in [
+            Op::Timeout { nanos: 1_000 },
+            Op::Close { sock: Sock::new(0) },
+        ] {
             let res = {
                 let mut d = DynIo(io);
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    d.submit_chain(&[(Token(50), bad_op)])
+                    d.submit_chain(&[(Token::new(50), bad_op)])
                 }))
             };
             if let Ok(Ok(())) = res {
                 let c = drive_until(&mut DynIo(io), &mut out, 100, |v| {
-                    v.iter().any(|x| x.token == Token(50))
+                    v.iter().any(|x| x.token().get() == 50)
                 })
                 .expect("ready completion");
-                assert_eq!(c[0].result, -LINUX_EINVAL);
+                assert_eq!(c[0].result(), -LINUX_EINVAL);
             }
         }
 
         let mut d = DynIo(io);
         for t in 1..=4 {
-            d.submit(Token(100 + t), Op::Timeout { nanos: 0 }).unwrap();
+            d.submit(Token::new(100 + t), Op::Timeout { nanos: 0 })
+                .unwrap();
         }
         let done = drive_until(&mut d, &mut out, 100, |v| v.len() == 4).expect("4 timers");
-        assert!(done.iter().all(|c| c.result == 0));
+        assert!(done.iter().all(|c| c.result() == 0));
     });
 }

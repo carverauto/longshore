@@ -70,7 +70,9 @@ impl Worker {
         let first = io.buf(layout.first_buffer);
         let (base, buf_size) = (first.as_mut_ptr(), first.len());
         if layout.buffers > 1 {
-            let next = io.buf(BufId(layout.first_buffer.0 + 1)).as_mut_ptr();
+            let next = io
+                .buf(BufId::new(layout.first_buffer.get() + 1))
+                .as_mut_ptr();
             assert_eq!(
                 next as usize - base as usize,
                 buf_size,
@@ -81,7 +83,7 @@ impl Worker {
             capacity: layout.operations as usize,
             slots: layout.operations,
             waiters_prealloc,
-            wake_token: Token(layout.token_base),
+            wake_token: Token::new(layout.token_base),
         };
         let (sender, rx) = longshore_mailbox::mailbox(io, config)?;
         let lane = Arc::new(Lane {
@@ -125,7 +127,7 @@ impl Worker {
     )]
     fn arm_timer<IO: Io>(&self, io: &mut IO) {
         io.submit(
-            Token(self.layout.token_base + 1),
+            Token::new(self.layout.token_base + 1),
             Op::Timeout {
                 nanos: self.layout.heartbeat_ns,
             },
@@ -147,7 +149,7 @@ impl Worker {
         if woken {
             return true;
         }
-        if c.token == Token(self.layout.token_base + 1) {
+        if c.token() == Token::new(self.layout.token_base + 1) {
             self.s3.tick(io);
             self.arm_timer(io);
             return true;
@@ -199,7 +201,7 @@ impl Worker {
             return;
         }
         let key = core::str::from_utf8(&r.key[..r.key_len as usize]).unwrap_or("");
-        let buf = BufId(self.layout.first_buffer.0 + r.buf);
+        let buf = BufId::new(self.layout.first_buffer.get() + r.buf);
         let token = u64::from(r.op);
         let sent = match r.kind {
             Kind::Store {

@@ -58,18 +58,16 @@ fn exchange(
 /// Client and server on one ring. Large buffers: server head 0, server
 /// body 1, user tx 2, user rx 3. Small buffers: the client head.
 pub(super) fn selftest() {
-    let limits = Limits {
-        sockets_max: 3,
-        buffers: 4,
-        buffer_size: SIZE,
-        small_buffers: 1,
-        small_buffer_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(3)
+        .with_buffers(4)
+        .with_buffer_size(SIZE)
+        .with_small_buffers(1)
+        .with_small_buffer_size(4096)
+        .with_ops_max(8);
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), 1, 2, 0, SIZE, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), 1, 2, 0, SIZE, 2 << 40)
             .head_max(4096)
             .objects_max(1)
             .build()
@@ -79,11 +77,11 @@ pub(super) fn selftest() {
         .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap_or_else(|e| die(e));
     let mut client = Client::new(
-        client_cfg(1, SIZE, 1, limits.small(0).0)
+        client_cfg(1, SIZE, 1, limits.small(0).get())
             .build()
             .or_die("the client configuration"),
     );
-    let (tx, rx) = (BufId(2), BufId(3));
+    let (tx, rx) = (BufId::new(2), BufId::new(3));
     for (i, b) in io.buf(tx).iter_mut().enumerate() {
         *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[2];
     }

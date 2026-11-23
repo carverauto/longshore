@@ -16,11 +16,7 @@ fn armed_recv_bytes_and_enobufs_and_eof<IO: Io>(
     make: &mut impl FnMut(Limits) -> IO,
     addr: SocketAddr,
 ) {
-    let limits = Limits {
-        ring_buffers: 1,
-        ring_buffer_size: 128,
-        ..net_limits()
-    };
+    let limits = net_limits().with_ring_buffers(1).with_ring_buffer_size(128);
     let ring = limits.ring(0);
     let mut io = make(limits);
     let mut out = Completions::new(8);

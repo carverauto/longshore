@@ -33,15 +33,13 @@ const NAME: &str = "objects.test";
 
 // Buffers: client heads 0..2, client TLS 2..6, server (head, body) 6..10,
 // server TLS 10..14, user tx 14, rx 15.
-const TX: BufId = BufId(14);
-const RX: BufId = BufId(15);
-const LIMITS: Limits = Limits {
-    sockets_max: 1 + CONNS * 2,
-    buffers: 16,
-    buffer_size: BUF,
-    ops_max: CONNS * 3 + CONNS + 1 + 1,
-    ..Limits::BASE
-};
+const TX: BufId = BufId::new(14);
+const RX: BufId = BufId::new(15);
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(1 + CONNS * 2)
+    .with_buffers(16)
+    .with_buffer_size(BUF)
+    .with_ops_max(CONNS * 3 + CONNS + 1 + 1);
 
 struct Identity {
     cert: Vec<u8>,
@@ -83,7 +81,7 @@ fn client_cfg() -> client::ClientConfig {
 
 #[cfg(test)]
 fn server_cfg() -> server::ServerConfig {
-    server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 6, BUF, 2 << 40)
+    server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 6, BUF, 2 << 40)
         .head_max(HEAD_MAX)
         .objects_max(2)
         .build()
@@ -118,7 +116,7 @@ fn world_cfg(
         Some(s) => Client::with_tls(cfg, s, 2),
         None => Client::new(cfg),
     };
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     World {
         io,
@@ -154,9 +152,9 @@ impl World {
             while done.len() < n {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                         continue;
                     }
@@ -187,9 +185,9 @@ impl World {
             while io.now_ns() < until {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     } else if client.on_completion(io, c) == Handled::NotMine {
                         let _: bool = server.on_completion(io, c);
@@ -273,12 +271,10 @@ fn put_then_get_round_trips_over_tls_on_one_connection() {
 /// delayed: the plaintext is unchanged.
 #[test]
 fn tls_survives_short_writes_partial_reads_and_delays() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 300_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(300_000)
+        .with_delay(200_000);
     for seed in 0..25 {
         let mut w = world(seed, faults);
         w.fill_tx(50_000, seed as u8);
@@ -301,12 +297,10 @@ fn tls_survives_short_writes_partial_reads_and_delays() {
 /// application: a request either succeeds with exact bytes or fails.
 #[test]
 fn a_flipped_bit_fails_the_request_and_never_corrupts_data() {
-    let faults = Faults {
-        bit_flip: 20_000,
-        short_send: 100_000,
-        partial_recv: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_bit_flip(20_000)
+        .with_short_send(100_000)
+        .with_partial_recv(100_000);
     let (mut clean, mut failed) = (0, 0);
     for seed in 0..60 {
         let mut w = world(seed, faults);
@@ -451,11 +445,9 @@ fn timeouts_and_server_failures_work_the_same_over_tls() {
 fn chunked_responses_work_over_tls() {
     let mut w = world(
         7,
-        Faults {
-            partial_recv: 300_000,
-            short_send: 300_000,
-            ..Faults::default()
-        },
+        Faults::NONE
+            .with_partial_recv(300_000)
+            .with_short_send(300_000),
     );
     w.fill_tx(30_000, 4);
     ok(200, 0)(w.request("PUT", "/k", Some(30_000)));

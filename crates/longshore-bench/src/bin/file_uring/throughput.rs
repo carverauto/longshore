@@ -32,10 +32,10 @@ pub(super) struct Shape {
 }
 
 fn one(io: &mut UringIo, out: &mut Completions, token: u64, op: Op, what: &str) {
-    io.submit(Token(token), op).or_die("submit");
+    io.submit(Token::new(token), op).or_die("submit");
     io.tick(true, out).or_die("tick");
     let c = out.pop().or_die("a completion");
-    assert_eq!(c.result, 0, "{what} failed: {}", c.result);
+    assert_eq!(c.result(), 0, "{what} failed: {}", c.result());
 }
 
 /// One sequential pass over the file. A write pass ends with `fdatasync`,
@@ -54,7 +54,7 @@ fn pass(
     while done < shape.size {
         while next < shape.size {
             let Some(i) = free.pop() else { break };
-            let (slot, buf) = (FileSlot(0), limits.aligned(i));
+            let (slot, buf) = (FileSlot::new(0), limits.aligned(i));
             let op = if write {
                 Op::FileWrite {
                     slot,
@@ -72,19 +72,19 @@ fn pass(
                     file_off: next,
                 }
             };
-            io.submit(Token(u64::from(i)), op).or_die("submit");
+            io.submit(Token::new(u64::from(i)), op).or_die("submit");
             next += block;
         }
         io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
-            assert_eq!(u64::try_from(c.result), Ok(block), "short or failed op");
-            free.push(c.token.0 as u32);
+            assert_eq!(u64::try_from(c.result()), Ok(block), "short or failed op");
+            free.push(c.token().get() as u32);
             done += block;
         }
     }
     if write {
         let sync = Op::FileSync {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             datasync: true,
         };
         one(io, out, u64::MAX, sync, "fdatasync");
@@ -94,21 +94,19 @@ fn pass(
 
 pub(super) fn run(dir: &Path, shape: Shape) {
     assert!(shape.size.is_multiple_of(u64::from(shape.block)));
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 4096,
-        files_max: 2,
-        aligned_buffers: shape.depth,
-        aligned_buffer_size: shape.block,
-        block_size: 4096,
-        ops_max: shape.depth + 2,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_aligned_buffers(shape.depth)
+        .with_aligned_buffer_size(shape.block)
+        .with_block_size(4096)
+        .with_ops_max(shape.depth + 2);
     let mut io = UringIo::new(limits).or_die("UringIo::new");
     let mut out = Completions::new(shape.depth as usize + 2);
     let path = format!("{}/bench_throughput.bin\0", dir.display());
-    io.buf(longshore::io::BufId(0))[..path.len()].copy_from_slice(path.as_bytes());
+    io.buf(longshore::io::BufId::new(0))[..path.len()].copy_from_slice(path.as_bytes());
 
     // Incompressible contents, different in every buffer.
     let mut x = 0x9E37_79B9_7F4A_7C15u64;
@@ -122,21 +120,19 @@ pub(super) fn run(dir: &Path, shape: Shape) {
     }
 
     let open = Op::FileOpen {
-        slot: FileSlot(0),
-        path_buf: longshore::io::BufId(0),
+        slot: FileSlot::new(0),
+        path_buf: longshore::io::BufId::new(0),
         path_off: 0,
         path_len: path.len() as u32,
-        flags: OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            direct: true,
-            ..Default::default()
-        },
+        flags: OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true)
+            .with_direct(true),
     };
     one(&mut io, &mut out, 1, open, "O_DIRECT open");
     let reserve = Op::FileReserve {
-        slot: FileSlot(0),
+        slot: FileSlot::new(0),
         file_off: 0,
         len: shape.size,
         keep_size: false,
@@ -164,7 +160,9 @@ pub(super) fn run(dir: &Path, shape: Shape) {
         &mut io,
         &mut out,
         99,
-        Op::FileClose { slot: FileSlot(0) },
+        Op::FileClose {
+            slot: FileSlot::new(0),
+        },
         "close",
     );
 }

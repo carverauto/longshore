@@ -19,28 +19,31 @@ use std::net::SocketAddr;
 const TLS_BUF_CAP: u32 = 40 * 1024;
 
 fn tls_stream_limits() -> Limits {
-    Limits {
-        sockets_max: 6,
-        buffers: 8,
-        buffer_size: TLS_BUF_CAP,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        accept_range_start: 3,
-        accept_range_len: 3,
-        ops_max: 16,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(8)
+        .with_buffer_size(TLS_BUF_CAP)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_accept_range_start(3)
+        .with_accept_range_len(3)
+        .with_ops_max(16)
 }
 
 /// Connects `Sock(1)` through an armed accept; returns the server socket.
 fn accept_one<IO: Io>(io: &mut IO, out: &mut Completions, addr: SocketAddr) -> Sock {
-    let bound = io.listen(Sock(0), addr).unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    let bound = io.listen(Sock::new(0), addr).unwrap();
     io.submit(
-        Token(2),
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    io.submit(
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr: bound,
         },
     )
@@ -51,10 +54,10 @@ fn accept_one<IO: Io>(io: &mut IO, out: &mut Completions, addr: SocketAddr) -> S
     while srv_sock.is_none() || !cli_ok {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 1 && c.result >= 0 {
-                srv_sock = Some(Sock(u32::try_from(c.result).unwrap()));
-            } else if c.token.0 == 2 {
-                assert_eq!(c.result, 0);
+            if c.token().get() == 1 && c.result() >= 0 {
+                srv_sock = Some(Sock::new(u32::try_from(c.result()).unwrap()));
+            } else if c.token().get() == 2 {
+                assert_eq!(c.result(), 0);
                 cli_ok = true;
             }
         }
@@ -104,14 +107,14 @@ fn complete_handshakes<IO: Io>(
     while !(cli_hs_done && srv_hs_done) {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            match c.token.0 {
+            match c.token().get() {
                 10 | 11 => {
                     cli_hs_done |=
-                        handshake_step(cli_stream, io, c.token.0 == 10, c.result, "client");
+                        handshake_step(cli_stream, io, c.token().get() == 10, c.result(), "client");
                 }
                 20 | 21 => {
                     srv_hs_done |=
-                        handshake_step(srv_stream, io, c.token.0 == 20, c.result, "server");
+                        handshake_step(srv_stream, io, c.token().get() == 20, c.result(), "server");
                 }
                 _ => {}
             }
@@ -127,9 +130,9 @@ fn exchange_payload<IO: Io>(
     srv_stream: &mut Stream,
     msg: &[u8],
 ) {
-    write_pool_bytes(io, BufId(4), 0, msg);
-    cli_stream.send(io, BufId(4), 0, msg.len() as u32, u32::MAX);
-    let mut srv_got = match srv_stream.recv(io, BufId(5), 0, 1024) {
+    write_pool_bytes(io, BufId::new(4), 0, msg);
+    cli_stream.send(io, BufId::new(4), 0, msg.len() as u32, u32::MAX);
+    let mut srv_got = match srv_stream.recv(io, BufId::new(5), 0, 1024) {
         Step::Done(n) => {
             assert!(n > 0);
             usize::try_from(n).unwrap()
@@ -142,15 +145,15 @@ fn exchange_payload<IO: Io>(
     while srv_got == 0 || !cli_sent {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            match c.token.0 {
+            match c.token().get() {
                 10 => {
-                    if let Step::Done(n) = cli_stream.on_send(io, c.result) {
+                    if let Step::Done(n) = cli_stream.on_send(io, c.result()) {
                         assert_eq!(n, i32::try_from(msg.len()).unwrap());
                         cli_sent = true;
                     }
                 }
                 21 => {
-                    if let Step::Done(n) = srv_stream.on_recv(io, c.result) {
+                    if let Step::Done(n) = srv_stream.on_recv(io, c.result()) {
                         assert!(n > 0);
                         srv_got = usize::try_from(n).unwrap();
                     }
@@ -159,17 +162,17 @@ fn exchange_payload<IO: Io>(
             }
         }
     }
-    assert_eq!(&io.buf(BufId(5))[..srv_got], msg);
+    assert_eq!(&io.buf(BufId::new(5))[..srv_got], msg);
 }
 
 /// `IdleCheck` on a healthy idle TLS socket reports `Clean` (not Dirty or Closed).
 fn idle_check_is_clean<IO: Io>(io: &mut IO, out: &mut Completions, srv_stream: &mut Stream) {
-    let mut idle = srv_stream.check_idle(io, BufId(6), 0);
+    let mut idle = srv_stream.check_idle(io, BufId::new(6), 0);
     while idle == IdleCheck::Pending {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 21 {
-                idle = srv_stream.on_idle_check(io, c.result);
+            if c.token().get() == 21 {
+                idle = srv_stream.on_idle_check(io, c.result());
             }
         }
     }
@@ -183,13 +186,14 @@ fn server_close_gives_client_eof<IO: Io>(
     cli_stream: &mut Stream,
     srv_sock: Sock,
 ) {
-    io.submit(Token(40), Op::Close { sock: srv_sock }).unwrap();
-    let mut saw_eof = matches!(cli_stream.recv(io, BufId(6), 0, 1024), Step::Done(0));
+    io.submit(Token::new(40), Op::Close { sock: srv_sock })
+        .unwrap();
+    let mut saw_eof = matches!(cli_stream.recv(io, BufId::new(6), 0, 1024), Step::Done(0));
     while !saw_eof {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 11 {
-                if let Step::Done(0) = cli_stream.on_recv(io, c.result) {
+            if c.token().get() == 11 {
+                if let Step::Done(0) = cli_stream.on_recv(io, c.result()) {
                     saw_eof = true;
                 }
             }
@@ -201,16 +205,17 @@ fn run_tls_stream_server_client_roundtrip<IO: Io>(io: &mut IO, addr: SocketAddr)
     let mut out = Completions::new(16);
     let srv_sock = accept_one(io, &mut out, addr);
 
-    let mut cli_stream = Stream::new(Sock(1), Token(10), Token(11)).with_tls_buffers(
-        BufId(0),
-        BufId(1),
-        TLS_BUF_CAP,
-        16 * 1024,
-        32 * 1024,
-    );
-    let mut srv_stream = Stream::new(srv_sock, Token(20), Token(21)).with_tls_buffers(
-        BufId(2),
-        BufId(3),
+    let mut cli_stream = Stream::new(Sock::new(1), Token::new(10), Token::new(11))
+        .with_tls_buffers(
+            BufId::new(0),
+            BufId::new(1),
+            TLS_BUF_CAP,
+            16 * 1024,
+            32 * 1024,
+        );
+    let mut srv_stream = Stream::new(srv_sock, Token::new(20), Token::new(21)).with_tls_buffers(
+        BufId::new(2),
+        BufId::new(3),
         TLS_BUF_CAP,
         16 * 1024,
         32 * 1024,

@@ -22,16 +22,11 @@ fn open_close_empty_excl<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str
     let mut out = Completions::new(8);
     let p1 = format!("{root}f1.dat");
     let p2 = format!("{root}f2.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
+    let ro = OpenFlags::NONE.with_read(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p2, ro),
         -ENOENT
@@ -52,20 +47,15 @@ fn open_close_empty_excl<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str
     );
     assert_eq!(close_file(&mut io, &mut out, 4, FileSlot(0)), 0);
 
-    let excl = OpenFlags {
-        exclusive: true,
-        ..rw
-    };
+    let excl = rw.with_exclusive(true);
     assert_eq!(
         open_file(&mut io, &mut out, 5, FileSlot(0), BufId(0), &p1, excl),
         -crate::io::posix::errno::linux::EEXIST
     );
-    let empty = OpenFlags {
-        read: true,
-        write: true,
-        empty: true,
-        ..Default::default()
-    };
+    let empty = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_empty(true);
     assert_eq!(
         open_file(&mut io, &mut out, 6, FileSlot(0), BufId(0), &p1, empty),
         0
@@ -81,12 +71,10 @@ fn offset_rw_hole_short_eof<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
     let mut io = make(base_limits());
     let mut out = Completions::new(8);
     let path = format!("{root}rw_off.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &path, rw),
         0
@@ -138,13 +126,11 @@ fn direct_io_aligned<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     let mut io = make(limits);
     let mut out = Completions::new(8);
     let path = format!("{root}direct.dat");
-    let flags = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        direct: true,
-        ..Default::default()
-    };
+    let flags = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
+        .with_direct(true);
     let open_res = open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &path, flags);
     if open_res == -crate::io::EINVAL {
         return;

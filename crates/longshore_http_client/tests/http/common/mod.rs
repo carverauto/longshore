@@ -35,18 +35,16 @@ pub const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2,
 pub const HEARTBEAT: u64 = 1 << 50;
 
 // Buffers: client heads 0..3, server (head, body) pairs 3..9, then user buffers.
-pub const TX: BufId = BufId(9);
+pub const TX: BufId = BufId::new(9);
 
-pub const RX: BufId = BufId(10);
+pub const RX: BufId = BufId::new(10);
 
 // Two more sockets and one more op for a hand-driven peer.
-pub const LIMITS: Limits = Limits {
-    sockets_max: 1 + CONNS * 2 + 2,
-    buffers: 11,
-    buffer_size: BUF,
-    ops_max: CONNS * 2 + CONNS + 1 + 1 + 1,
-    ..Limits::BASE
-};
+pub const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(1 + CONNS * 2 + 2)
+    .with_buffers(11)
+    .with_buffer_size(BUF)
+    .with_ops_max(CONNS * 2 + CONNS + 1 + 1 + 1);
 
 pub struct World {
     pub io: SimIo,
@@ -79,14 +77,14 @@ pub fn client_cfg() -> client::ClientConfig {
 pub fn world_with(seed: u64, faults: Faults, cfg: client::ClientConfig) -> World {
     let mut io = SimIo::new(LIMITS, seed, faults);
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, CONNS, BUF, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, CONNS, BUF, 2 << 40)
             .head_max(HEAD_MAX)
             .objects_max(4)
             .build()
             .unwrap(),
     );
     let _: SocketAddr = server.start(&mut io, ADDR).unwrap();
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
         .unwrap();
     World {
         io,
@@ -116,9 +114,9 @@ impl World {
             while done.len() < n {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                         continue;
                     }
@@ -148,9 +146,9 @@ impl World {
             while io.now_ns() < until {
                 io.tick(true, out).expect("simulation deadlock");
                 while let Some(c) = out.pop() {
-                    if c.token.0 == HEARTBEAT {
+                    if c.token().get() == HEARTBEAT {
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     } else if let Handled::Done(d) = match client.on_completion(io, c) {
                         Handled::NotMine => {

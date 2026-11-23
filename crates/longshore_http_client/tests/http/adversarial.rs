@@ -73,15 +73,13 @@ mod tls_cases {
     use longshore_tls::handshake::{ClientSetup, ServerSetup};
 
     const TLS_BUF: u32 = 64 * 1024;
-    const TLS_LIMITS: Limits = Limits {
-        sockets_max: 1 + CONNS * 2,
-        buffers: 16,
-        buffer_size: TLS_BUF,
-        ops_max: CONNS * 3 + CONNS + 2,
-        ..Limits::BASE
-    };
+    const TLS_LIMITS: Limits = Limits::BASE
+        .with_sockets_max(1 + CONNS * 2)
+        .with_buffers(16)
+        .with_buffer_size(TLS_BUF)
+        .with_ops_max(CONNS * 3 + CONNS + 2);
     fn tls_srv_cfg() -> server::ServerConfig {
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 6, TLS_BUF, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 6, TLS_BUF, 2 << 40)
             .head_max(HEAD_MAX)
             .objects_max(4)
             .build()

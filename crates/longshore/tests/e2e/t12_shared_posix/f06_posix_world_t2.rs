@@ -19,26 +19,24 @@ use longshore::io::{BufId, Completions, Io, Limits, Op, Sock, Token, EAGAIN, ECO
 #[cfg(all(unix, feature = "fault-injection"))]
 #[test]
 fn t2_f06_1_posix_stale_readiness_among_real_ready_ops() {
-    let limits = Limits {
-        sockets_max: 6,
-        buffers: 3,
-        buffer_size: 256,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(3)
+        .with_buffer_size(256)
+        .with_ops_max(8);
     let mut io = posix_backend(limits).expect("posix");
     let mut out = Completions::new(8);
-    connect_pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
-    connect_pair(&mut io, &mut out, Sock(3), Sock(4), Sock(5));
+    connect_pair(&mut io, &mut out, Sock::new(0), Sock::new(1), Sock::new(2));
+    connect_pair(&mut io, &mut out, Sock::new(3), Sock::new(4), Sock::new(5));
 
-    write_pool_bytes(&mut io, BufId(0), 0, b"real");
+    write_pool_bytes(&mut io, BufId::new(0), 0, b"real");
     let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
-        Token(10),
+        Token::new(10),
         Op::Send {
-            sock: Sock(2),
-            buf: BufId(0),
+            sock: Sock::new(2),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -48,40 +46,40 @@ fn t2_f06_1_posix_stale_readiness_among_real_ready_ops() {
     .unwrap();
 
     io.submit(
-        Token(11),
+        Token::new(11),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(1),
+            sock: Sock::new(1),
+            buf: BufId::new(1),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
     io.submit(
-        Token(12),
+        Token::new(12),
         Op::Recv {
-            sock: Sock(4),
-            buf: BufId(2),
+            sock: Sock::new(4),
+            buf: BufId::new(2),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    io.inject_stale(Sock(4), false);
+    io.inject_stale(Sock::new(4), false);
 
     let cs = drive_until(&mut io, &mut out, 10, |v| !v.is_empty()).unwrap();
     assert_eq!(cs.len(), 1);
-    assert_eq!((cs[0].token, cs[0].result), (Token(11), 4));
+    assert_eq!((cs[0].token(), cs[0].result()), (Token::new(11), 4));
 
     // Sock(4) remains pending and receives real data when sent.
-    write_pool_bytes(&mut io, BufId(0), 0, b"late");
+    write_pool_bytes(&mut io, BufId::new(0), 0, b"late");
     let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
-        Token(13),
+        Token::new(13),
         Op::Send {
-            sock: Sock(5),
-            buf: BufId(0),
+            sock: Sock::new(5),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -90,46 +88,44 @@ fn t2_f06_1_posix_stale_readiness_among_real_ready_ops() {
     )
     .unwrap();
     let late = drive_until(&mut io, &mut out, 100, |v| !v.is_empty()).unwrap();
-    assert_eq!((late[0].token, late[0].result), (Token(12), 4));
+    assert_eq!((late[0].token(), late[0].result()), (Token::new(12), 4));
 }
 
 #[cfg(all(unix, feature = "fault-injection"))]
 #[test]
 fn t2_f06_2_posix_stale_readiness_alone_then_real_data() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 256,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(256)
+        .with_ops_max(4);
     let mut io = posix_backend(limits).expect("posix");
     let mut out = Completions::new(8);
-    connect_pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
+    connect_pair(&mut io, &mut out, Sock::new(0), Sock::new(1), Sock::new(2));
 
     io.submit(
-        Token(20),
+        Token::new(20),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    io.inject_stale(Sock(1), false);
+    io.inject_stale(Sock::new(1), false);
     io.tick(false, &mut out).unwrap();
     assert!(
         out.is_empty(),
         "stale readiness alone must leave Recv pending"
     );
 
-    write_pool_bytes(&mut io, BufId(1), 0, b"arrived");
+    write_pool_bytes(&mut io, BufId::new(1), 0, b"arrived");
     io.submit(
-        Token(21),
+        Token::new(21),
         Op::Send {
-            sock: Sock(2),
-            buf: BufId(1),
+            sock: Sock::new(2),
+            buf: BufId::new(1),
             off: 0,
             len: 7,
             zero_copy: false,
@@ -137,10 +133,10 @@ fn t2_f06_2_posix_stale_readiness_alone_then_real_data() {
     )
     .unwrap();
     let cs = drive_until(&mut io, &mut out, 100, |v| {
-        v.iter().any(|c| c.token == Token(20))
+        v.iter().any(|c| c.token().get() == 20)
     })
     .unwrap();
-    assert!(cs.iter().any(|c| c.token == Token(20) && c.result == 7));
+    assert!(cs.iter().any(|c| c.token().get() == 20 && c.result() == 7));
 }
 
 /// Ticks into a one-slot `Completions` until `n` completions arrived or 5 s
@@ -168,25 +164,25 @@ fn collect_one_per_tick<IO: Io>(io: &mut IO, n: usize) -> Vec<longshore::io::Com
 #[cfg(unix)]
 #[test]
 fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
-    let limits = Limits {
-        sockets_max: 6,
-        buffers: 4,
-        buffer_size: 256,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    const SOCK_5: Sock = Sock::new(5);
+    const SOCK_2: Sock = Sock::new(2);
+    let limits = Limits::BASE
+        .with_sockets_max(6)
+        .with_buffers(4)
+        .with_buffer_size(256)
+        .with_ops_max(8);
     let mut io = posix_backend(limits).expect("posix");
     let mut setup_out = Completions::new(8);
-    connect_pair(&mut io, &mut setup_out, Sock(0), Sock(1), Sock(2));
-    connect_pair(&mut io, &mut setup_out, Sock(3), Sock(4), Sock(5));
+    connect_pair(&mut io, &mut setup_out, Sock::new(0), Sock::new(1), SOCK_2);
+    connect_pair(&mut io, &mut setup_out, Sock::new(3), Sock::new(4), SOCK_5);
 
-    write_pool_bytes(&mut io, BufId(0), 0, b"msg1");
-    write_pool_bytes(&mut io, BufId(1), 0, b"msg2");
-    for (tok, sock, buf) in [(1, Sock(2), BufId(0)), (2, Sock(5), BufId(1))] {
+    write_pool_bytes(&mut io, BufId::new(0), 0, b"msg1");
+    write_pool_bytes(&mut io, BufId::new(1), 0, b"msg2");
+    for (tok, sock, buf) in [(1, SOCK_2, BufId::new(0)), (2, SOCK_5, BufId::new(1))] {
         let _: longshore::io::Completion = submit_and_wait_one(
             &mut io,
             &mut setup_out,
-            Token(tok),
+            Token::new(tok),
             Op::Send {
                 sock,
                 buf,
@@ -200,9 +196,12 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
     }
 
     // Queue 4 ready operations while Completions capacity is 1.
-    for (tok, sock, buf) in [(10, Sock(1), BufId(2)), (11, Sock(4), BufId(3))] {
+    for (tok, sock, buf) in [
+        (10, Sock::new(1), BufId::new(2)),
+        (11, Sock::new(4), BufId::new(3)),
+    ] {
         io.submit(
-            Token(tok),
+            Token::new(tok),
             Op::Recv {
                 sock,
                 buf,
@@ -212,9 +211,9 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
         )
         .unwrap();
     }
-    for (tok, sock, buf) in [(12, Sock(2), BufId(0)), (13, Sock(5), BufId(1))] {
+    for (tok, sock, buf) in [(12, SOCK_2, BufId::new(0)), (13, SOCK_5, BufId::new(1))] {
         io.submit(
-            Token(tok),
+            Token::new(tok),
             Op::Send {
                 sock,
                 buf,
@@ -227,10 +226,10 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
     }
 
     let mut got = collect_one_per_tick(&mut io, 4);
-    got.sort_by_key(|c| c.token.0);
+    got.sort_by_key(|c| c.token().get());
     assert_eq!(
         got.iter()
-            .map(|c| (c.token.0, c.result))
+            .map(|c| (c.token().get(), c.result()))
             .collect::<Vec<_>>(),
         vec![(10, 4), (11, 4), (12, 4), (13, 4)]
     );
@@ -239,25 +238,23 @@ fn t2_f06_3_posix_full_completions_buffer_preserves_ready_ops() {
 #[cfg(unix)]
 #[test]
 fn t2_f06_4_posix_continuous_immediate_ops_do_not_starve_recv() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 256,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(256)
+        .with_ops_max(8);
     let mut io = posix_backend(limits).expect("posix");
     let mut out = Completions::new(8);
-    connect_pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
+    connect_pair(&mut io, &mut out, Sock::new(0), Sock::new(1), Sock::new(2));
 
-    write_pool_bytes(&mut io, BufId(0), 0, b"data");
+    write_pool_bytes(&mut io, BufId::new(0), 0, b"data");
     let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
-        Token(1),
+        Token::new(1),
         Op::Send {
-            sock: Sock(2),
-            buf: BufId(0),
+            sock: Sock::new(2),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -267,10 +264,10 @@ fn t2_f06_4_posix_continuous_immediate_ops_do_not_starve_recv() {
     .unwrap();
 
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(1),
+            sock: Sock::new(1),
+            buf: BufId::new(1),
             off: 0,
             len: 64,
         },
@@ -279,11 +276,12 @@ fn t2_f06_4_posix_continuous_immediate_ops_do_not_starve_recv() {
 
     let mut recv_done = false;
     for k in 0..64u64 {
-        io.submit(Token(100 + k), Op::Timeout { nanos: 0 }).unwrap();
+        io.submit(Token::new(100 + k), Op::Timeout { nanos: 0 })
+            .unwrap();
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(2) {
-                assert_eq!(c.result, 4);
+            if c.token().get() == 2 {
+                assert_eq!(c.result(), 4);
                 recv_done = true;
             }
         }
@@ -300,52 +298,50 @@ fn t2_f06_4_posix_continuous_immediate_ops_do_not_starve_recv() {
 #[cfg(unix)]
 #[test]
 fn t2_f06_5_posix_linux_errno_mapping_and_waker_outlives_backend() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 256,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(256)
+        .with_ops_max(4);
     let mut io = posix_backend(limits).expect("posix");
     let mut out = Completions::new(8);
-    connect_pair(&mut io, &mut out, Sock(0), Sock(1), Sock(2));
+    connect_pair(&mut io, &mut out, Sock::new(0), Sock::new(1), Sock::new(2));
 
     // Verify Linux-mapped -EAGAIN (-11), not macOS 35.
     let again = submit_and_wait_one(
         &mut io,
         &mut out,
-        Token(1),
+        Token::new(1),
         Op::RecvNow {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 16,
         },
         100,
     )
     .unwrap();
-    assert_eq!(again.result, -EAGAIN);
+    assert_eq!(again.result(), -EAGAIN);
 
     // Close peer and send repeatedly until Linux -EPIPE (-32) or -ECONNRESET (-104).
     let _: longshore::io::Completion = submit_and_wait_one(
         &mut io,
         &mut out,
-        Token(2),
-        Op::Close { sock: Sock(2) },
+        Token::new(2),
+        Op::Close { sock: Sock::new(2) },
         100,
     )
     .unwrap();
     let mut err_res = None;
     for k in 0..16u64 {
-        write_pool_bytes(&mut io, BufId(0), 0, b"probe");
+        write_pool_bytes(&mut io, BufId::new(0), 0, b"probe");
         let s = submit_and_wait_one(
             &mut io,
             &mut out,
-            Token(10 + k),
+            Token::new(10 + k),
             Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
+                sock: Sock::new(1),
+                buf: BufId::new(0),
                 off: 0,
                 len: 5,
                 zero_copy: false,
@@ -353,8 +349,8 @@ fn t2_f06_5_posix_linux_errno_mapping_and_waker_outlives_backend() {
             100,
         )
         .unwrap();
-        if s.result < 0 {
-            err_res = Some(s.result);
+        if s.result() < 0 {
+            err_res = Some(s.result());
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(2));

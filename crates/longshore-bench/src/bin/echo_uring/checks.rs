@@ -12,11 +12,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Submit `op` as token 1 and wait for its completion's result.
 fn run_one(io: &mut UringIo, out: &mut Completions, op: Op) -> i32 {
-    io.submit(Token(1), op).or_die("submit");
+    io.submit(Token::new(1), op).or_die("submit");
     loop {
         io.tick(true, out).or_die("tick");
         if let Some(c) = out.pop() {
-            break c.result;
+            break c.result();
         }
     }
 }
@@ -28,7 +28,7 @@ fn read_file(io: &mut UringIo, out: &mut Completions, file: FileId) -> i32 {
         out,
         Op::ReadFile {
             file,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
@@ -40,7 +40,7 @@ pub(crate) fn timers(io: &mut UringIo, out: &mut Completions) {
     let t0 = io.now_ns();
     for t in 0..4 {
         io.submit(
-            Token(t),
+            Token::new(t),
             Op::Timeout {
                 nanos: 20_000_000 * (4 - t),
             },
@@ -48,7 +48,7 @@ pub(crate) fn timers(io: &mut UringIo, out: &mut Completions) {
         .or_die("submit");
     }
     assert_eq!(
-        io.submit(Token(9), Op::Timeout { nanos: 1 }),
+        io.submit(Token::new(9), Op::Timeout { nanos: 1 }),
         Err(Busy),
         "fifth operation must be refused"
     );
@@ -57,8 +57,8 @@ pub(crate) fn timers(io: &mut UringIo, out: &mut Completions) {
     while n < 4 {
         io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
-            assert_eq!(c.result, 0, "timeout result");
-            order[n] = c.token.0;
+            assert_eq!(c.result(), 0, "timeout result");
+            order[n] = c.token().get();
             n += 1;
         }
     }
@@ -87,7 +87,7 @@ pub(crate) fn files(io: &mut UringIo, out: &mut Completions) {
             i32::try_from(contents.len()).or_die("file length")
         );
         assert_eq!(
-            &io.buf(BufId(0))[..contents.len()],
+            &io.buf(BufId::new(0))[..contents.len()],
             contents.as_bytes(),
             "file contents"
         );
@@ -113,17 +113,22 @@ fn cancel_connect(io: &mut UringIo, out: &mut Completions) -> (i32, u64) {
     let t0 = io.now_ns();
     // TEST-NET-1 (RFC 5737): never routed, so a connect to it gets no answer.
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Connect {
-            sock: Sock(3),
+            sock: Sock::new(3),
             addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9),
         },
     )
     .or_die("submit");
-    io.submit(Token(2), Op::Cancel { target: Token(1) })
-        .or_die("submit");
     io.submit(
-        Token(3),
+        Token::new(2),
+        Op::Cancel {
+            target: Token::new(1),
+        },
+    )
+    .or_die("submit");
+    io.submit(
+        Token::new(3),
         Op::Timeout {
             nanos: 3_000_000_000,
         },
@@ -134,9 +139,9 @@ fn cancel_connect(io: &mut UringIo, out: &mut Completions) -> (i32, u64) {
     while connect.is_none() {
         io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
-            done |= 1 << c.token.0;
-            match c.token.0 {
-                1 => connect = Some(c.result),
+            done |= 1 << c.token().get();
+            match c.token().get() {
+                1 => connect = Some(c.result()),
                 3 => die::die("a cancelled connect was still running after 3 s"),
                 _ => {}
             }
@@ -151,20 +156,25 @@ fn cancel_connect(io: &mut UringIo, out: &mut Completions) -> (i32, u64) {
     let ms = (io.now_ns() - t0) / 1_000_000;
     // Close the socket the first step created, and let the guard timer and
     // the cancel finish, so the echo starts with every slot free.
-    io.submit(Token(4), Op::Close { sock: Sock(3) })
+    io.submit(Token::new(4), Op::Close { sock: Sock::new(3) })
         .or_die("submit");
-    io.submit(Token(5), Op::Cancel { target: Token(3) })
-        .or_die("submit");
+    io.submit(
+        Token::new(5),
+        Op::Cancel {
+            target: Token::new(3),
+        },
+    )
+    .or_die("submit");
     let all = 0b11_1110;
     while done != all {
         io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
             assert!(
-                all & (1 << c.token.0) != 0 && done & (1 << c.token.0) == 0,
+                all & (1 << c.token().get()) != 0 && done & (1 << c.token().get()) == 0,
                 "unexpected completion {:?}",
-                c.token
+                c.token()
             );
-            done |= 1 << c.token.0;
+            done |= 1 << c.token().get();
         }
     }
     (r, ms)
@@ -178,26 +188,31 @@ fn cancel_read(io: &mut UringIo, out: &mut Completions) {
     );
     std::fs::write(&path, "must not be read").or_die("write");
     let file = io.register_file(&path).or_die("register_file");
-    io.buf(BufId(0))[..4].copy_from_slice(b"----");
+    io.buf(BufId::new(0))[..4].copy_from_slice(b"----");
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::ReadFile {
             file,
-            buf: BufId(0),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .or_die("submit");
-    io.submit(Token(2), Op::Cancel { target: Token(1) })
-        .or_die("submit");
+    io.submit(
+        Token::new(2),
+        Op::Cancel {
+            target: Token::new(1),
+        },
+    )
+    .or_die("submit");
     let mut read = None;
     let mut pending = 2;
     while pending > 0 {
         io.tick(true, out).or_die("tick");
         while let Some(c) = out.pop() {
-            if c.token.0 == 1 {
-                read = Some(c.result);
+            if c.token().get() == 1 {
+                read = Some(c.result());
             }
             pending -= 1;
         }
@@ -209,7 +224,7 @@ fn cancel_read(io: &mut UringIo, out: &mut Completions) {
         "a file read cancelled as it started"
     );
     assert_eq!(
-        &io.buf(BufId(0))[..4],
+        &io.buf(BufId::new(0))[..4],
         b"----",
         "the cancelled read still filled the buffer"
     );
@@ -227,7 +242,7 @@ pub(crate) fn failed_connect(io: &mut UringIo, out: &mut Completions, loopback: 
             io,
             out,
             Op::Connect {
-                sock: Sock(3),
+                sock: Sock::new(3),
                 addr: SocketAddr::new(loopback, 1),
             },
         );
@@ -257,13 +272,13 @@ pub(crate) fn measured_connect(
     let before = open_fds();
     io.measure_segment_sizes(true);
     let listening = io
-        .listen(Sock(0), SocketAddr::new(loopback, 0))
+        .listen(Sock::new(0), SocketAddr::new(loopback, 0))
         .or_die("listen");
     let size = run_one(
         io,
         out,
         Op::Connect {
-            sock: Sock(3),
+            sock: Sock::new(3),
             addr: listening,
         },
     );
@@ -271,24 +286,25 @@ pub(crate) fn measured_connect(
         .unwrap_or_else(|| die::die(format_args!("measured connect returned {size}")));
     // Loopback's MTU is 65536, so its segments are far above Ethernet's.
     assert!(
-        segment.size > 16_000 && segment.path_limit > 60_000,
+        segment.size() > 16_000 && segment.path_limit() > 60_000,
         "{segment:?}"
     );
-    assert_eq!(run_one(io, out, Op::Close { sock: Sock(3) }), 0);
+    assert_eq!(run_one(io, out, Op::Close { sock: Sock::new(3) }), 0);
     let refused = run_one(
         io,
         out,
         Op::Connect {
-            sock: Sock(3),
+            sock: Sock::new(3),
             addr: SocketAddr::new(loopback, 1),
         },
     );
     assert_eq!(refused, -111, "refused connect with measuring on");
-    assert_eq!(run_one(io, out, Op::Close { sock: Sock(0) }), 0);
+    assert_eq!(run_one(io, out, Op::Close { sock: Sock::new(0) }), 0);
     io.measure_segment_sizes(measure);
     assert_eq!(open_fds(), before, "a measured connect leaked a descriptor");
     println!(
         "ok measured connect: segment size {}, path limit {}, no descriptor left open",
-        segment.size, segment.path_limit
+        segment.size(),
+        segment.path_limit()
     );
 }

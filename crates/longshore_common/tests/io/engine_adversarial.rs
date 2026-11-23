@@ -9,15 +9,13 @@
 fn limits_validate_allows_zero_block_size_and_zero_buffer_size() {
     use longshore_common::io::{BufId, Limits};
 
-    let l1 = Limits {
-        aligned_buffers: 0,
-        block_size: 0,
-        buffers: 1,
-        buffer_size: 0,
-        ..Limits::BASE
-    };
+    let l1 = Limits::BASE
+        .with_aligned_buffers(0)
+        .with_block_size(0)
+        .with_buffers(1)
+        .with_buffer_size(0);
     l1.validate();
-    assert_eq!(l1.span(BufId(0)), (0, 0));
+    assert_eq!(l1.span(BufId::new(0)), (0, 0));
 }
 
 #[test]
@@ -25,11 +23,7 @@ fn limits_validate_allows_zero_block_size_and_zero_buffer_size() {
 fn limits_validate_rejects_nonzero_sub4k_block_size_when_aligned_zero() {
     use longshore_common::io::Limits;
 
-    let l = Limits {
-        aligned_buffers: 0,
-        block_size: 2048,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE.with_aligned_buffers(0).with_block_size(2048);
     l.validate();
 }
 
@@ -38,11 +32,7 @@ fn limits_validate_rejects_nonzero_sub4k_block_size_when_aligned_zero() {
 fn limits_validate_rejects_u32_buffer_count_overflow() {
     use longshore_common::io::Limits;
 
-    let l = Limits {
-        buffers: u32::MAX,
-        small_buffers: 1,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE.with_buffers(u32::MAX).with_small_buffers(1);
     l.validate();
 }
 
@@ -53,42 +43,38 @@ fn timeout_u64_max_after_ticks_does_not_overflow_or_fire_early() {
     use longshore_common::sim::{Faults, SimIo};
 
     let mut sim = SimIo::new(
-        Limits {
-            sockets_max: 1,
-            ops_max: 4,
-            ..Limits::BASE
-        },
+        Limits::BASE.with_sockets_max(1).with_ops_max(4),
         1,
         Faults::default(),
     );
     let mut out = Completions::new(4);
-    sim.submit(Token(1), Op::Timeout { nanos: 0 }).unwrap();
+    sim.submit(Token::new(1), Op::Timeout { nanos: 0 }).unwrap();
     sim.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().token, Token(1));
+    assert_eq!(out.pop().unwrap().token(), Token::new(1));
 
     // Advance clock > 0, then submit u64::MAX and u64::MAX - 1.
-    sim.submit(Token(10), Op::Timeout { nanos: 50_000 })
+    sim.submit(Token::new(10), Op::Timeout { nanos: 50_000 })
         .unwrap();
     sim.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().token, Token(10));
+    assert_eq!(out.pop().unwrap().token(), Token::new(10));
     assert!(sim.now_ns() > 0);
 
-    sim.submit(Token(2), Op::Timeout { nanos: u64::MAX })
+    sim.submit(Token::new(2), Op::Timeout { nanos: u64::MAX })
         .unwrap();
     sim.submit(
-        Token(3),
+        Token::new(3),
         Op::Timeout {
             nanos: u64::MAX - 1,
         },
     )
     .unwrap();
-    sim.submit(Token(4), Op::Timeout { nanos: 100_000 })
+    sim.submit(Token::new(4), Op::Timeout { nanos: 100_000 })
         .unwrap();
     sim.tick(true, &mut out).unwrap();
     let c = out.pop().unwrap();
     assert_eq!(
-        c.token,
-        Token(4),
+        c.token(),
+        Token::new(4),
         "saturating deadline must not fire before 100us timer"
     );
     sim.tick(false, &mut out).unwrap();
@@ -106,43 +92,36 @@ mod deferred_cancel {
     /// A delayed simulator with a small disk and `PATH` written to buffer 0.
     pub fn delayed_sim(seed: u64) -> SimIo {
         let mut sim = SimIo::new(
-            Limits {
-                buffers: 2,
-                buffer_size: 256,
-                files_max: 2,
-                ops_max: 8,
-                ..Limits::BASE
-            },
+            Limits::BASE
+                .with_buffers(2)
+                .with_buffer_size(256)
+                .with_files_max(2)
+                .with_ops_max(8),
             seed,
-            Faults {
-                delay: 500_000,
-                ..Default::default()
-            },
+            Faults::NONE.with_delay(500_000),
         );
-        sim.setup_disk(DiskConfig {
-            max_files: 4,
-            max_dirs: 2,
-            max_bytes_per_file: 4096,
-            max_name_len: 64,
-            ..DiskConfig::BASE
-        });
-        sim.buf(BufId(0))[..PATH.len()].copy_from_slice(PATH);
+        sim.setup_disk(
+            DiskConfig::BASE
+                .with_max_files(4)
+                .with_max_dirs(2)
+                .with_max_bytes_per_file(4096)
+                .with_max_name_len(64),
+        );
+        sim.buf(BufId::new(0))[..PATH.len()].copy_from_slice(PATH);
         sim
     }
 
     /// Opens `PATH` (read, write, create) into slot 0.
     pub fn open() -> Op {
         Op::FileOpen {
-            slot: FileSlot(0),
-            path_buf: BufId(0),
+            slot: FileSlot::new(0),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: PATH.len() as u32,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true),
         }
     }
 
@@ -150,16 +129,16 @@ mod deferred_cancel {
     pub fn deferred(use_write: bool) -> Op {
         if use_write {
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 16,
                 file_off: 0,
             }
         } else {
             Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 16,
                 file_off: 0,
@@ -173,7 +152,7 @@ mod deferred_cancel {
         while got.iter().any(Option::is_none) {
             sim.tick(true, out).unwrap();
             while let Some(c) = out.pop() {
-                got[(c.token.0 - 1) as usize] = Some(c.result);
+                got[(c.token().get() - 1) as usize] = Some(c.result());
             }
         }
         got.map(Option::unwrap)
@@ -181,7 +160,7 @@ mod deferred_cancel {
 
     /// Submits `op` under `token`.
     pub fn submit(sim: &mut SimIo, token: u64, op: Op) {
-        sim.submit(Token(token), op).unwrap();
+        sim.submit(Token::new(token), op).unwrap();
     }
 }
 
@@ -198,7 +177,13 @@ fn cancelled_file_open_releases_deferred_read_and_write_with_ebadf_and_reuses_sl
             let mut out = Completions::new(8);
             submit(&mut sim, 1, open());
             submit(&mut sim, 2, deferred(use_write));
-            submit(&mut sim, 3, Op::Cancel { target: Token(1) });
+            submit(
+                &mut sim,
+                3,
+                Op::Cancel {
+                    target: Token::new(1),
+                },
+            );
 
             let [r1, r2, r3] = results_of_three(&mut sim, &mut out);
             if r1 == -ECANCELED {
@@ -207,7 +192,7 @@ fn cancelled_file_open_releases_deferred_read_and_write_with_ebadf_and_reuses_sl
                 assert_eq!(r2, -EBADF);
                 submit(&mut sim, 4, open());
                 sim.tick(true, &mut out).unwrap();
-                assert_eq!(out.pop().unwrap().result, 0);
+                assert_eq!(out.pop().unwrap().result(), 0);
                 break;
             }
         }
@@ -225,21 +210,16 @@ fn posix_close_cancels_attached_connect_and_frees_slot() {
     let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut io = PosixIo::new(Limits {
-        sockets_max: 2,
-        ops_max: 4,
-        ..Limits::BASE
-    })
-    .unwrap();
+    let mut io = PosixIo::new(Limits::BASE.with_sockets_max(2).with_ops_max(4)).unwrap();
     let mut out = Completions::new(4);
 
     // Try loopback connect + immediate close; also test non-routable connect so
     // Connect is attached (SockKind::Connecting) before Close arrives.
     let blackhole: SocketAddr = "192.0.2.1:80".parse().unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Connect {
-            sock: Sock(0),
+            sock: Sock::new(0),
             addr: blackhole,
         },
     )
@@ -247,20 +227,21 @@ fn posix_close_cancels_attached_connect_and_frees_slot() {
     io.tick(false, &mut out).unwrap();
     let mut got_connect_early = false;
     while let Some(c) = out.pop() {
-        if c.token == Token(1) {
+        if c.token().get() == 1 {
             got_connect_early = true;
         }
     }
-    io.submit(Token(2), Op::Close { sock: Sock(0) }).unwrap();
+    io.submit(Token::new(2), Op::Close { sock: Sock::new(0) })
+        .unwrap();
     let mut got_close = false;
     while !got_close || !got_connect_early {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(1) {
-                assert!(c.result == -ECANCELED || c.result < 0);
+            if c.token().get() == 1 {
+                assert!(c.result() == -ECANCELED || c.result() < 0);
                 got_connect_early = true;
-            } else if c.token == Token(2) {
-                assert_eq!(c.result, 0);
+            } else if c.token().get() == 2 {
+                assert_eq!(c.result(), 0);
                 got_close = true;
             }
         }
@@ -268,15 +249,15 @@ fn posix_close_cancels_attached_connect_and_frees_slot() {
 
     // Slot 0 is reusable for a fresh Connect.
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Connect {
-            sock: Sock(0),
+            sock: Sock::new(0),
             addr,
         },
     )
     .unwrap();
     io.tick(true, &mut out).unwrap();
-    assert_eq!(out.pop().unwrap().result, 0);
+    assert_eq!(out.pop().unwrap().result(), 0);
     drop(listener);
 }
 

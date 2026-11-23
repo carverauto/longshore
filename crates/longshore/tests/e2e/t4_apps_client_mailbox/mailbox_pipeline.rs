@@ -102,13 +102,11 @@ fn spawn_posix_receiver(
     close_after_n: Option<usize>,
     answer_gate: Option<Gate>,
 ) -> (Sender<Job, u32>, thread::JoinHandle<()>) {
-    let lim = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 256,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let lim = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(256)
+        .with_ops_max(8);
     let (tx_ready, rx_ready) = std::sync::mpsc::sync_channel(1);
     let mut state = ReceiverState {
         tx_done,
@@ -126,7 +124,7 @@ fn spawn_posix_receiver(
                 capacity: 16,
                 slots: 4,
                 waiters_prealloc: 16,
-                wake_token: Token(1),
+                wake_token: Token::new(1),
             },
         )
         .unwrap();

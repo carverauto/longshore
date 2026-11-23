@@ -31,15 +31,12 @@ struct RunResult {
 
 #[cfg(test)]
 fn run_two_cores(seed_a: u64, seed_b: u64, tick_order: &[usize], faults: Faults) -> RunResult {
-    let limits = Limits {
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE.with_ops_max(4);
     let mut io_a = SimIo::new(limits, seed_a, faults);
     let mut io_b = SimIo::new(limits, seed_b, faults);
 
-    let (tx_a, mut rx_a) = queue::<Msg, _>(&mut io_a, 8, Token(1)).unwrap();
-    let (tx_b, mut rx_b) = queue::<Msg, _>(&mut io_b, 8, Token(2)).unwrap();
+    let (tx_a, mut rx_a) = queue::<Msg, _>(&mut io_a, 8, Token::new(1)).unwrap();
+    let (tx_b, mut rx_b) = queue::<Msg, _>(&mut io_b, 8, Token::new(2)).unwrap();
     rx_a.arm(&mut io_a).unwrap();
     rx_b.arm(&mut io_b).unwrap();
 
@@ -117,10 +114,7 @@ fn run_two_cores(seed_a: u64, seed_b: u64, tick_order: &[usize], faults: Faults)
 fn two_virtual_engines_replay_identically_from_seeds_and_tick_order() {
     let order1 = [0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0];
     let order2 = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0];
-    let faults = Faults {
-        delay: 250_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE.with_delay(250_000);
 
     let r1a = run_two_cores(111, 222, &order1, faults);
     let r1b = run_two_cores(111, 222, &order1, faults);

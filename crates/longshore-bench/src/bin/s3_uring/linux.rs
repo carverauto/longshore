@@ -120,7 +120,7 @@ fn resolver(
         prefer_large_segments,
         refresh_ns: 30_000 * MS,
         timeout_ns: 2_000 * MS,
-        socks: [Sock(conns), Sock(conns + 1)],
+        socks: [Sock::new(conns), Sock::new(conns + 1)],
         rx_bufs: [limits.small(conns), limits.small(conns + 1)],
         tx_buf: limits.small(conns + 2),
         token_base: 3 << 40,
@@ -131,7 +131,7 @@ fn resolver(
 /// The HTTP client's configuration: `conns` connections on the first
 /// sockets, their heads in the first small buffers.
 fn http(conns: u32, limits: &Limits, buffer_size: u32) -> client::ClientConfig {
-    client::ClientConfig::builder(conns, 0, limits.small(0).0, buffer_size, 1 << 40)
+    client::ClientConfig::builder(conns, 0, limits.small(0).get(), buffer_size, 1 << 40)
         .head_max(8192)
         .max_age_ns(300_000 * MS)
         .max_requests(100_000)
@@ -193,15 +193,13 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
     // TLS record buffers must hold at least two records.
     // Also never smaller than a request or response head.
     let buffer_size = size.max(if tls { 256 * 1024 } else { 8192 });
-    let limits = Limits {
-        sockets_max: conns + 2,
-        buffers: 2 * conns + user,
-        buffer_size,
-        small_buffers: conns + 3,
-        small_buffer_size: 8192,
-        ops_max: conns * 3 + 4 + 1,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(conns + 2)
+        .with_buffers(2 * conns + user)
+        .with_buffer_size(buffer_size)
+        .with_small_buffers(conns + 3)
+        .with_small_buffer_size(8192)
+        .with_ops_max(conns * 3 + 4 + 1);
     let mut io = UringIo::new(limits).unwrap_or_else(|e| die(e));
     let prefer_large_segments = prefer_large_segments();
     io.measure_segment_sizes(prefer_large_segments.is_some());
@@ -234,7 +232,7 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
         endpoint: Endpoint::Resolved(resolver),
     });
     s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 50 * MS })
+    io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 50 * MS })
         .or_die("submit");
     (io, s3, 2 * conns)
 }
@@ -243,9 +241,9 @@ fn setup(conns: u32, user: u32, size: u32, requests: u32) -> (UringIo, S3, u32) 
 fn turn(io: &mut UringIo, s3: &mut S3, out: &mut Completions) {
     io.tick(true, out).or_die("tick");
     while let Some(c) = out.pop() {
-        if c.token.0 == HEARTBEAT {
+        if c.token().get() == HEARTBEAT {
             s3.tick(io);
-            io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 50 * MS })
+            io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 50 * MS })
                 .or_die("submit");
         } else {
             let _: bool = s3.on_completion(io, c);

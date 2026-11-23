@@ -82,7 +82,7 @@ impl Server {
             );
             // Through the connection's body buffer: two objects cannot be
             // borrowed at once.
-            let scratch = BufId(self.cfg.first_buf() + i as u32 * 2 + 1);
+            let scratch = BufId::new(self.cfg.first_buf() + i as u32 * 2 + 1);
             io.buf(scratch)[..len as usize]
                 .copy_from_slice(&self.objects[from].data[..len as usize]);
             let o = &mut self.objects[to];

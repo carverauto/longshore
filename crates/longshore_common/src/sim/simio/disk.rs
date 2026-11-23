@@ -28,12 +28,18 @@ use crate::io::OpenFlags;
 
 #[path = "disk_attempt.rs"]
 mod attempt;
+#[path = "disk_config.rs"]
+mod config;
+#[path = "disk_counters.rs"]
+mod counters;
 #[path = "disk_dirs.rs"]
 mod dirs;
 #[path = "disk_dirs_apply.rs"]
 mod dirs_apply;
 #[path = "disk_faults.rs"]
 mod faults;
+#[path = "disk_faults_rates.rs"]
+mod faults_rates;
 #[path = "disk_log.rs"]
 mod log;
 #[path = "disk_log_read.rs"]

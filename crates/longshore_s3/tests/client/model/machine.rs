@@ -214,16 +214,13 @@ impl World {
         let (mut lanes, mut machines, mut signals, mut failed) = (vec![], vec![], vec![], vec![]);
         for (n, &fate) in fates.iter().enumerate() {
             let signal = Arc::new(Signal::default());
-            let limits = Limits {
-                ops_max: LIMITS.ops_max + 2,
-                ..LIMITS
-            };
+            let limits = LIMITS.with_ops_max(LIMITS.ops_max() + 2);
             let mut io = Woken {
                 io: SimIo::new(limits, 40 + n as u64, Faults::default()),
                 signal: signal.clone(),
             };
             let mut server = Server::new(
-                server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+                server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
                     .head_max(2048)
                     .objects_max(8)
                     .build()

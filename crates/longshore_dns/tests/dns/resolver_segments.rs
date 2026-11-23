@@ -18,18 +18,12 @@ const PATH: u32 = 8960;
 
 /// A measurement on a path whose limit is unknown.
 fn seg(size: u32) -> Segment {
-    Segment {
-        size,
-        path_limit: 0,
-    }
+    Segment::new(size, 0)
 }
 
 /// A measurement on the jumbo-frame path.
 fn on_path(size: u32) -> Segment {
-    Segment {
-        size,
-        path_limit: PATH,
-    }
+    Segment::new(size, PATH)
 }
 
 /// A resolver for host 0's three A records, preferring large segments and
@@ -181,10 +175,7 @@ fn small_segments_on_a_path_that_carries_no_more_are_not_starvation() {
     let (mut io, mut r, mut s, mut out) = resolved(Some(1));
     for ip in zone_addrs(0) {
         // An Ethernet path: 1432 is what there is to have.
-        let segment = Segment {
-            size: SMALL,
-            path_limit: 1460,
-        };
+        let segment = Segment::new(SMALL, 1460);
         let _: u32 = r.connected(0, ip, segment);
     }
     pump(&mut io, &mut r, &mut s, &mut out, 600 * MS);

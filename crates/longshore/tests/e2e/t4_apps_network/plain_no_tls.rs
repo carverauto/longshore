@@ -112,30 +112,28 @@ fn t4_04_plain_http_s3_client_full_lifecycle_and_tls_error_accessible() {
 #[cfg(feature = "sim")]
 #[test]
 fn t4_04_plain_stream_echo_without_tls() {
-    let lim = Limits {
-        sockets_max: 4,
-        buffers: 4,
-        buffer_size: 1024,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let lim = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(4)
+        .with_buffer_size(1024)
+        .with_ops_max(8);
     let mut sim = SimIo::new(lim, 44, Faults::default());
     let mut out = Completions::new(8);
     let addr = sim
-        .listen(Sock(0), "127.0.0.1:9404".parse().unwrap())
+        .listen(Sock::new(0), "127.0.0.1:9404".parse().unwrap())
         .unwrap();
     sim.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     sim.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -143,31 +141,31 @@ fn t4_04_plain_stream_echo_without_tls() {
     let _: Vec<longshore::io::Completion> =
         drive_until(&mut sim, &mut out, 100, |v| v.len() >= 2).unwrap();
 
-    let mut c_stream = Stream::new(Sock(1), Token(10), Token(11));
-    let mut s_stream = Stream::new(Sock(2), Token(12), Token(13));
-    write_pool_bytes(&mut sim, BufId(0), 0, b"stream-plain-hello");
-    c_stream.send(&mut sim, BufId(0), 0, 18, u32::MAX);
-    assert_eq!(s_stream.recv(&mut sim, BufId(1), 0, 64), Step::Pending);
+    let mut c_stream = Stream::new(Sock::new(1), Token::new(10), Token::new(11));
+    let mut s_stream = Stream::new(Sock::new(2), Token::new(12), Token::new(13));
+    write_pool_bytes(&mut sim, BufId::new(0), 0, b"stream-plain-hello");
+    c_stream.send(&mut sim, BufId::new(0), 0, 18, u32::MAX);
+    assert_eq!(s_stream.recv(&mut sim, BufId::new(1), 0, 64), Step::Pending);
 
     let mut sent = false;
     let mut got = 0usize;
     while !sent || got == 0 {
         sim.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(10) {
-                if let Step::Done(n) = c_stream.on_send(&mut sim, c.result) {
+            if c.token().get() == 10 {
+                if let Step::Done(n) = c_stream.on_send(&mut sim, c.result()) {
                     assert_eq!(n, 18);
                     sent = true;
                 }
-            } else if c.token == Token(13) {
-                if let Step::Done(n) = s_stream.on_recv(&mut sim, c.result) {
+            } else if c.token().get() == 13 {
+                if let Step::Done(n) = s_stream.on_recv(&mut sim, c.result()) {
                     assert!(n > 0);
                     got = usize::try_from(n).unwrap();
                 }
             }
         }
     }
-    assert_eq!(&sim.buf(BufId(1))[..got], b"stream-plain-hello");
+    assert_eq!(&sim.buf(BufId::new(1))[..got], b"stream-plain-hello");
 }
 
 #[test]

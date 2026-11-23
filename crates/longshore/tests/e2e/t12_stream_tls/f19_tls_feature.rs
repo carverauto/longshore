@@ -70,30 +70,28 @@ fn t1_f19_1_default_feature_enables_tls_module_and_https_store() {
 #[cfg(feature = "sim")]
 #[test]
 fn t1_f19_2_plain_stream_and_tls_error_compile_with_or_without_tls_feature() {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 1024,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_ops_max(4);
     let mut io = SimIo::new(limits, 1902, Faults::default());
     let mut out = Completions::new(8);
     let addr = io
-        .listen(Sock(0), "192.0.2.19:8080".parse().unwrap())
+        .listen(Sock::new(0), "192.0.2.19:8080".parse().unwrap())
         .unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -101,16 +99,16 @@ fn t1_f19_2_plain_stream_and_tls_error_compile_with_or_without_tls_feature() {
     let _: Vec<longshore::io::Completion> =
         drive_until(&mut io, &mut out, 50, |v| v.len() == 2).unwrap();
 
-    let mut s = Stream::new(Sock(1), Token(3), Token(4));
+    let mut s = Stream::new(Sock::new(1), Token::new(3), Token::new(4));
     assert!(!s.is_tls());
     assert_eq!(s.records(), 0);
-    write_pool_bytes(&mut io, BufId(0), 0, b"plain");
-    s.send(&mut io, BufId(0), 0, 5, 4096);
+    write_pool_bytes(&mut io, BufId::new(0), 0, b"plain");
+    s.send(&mut io, BufId::new(0), 0, 5, 4096);
     let cs = drive_until(&mut io, &mut out, 50, |v| {
-        v.iter().any(|c| c.token == Token(3))
+        v.iter().any(|c| c.token().get() == 3)
     })
     .unwrap();
-    let sent = cs.iter().find(|c| c.token == Token(3)).unwrap().result;
+    let sent = cs.iter().find(|c| c.token().get() == 3).unwrap().result();
     assert!(sent > 0);
     assert_eq!(s.on_send(&mut io, sent), Step::Done(sent));
     assert_eq!(describe_tls_err(TlsError::BadCertificate), "bad-cert");
@@ -243,7 +241,7 @@ fn t2_f19_1_plain_build_rejects_tls_builder_naming_tls() {
 #[cfg(not(feature = "tls"))]
 #[test]
 fn t2_f19_2_plain_build_stream_has_no_tls_and_builder_rejects_before_io() {
-    let mut s = Stream::new(Sock(0), Token(1), Token(2));
+    let mut s = Stream::new(Sock::new(0), Token::new(1), Token::new(2));
     assert!(!s.is_tls());
     assert_eq!(s.records(), 0);
     s.reset();

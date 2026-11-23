@@ -58,8 +58,8 @@ fn a_stalled_server_times_out_and_the_slot_is_freed() {
 }
 
 const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 81)), 80);
-const LISTEN: Sock = Sock(1 + CONNS * 2);
-const PEER_SOCK: Sock = Sock(2 + CONNS * 2);
+const LISTEN: Sock = Sock::new(1 + CONNS * 2);
+const PEER_SOCK: Sock = Sock::new(2 + CONNS * 2);
 const ACCEPT: u64 = 3 << 40;
 const RECV: u64 = ACCEPT + 1;
 const SEND: u64 = ACCEPT + 2;
@@ -95,7 +95,7 @@ fn a_timed_out_request_ends_even_if_the_cancelled_read_returns_data() {
 fn start_slow_request(w: &mut World) -> u64 {
     let _: SocketAddr = w.io.listen(LISTEN, PEER).unwrap();
     w.io.submit(
-        Token(ACCEPT),
+        Token::new(ACCEPT),
         Op::Accept {
             listener: LISTEN,
             sock: PEER_SOCK,
@@ -128,24 +128,24 @@ fn run_with_slow_peer(w: &mut World, t0: u64) -> (bool, bool, Option<Done>) {
         while io.now_ns() - t0 < 5 * timeout && !(peer_eof && result.is_some()) {
             io.tick(true, out).expect("simulation deadlock");
             while let Some(c) = out.pop() {
-                match c.token.0 {
+                match c.token().get() {
                     HEARTBEAT => {
                         if !sent && io.now_ns() - t0 >= timeout {
                             send_partial(io);
                             sent = true;
                         }
                         client.tick(io);
-                        io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                        io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                             .unwrap();
                     }
-                    ACCEPT | RECV if c.result > 0 || c.token.0 == ACCEPT => {
+                    ACCEPT | RECV if c.result() > 0 || c.token().get() == ACCEPT => {
                         let recv = Op::Recv {
                             sock: PEER_SOCK,
                             buf: TX,
                             off: 0,
                             len: 1024,
                         };
-                        io.submit(Token(RECV), recv).unwrap();
+                        io.submit(Token::new(RECV), recv).unwrap();
                     }
                     RECV => peer_eof = true,
                     SEND => {}
@@ -173,18 +173,12 @@ fn send_partial(io: &mut SimIo) {
         len: PARTIAL.len() as u32,
         zero_copy: false,
     };
-    io.submit(Token(SEND), send).unwrap();
+    io.submit(Token::new(SEND), send).unwrap();
 }
 
 #[test]
 fn connect_refused_is_reported_without_leaking_the_slot() {
-    let mut w = world(
-        7,
-        Faults {
-            connect_refused: 1_000_000,
-            ..Faults::default()
-        },
-    );
+    let mut w = world(7, Faults::NONE.with_connect_refused(1_000_000));
     for _ in 0..CONNS * 2 {
         assert_eq!(
             w.request("GET", "/k", None),
@@ -197,12 +191,10 @@ fn connect_refused_is_reported_without_leaking_the_slot() {
 /// Short writes, partial reads and reordering must not change what is stored or fetched.
 #[test]
 fn round_trip_survives_short_writes_partial_reads_and_delays() {
-    let faults = Faults {
-        short_send: 300_000,
-        partial_recv: 300_000,
-        delay: 200_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_short_send(300_000)
+        .with_partial_recv(300_000)
+        .with_delay(200_000);
     for seed in 0..40 {
         let mut w = world(seed, faults);
         w.fill_tx(BUF, seed as u8);
@@ -225,13 +217,11 @@ fn round_trip_survives_short_writes_partial_reads_and_delays() {
 /// an error, and the pool never leaks a connection slot.
 #[test]
 fn resets_never_hang_a_request_or_leak_a_slot() {
-    let faults = Faults {
-        reset: 30_000,
-        short_send: 100_000,
-        partial_recv: 100_000,
-        delay: 100_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_reset(30_000)
+        .with_short_send(100_000)
+        .with_partial_recv(100_000)
+        .with_delay(100_000);
     let (mut oks, mut errs) = (0, 0);
     for seed in 0..40 {
         let mut w = world(seed, faults);
@@ -280,14 +270,12 @@ fn client_agrees_with_a_model_under_faults(tc: hegel::TestCase) {
     use hegel::generators as gs;
     let seed = tc.draw(gs::integers::<u64>());
     let ppm = |max: u32| tc.draw(gs::integers::<u32>().min_value(0).max_value(max));
-    let faults = Faults {
-        reset: ppm(20_000),
-        short_send: ppm(500_000),
-        partial_recv: ppm(500_000),
-        delay: ppm(400_000),
-        connect_refused: ppm(100_000),
-        ..Faults::default()
-    };
+    let faults = Faults::NONE
+        .with_reset(ppm(20_000))
+        .with_short_send(ppm(500_000))
+        .with_partial_recv(ppm(500_000))
+        .with_delay(ppm(400_000))
+        .with_connect_refused(ppm(100_000));
     let ops = tc.draw(
         gs::vecs(
             gs::integers::<u32>()

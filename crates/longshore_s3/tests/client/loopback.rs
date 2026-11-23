@@ -18,7 +18,7 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-const WAKE_TOKEN: Token = Token(9 << 40);
+const WAKE_TOKEN: Token = Token::new(9 << 40);
 
 /// A server running on its own thread until [`ServerThread::stop`].
 pub struct ServerThread {
@@ -84,7 +84,7 @@ fn serve_until_stopped(io: &mut PosixIo, server: &mut Server, stop: &AtomicBool)
     while !stop.load(Ordering::Acquire) {
         io.tick(true, &mut out).expect("server tick");
         while let Some(c) = out.pop() {
-            if c.token == WAKE_TOKEN {
+            if c.token() == WAKE_TOKEN {
                 if !stop.load(Ordering::Acquire) {
                     io.submit(WAKE_TOKEN, Op::AwaitWake).expect("rearm wake");
                 }

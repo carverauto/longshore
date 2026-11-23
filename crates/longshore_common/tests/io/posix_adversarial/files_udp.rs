@@ -15,24 +15,24 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
 /// Submits `op` as `tok`, ticks once, and returns the completion's result.
 fn run_one(io: &mut PosixIo, out: &mut Completions, tok: u64, op: Op) -> i32 {
-    io.submit(Token(tok), op).unwrap();
+    io.submit(Token::new(tok), op).unwrap();
     io.tick(true, out).unwrap();
-    out.pop().unwrap().result
+    out.pop().unwrap().result()
 }
 
 /// Writes `path` and a NUL into buffer 0; the length written.
 fn put_path(io: &mut PosixIo, path: &str) -> u32 {
     let mut p = path.as_bytes().to_vec();
     p.push(0);
-    io.buf(BufId(0))[..p.len()].copy_from_slice(&p);
+    io.buf(BufId::new(0))[..p.len()].copy_from_slice(&p);
     p.len() as u32
 }
 
 /// Opens the path in buffer 0, `path_len` bytes, into `slot`.
 fn open(slot: u32, path_len: u32, flags: OpenFlags) -> Op {
     Op::FileOpen {
-        slot: FileSlot(slot),
-        path_buf: BufId(0),
+        slot: FileSlot::new(slot),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
         flags,
@@ -46,7 +46,7 @@ fn invalid_file_ops() -> [(u64, Op); 4] {
         (
             2,
             Op::FileReserve {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 file_off: 0,
                 len: 0,
                 keep_size: false,
@@ -55,7 +55,7 @@ fn invalid_file_ops() -> [(u64, Op); 4] {
         (
             3,
             Op::FilePunch {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 file_off: 0,
                 len: 0,
             },
@@ -63,8 +63,8 @@ fn invalid_file_ops() -> [(u64, Op); 4] {
         (
             4,
             Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 4,
                 file_off: u64::MAX,
@@ -73,8 +73,8 @@ fn invalid_file_ops() -> [(u64, Op); 4] {
         (
             5,
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 4,
                 file_off: u64::MAX,
@@ -88,14 +88,14 @@ fn invalid_file_ops() -> [(u64, Op); 4] {
 fn sun_path_one_too_long(io: &mut PosixIo, out: &mut Completions) {
     let mut long_path = [b'x'; 105];
     long_path[104] = 0;
-    io.buf(BufId(0))[..105].copy_from_slice(&long_path);
+    io.buf(BufId::new(0))[..105].copy_from_slice(&long_path);
     let long_str = core::str::from_utf8(&long_path[..104]).unwrap();
     if cfg!(target_os = "macos") {
-        assert!(io.listen_unix(Sock(1), long_str).is_err());
+        assert!(io.listen_unix(Sock::new(1), long_str).is_err());
     }
     let connect = Op::ConnectUnix {
-        sock: Sock(1),
-        path_buf: BufId(0),
+        sock: Sock::new(1),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len: 105,
     };
@@ -112,25 +112,23 @@ fn posix_file_edge_cases_and_sun_path_boundary() {
     let _: Option<()> = std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
 
-    let mut io = PosixIo::new(Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 512,
-        files_max: 2,
-        ops_max: 4,
-        ..Limits::BASE
-    })
+    let mut io = PosixIo::new(
+        Limits::BASE
+            .with_sockets_max(2)
+            .with_buffers(2)
+            .with_buffer_size(512)
+            .with_files_max(2)
+            .with_ops_max(4),
+    )
     .unwrap();
     let mut out = Completions::new(4);
 
     let fpath = dir.join("edge.dat");
     let file_len = put_path(&mut io, fpath.to_str().unwrap());
-    let read_write = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let read_write = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         run_one(&mut io, &mut out, 1, open(0, file_len, read_write)),
         0
@@ -141,15 +139,15 @@ fn posix_file_edge_cases_and_sun_path_boundary() {
     }
 
     let dir_len = put_path(&mut io, dir.to_str().unwrap());
-    let directory = OpenFlags {
-        read: true,
-        direct: true,
-        directory: true,
-        ..Default::default()
-    };
+    let directory = OpenFlags::NONE
+        .with_read(true)
+        .with_direct(true)
+        .with_directory(true);
     let d_res = run_one(&mut io, &mut out, 6, open(1, dir_len, directory));
     if d_res == 0 {
-        let close = Op::FileClose { slot: FileSlot(1) };
+        let close = Op::FileClose {
+            slot: FileSlot::new(1),
+        };
         assert_eq!(run_one(&mut io, &mut out, 7, close), 0);
     }
 
@@ -160,8 +158,8 @@ fn posix_file_edge_cases_and_sun_path_boundary() {
 
 /// Up to 32 bytes from Sock(0) into buffer 0, if any are there now.
 const RECV_NOW: Op = Op::RecvNow {
-    sock: Sock(0),
-    buf: BufId(0),
+    sock: Sock::new(0),
+    buf: BufId::new(0),
     off: 0,
     len: 32,
 };
@@ -171,16 +169,16 @@ const RECV_NOW: Op = Op::RecvNow {
 fn udp_recv_now_round_trip(io: &mut PosixIo, out: &mut Completions, udp_srv: &UdpSocket) {
     let addr = udp_srv.local_addr().unwrap();
     let connect = Op::ConnectUdp {
-        sock: Sock(0),
+        sock: Sock::new(0),
         addr,
     };
     assert_eq!(run_one(io, out, 1, connect), 0);
     assert_eq!(run_one(io, out, 2, RECV_NOW), -EAGAIN);
 
-    io.buf(BufId(0))[..4].copy_from_slice(b"ping");
+    io.buf(BufId::new(0))[..4].copy_from_slice(b"ping");
     let send = Op::Send {
-        sock: Sock(0),
-        buf: BufId(0),
+        sock: Sock::new(0),
+        buf: BufId::new(0),
         off: 0,
         len: 4,
         zero_copy: false,
@@ -194,24 +192,26 @@ fn udp_recv_now_round_trip(io: &mut PosixIo, out: &mut Completions, udp_srv: &Ud
     std::thread::sleep(std::time::Duration::from_millis(10));
 
     assert_eq!(run_one(io, out, 4, RECV_NOW), 4);
-    assert_eq!(&io.buf(BufId(0))[..4], b"pong");
+    assert_eq!(&io.buf(BufId::new(0))[..4], b"pong");
 }
 
 /// Listens on Sock(1), accepts into Sock(2) the connect of Sock(3).
 fn tcp_pair(io: &mut PosixIo, out: &mut Completions) {
-    let tcp_addr = io.listen(Sock(1), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let tcp_addr = io
+        .listen(Sock::new(1), "127.0.0.1:0".parse().unwrap())
+        .unwrap();
     io.submit(
-        Token(5),
+        Token::new(5),
         Op::Accept {
-            listener: Sock(1),
-            sock: Sock(2),
+            listener: Sock::new(1),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(6),
+        Token::new(6),
         Op::Connect {
-            sock: Sock(3),
+            sock: Sock::new(3),
             addr: tcp_addr,
         },
     )
@@ -220,7 +220,7 @@ fn tcp_pair(io: &mut PosixIo, out: &mut Completions) {
     while up < 2 {
         io.tick(true, out).unwrap();
         while let Some(conn) = out.pop() {
-            assert_eq!(conn.result, 0);
+            assert_eq!(conn.result(), 0);
             up += 1;
         }
     }
@@ -228,20 +228,20 @@ fn tcp_pair(io: &mut PosixIo, out: &mut Completions) {
 
 /// Zero-copy sends from Sock(3) until one stalls; its token.
 fn zero_copy_until_stalled(io: &mut PosixIo, out: &mut Completions, tok: &mut u64) -> u64 {
-    io.buf(BufId(1)).fill(0x5A);
+    io.buf(BufId::new(1)).fill(0x5A);
     let mut pending_zc = None;
     for _ in 0..256 {
         let send = Op::Send {
-            sock: Sock(3),
-            buf: BufId(1),
+            sock: Sock::new(3),
+            buf: BufId::new(1),
             off: 0,
             len: 65536,
             zero_copy: true,
         };
-        io.submit(Token(*tok), send).unwrap();
+        io.submit(Token::new(*tok), send).unwrap();
         io.tick(false, out).unwrap();
         if let Some(sent) = out.pop() {
-            assert!(sent.result > 0);
+            assert!(sent.result() > 0);
             *tok += 1;
         } else {
             pending_zc = Some(*tok);
@@ -257,17 +257,17 @@ fn drain_until_sent(io: &mut PosixIo, out: &mut Completions, tok: &mut u64, zc_t
     let mut done = false;
     while !done {
         let recv = Op::Recv {
-            sock: Sock(2),
-            buf: BufId(2),
+            sock: Sock::new(2),
+            buf: BufId::new(2),
             off: 0,
             len: 65536,
         };
-        io.submit(Token(*tok), recv).unwrap();
+        io.submit(Token::new(*tok), recv).unwrap();
         *tok += 1;
         io.tick(true, out).unwrap();
         while let Some(drained) = out.pop() {
-            if drained.token.0 == zc_tok {
-                assert!(drained.result > 0);
+            if drained.token().get() == zc_tok {
+                assert!(drained.result() > 0);
                 done = true;
             }
         }
@@ -278,13 +278,13 @@ fn drain_until_sent(io: &mut PosixIo, out: &mut Completions, tok: &mut u64, zc_t
 fn posix_udp_recv_now_and_send_zero_copy_backpressure() {
     let udp_srv = UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
 
-    let mut io = PosixIo::new(Limits {
-        sockets_max: 4,
-        buffers: 3,
-        buffer_size: 65536,
-        ops_max: 8,
-        ..Limits::BASE
-    })
+    let mut io = PosixIo::new(
+        Limits::BASE
+            .with_sockets_max(4)
+            .with_buffers(3)
+            .with_buffer_size(65536)
+            .with_ops_max(8),
+    )
     .unwrap();
     let mut out = Completions::new(8);
 

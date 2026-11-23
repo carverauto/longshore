@@ -18,47 +18,42 @@ use longshore::sim::{DiskConfig, DiskFaults, Faults, SimIo};
 fn t2_f14_1_write_log_overflow_evicts_oldest_to_durable() {
     let mut sim = make_disk_sim(10, 512, 4, 2048);
     let mut out = Completions::new(8);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/evict.dat", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/evict.dat", rw),
         0
     );
-    assert_eq!(sync_root_dir(&mut sim, &mut out, 2, FileSlot(1)), 0);
+    assert_eq!(sync_root_dir(&mut sim, &mut out, 2, FileSlot::new(1)), 0);
 
     for i in 0..8u64 {
         let data = vec![(0x10 + i) as u8; 512];
         assert_eq!(
-            write_file(&mut sim, &mut out, 10 + i, FileSlot(0), i * 512, &data),
+            write_file(&mut sim, &mut out, 10 + i, FileSlot::new(0), i * 512, &data),
             512
         );
     }
-    assert_eq!(close_file(&mut sim, &mut out, 30, FileSlot(0)), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 30, FileSlot::new(0)), 0);
 
     sim.power_loss();
 
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
+    let ro = OpenFlags::NONE.with_read(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 40, FileSlot(0), "/evict.dat", ro),
+        open_file(&mut sim, &mut out, 40, FileSlot::new(0), "/evict.dat", ro),
         0
     );
     // Oldest 4 entries (sectors 0..4) were evicted to durable when entries 4..8 entered the 4-entry log.
     for i in 0..4u64 {
-        let got =
-            read_file_vec(&mut sim, &mut out, 50 + i, FileSlot(0), i * 512, 512).expect("read");
+        let got = read_file_vec(&mut sim, &mut out, 50 + i, FileSlot::new(0), i * 512, 512)
+            .expect("read");
         assert!(
             got.iter().all(|&b| b == (0x10 + i) as u8),
             "evicted sector {i} must survive power_loss"
         );
     }
-    assert_eq!(close_file(&mut sim, &mut out, 60, FileSlot(0)), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 60, FileSlot::new(0)), 0);
 }
 
 /// `T2-F14-2`: Rename without dir sync + `power_loss()` yields old or new name, never both or neither.
@@ -68,43 +63,41 @@ fn t2_f14_2_unsynced_rename_crash_yields_old_or_new_never_both() {
     for seed in 0..32u64 {
         let mut sim = make_disk_sim(seed, 512, 32, 64 * 1024);
         let mut out = Completions::new(8);
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
+        let rw = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true);
         assert_eq!(
-            open_file(&mut sim, &mut out, 1, FileSlot(0), "/old.dat", rw),
+            open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/old.dat", rw),
             0
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 2, FileSlot(0), 0, b"payload"),
+            write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, b"payload"),
             7
         );
-        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), false), 0);
-        assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot(0)), 0);
-        assert_eq!(sync_root_dir(&mut sim, &mut out, 5, FileSlot(1)), 0);
+        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), false), 0);
+        assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot::new(0)), 0);
+        assert_eq!(sync_root_dir(&mut sim, &mut out, 5, FileSlot::new(1)), 0);
 
-        let l_old = write_nul_path(&mut sim, BufId(0), 0, "/old.dat");
-        let l_new = write_nul_path(&mut sim, BufId(1), 0, "/new.dat");
+        let l_old = write_nul_path(&mut sim, BufId::new(0), 0, "/old.dat");
+        let l_new = write_nul_path(&mut sim, BufId::new(1), 0, "/new.dat");
         assert_eq!(
             submit_and_wait_one(
                 &mut sim,
                 &mut out,
-                Token(10),
+                Token::new(10),
                 Op::FileRename {
-                    old_buf: BufId(0),
+                    old_buf: BufId::new(0),
                     old_off: 0,
                     old_len: l_old,
-                    new_buf: BufId(1),
+                    new_buf: BufId::new(1),
                     new_off: 0,
                     new_len: l_new,
                 },
                 10_000,
             )
             .expect("rename")
-            .result,
+            .result(),
             0
         );
         sim.power_loss();
@@ -128,30 +121,29 @@ fn t2_f14_2_unsynced_rename_crash_yields_old_or_new_never_both() {
 #[test]
 fn t2_f14_3_exceed_disk_capacities_deterministic_error() {
     let mut sim = SimIo::new(disk_limits(), 99, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 2,
-        max_dirs: 2,
-        max_bytes_per_file: 4096,
-        max_name_len: 16,
-        write_log_entries: 16,
-        write_log_bytes: 16_384,
-        read_error_sectors: 4,
-        sector_size: 512,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(2)
+            .with_max_dirs(2)
+            .with_max_bytes_per_file(4096)
+            .with_max_name_len(16)
+            .with_write_log_entries(16)
+            .with_write_log_bytes(16_384)
+            .with_read_error_sectors(4)
+            .with_sector_size(512),
+    );
     let mut out = Completions::new(8);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
 
     // 1. Name longer than max_name_len (16).
     let r_long = open_file(
         &mut sim,
         &mut out,
         1,
-        FileSlot(0),
+        FileSlot::new(0),
         "/too_long_filename.dat",
         rw,
     );
@@ -162,20 +154,20 @@ fn t2_f14_3_exceed_disk_capacities_deterministic_error() {
 
     // 2. Exceed max_bytes_per_file (4096).
     assert_eq!(
-        open_file(&mut sim, &mut out, 2, FileSlot(0), "/f1.dat", rw),
+        open_file(&mut sim, &mut out, 2, FileSlot::new(0), "/f1.dat", rw),
         0
     );
-    let r_big = write_file(&mut sim, &mut out, 3, FileSlot(0), 4096, b"past-max");
+    let r_big = write_file(&mut sim, &mut out, 3, FileSlot::new(0), 4096, b"past-max");
     assert_eq!(r_big, -LINUX_ENOSPC);
-    assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot(0)), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 4, FileSlot::new(0)), 0);
 
     // 3. Exceed max_files (2).
     assert_eq!(
-        open_file(&mut sim, &mut out, 5, FileSlot(0), "/f2.dat", rw),
+        open_file(&mut sim, &mut out, 5, FileSlot::new(0), "/f2.dat", rw),
         0
     );
-    assert_eq!(close_file(&mut sim, &mut out, 6, FileSlot(0)), 0);
-    let r_many = open_file(&mut sim, &mut out, 7, FileSlot(0), "/f3.dat", rw);
+    assert_eq!(close_file(&mut sim, &mut out, 6, FileSlot::new(0)), 0);
+    let r_many = open_file(&mut sim, &mut out, 7, FileSlot::new(0), "/f3.dat", rw);
     assert!(
         r_many == -LINUX_ENOSPC || r_many == -LINUX_EMFILE,
         "expected capacity error on 3rd file, got {r_many}"
@@ -189,26 +181,24 @@ fn t2_f14_4_zero_disk_faults_preserves_trace_hash() {
         let mut sim = make_disk_sim(77, 512, 32, 64 * 1024);
         sim.set_disk_faults(DiskFaults::default());
         let mut out = Completions::new(8);
-        let rw = OpenFlags {
-            read: true,
-            write: true,
-            create: true,
-            ..Default::default()
-        };
+        let rw = OpenFlags::NONE
+            .with_read(true)
+            .with_write(true)
+            .with_create(true);
         assert_eq!(
-            open_file(&mut sim, &mut out, 1, FileSlot(0), "/tr.dat", rw),
+            open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/tr.dat", rw),
             0
         );
         assert_eq!(
-            write_file(&mut sim, &mut out, 2, FileSlot(0), 0, b"trace-data"),
+            write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, b"trace-data"),
             10
         );
-        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot(0), true), 0);
+        assert_eq!(sync_file(&mut sim, &mut out, 3, FileSlot::new(0), true), 0);
         assert_eq!(
-            read_file_vec(&mut sim, &mut out, 4, FileSlot(0), 0, 10).unwrap(),
+            read_file_vec(&mut sim, &mut out, 4, FileSlot::new(0), 0, 10).unwrap(),
             b"trace-data"
         );
-        assert_eq!(close_file(&mut sim, &mut out, 5, FileSlot(0)), 0);
+        assert_eq!(close_file(&mut sim, &mut out, 5, FileSlot::new(0)), 0);
         (sim.trace_hash(), sim.disk_fault_counters())
     };
     let (h1, c1) = run();
@@ -223,28 +213,26 @@ fn t2_f14_4_zero_disk_faults_preserves_trace_hash() {
 fn t2_f14_5_overlapping_unsynced_writes_overlay_exact_bytes() {
     let mut sim = make_disk_sim(12, 512, 32, 64 * 1024);
     let mut out = Completions::new(8);
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
-        open_file(&mut sim, &mut out, 1, FileSlot(0), "/lap.dat", rw),
+        open_file(&mut sim, &mut out, 1, FileSlot::new(0), "/lap.dat", rw),
         0
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 2, FileSlot(0), 0, &[0xAA; 1024]),
+        write_file(&mut sim, &mut out, 2, FileSlot::new(0), 0, &[0xAA; 1024]),
         1024
     );
     assert_eq!(
-        write_file(&mut sim, &mut out, 3, FileSlot(0), 512, &[0xBB; 1024]),
+        write_file(&mut sim, &mut out, 3, FileSlot::new(0), 512, &[0xBB; 1024]),
         1024
     );
 
-    let got = read_file_vec(&mut sim, &mut out, 4, FileSlot(0), 0, 1536).expect("read");
+    let got = read_file_vec(&mut sim, &mut out, 4, FileSlot::new(0), 0, 1536).expect("read");
     assert_eq!(got.len(), 1536);
     assert!(got[..512].iter().all(|&b| b == 0xAA));
     assert!(got[512..1536].iter().all(|&b| b == 0xBB));
-    assert_eq!(close_file(&mut sim, &mut out, 5, FileSlot(0)), 0);
+    assert_eq!(close_file(&mut sim, &mut out, 5, FileSlot::new(0)), 0);
 }

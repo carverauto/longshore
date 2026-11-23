@@ -14,21 +14,14 @@ use longshore_common::sim::{DiskConfig, Faults, SimIo};
 static ALLOC: Guard = Guard;
 
 fn make_sim(limits: Limits, delay: u32) -> SimIo {
-    let mut sim = SimIo::new(
-        limits,
-        77,
-        Faults {
-            delay,
-            ..Default::default()
-        },
+    let mut sim = SimIo::new(limits, 77, Faults::NONE.with_delay(delay));
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(32)
+            .with_max_dirs(16)
+            .with_max_bytes_per_file(64 * 1024)
+            .with_max_name_len(256),
     );
-    sim.setup_disk(DiskConfig {
-        max_files: 32,
-        max_dirs: 16,
-        max_bytes_per_file: 64 * 1024,
-        max_name_len: 256,
-        ..DiskConfig::BASE
-    });
     sim
 }
 
@@ -36,18 +29,16 @@ fn make_sim(limits: Limits, delay: u32) -> SimIo {
 /// writes aligned buffer `a` to it and syncs it, all as one batch.
 #[cfg(test)]
 fn open_write_sync(sim: &mut SimIo, out: &mut Completions, path_len: u32, a: BufId) {
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        direct: true,
-        ..Default::default()
-    };
-    sim.submit(Token(1), open(path_len, rw)).unwrap();
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true)
+        .with_direct(true);
+    sim.submit(Token::new(1), open(path_len, rw)).unwrap();
     sim.submit(
-        Token(2),
+        Token::new(2),
         Op::FileWrite {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: a,
             off: 0,
             len: 4096,
@@ -56,9 +47,9 @@ fn open_write_sync(sim: &mut SimIo, out: &mut Completions, path_len: u32, a: Buf
     )
     .unwrap();
     sim.submit(
-        Token(3),
+        Token::new(3),
         Op::FileSync {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             datasync: true,
         },
     )
@@ -67,7 +58,7 @@ fn open_write_sync(sim: &mut SimIo, out: &mut Completions, path_len: u32, a: Buf
     while done < 3 {
         sim.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            assert!(c.result >= 0);
+            assert!(c.result() >= 0);
             done += 1;
         }
     }
@@ -76,18 +67,18 @@ fn open_write_sync(sim: &mut SimIo, out: &mut Completions, path_len: u32, a: Buf
 /// Submits `op` as `tok`, ticks once; the result of the completion it brings.
 #[cfg(test)]
 fn one_tick(sim: &mut SimIo, out: &mut Completions, tok: u64, op: Op) -> i32 {
-    sim.submit(Token(tok), op).unwrap();
+    sim.submit(Token::new(tok), op).unwrap();
     sim.tick(true, out).unwrap();
-    out.pop().unwrap().result
+    out.pop().unwrap().result()
 }
 
 /// Renames the path in buffer 0 to the one in buffer 1.
 fn rename(old_len: u32, new_len: u32) -> Op {
     Op::FileRename {
-        old_buf: BufId(0),
+        old_buf: BufId::new(0),
         old_off: 0,
         old_len,
-        new_buf: BufId(1),
+        new_buf: BufId::new(1),
         new_off: 0,
         new_len,
     }
@@ -98,26 +89,26 @@ fn sim_file_contract_and_zero_alloc() {
     contract_files::run_all(&mut |l| make_sim(l, 0), "");
     contract_files::run_all(&mut |l| make_sim(l, 200_000), "");
 
-    let limits = Limits {
-        buffers: 2,
-        buffer_size: 4096,
-        files_max: 2,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_files_max(2)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(8);
     let mut sim = make_sim(limits, 0);
     let mut out = Completions::new(8);
-    let p = put_path(&mut sim, BufId(0), b"/sealed.dat\0");
-    let n = put_path(&mut sim, BufId(1), b"/sealed2.dat\0");
+    let p = put_path(&mut sim, BufId::new(0), b"/sealed.dat\0");
+    let n = put_path(&mut sim, BufId::new(1), b"/sealed2.dat\0");
     let a = limits.aligned(0);
     sim.buf(a).fill(0x3C);
 
     sealed(|| {
         open_write_sync(&mut sim, &mut out, p, a);
-        let close = Op::FileClose { slot: FileSlot(0) };
+        let close = Op::FileClose {
+            slot: FileSlot::new(0),
+        };
         assert_eq!(one_tick(&mut sim, &mut out, 4, close), 0);
         assert_eq!(one_tick(&mut sim, &mut out, 5, rename(p, n)), 0);
     });
@@ -126,12 +117,12 @@ fn sim_file_contract_and_zero_alloc() {
 /// Submits `op` as `tok` and ticks until it completes; its result.
 #[cfg(test)]
 fn drive(io: &mut SimIo, ready: &mut Completions, tok: u64, op: Op) -> i32 {
-    io.submit(Token(tok), op).unwrap();
+    io.submit(Token::new(tok), op).unwrap();
     loop {
         io.tick(true, ready).unwrap();
         if let Some(c) = ready.pop() {
-            assert_eq!(c.token, Token(tok));
-            return c.result;
+            assert_eq!(c.token(), Token::new(tok));
+            return c.result();
         }
     }
 }
@@ -151,13 +142,13 @@ fn at_path(
     path: &[u8],
     op: impl FnOnce(u32) -> Op,
 ) -> i32 {
-    let len = put_path(sim, BufId(0), path);
+    let len = put_path(sim, BufId::new(0), path);
     drive(sim, out, tok, op(len))
 }
 
 fn mkdir(path_len: u32) -> Op {
     Op::FileMkdir {
-        path_buf: BufId(0),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
     }
@@ -166,10 +157,10 @@ fn mkdir(path_len: u32) -> Op {
 /// The status of the path in buffer 0, into buffer 1.
 fn status(path_len: u32) -> Op {
     Op::FileStatus {
-        path_buf: BufId(0),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
-        out_buf: BufId(1),
+        out_buf: BufId::new(1),
         out_off: 0,
     }
 }
@@ -177,8 +168,8 @@ fn status(path_len: u32) -> Op {
 /// Opens the path in buffer 0 into slot 0.
 fn open(path_len: u32, flags: OpenFlags) -> Op {
     Op::FileOpen {
-        slot: FileSlot(0),
-        path_buf: BufId(0),
+        slot: FileSlot::new(0),
+        path_buf: BufId::new(0),
         path_off: 0,
         path_len,
         flags,
@@ -188,8 +179,8 @@ fn open(path_len: u32, flags: OpenFlags) -> Op {
 /// Four bytes between slot 0 at offset 0 and `buf`.
 fn write4(buf: u32) -> Op {
     Op::FileWrite {
-        slot: FileSlot(0),
-        buf: BufId(buf),
+        slot: FileSlot::new(0),
+        buf: BufId::new(buf),
         off: 0,
         len: 4,
         file_off: 0,
@@ -198,8 +189,8 @@ fn write4(buf: u32) -> Op {
 
 fn read4(buf: u32) -> Op {
     Op::FileRead {
-        slot: FileSlot(0),
-        buf: BufId(buf),
+        slot: FileSlot::new(0),
+        buf: BufId::new(buf),
         off: 0,
         len: 4,
         file_off: 0,
@@ -216,8 +207,8 @@ fn rename_that_would_overflow_a_name_changes_nothing(sim: &mut SimIo, out: &mut 
     assert_eq!(at_path(sim, out, 2, b"/d1/123456789\0", mkdir), 0);
     assert_eq!(at_path(sim, out, 3, b"/longdir\0", mkdir), 0);
 
-    let old_len = put_path(sim, BufId(0), b"/d1\0");
-    let new_len = put_path(sim, BufId(1), b"/longdir\0");
+    let old_len = put_path(sim, BufId::new(0), b"/d1\0");
+    let new_len = put_path(sim, BufId::new(1), b"/longdir\0");
     assert_eq!(drive(sim, out, 4, rename(old_len, new_len)), -ENAMETOOLONG);
 
     assert_eq!(at_path(sim, out, 5, b"/longdir\0", status), 0);
@@ -229,43 +220,59 @@ fn rename_that_would_overflow_a_name_changes_nothing(sim: &mut SimIo, out: &mut 
 fn default_flags_open_read_only(sim: &mut SimIo, out: &mut Completions) {
     use longshore_common::io::{file_size, EBADF};
 
-    let f = put_path(sim, BufId(0), b"/ro.dat\0");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let f = put_path(sim, BufId::new(0), b"/ro.dat\0");
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(drive(sim, out, 7, open(f, rw)), 0);
-    sim.buf(BufId(1))[..4].copy_from_slice(b"data");
+    sim.buf(BufId::new(1))[..4].copy_from_slice(b"data");
     assert_eq!(drive(sim, out, 8, write4(1)), 4);
-    assert_eq!(drive(sim, out, 9, Op::FileClose { slot: FileSlot(0) }), 0);
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            9,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
+        0
+    );
     assert_eq!(drive(sim, out, 10, open(f, OpenFlags::default())), 0);
     assert_eq!(drive(sim, out, 11, read4(2)), 4);
-    assert_eq!(&sim.buf(BufId(2))[..4], b"data");
+    assert_eq!(&sim.buf(BufId::new(2))[..4], b"data");
     assert_eq!(drive(sim, out, 12, write4(1)), -EBADF);
-    assert_eq!(drive(sim, out, 13, Op::FileClose { slot: FileSlot(0) }), 0);
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            13,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
+        0
+    );
     assert_eq!(drive(sim, out, 14, status(f)), 0);
-    assert_eq!(file_size(sim.buf(BufId(1))), 4);
+    assert_eq!(file_size(sim.buf(BufId::new(1))), 4);
 }
 
 #[test]
 fn sim_rename_enametoolong_is_atomic_and_default_flags_read() {
-    let limits = Limits {
-        buffers: 4,
-        buffer_size: 512,
-        files_max: 4,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_buffers(4)
+        .with_buffer_size(512)
+        .with_files_max(4)
+        .with_ops_max(8);
     let mut sim = SimIo::new(limits, 99, Faults::default());
-    sim.setup_disk(DiskConfig {
-        max_files: 16,
-        max_dirs: 16,
-        max_bytes_per_file: 4096,
-        max_name_len: 16,
-        ..DiskConfig::BASE
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(16)
+            .with_max_dirs(16)
+            .with_max_bytes_per_file(4096)
+            .with_max_name_len(16),
+    );
     let mut out = Completions::new(8);
     rename_that_would_overflow_a_name_changes_nothing(&mut sim, &mut out);
     default_flags_open_read_only(&mut sim, &mut out);

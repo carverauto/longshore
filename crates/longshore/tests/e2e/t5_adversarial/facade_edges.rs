@@ -36,30 +36,33 @@ fn facade_non_optional_reexports_send_alert_plain_and_builder_errors_without_sim
     assert_eq!(rx.try_recv(), TryRecv::Message(9));
 
     // Plain Stream::send_alert over PosixIo (no sim required).
-    let mut io = PosixIo::new(Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 256,
-        ops_max: 8,
-        ..Limits::BASE
-    })
+    let mut io = PosixIo::new(
+        Limits::BASE
+            .with_sockets_max(4)
+            .with_buffers(2)
+            .with_buffer_size(256)
+            .with_ops_max(8),
+    )
     .unwrap();
     let mut out = Completions::new(8);
     let addr = io
-        .listen(Sock(0), SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .listen(
+            Sock::new(0),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
         .unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
+            listener: Sock::new(0),
+            sock: Sock::new(1),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(2),
+            sock: Sock::new(2),
             addr,
         },
     )
@@ -68,17 +71,17 @@ fn facade_non_optional_reexports_send_alert_plain_and_builder_errors_without_sim
     while up < 2 {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            assert_eq!(c.result, 0);
+            assert_eq!(c.result(), 0);
             up += 1;
         }
     }
-    let mut plain = Stream::new(Sock(2), Token(10), Token(11));
-    plain.send_alert(&mut io, BufId(0), 0, 1, 0);
+    let mut plain = Stream::new(Sock::new(2), Token::new(10), Token::new(11));
+    plain.send_alert(&mut io, BufId::new(0), 0, 1, 0);
     loop {
         io.tick(true, &mut out).unwrap();
         if let Some(c) = out.pop() {
-            assert_eq!(c.token, Token(10));
-            assert_eq!(plain.on_send(&mut io, c.result), Step::Done(0));
+            assert_eq!(c.token(), Token::new(10));
+            assert_eq!(plain.on_send(&mut io, c.result()), Step::Done(0));
             break;
         }
     }

@@ -35,21 +35,21 @@ pub(super) enum CoreTick {
 #[cfg(feature = "sim")]
 fn connect_and_send_on_core_b(core_b: &mut SimIo, out_b: &mut Completions) {
     let addr: SocketAddr = "192.0.2.26:9600".parse().unwrap();
-    let _: SocketAddr = core_b.listen(Sock(0), addr).unwrap();
+    let _: SocketAddr = core_b.listen(Sock::new(0), addr).unwrap();
     core_b
         .submit(
-            Token(50),
+            Token::new(50),
             Op::Accept {
-                listener: Sock(0),
-                sock: Sock(2),
+                listener: Sock::new(0),
+                sock: Sock::new(2),
             },
         )
         .unwrap();
     core_b
         .submit(
-            Token(51),
+            Token::new(51),
             Op::Connect {
-                sock: Sock(1),
+                sock: Sock::new(1),
                 addr,
             },
         )
@@ -57,13 +57,13 @@ fn connect_and_send_on_core_b(core_b: &mut SimIo, out_b: &mut Completions) {
     let _: Vec<longshore::io::Completion> =
         drive_until_nonblocking(core_b, out_b, 20, |v| v.len() == 2)
             .expect("accept and connect complete");
-    write_pool_bytes(core_b, BufId(0), 0, b"core-b-net");
+    write_pool_bytes(core_b, BufId::new(0), 0, b"core-b-net");
     core_b
         .submit(
-            Token(52),
+            Token::new(52),
             Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
+                sock: Sock::new(1),
+                buf: BufId::new(0),
                 off: 0,
                 len: 10,
                 zero_copy: false,
@@ -79,20 +79,18 @@ pub(super) fn run_two_core_ping_pong(
     faults_b: Faults,
     schedule: &[CoreTick],
 ) -> (Vec<u64>, Vec<u64>, u64, u64) {
-    let limits = Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 1024,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(1024)
+        .with_ops_max(8);
     let mut core_a = SimIo::new(limits, seed_a, Faults::default());
     let mut core_b = SimIo::new(limits, seed_b, faults_b);
     let mut out_a = Completions::new(16);
     let mut out_b = Completions::new(16);
 
-    let (tx_ab, mut m_ab) = queue::<u64, _>(&mut core_b, 16, Token(1)).expect("b io rx");
-    let (tx_ba, mut m_ba) = queue::<u64, _>(&mut core_a, 16, Token(2)).expect("a io rx");
+    let (tx_ab, mut m_ab) = queue::<u64, _>(&mut core_b, 16, Token::new(1)).expect("b io rx");
+    let (tx_ba, mut m_ba) = queue::<u64, _>(&mut core_a, 16, Token::new(2)).expect("a io rx");
     m_ab.arm(&mut core_b).unwrap();
     m_ba.arm(&mut core_a).unwrap();
 
@@ -168,19 +166,17 @@ fn t1_f26_2_identical_seeds_and_schedule_produce_identical_traces() {
 #[cfg(feature = "sim")]
 #[test]
 fn t1_f26_3_distinct_tick_schedules_produce_deterministic_order_differences() {
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 256,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(256)
+        .with_ops_max(4);
     let run_sched = |a_first: bool| -> Vec<u64> {
         let mut core_a = SimIo::new(limits, 11, Faults::default());
         let mut core_b = SimIo::new(limits, 22, Faults::default());
         let mut out_a = Completions::new(8);
         let mut out_b = Completions::new(8);
-        let (tx, mut m_rx) = queue::<u64, _>(&mut core_b, 8, Token(1)).unwrap();
+        let (tx, mut m_rx) = queue::<u64, _>(&mut core_b, 8, Token::new(1)).unwrap();
         m_rx.arm(&mut core_b).unwrap();
 
         let (tx_a, tx_b) = (tx.clone(), tx);

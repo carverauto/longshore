@@ -70,7 +70,7 @@ fn spawn_ping_backend(be_limits: Limits) -> (Sender<PingMsg, u64>, std::thread::
                 capacity: 8,
                 slots: 4,
                 waiters_prealloc: 4,
-                wake_token: Token(1),
+                wake_token: Token::new(1),
             },
         )
         .unwrap();
@@ -128,57 +128,61 @@ fn send_u64<IO: Io>(io: &mut IO, token: Token, sock: Sock, buf: BufId, val: u64)
 #[cfg(unix)]
 fn armed_accept_pair<IO: Io>(fe: &mut IO, out_fe: &mut Completions) -> Sock {
     use super::super::harness::drive_until;
-    let addr = fe.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
-    fe.submit(Token(10), Op::ArmedAccept { listener: Sock(0) })
+    let addr = fe
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
         .unwrap();
     fe.submit(
-        Token(11),
+        Token::new(10),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
+    fe.submit(
+        Token::new(11),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
     let cs = drive_until(fe, out_fe, 10_000, |v| v.len() == 2).unwrap();
-    Sock(u32::try_from(cs.iter().find(|c| c.token == Token(10)).unwrap().result).unwrap())
+    Sock::new(u32::try_from(cs.iter().find(|c| c.token().get() == 10).unwrap().result()).unwrap())
 }
 
 #[cfg(unix)]
 #[test]
 fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
     use super::super::harness::{drive_until, posix_backend, read_pool_bytes, submit_and_wait_one};
-    let fe_limits = Limits {
-        sockets_max: 12,
-        buffers: 4,
-        buffer_size: 4096,
-        accept_range_start: 6,
-        accept_range_len: 4,
-        ring_buffers: 4,
-        ring_buffer_size: 1024,
-        ops_max: 16,
-        ..Limits::BASE
-    };
-    let be_limits = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    };
+    let fe_limits = Limits::BASE
+        .with_sockets_max(12)
+        .with_buffers(4)
+        .with_buffer_size(4096)
+        .with_accept_range_start(6)
+        .with_accept_range_len(4)
+        .with_ring_buffers(4)
+        .with_ring_buffer_size(1024)
+        .with_ops_max(16);
+    let be_limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4);
     let mut fe = posix_backend(fe_limits).unwrap();
     let (tx_be, be_handle) = spawn_ping_backend(be_limits);
 
     let mut out_fe = Completions::new(16);
     let srv = armed_accept_pair(&mut fe, &mut out_fe);
-    fe.submit(Token(12), Op::ArmedRecv { sock: srv }).unwrap();
+    fe.submit(Token::new(12), Op::ArmedRecv { sock: srv })
+        .unwrap();
 
-    send_u64(&mut fe, Token(13), Sock(1), BufId(0), 42);
+    send_u64(&mut fe, Token::new(13), Sock::new(1), BufId::new(0), 42);
     let rcs = drive_until(&mut fe, &mut out_fe, 10_000, |v| {
-        v.iter().any(|c| c.token == Token(12))
+        v.iter().any(|c| c.token().get() == 12)
     })
     .unwrap();
-    let rc = rcs.iter().find(|c| c.token == Token(12)).unwrap();
-    let rbuf = rc.buf.unwrap();
+    let rc = rcs.iter().find(|c| c.token().get() == 12).unwrap();
+    let rbuf = rc.buf().unwrap();
     let raw = read_pool_bytes(&mut fe, rbuf, 0, 8);
     let seq = u64::from_le_bytes(raw.try_into().unwrap());
     fe.give_back(rbuf);
@@ -188,23 +192,27 @@ fn t3_27_frontend_armed_recv_mailbox_backend_give_back() {
     be_handle.join().unwrap();
     assert_eq!(ans, 42 ^ 0xA5A5);
 
-    send_u64(&mut fe, Token(14), srv, BufId(1), ans);
+    send_u64(&mut fe, Token::new(14), srv, BufId::new(1), ans);
     let ack = submit_and_wait_one(
         &mut fe,
         &mut out_fe,
-        Token(15),
+        Token::new(15),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(2),
+            sock: Sock::new(1),
+            buf: BufId::new(2),
             off: 0,
             len: 8,
         },
         10_000,
     )
     .unwrap();
-    assert_eq!(ack.result, 8);
+    assert_eq!(ack.result(), 8);
     assert_eq!(
-        u64::from_le_bytes(read_pool_bytes(&mut fe, BufId(2), 0, 8).try_into().unwrap()),
+        u64::from_le_bytes(
+            read_pool_bytes(&mut fe, BufId::new(2), 0, 8)
+                .try_into()
+                .unwrap()
+        ),
         42 ^ 0xA5A5
     );
 }

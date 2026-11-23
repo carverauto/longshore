@@ -7,46 +7,30 @@
 
 use crate::io::BufId;
 
+mod fields;
+
 /// Everything the I/O layer allocates is sized from these, once.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    pub sockets_max: u32,
-    /// First socket slot in the range reserved for [`super::Op::ArmedAccept`].
-    pub accept_range_start: u32,
-    /// Number of socket slots reserved for [`super::Op::ArmedAccept`]. Zero
-    /// leaves the accept range empty.
-    pub accept_range_len: u32,
-    /// Large buffers, sized for object bodies: ids `0..buffers`.
-    pub buffers: u32,
-    pub buffer_size: u32,
-    /// Small buffers, sized for request and response heads and datagrams:
-    /// ids `buffers..buffers + small_buffers`. May be zero.
-    pub small_buffers: u32,
-    pub small_buffer_size: u32,
-    /// Fixed file slots (`FileSlot(0..files_max)`). May be zero.
-    pub files_max: u32,
-    /// Block-aligned buffers for direct file I/O: ids
-    /// `buffers + small_buffers..buffers + small_buffers + aligned_buffers`.
-    /// May be zero.
-    pub aligned_buffers: u32,
-    pub aligned_buffer_size: u32,
-    /// Block alignment in bytes for aligned buffers and hole punching.
-    /// Must be a power of two `>= 4096` when `aligned_buffers > 0`.
-    pub block_size: u32,
-    /// Buffers in the registered buffer ring (`<= 32_768`): ids
-    /// `ring_base()..ring_base() + ring_buffers`. May be zero.
-    pub ring_buffers: u32,
-    /// Size in bytes of each buffer-ring buffer. Must be `> 0` when
-    /// `ring_buffers > 0`.
-    pub ring_buffer_size: u32,
-    /// Maximum operations in flight. Armed operations (`ArmedAccept`,
-    /// `ArmedRecv`) stay in flight across completions and count toward this
-    /// limit until their final completion.
-    pub ops_max: u32,
+    pub(crate) sockets_max: u32,
+    pub(crate) accept_range_start: u32,
+    pub(crate) accept_range_len: u32,
+    pub(crate) buffers: u32,
+    pub(crate) buffer_size: u32,
+    pub(crate) small_buffers: u32,
+    pub(crate) small_buffer_size: u32,
+    pub(crate) files_max: u32,
+    pub(crate) aligned_buffers: u32,
+    pub(crate) aligned_buffer_size: u32,
+    pub(crate) block_size: u32,
+    pub(crate) ring_buffers: u32,
+    pub(crate) ring_buffer_size: u32,
+    pub(crate) ops_max: u32,
 }
 
 impl Limits {
-    /// Zeroed base value for struct-update construction (`Limits { ..Limits::BASE }`).
+    /// The zeroed value every `Limits` is built from with the `with_*`
+    /// setters: `Limits::BASE.with_sockets_max(4).with_buffers(3)`.
     pub const BASE: Self = Self {
         sockets_max: 0,
         accept_range_start: 0,

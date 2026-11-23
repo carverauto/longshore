@@ -31,7 +31,7 @@ fn world_for_bucket(seed: u64, bucket: &'static str) -> World {
 #[cfg(test)]
 fn path_server(mut io: SimIo, bucket: &'static str) -> (SimIo, Server) {
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
             .head_max(2048)
             .objects_max(8)
             .build()
@@ -49,7 +49,7 @@ fn store_config(bucket: &str, second: bool) -> Config {
     cfg.host = "objects.test".into();
     cfg.bucket_in_path = Some(bucket.into());
     if second {
-        cfg.http = http_config(1 + 2 * CONNS, LIMITS.buffers + CONNS, 3 << 40);
+        cfg.http = http_config(1 + 2 * CONNS, LIMITS.buffers() + CONNS, 3 << 40);
     }
     cfg
 }
@@ -67,10 +67,10 @@ fn run_both(w: &mut World, other: &mut S3, n: usize) {
     while done.len() < n {
         io.tick(true, out).expect("simulation deadlock");
         while let Some(c) = out.pop() {
-            if c.token.0 == HEARTBEAT {
+            if c.token().get() == HEARTBEAT {
                 s3.tick(io);
                 other.tick(io);
-                io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+                io.submit(Token::new(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                     .unwrap();
             } else if !s3.on_completion(io, c) && !other.on_completion(io, c) {
                 assert!(server.on_completion(io, c), "unrouted completion {c:?}");
@@ -213,7 +213,7 @@ fn signed_and_copied_from_dotted(method: &[u8], target: &[u8], head: &[u8], f: &
 fn a_copy_names_a_dotted_bucket_in_the_host_whole() {
     let mut io = SimIo::new(LIMITS, 9, Faults::default());
     let mut server = Server::new(
-        server::ServerConfig::builder(Sock(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
+        server::ServerConfig::builder(Sock::new(0), CONNS, 1 + CONNS, 0, BUF, 2 << 40)
             .head_max(HEAD_MAX)
             .objects_max(8)
             .build()
@@ -295,12 +295,10 @@ fn unreserved_characters_reach_the_path_and_the_url_unencoded() {
 
 #[test]
 fn a_store_for_another_bucket_does_not_reach_the_served_one() {
-    let limits = Limits {
-        sockets_max: 1 + CONNS * 3,
-        small_buffers: CONNS * 2,
-        ops_max: (CONNS * 3 + 2) * 2,
-        ..LIMITS
-    };
+    let limits = LIMITS
+        .with_sockets_max(1 + CONNS * 3)
+        .with_small_buffers(CONNS * 2)
+        .with_ops_max((CONNS * 3 + 2) * 2);
     let (io, server) = path_server(SimIo::new(limits, 7, Faults::default()), "media");
     let mut w = finish_world(io, server, store_config("media-2", false));
     let mut media = S3::new(store_config("media", true));

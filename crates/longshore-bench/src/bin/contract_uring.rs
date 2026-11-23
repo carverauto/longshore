@@ -44,41 +44,37 @@ fn run_backend<IO: longshore::io::Io>(
 
     // Cross-thread wake while `tick(true)` is blocked in the kernel.
     {
-        let limits = Limits {
-            sockets_max: 1,
-            buffers: 1,
-            buffer_size: 64,
-            ops_max: 2,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(1)
+            .with_buffers(1)
+            .with_buffer_size(64)
+            .with_ops_max(2);
         let mut io = make(limits);
         let mut out = Completions::new(4);
         let waker = io.waker().or_die("waker");
-        io.submit(Token(1), Op::AwaitWake).or_die("submit");
+        io.submit(Token::new(1), Op::AwaitWake).or_die("submit");
         let h = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(15));
             waker.wake();
         });
         io.tick(true, &mut out).or_die("tick");
         let c = out.pop().or_die("wake completion");
-        assert_eq!((c.token.0, c.result), (1, 0));
+        assert_eq!((c.token().get(), c.result()), (1, 0));
         h.join().or_die("join");
     }
 
     // Sealed zero-allocation echo check.
     {
-        let limits = Limits {
-            sockets_max: 4,
-            buffers: 3,
-            buffer_size: 4096,
-            ops_max: 4,
-            ..Limits::BASE
-        };
+        let limits = Limits::BASE
+            .with_sockets_max(4)
+            .with_buffers(3)
+            .with_buffer_size(4096)
+            .with_ops_max(4);
         let mut io = make(limits);
         let mut out = Completions::new(8);
         let stats = sealed(|| echo(&mut io, addr, 300_000, 4096, false, &mut out))
             .unwrap_or_else(|e| crate::die::die(format_args!("sealed echo failed: {e:?}")));
-        assert!(stats.sends > 0 && stats.recvs > 0);
+        assert!(stats.sends() > 0 && stats.recvs() > 0);
     }
 }
 

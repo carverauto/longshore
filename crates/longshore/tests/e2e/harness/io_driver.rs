@@ -84,10 +84,12 @@ pub fn submit_and_collect_one<IO: Io + ?Sized>(
 ) -> io::Result<(Completion, Vec<Completion>)> {
     io.submit(token, op)
         .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Io::submit returned Busy"))?;
-    let all = drive_until(io, out, max_ticks, |cs| cs.iter().any(|c| c.token == token))?;
+    let all = drive_until(io, out, max_ticks, |cs| {
+        cs.iter().any(|c| c.token() == token)
+    })?;
     let pos = all
         .iter()
-        .position(|c| c.token == token)
+        .position(|c| c.token() == token)
         .expect("predicate guaranteed token presence");
     let mut rest = all;
     let matched = rest.remove(pos);
@@ -114,7 +116,7 @@ pub fn drive_until_stack<IO: Io + ?Sized, const N: usize>(
     max_ticks: usize,
     mut pred: impl FnMut(&[Completion]) -> bool,
 ) -> io::Result<usize> {
-    let mut buf = [Completion::new(Token(0), 0); N];
+    let mut buf = [Completion::new(Token::new(0), 0); N];
     let mut len = 0usize;
     while let Some(c) = out.pop() {
         if len >= N {
@@ -157,14 +159,14 @@ pub fn submit_and_wait_one_stack<IO: Io + ?Sized>(
     io.submit(token, op)
         .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Io::submit returned Busy"))?;
     while let Some(c) = out.pop() {
-        if c.token == token {
+        if c.token() == token {
             return Ok(c);
         }
     }
     for _ in 0..max_ticks {
         io.tick(true, out)?;
         while let Some(c) = out.pop() {
-            if c.token == token {
+            if c.token() == token {
                 return Ok(c);
             }
         }

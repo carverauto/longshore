@@ -48,12 +48,10 @@ fn write_then_sync<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     let p = format!("{root}c_ws.dat");
     let plen = write_path(&mut io, BufId(0), 0, &p);
     io.buf(BufId(1))[..13].copy_from_slice(b"chain-payload");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     let cs = collect_chain(
         &mut io,
         &mut out,
@@ -118,12 +116,10 @@ fn short_read_cancels_tail<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &s
     let mut io = make(base_limits());
     let mut out = Completions::new(16);
     let p = format!("{root}c_short.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &p, rw),
         0
@@ -177,16 +173,11 @@ fn failure_at_each_position<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
     let mut out = Completions::new(16);
     let ok_path = format!("{root}c_ok.dat");
     let missing = format!("{root}c_missing.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE
+        .with_read(true)
+        .with_write(true)
+        .with_create(true);
+    let ro = OpenFlags::NONE.with_read(true);
     assert_eq!(
         open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &ok_path, rw),
         0

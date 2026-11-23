@@ -74,13 +74,11 @@ impl World for WakeTestWorld {
 }
 
 pub(super) fn base_limits() -> Limits {
-    Limits {
-        sockets_max: 4,
-        buffers: 2,
-        buffer_size: 128,
-        ops_max: 6,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(4)
+        .with_buffers(2)
+        .with_buffer_size(128)
+        .with_ops_max(6)
 }
 
 #[test]
@@ -88,11 +86,11 @@ fn t1_f02_1_world_hooks_timeout_sequence() {
     let mut engine = Engine::with_world(base_limits(), TestWorld::new());
     let mut out = Completions::new(8);
     engine
-        .submit(Token(1), Op::Timeout { nanos: 200_000 })
+        .submit(Token::new(1), Op::Timeout { nanos: 200_000 })
         .expect("submit");
     let cs = drive_until(&mut engine, &mut out, 10, |v| !v.is_empty()).expect("tick");
     assert_eq!(cs.len(), 1);
-    assert_eq!((cs[0].token, cs[0].result), (Token(1), 0));
+    assert_eq!((cs[0].token(), cs[0].result()), (Token::new(1), 0));
 
     let calls = engine.world().calls();
     assert_eq!(calls[0], HookCall::Advance);
@@ -127,10 +125,10 @@ fn t1_f02_2_engine_resolves_await_wake_locally() {
     let mut out = Completions::new(8);
     let waker = engine.waker().expect("waker");
     waker.wake();
-    engine.submit(Token(2), Op::AwaitWake).expect("submit");
+    engine.submit(Token::new(2), Op::AwaitWake).expect("submit");
     let cs = drive_until(&mut engine, &mut out, 5, |v| !v.is_empty()).expect("tick");
     assert_eq!(cs.len(), 1);
-    assert_eq!((cs[0].token, cs[0].result), (Token(2), 0));
+    assert_eq!((cs[0].token(), cs[0].result()), (Token::new(2), 0));
     assert!(!engine
         .world()
         .inner
@@ -145,10 +143,10 @@ fn t1_f02_3_engine_resolves_cancel_locally() {
     let mut out = Completions::new(8);
     engine
         .submit(
-            Token(10),
+            Token::new(10),
             Op::Recv {
-                sock: Sock(0),
-                buf: BufId(0),
+                sock: Sock::new(0),
+                buf: BufId::new(0),
                 off: 0,
                 len: 64,
             },
@@ -159,12 +157,19 @@ fn t1_f02_3_engine_resolves_cancel_locally() {
     engine.world().clear_calls();
 
     engine
-        .submit(Token(11), Op::Cancel { target: Token(10) })
+        .submit(
+            Token::new(11),
+            Op::Cancel {
+                target: Token::new(10),
+            },
+        )
         .expect("submit cancel");
     let mut cs = drive_until(&mut engine, &mut out, 5, |v| v.len() == 2).expect("drain");
-    cs.sort_by_key(|c| c.token.0);
+    cs.sort_by_key(|c| c.token().get());
     assert_eq!(
-        cs.iter().map(|c| (c.token.0, c.result)).collect::<Vec<_>>(),
+        cs.iter()
+            .map(|c| (c.token().get(), c.result()))
+            .collect::<Vec<_>>(),
         vec![(10, -ECANCELED), (11, 0)]
     );
     assert!(!engine
@@ -178,10 +183,10 @@ fn t1_f02_3_engine_resolves_cancel_locally() {
 /// `flag` is set.
 fn readiness_world(flag: Arc<AtomicBool>) -> TestWorld {
     TestWorld::new()
-        .with_ready_socks(vec![Sock(1)])
+        .with_ready_socks(vec![Sock::new(1)])
         .with_attempt_handler(move |op, _, _| match *op {
-            Op::Recv { sock: Sock(1), .. } => Some(4),
-            Op::Recv { sock: Sock(2), .. } => {
+            Op::Recv { sock, .. } if sock == Sock::new(1) => Some(4),
+            Op::Recv { sock, .. } if sock == Sock::new(2) => {
                 assert!(
                     !flag.load(Ordering::Acquire),
                     "unready Sock(2) should be skipped"
@@ -234,7 +239,7 @@ fn t1_f02_4_engine_respects_world_readiness_filter() {
 
     // First tick visits fresh Sock(2) once, then clears its `fresh` bit.
     engine
-        .submit(Token(20), recv(Sock(2), BufId(0)))
+        .submit(Token::new(20), recv(Sock::new(2), BufId::new(0)))
         .expect("submit s2");
     engine.tick(false, &mut out).expect("tick1");
     assert!(out.is_empty());
@@ -243,26 +248,31 @@ fn t1_f02_4_engine_respects_world_readiness_filter() {
 
     // Second turn: submit ready Sock(1), Timeout, and Cancel; Sock(2) must not be attempted.
     engine
-        .submit(Token(21), recv(Sock(1), BufId(1)))
+        .submit(Token::new(21), recv(Sock::new(1), BufId::new(1)))
         .expect("submit s1");
     engine
-        .submit(Token(22), Op::Timeout { nanos: 0 })
+        .submit(Token::new(22), Op::Timeout { nanos: 0 })
         .expect("submit timer");
     engine
-        .submit(Token(23), Op::Cancel { target: Token(999) })
+        .submit(
+            Token::new(23),
+            Op::Cancel {
+                target: Token::new(999),
+            },
+        )
         .expect("submit cancel");
     engine.tick(false, &mut out).expect("tick2");
 
     let mut got = Vec::new();
     let _: usize = drain_completions(&mut out, &mut got);
-    got.sort_by_key(|c| c.token.0);
+    got.sort_by_key(|c| c.token().get());
     assert_eq!(got.len(), 3);
-    assert_eq!(got[0].token, Token(21));
-    assert_eq!(got[0].result, 4);
-    assert_eq!(got[1].token, Token(22));
-    assert_eq!(got[1].result, 0);
-    assert_eq!(got[2].token, Token(23));
-    assert!(got[2].result < 0);
+    assert_eq!(got[0].token(), Token::new(21));
+    assert_eq!(got[0].result(), 4);
+    assert_eq!(got[1].token(), Token::new(22));
+    assert_eq!(got[1].result(), 0);
+    assert_eq!(got[2].token(), Token::new(23));
+    assert!(got[2].result() < 0);
 
     let attempt_count = engine
         .world()
@@ -283,14 +293,20 @@ fn t1_f02_5_engine_clock_and_arrival_order() {
     assert_eq!(engine.unix_secs(), 1_700_000_000);
 
     let mut out = Completions::new(8);
-    engine.submit(Token(1), Op::Timeout { nanos: 0 }).unwrap();
-    engine.submit(Token(2), Op::Timeout { nanos: 0 }).unwrap();
-    engine.submit(Token(3), Op::Timeout { nanos: 0 }).unwrap();
+    engine
+        .submit(Token::new(1), Op::Timeout { nanos: 0 })
+        .unwrap();
+    engine
+        .submit(Token::new(2), Op::Timeout { nanos: 0 })
+        .unwrap();
+    engine
+        .submit(Token::new(3), Op::Timeout { nanos: 0 })
+        .unwrap();
     engine.tick(false, &mut out).unwrap();
 
     assert_eq!(engine.now_ns(), 6_000_000);
     let mut got = Vec::new();
     let _: usize = drain_completions(&mut out, &mut got);
     assert_eq!(got.len(), 3);
-    assert_eq!(got[0].token, Token(2), "walk started at index 1");
+    assert_eq!(got[0].token(), Token::new(2), "walk started at index 1");
 }

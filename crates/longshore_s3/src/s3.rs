@@ -261,9 +261,13 @@ impl S3 {
     /// Feed a completion. Returns false if it belongs to neither the HTTP
     /// client nor the resolver.
     pub fn on_completion<IO: Io>(&mut self, io: &mut IO, c: Completion) -> bool {
-        if let Some(f) = self.cfg.credentials_file.filter(|f| f.token == c.token.0) {
+        if let Some(f) = self
+            .cfg
+            .credentials_file
+            .filter(|f| f.token == c.token().get())
+        {
             if self.provider == Provider::Reading {
-                self.on_credentials_read(io, &f, c.result);
+                self.on_credentials_read(io, &f, c.result());
             }
             return true;
         }
@@ -321,7 +325,7 @@ impl S3 {
                     reason = "Limits::ops_max leaves the credentials read a slot, and only one is in flight"
                 )]
                 io.submit(
-                    Token(f.token),
+                    Token::new(f.token),
                     Op::ReadFile {
                         file: f.file,
                         buf: f.buf,

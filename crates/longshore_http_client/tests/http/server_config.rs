@@ -12,13 +12,13 @@ use longshore_http_client::server::{ServerConfig, ServerConfigBuilder, ServerCon
 /// One connection on socket 1, listening on socket 0, with 4 KiB buffers.
 #[cfg(test)]
 fn one() -> ServerConfigBuilder {
-    ServerConfig::builder(Sock(0), 1, 1, 0, 4096, 0)
+    ServerConfig::builder(Sock::new(0), 1, 1, 0, 4096, 0)
 }
 
 #[test]
 fn a_built_config_reads_back_what_it_was_given() {
     let sum = |_: &[u8]| [b'A'; 12];
-    let cfg = ServerConfig::builder(Sock(9), 3, 10, 4, 8192, 2 << 40)
+    let cfg = ServerConfig::builder(Sock::new(9), 3, 10, 4, 8192, 2 << 40)
         .head_max(2048)
         .objects_max(5)
         .checksum(sum)
@@ -26,7 +26,7 @@ fn a_built_config_reads_back_what_it_was_given() {
         .unwrap();
     assert_eq!(
         (cfg.listener(), cfg.connections_max(), cfg.first_sock()),
-        (Sock(9), 3, 10)
+        (Sock::new(9), 3, 10)
     );
     assert_eq!(
         (cfg.first_buf(), cfg.head_max(), cfg.buffer_size()),
@@ -45,7 +45,7 @@ fn defaults_are_a_4096_byte_head_eight_objects_and_no_checksum() {
 
 #[test]
 fn a_server_without_connections_is_refused() {
-    let refused = ServerConfig::builder(Sock(0), 0, 1, 0, 4096, 0).build();
+    let refused = ServerConfig::builder(Sock::new(0), 0, 1, 0, 4096, 0).build();
     assert_eq!(refused.unwrap_err(), ServerConfigError::NoConnections);
 }
 
@@ -63,7 +63,7 @@ fn a_head_too_small_for_the_servers_own_answers_or_too_long_to_parse_is_refused(
 
 #[test]
 fn a_head_larger_than_the_buffers_is_refused() {
-    let refused = ServerConfig::builder(Sock(0), 1, 1, 0, 2048, 0)
+    let refused = ServerConfig::builder(Sock::new(0), 1, 1, 0, 2048, 0)
         .head_max(4096)
         .build();
     assert_eq!(
@@ -77,23 +77,23 @@ fn a_head_larger_than_the_buffers_is_refused() {
 
 #[test]
 fn slot_buffer_and_token_ranges_must_fit_their_numbers() {
-    let socks = ServerConfig::builder(Sock(0), 2, u32::MAX - 1, 0, 4096, 0).build();
+    let socks = ServerConfig::builder(Sock::new(0), 2, u32::MAX - 1, 0, 4096, 0).build();
     assert!(matches!(
         socks,
         Err(ServerConfigError::SocketsOverflow { .. })
     ));
-    let bufs = ServerConfig::builder(Sock(0), 2, 1, u32::MAX - 3, 4096, 0).build();
+    let bufs = ServerConfig::builder(Sock::new(0), 2, 1, u32::MAX - 3, 4096, 0).build();
     assert!(matches!(
         bufs,
         Err(ServerConfigError::BuffersOverflow { .. })
     ));
-    let tokens = ServerConfig::builder(Sock(0), 2, 1, 0, 4096, u64::MAX - 16).build();
+    let tokens = ServerConfig::builder(Sock::new(0), 2, 1, 0, 4096, u64::MAX - 16).build();
     assert!(matches!(
         tokens,
         Err(ServerConfigError::TokensOverflow { .. })
     ));
     assert!(
-        ServerConfig::builder(Sock(0), 2, 1, u32::MAX - 4, 4096, u64::MAX - 17)
+        ServerConfig::builder(Sock::new(0), 2, 1, u32::MAX - 4, 4096, u64::MAX - 17)
             .build()
             .is_ok()
     );
@@ -101,14 +101,14 @@ fn slot_buffer_and_token_ranges_must_fit_their_numbers() {
 
 #[test]
 fn a_listener_among_the_connection_slots_is_refused() {
-    let refused = ServerConfig::builder(Sock(3), 4, 1, 0, 4096, 0)
+    let refused = ServerConfig::builder(Sock::new(3), 4, 1, 0, 4096, 0)
         .build()
         .unwrap_err();
     assert_eq!(
         refused.to_string(),
         "listener slot 3 is inside the connection slots 1..5"
     );
-    assert!(ServerConfig::builder(Sock(5), 4, 1, 0, 4096, 0)
+    assert!(ServerConfig::builder(Sock::new(5), 4, 1, 0, 4096, 0)
         .build()
         .is_ok());
 }

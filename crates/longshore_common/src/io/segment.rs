@@ -8,19 +8,35 @@
 /// The segment sizes of one connection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Segment {
-    /// The connection's maximum segment size in bytes: the smaller of what
-    /// each end accepts.
-    pub size: u32,
-    /// The largest segment the local path could carry, from its MTU, or 0
-    /// when unknown. A `size` far below this means the far end is what
-    /// keeps segments small.
-    pub path_limit: u32,
+    pub(crate) size: u32,
+    pub(crate) path_limit: u32,
 }
 
 /// The path limit is carried in units of this many bytes.
 const LIMIT_UNIT: u16 = 8;
 
 impl Segment {
+    /// The segment sizes `size` and `path_limit` describe.
+    #[inline]
+    pub const fn new(size: u32, path_limit: u32) -> Segment {
+        Segment { size, path_limit }
+    }
+
+    /// The connection's maximum segment size in bytes: the smaller of what
+    /// each end accepts.
+    #[inline]
+    pub const fn size(self) -> u32 {
+        self.size
+    }
+
+    /// The largest segment the local path could carry, from its MTU, or 0
+    /// when unknown. A `size` far below this means the far end is what
+    /// keeps segments small.
+    #[inline]
+    pub const fn path_limit(self) -> u32 {
+        self.path_limit
+    }
+
     /// The result a successful connect completes with. Sizes above 65,535
     /// are reported as 65,535.
     pub fn encode(self) -> i32 {

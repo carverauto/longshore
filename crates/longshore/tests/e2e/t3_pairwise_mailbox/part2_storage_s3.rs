@@ -17,16 +17,15 @@ use longshore::sim::SimIo;
 /// The simulated disk both storage-core scenarios mount.
 #[cfg(feature = "sim")]
 fn small_disk() -> longshore::sim::DiskConfig {
-    longshore::sim::DiskConfig {
-        max_files: 8,
-        max_dirs: 4,
-        max_bytes_per_file: 64 * 1024,
-        max_name_len: 128,
-        write_log_entries: 16,
-        write_log_bytes: 32 * 1024,
-        read_error_sectors: 4,
-        sector_size: 512,
-    }
+    longshore::sim::DiskConfig::BASE
+        .with_max_files(8)
+        .with_max_dirs(4)
+        .with_max_bytes_per_file(64 * 1024)
+        .with_max_name_len(128)
+        .with_write_log_entries(16)
+        .with_write_log_bytes(32 * 1024)
+        .with_read_error_sectors(4)
+        .with_sector_size(512)
 }
 
 /// Opens `path` read-write-create into `FileSlot(0)` and waits for the open.
@@ -35,19 +34,17 @@ fn open_slot0(core: &mut SimIo, out: &mut Completions, limits: Limits, path: &st
     use super::super::harness::{drive_until, write_nul_path};
     let plen = write_nul_path(core, limits.small(0), 0, path);
     core.submit(
-        Token(1),
+        Token::new(1),
         Op::FileOpen {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             path_buf: limits.small(0),
             path_off: 0,
             path_len: plen,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create: true,
-                direct,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(true)
+                .with_direct(direct),
         },
     )
     .unwrap();
@@ -61,7 +58,7 @@ fn write_mailbox_config() -> Config {
         capacity: 4,
         slots: 2,
         waiters_prealloc: 4,
-        wake_token: Token(10),
+        wake_token: Token::new(10),
     }
 }
 
@@ -72,9 +69,9 @@ fn submit_write_sync_chain(core: &mut SimIo, limits: Limits, cmd: WriteCmd) {
     write_pool_bytes(core, limits.aligned(0), 0, &[cmd.fill; 4096]);
     core.submit_chain(&[
         (
-            Token(20),
+            Token::new(20),
             Op::FileWrite {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 buf: limits.aligned(0),
                 off: 0,
                 len: cmd.len,
@@ -82,9 +79,9 @@ fn submit_write_sync_chain(core: &mut SimIo, limits: Limits, cmd: WriteCmd) {
             },
         ),
         (
-            Token(21),
+            Token::new(21),
             Op::FileSync {
-                slot: FileSlot(0),
+                slot: FileSlot::new(0),
                 datasync: true,
             },
         ),
@@ -100,26 +97,22 @@ fn t3_23_mailbox_to_storage_core_aligned_submit_chain() {
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
-    let limits_a = Limits {
-        sockets_max: 2,
-        buffers: 1,
-        buffer_size: 64,
-        ops_max: 4,
-        ..Limits::BASE
-    };
-    let limits_b = Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        files_max: 2,
-        aligned_buffers: 2,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits_a = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(1)
+        .with_buffer_size(64)
+        .with_ops_max(4);
+    let limits_b = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_files_max(2)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ops_max(8);
     let mut core_a = SimIo::new(limits_a, 323, Faults::default());
     let mut core_b = SimIo::new(limits_b, 324, Faults::default());
     core_b.setup_disk(small_disk());
@@ -155,9 +148,9 @@ fn t3_23_mailbox_to_storage_core_aligned_submit_chain() {
                     submit_write_sync_chain(&mut core_b, limits_b, cmd);
                     pending_slot = Some(cmd.slot);
                 }
-            } else if c.token == Token(21) {
+            } else if c.token().get() == 21 {
                 assert!(io_rx_b
-                    .answer(pending_slot.take().unwrap(), c.result)
+                    .answer(pending_slot.take().unwrap(), c.result())
                     .is_none());
                 answered = true;
                 break;
@@ -180,16 +173,14 @@ fn t3_24_storage_core_power_loss_closes_mailbox_and_settles_disk() {
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
-    let limits = Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: 4096,
-        small_buffers: 2,
-        small_buffer_size: 256,
-        files_max: 2,
-        ops_max: 8,
-        ..Limits::BASE
-    };
+    let limits = Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(4096)
+        .with_small_buffers(2)
+        .with_small_buffer_size(256)
+        .with_files_max(2)
+        .with_ops_max(8);
     let mut core_b = SimIo::new(limits, 3240, Faults::default());
     core_b.setup_disk(small_disk());
     let mut out_b = Completions::new(8);
@@ -216,13 +207,13 @@ fn t3_24_storage_core_power_loss_closes_mailbox_and_settles_disk() {
     while let Some(c) = out_b.pop() {
         if io_rx_b.on_completion(&mut core_b, c).unwrap() {
             while let TryRecv::Message(cmd) = io_rx_b.try_recv() {
-                write_pool_bytes(&mut core_b, BufId(0), 0, &[cmd.fill; 1024]);
+                write_pool_bytes(&mut core_b, BufId::new(0), 0, &[cmd.fill; 1024]);
                 core_b
                     .submit(
-                        Token(20),
+                        Token::new(20),
                         Op::FileWrite {
-                            slot: FileSlot(0),
-                            buf: BufId(0),
+                            slot: FileSlot::new(0),
+                            buf: BufId::new(0),
                             off: 0,
                             len: cmd.len,
                             file_off: cmd.file_off,

@@ -56,13 +56,17 @@ fn streams(
 ) -> Box<[Stream]> {
     (0..cfg.connections_max())
         .map(|i| {
-            let token = |kind| Token(cfg.token_base() + u64::from(i) * 8 + kind);
-            let s = Stream::new(Sock(cfg.first_sock() + i), token(K_SEND), token(K_RECV));
+            let token = |kind| Token::new(cfg.token_base() + u64::from(i) * 8 + kind);
+            let s = Stream::new(
+                Sock::new(cfg.first_sock() + i),
+                token(K_SEND),
+                token(K_RECV),
+            );
             #[cfg(feature = "tls")]
             let s = match first_tls_buf {
                 Some(first) => s.with_tls_buffers(
-                    BufId(first + 2 * i),
-                    BufId(first + 2 * i + 1),
+                    BufId::new(first + 2 * i),
+                    BufId::new(first + 2 * i + 1),
                     cfg.buffer_size(),
                     cfg.buffer_size(),
                     u32::MAX,

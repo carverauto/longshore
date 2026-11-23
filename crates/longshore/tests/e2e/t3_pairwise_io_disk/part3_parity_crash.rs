@@ -20,19 +20,19 @@ const EIO: i32 = 5;
 
 /// Listens on `Sock(0)` at `addr`, accepts `Sock(2)` and connects `Sock(1)`.
 fn accept_and_connect(sim: &mut SimIo, out: &mut Completions, addr: &str) {
-    let addr = sim.listen(Sock(0), addr.parse().unwrap()).unwrap();
+    let addr = sim.listen(Sock::new(0), addr.parse().unwrap()).unwrap();
     sim.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     sim.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -55,16 +55,19 @@ fn run_mixed_zero_faults(seed: u64) -> (u64, DiskFaultCounters) {
             &mut sim,
             &mut out,
             3,
-            FileSlot(0),
+            FileSlot::new(0),
             "/t3_06.dat",
             rw_create()
         ),
         0
     );
-    write_pool_bytes(&mut sim, BufId(0), 0, &[0x42; 512]);
+    write_pool_bytes(&mut sim, BufId::new(0), 0, &[0x42; 512]);
     sim.submit_chain(&[
-        (Token(4), write_op(FileSlot(0), BufId(0), 512, 0)),
-        (Token(5), sync_op(FileSlot(0), true)),
+        (
+            Token::new(4),
+            write_op(FileSlot::new(0), BufId::new(0), 512, 0),
+        ),
+        (Token::new(5), sync_op(FileSlot::new(0), true)),
     ])
     .unwrap();
     let _: Vec<Completion> = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
@@ -87,18 +90,21 @@ fn t3_06_simio_trace_parity_with_zero_disk_faults() {
 /// complete.
 fn power_loss_drops_inflight(sim: &mut SimIo, out: &mut Completions) {
     sim.submit(
-        Token(10),
+        Token::new(10),
         Op::Recv {
-            sock: Sock(2),
-            buf: BufId(1),
+            sock: Sock::new(2),
+            buf: BufId::new(1),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
-    write_pool_bytes(sim, BufId(0), 0, &[0x22; 512]);
-    sim.submit(Token(11), write_op(FileSlot(0), BufId(0), 512, 512))
-        .unwrap();
+    write_pool_bytes(sim, BufId::new(0), 0, &[0x22; 512]);
+    sim.submit(
+        Token::new(11),
+        write_op(FileSlot::new(0), BufId::new(0), 512, 512),
+    )
+    .unwrap();
 
     sim.power_loss();
     sim.tick(false, out).unwrap();
@@ -111,14 +117,7 @@ fn power_loss_drops_inflight(sim: &mut SimIo, out: &mut Completions) {
 #[test]
 fn t3_07_simio_power_loss_and_placed_fault_op_number_continuity() {
     let limits = file_limits(4, 2, 4096);
-    let mut sim = SimIo::new(
-        limits,
-        307,
-        Faults {
-            delay: 100_000,
-            ..Default::default()
-        },
-    );
+    let mut sim = SimIo::new(limits, 307, Faults::NONE.with_delay(100_000));
     sim.setup_disk(disk_config());
     sim.set_disk_faults(DiskFaults::default());
     let mut out = Completions::new(16);
@@ -130,34 +129,30 @@ fn t3_07_simio_power_loss_and_placed_fault_op_number_continuity() {
             &mut sim,
             &mut out,
             3,
-            FileSlot(0),
+            FileSlot::new(0),
             "/t3_07.dat",
             rw_create()
         ),
         0
     );
-    write_pool_bytes(&mut sim, BufId(0), 0, &[0x11; 512]);
-    let write = write_op(FileSlot(0), BufId(0), 512, 0);
+    write_pool_bytes(&mut sim, BufId::new(0), 0, &[0x11; 512]);
+    let write = write_op(FileSlot::new(0), BufId::new(0), 512, 0);
     assert_eq!(run_op(&mut sim, &mut out, 4, write, 1000), 512);
-    let sync = sync_op(FileSlot(0), true);
+    let sync = sync_op(FileSlot::new(0), true);
     assert_eq!(run_op(&mut sim, &mut out, 5, sync, 1000), 0);
 
     power_loss_drops_inflight(&mut sim, &mut out);
 
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        ..Default::default()
-    };
+    let rw = OpenFlags::NONE.with_read(true).with_write(true);
     assert_eq!(
-        open_at(&mut sim, &mut out, 12, FileSlot(0), "/t3_07.dat", rw),
+        open_at(&mut sim, &mut out, 12, FileSlot::new(0), "/t3_07.dat", rw),
         0
     );
     let op6 = run_op(
         &mut sim,
         &mut out,
         13,
-        read_op(FileSlot(0), BufId(2), 512, 0),
+        read_op(FileSlot::new(0), BufId::new(2), 512, 0),
         1000,
     );
     assert_eq!(op6, -EIO);
@@ -175,18 +170,21 @@ fn t3_08_chained_write_sync_short_write_and_power_loss() {
             &mut sim,
             &mut out,
             1,
-            FileSlot(0),
+            FileSlot::new(0),
             "/t3_08.dat",
             rw_create()
         ),
         0
     );
-    sync_root_dir(&mut sim, &mut out, 10, FileSlot(1));
+    sync_root_dir(&mut sim, &mut out, 10, FileSlot::new(1));
     sim.place_disk_fault(5, PlacedFault::ShortWrite);
-    write_pool_bytes(&mut sim, BufId(0), 0, &[0x77; 4096]);
+    write_pool_bytes(&mut sim, BufId::new(0), 0, &[0x77; 4096]);
     sim.submit_chain(&[
-        (Token(2), write_op(FileSlot(0), BufId(0), 4096, 0)),
-        (Token(3), sync_op(FileSlot(0), true)),
+        (
+            Token::new(2),
+            write_op(FileSlot::new(0), BufId::new(0), 4096, 0),
+        ),
+        (Token::new(3), sync_op(FileSlot::new(0), true)),
     ])
     .unwrap();
     let cs = drive_until(&mut sim, &mut out, 1000, |v| v.len() == 2).unwrap();
@@ -204,7 +202,7 @@ fn t3_08_chained_write_sync_short_write_and_power_loss() {
             &mut sim,
             &mut out,
             4,
-            FileSlot(0),
+            FileSlot::new(0),
             "/t3_08.dat",
             read_only()
         ),
@@ -214,7 +212,7 @@ fn t3_08_chained_write_sync_short_write_and_power_loss() {
         &mut sim,
         &mut out,
         5,
-        read_op(FileSlot(0), BufId(1), 4096, 0),
+        read_op(FileSlot::new(0), BufId::new(1), 4096, 0),
         1000,
     );
     assert!(r >= 0 && r <= w);

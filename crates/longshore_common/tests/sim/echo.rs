@@ -16,13 +16,11 @@ mod slots;
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
-const LIMITS: Limits = Limits {
-    sockets_max: 4,
-    buffers: 3,
-    buffer_size: 4096,
-    ops_max: 4,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(4)
+    .with_buffers(3)
+    .with_buffer_size(4096)
+    .with_ops_max(4);
 const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 443);
 const TOTAL: u64 = 300_000;
 
@@ -34,15 +32,14 @@ fn run(seed: u64, faults: Faults) -> (Result<EchoStats, EchoError>, u64) {
     (r, io.trace_hash())
 }
 
-const BENIGN: Faults = Faults {
-    connect_refused: 0,
-    reset: 0,
-    short_send: 300_000,
-    partial_recv: 300_000,
-    bit_flip: 0,
-    delay: 200_000,
-    udp_drop: 0,
-};
+const BENIGN: Faults = Faults::NONE
+    .with_connect_refused(0)
+    .with_reset(0)
+    .with_short_send(300_000)
+    .with_partial_recv(300_000)
+    .with_bit_flip(0)
+    .with_delay(200_000)
+    .with_udp_drop(0);
 
 #[test]
 fn echo_survives_short_writes_partial_reads_and_delays() {
@@ -70,10 +67,7 @@ fn same_seed_same_execution() {
 fn failing_seed_reproduces() {
     // Bit flips make the echo fail at a seed-dependent offset. The same seed
     // must fail at the same place with the same trace.
-    let faults = Faults {
-        bit_flip: 2_000,
-        ..BENIGN
-    };
+    let faults = BENIGN.with_bit_flip(2_000);
     let (seed, first) = (0..500u64)
         .map(|s| (s, run(s, faults)))
         .find(|(_, r)| matches!(r.0, Err(EchoError::Mismatch(_))))
@@ -85,10 +79,7 @@ fn failing_seed_reproduces() {
 
 #[test]
 fn reset_is_reported_not_hidden() {
-    let faults = Faults {
-        reset: 20_000,
-        ..BENIGN
-    };
+    let faults = BENIGN.with_reset(20_000);
     let resets = (0..200u64).filter(|s| matches!(run(*s, faults).0, Err(EchoError::Io(_, r)) if r == -longshore_common::io::ECONNRESET || r == -longshore_common::io::EPIPE)).count();
     assert!(resets > 0, "expected some seeds to hit a reset");
 }
@@ -97,14 +88,7 @@ fn reset_is_reported_not_hidden() {
 /// fault. A connect with nothing listening is in `sockets.rs`.
 #[test]
 fn a_refused_connect_is_reported_with_its_token() {
-    let mut io = SimIo::new(
-        LIMITS,
-        1,
-        Faults {
-            connect_refused: 1_000_000,
-            ..Faults::default()
-        },
-    );
+    let mut io = SimIo::new(LIMITS, 1, Faults::NONE.with_connect_refused(1_000_000));
     let mut out = Completions::new(8);
     assert_eq!(
         echo(&mut io, ADDR, 10, 4096, false, &mut out),
@@ -119,7 +103,7 @@ fn timeouts_fire_in_deadline_order_on_virtual_time() {
     let mut out = Completions::new(8);
     for (t, ms) in [(1u64, 30u64), (2, 10), (3, 20)] {
         io.submit(
-            Token(t),
+            Token::new(t),
             Op::Timeout {
                 nanos: ms * 1_000_000,
             },
@@ -130,8 +114,8 @@ fn timeouts_fire_in_deadline_order_on_virtual_time() {
     while order.len() < 3 {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            assert_eq!(c.result, 0);
-            order.push((c.token.0, io.now_ns() / 1_000_000));
+            assert_eq!(c.result(), 0);
+            order.push((c.token().get(), io.now_ns() / 1_000_000));
         }
     }
     assert_eq!(order.iter().map(|o| o.0).collect::<Vec<_>>(), [2, 3, 1]);
@@ -145,10 +129,30 @@ fn timeouts_fire_in_deadline_order_on_virtual_time() {
 fn submit_reports_busy_at_the_operation_limit() {
     use longshore_common::io::{Busy, Io, Op, Token};
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
-    for t in 0..u64::from(LIMITS.ops_max) {
-        io.submit(Token(t), Op::Timeout { nanos: 1 }).unwrap();
+    for t in 0..u64::from(LIMITS.ops_max()) {
+        io.submit(Token::new(t), Op::Timeout { nanos: 1 }).unwrap();
     }
-    assert_eq!(io.submit(Token(99), Op::Timeout { nanos: 1 }), Err(Busy));
+    assert_eq!(
+        io.submit(Token::new(99), Op::Timeout { nanos: 1 }),
+        Err(Busy)
+    );
+}
+
+/// Tick until `log` holds `until` completions, logging each as (token, result).
+fn drain(
+    sim: &mut SimIo,
+    ready: &mut Completions,
+    log: &mut Vec<(u64, i32)>,
+    until: usize,
+) -> std::io::Result<()> {
+    use longshore_common::io::Io;
+    while log.len() < until {
+        sim.tick(true, ready)?;
+        while let Some(c) = ready.pop() {
+            log.push((c.token().get(), c.result()));
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -156,40 +160,32 @@ fn cancel_stops_a_pending_operation() {
     use longshore_common::io::{BufId, Io, Op, Sock, Token};
     let mut io = SimIo::new(LIMITS, 3, Faults::default());
     let mut out = Completions::new(8);
-    let _: SocketAddr = io.listen(Sock(0), ADDR).unwrap();
+    let _: SocketAddr = io.listen(Sock::new(0), ADDR).unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(1),
+            listener: Sock::new(0),
+            sock: Sock::new(1),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(2),
+            sock: Sock::new(2),
             addr: ADDR,
         },
     )
     .unwrap();
     let mut seen = vec![];
-    let drain =
-        |sim: &mut SimIo, ready: &mut Completions, log: &mut Vec<(u64, i32)>, until: usize| {
-            while log.len() < until {
-                sim.tick(true, ready).unwrap();
-                while let Some(c) = ready.pop() {
-                    log.push((c.token.0, c.result));
-                }
-            }
-        };
-    drain(&mut io, &mut out, &mut seen, 2); // accept and connect
-                                            // Nothing is ever sent, so this receive would wait forever.
+    drain(&mut io, &mut out, &mut seen, 2).unwrap(); // accept and connect
+
+    // Nothing is ever sent, so this receive would wait forever.
     io.submit(
-        Token(3),
+        Token::new(3),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 16,
         },
@@ -199,9 +195,14 @@ fn cancel_stops_a_pending_operation() {
         io.tick(false, &mut out).unwrap();
     }
     assert!(out.is_empty(), "receive must still be pending");
-    io.submit(Token(9), Op::Cancel { target: Token(3) })
-        .unwrap();
-    drain(&mut io, &mut out, &mut seen, 4);
+    io.submit(
+        Token::new(9),
+        Op::Cancel {
+            target: Token::new(3),
+        },
+    )
+    .unwrap();
+    drain(&mut io, &mut out, &mut seen, 4).unwrap();
     seen.sort();
     assert_eq!(
         seen,
@@ -212,9 +213,14 @@ fn cancel_stops_a_pending_operation() {
             (9, 0)
         ]
     );
-    io.submit(Token(10), Op::Cancel { target: Token(77) })
-        .unwrap();
-    drain(&mut io, &mut out, &mut seen, 5);
+    io.submit(
+        Token::new(10),
+        Op::Cancel {
+            target: Token::new(77),
+        },
+    )
+    .unwrap();
+    drain(&mut io, &mut out, &mut seen, 5).unwrap();
     assert_eq!(
         seen[4],
         (10, -longshore_common::io::ENOENT),
@@ -230,10 +236,10 @@ fn files_are_read_whole_and_see_replacement() {
     let f = io.register_file("/etc/credentials").unwrap();
     let mut read = |sim: &mut SimIo| {
         sim.submit(
-            Token(1),
+            Token::new(1),
             Op::ReadFile {
                 file: f,
-                buf: BufId(0),
+                buf: BufId::new(0),
                 off: 0,
                 len: 4096,
             },
@@ -242,7 +248,7 @@ fn files_are_read_whole_and_see_replacement() {
         loop {
             sim.tick(true, &mut out).unwrap();
             if let Some(c) = out.pop() {
-                return c.result;
+                return c.result();
             }
         }
     };
@@ -253,10 +259,10 @@ fn files_are_read_whole_and_see_replacement() {
     );
     io.set_file(f, Some(b"first"));
     assert_eq!(read(&mut io), 5);
-    assert_eq!(&io.buf(BufId(0))[..5], b"first");
+    assert_eq!(&io.buf(BufId::new(0))[..5], b"first");
     io.set_file(f, Some(b"second version"));
     assert_eq!(read(&mut io), 14);
-    assert_eq!(&io.buf(BufId(0))[..14], b"second version");
+    assert_eq!(&io.buf(BufId::new(0))[..14], b"second version");
     io.set_file(f, Some(&[7u8; 5000]));
     assert_eq!(read(&mut io), 4096, "bounded by the length asked for");
 }
@@ -270,15 +276,20 @@ fn a_cancel_does_not_reach_an_operation_submitted_after_it() {
     let mut io = SimIo::new(LIMITS, 5, Faults::default());
     let mut out = Completions::new(8);
     // Nothing has token 9 yet, so this cancel has no target.
-    io.submit(Token(1), Op::Cancel { target: Token(9) })
-        .unwrap();
-    io.submit(Token(9), Op::Timeout { nanos: 50_000_000 })
+    io.submit(
+        Token::new(1),
+        Op::Cancel {
+            target: Token::new(9),
+        },
+    )
+    .unwrap();
+    io.submit(Token::new(9), Op::Timeout { nanos: 50_000_000 })
         .unwrap();
     let mut results = Vec::new();
     while results.len() < 2 {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            results.push((c.token.0, c.result));
+            results.push((c.token().get(), c.result()));
         }
     }
     results.sort();
@@ -290,15 +301,20 @@ fn a_cancel_does_not_reach_an_operation_submitted_after_it() {
     assert!(io.now_ns() >= 50_000_000);
 
     // A cancel submitted after its target still cancels it.
-    io.submit(Token(9), Op::Timeout { nanos: 50_000_000 })
+    io.submit(Token::new(9), Op::Timeout { nanos: 50_000_000 })
         .unwrap();
-    io.submit(Token(1), Op::Cancel { target: Token(9) })
-        .unwrap();
+    io.submit(
+        Token::new(1),
+        Op::Cancel {
+            target: Token::new(9),
+        },
+    )
+    .unwrap();
     results.clear();
     while results.len() < 2 {
         io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
-            results.push((c.token.0, c.result));
+            results.push((c.token().get(), c.result()));
         }
     }
     results.sort();

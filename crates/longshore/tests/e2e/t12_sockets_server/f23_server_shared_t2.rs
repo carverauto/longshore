@@ -30,44 +30,46 @@ const ENOSYS: i32 = 38;
 #[cfg(feature = "sim")]
 #[test]
 fn t2_f23_1_sim_armed_accept_under_connect_refused_produces_only_valid_slots() {
-    let faults = Faults {
-        connect_refused: 500_000,
-        ..Default::default()
-    };
+    let faults = Faults::NONE.with_connect_refused(500_000);
     let mut io = SimIo::new(server_limits(), 2311, faults);
     let mut out = Completions::new(32);
     let addr = io
-        .listen(Sock(0), "192.0.2.23:9311".parse().unwrap())
+        .listen(Sock::new(0), "192.0.2.23:9311".parse().unwrap())
         .unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
 
     let mut accepted = 0usize;
     let mut refused = 0usize;
     for i in 0..8u32 {
         io.submit(
-            Token(10 + u64::from(i)),
+            Token::new(10 + u64::from(i)),
             Op::Connect {
-                sock: Sock(1 + i),
+                sock: Sock::new(1 + i),
                 addr,
             },
         )
         .unwrap();
         let cs = drive_until(&mut io, &mut out, 30, |v| {
-            v.iter().any(|c| c.token == Token(10 + u64::from(i)))
+            v.iter().any(|c| c.token() == Token::new(10 + u64::from(i)))
         })
         .unwrap();
         let cc = cs
             .iter()
-            .find(|c| c.token == Token(10 + u64::from(i)))
+            .find(|c| c.token() == Token::new(10 + u64::from(i)))
             .unwrap();
-        if cc.result < 0 {
+        if cc.result() < 0 {
             refused += 1;
         } else {
             accepted += 1;
         }
-        for ac in cs.iter().filter(|c| c.token == Token(1)) {
-            assert!((12..20).contains(&ac.result));
+        for ac in cs.iter().filter(|c| c.token().get() == 1) {
+            assert!((12..20).contains(&ac.result()));
         }
     }
     assert!(accepted > 0 && refused > 0);
@@ -76,45 +78,42 @@ fn t2_f23_1_sim_armed_accept_under_connect_refused_produces_only_valid_slots() {
 #[cfg(feature = "sim")]
 #[test]
 fn t2_f23_2_sim_armed_recv_observes_bit_flip_in_ring_buffer() {
-    let faults = Faults {
-        bit_flip: 500_000,
-        ..Default::default()
-    };
+    let faults = Faults::NONE.with_bit_flip(500_000);
     let mut io = SimIo::new(server_limits(), 2312, faults);
     let mut out = Completions::new(32);
     let addr = io
-        .listen(Sock(0), "192.0.2.23:9312".parse().unwrap())
+        .listen(Sock::new(0), "192.0.2.23:9312".parse().unwrap())
         .unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
     let _: Vec<longshore::io::Completion> =
         drive_until(&mut io, &mut out, 30, |v| v.len() == 2).unwrap();
-    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
+    io.submit(Token::new(3), Op::ArmedRecv { sock: Sock::new(2) })
         .unwrap();
 
     let expected = [0xa5u8; 64];
     let mut flipped_seen = false;
     for i in 0..20u64 {
-        write_pool_bytes(&mut io, BufId(0), 0, &expected);
+        write_pool_bytes(&mut io, BufId::new(0), 0, &expected);
         io.submit(
-            Token(10 + i),
+            Token::new(10 + i),
             Op::Send {
-                sock: Sock(1),
-                buf: BufId(0),
+                sock: Sock::new(1),
+                buf: BufId::new(0),
                 off: 0,
                 len: 64,
                 zero_copy: false,
@@ -122,12 +121,12 @@ fn t2_f23_2_sim_armed_recv_observes_bit_flip_in_ring_buffer() {
         )
         .unwrap();
         let cs = drive_until(&mut io, &mut out, 30, |v| {
-            v.iter().any(|c| c.token == Token(3))
+            v.iter().any(|c| c.token().get() == 3)
         })
         .unwrap();
-        let rc = cs.iter().find(|c| c.token == Token(3)).unwrap();
-        let id = rc.buf.unwrap();
-        let got = read_pool_bytes(&mut io, id, 0, usize::try_from(rc.result).unwrap());
+        let rc = cs.iter().find(|c| c.token().get() == 3).unwrap();
+        let id = rc.buf().unwrap();
+        let got = read_pool_bytes(&mut io, id, 0, usize::try_from(rc.result()).unwrap());
         if got != expected[..got.len()] {
             flipped_seen = true;
         }
@@ -149,9 +148,9 @@ fn connect_to_armed_accept(
     round: u64,
 ) -> Sock {
     io.submit(
-        Token(10 + round),
+        Token::new(10 + round),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
@@ -161,9 +160,9 @@ fn connect_to_armed_accept(
     while srv_sock.is_none() || !connected {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(1) {
-                srv_sock = Some(Sock(u32::try_from(c.result).unwrap()));
-            } else if c.token == Token(10 + round) {
+            if c.token().get() == 1 {
+                srv_sock = Some(Sock::new(u32::try_from(c.result()).unwrap()));
+            } else if c.token() == Token::new(10 + round) {
                 connected = true;
             }
         }
@@ -175,14 +174,14 @@ fn connect_to_armed_accept(
 /// buffer that received them back.
 #[cfg(feature = "sim")]
 fn armed_recv_and_give_back(io: &mut SimIo, out: &mut Completions, srv: Sock, round: u64) {
-    io.submit(Token(100 + round), Op::ArmedRecv { sock: srv })
+    io.submit(Token::new(100 + round), Op::ArmedRecv { sock: srv })
         .unwrap();
-    io.buf(BufId(0))[..4].copy_from_slice(b"zero");
+    io.buf(BufId::new(0))[..4].copy_from_slice(b"zero");
     io.submit(
-        Token(200 + round),
+        Token::new(200 + round),
         Op::Send {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 4,
             zero_copy: false,
@@ -193,8 +192,8 @@ fn armed_recv_and_give_back(io: &mut SimIo, out: &mut Completions, srv: Sock, ro
     while got_buf.is_none() {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token == Token(100 + round) {
-                got_buf = c.buf;
+            if c.token() == Token::new(100 + round) {
+                got_buf = c.buf();
             }
         }
     }
@@ -204,15 +203,15 @@ fn armed_recv_and_give_back(io: &mut SimIo, out: &mut Completions, srv: Sock, ro
 /// Closes both ends and waits for the two closes and the armed recv's end.
 #[cfg(feature = "sim")]
 fn close_both_ends(io: &mut SimIo, out: &mut Completions, srv: Sock, round: u64) {
-    io.submit(Token(300 + round), Op::Close { sock: srv })
+    io.submit(Token::new(300 + round), Op::Close { sock: srv })
         .unwrap();
-    io.submit(Token(400 + round), Op::Close { sock: Sock(1) })
+    io.submit(Token::new(400 + round), Op::Close { sock: Sock::new(1) })
         .unwrap();
     let mut closed = 0;
     while closed < 3 {
         io.tick(true, out).unwrap();
         while let Some(c) = out.pop() {
-            if c.token.0 == 100 + round || c.token.0 >= 300 {
+            if c.token().get() == 100 + round || c.token().get() >= 300 {
                 closed += 1;
             }
         }
@@ -225,10 +224,15 @@ fn t2_f23_3_sim_armed_accept_recv_give_back_close_runs_under_alloc_guard() {
     let mut io = SimIo::new(server_limits(), 2313, Faults::default());
     let mut out = Completions::new(32);
     let addr = io
-        .listen(Sock(0), "192.0.2.23:9313".parse().unwrap())
+        .listen(Sock::new(0), "192.0.2.23:9313".parse().unwrap())
         .unwrap();
-    io.submit(Token(1), Op::ArmedAccept { listener: Sock(0) })
-        .unwrap();
+    io.submit(
+        Token::new(1),
+        Op::ArmedAccept {
+            listener: Sock::new(0),
+        },
+    )
+    .unwrap();
 
     let completed = sealed(|| {
         let mut count = 0u32;
@@ -254,50 +258,54 @@ fn t2_f23_4_uring_peer_eof_on_armed_close() {
         Err(e) => panic!("UringIo::new: {e}"),
     };
     let mut out = Completions::new(16);
-    let addr = io.listen(Sock(0), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = io
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
+        .unwrap();
     io.submit(
-        Token(1),
+        Token::new(1),
         Op::Accept {
-            listener: Sock(0),
-            sock: Sock(2),
+            listener: Sock::new(0),
+            sock: Sock::new(2),
         },
     )
     .unwrap();
     io.submit(
-        Token(2),
+        Token::new(2),
         Op::Connect {
-            sock: Sock(1),
+            sock: Sock::new(1),
             addr,
         },
     )
     .unwrap();
     let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
-        v.iter().any(|c| c.token == Token(1)) && v.iter().any(|c| c.token == Token(2))
+        v.iter().any(|c| c.token().get() == 1) && v.iter().any(|c| c.token().get() == 2)
     })
     .unwrap();
-    io.submit(Token(3), Op::ArmedRecv { sock: Sock(2) })
+    io.submit(Token::new(3), Op::ArmedRecv { sock: Sock::new(2) })
         .unwrap();
-    io.submit(Token(4), Op::Close { sock: Sock(2) }).unwrap();
+    io.submit(Token::new(4), Op::Close { sock: Sock::new(2) })
+        .unwrap();
     let _: Vec<longshore::io::Completion> = drive_until(&mut io, &mut out, 50, |v| {
-        v.iter().any(|c| c.token == Token(3) && !c.more) && v.iter().any(|c| c.token == Token(4))
+        v.iter().any(|c| c.token().get() == 3 && !c.more())
+            && v.iter().any(|c| c.token().get() == 4)
     })
     .unwrap();
     io.submit(
-        Token(5),
+        Token::new(5),
         Op::Recv {
-            sock: Sock(1),
-            buf: BufId(0),
+            sock: Sock::new(1),
+            buf: BufId::new(0),
             off: 0,
             len: 64,
         },
     )
     .unwrap();
     let cs = drive_until(&mut io, &mut out, 50, |v| {
-        v.iter().any(|c| c.token == Token(5))
+        v.iter().any(|c| c.token().get() == 5)
     })
     .unwrap();
-    let eof = cs.iter().find(|c| c.token == Token(5)).unwrap();
-    assert_eq!(eof.result, 0);
+    let eof = cs.iter().find(|c| c.token().get() == 5).unwrap();
+    assert_eq!(eof.result(), 0);
 }
 
 #[test]

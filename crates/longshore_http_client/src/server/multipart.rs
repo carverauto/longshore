@@ -254,7 +254,7 @@ impl Server {
             .expect("the parts just freed leave room");
         let o = &mut self.objects[slot];
         o.data[..total]
-            .copy_from_slice(&io.buf(BufId(self.cfg.first_buf() + i as u32 * 2 + 1))[..total]);
+            .copy_from_slice(&io.buf(BufId::new(self.cfg.first_buf() + i as u32 * 2 + 1))[..total]);
         o.target[..path.len()].copy_from_slice(path);
         o.target_len = path.len();
         o.len = total as u32;

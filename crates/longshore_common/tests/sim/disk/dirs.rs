@@ -34,18 +34,25 @@ fn open_file_survives_unlink_and_rename_and_cross_dir_rename_sync() {
     sync_dir_path(&mut sim, &mut out, 10, "/");
 
     assert_eq!(
-        open_path(&mut sim, &mut out, 20, FileSlot(0), "/d1/f", rw_create()),
+        open_path(
+            &mut sim,
+            &mut out,
+            20,
+            FileSlot::new(0),
+            "/d1/f",
+            rw_create()
+        ),
         0
     );
-    sim.buf(BufId(1))[..5].copy_from_slice(b"alive");
+    sim.buf(BufId::new(1))[..5].copy_from_slice(b"alive");
     assert_eq!(
         drive(
             &mut sim,
             &mut out,
             21,
             Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
+                slot: FileSlot::new(0),
+                buf: BufId::new(1),
                 off: 0,
                 len: 5,
                 file_off: 0,
@@ -53,7 +60,7 @@ fn open_file_survives_unlink_and_rename_and_cross_dir_rename_sync() {
         ),
         5
     );
-    assert_eq!(sync_slot(&mut sim, &mut out, 22, FileSlot(0)), 0);
+    assert_eq!(sync_slot(&mut sim, &mut out, 22, FileSlot::new(0)), 0);
     sync_dir_path(&mut sim, &mut out, 30, "/d1");
 
     rename_path(&mut sim, &mut out, 40, "/d1/f", "/d2/g");
@@ -63,7 +70,14 @@ fn open_file_survives_unlink_and_rename_and_cross_dir_rename_sync() {
     assert_eq!(status_of(&mut sim, &mut out, 43, "/d2/g"), -ENOENT);
     assert_slot0_reads_alive(&mut sim, &mut out, 44);
     assert_eq!(
-        drive(&mut sim, &mut out, 45, Op::FileClose { slot: FileSlot(0) }),
+        drive(
+            &mut sim,
+            &mut out,
+            45,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
         0
     );
     sync_dir_path(&mut sim, &mut out, 50, "/d1");
@@ -74,37 +88,44 @@ fn open_file_survives_unlink_and_rename_and_cross_dir_rename_sync() {
 
 /// The still-open slot 0 reads back `alive`.
 fn assert_slot0_reads_alive(sim: &mut SimIo, out: &mut Completions, tok: u64) {
-    assert_eq!(read_at(sim, out, tok, FileSlot(0), 0, 5), 5);
-    assert_eq!(&sim.buf(BufId(2))[..5], b"alive");
+    assert_eq!(read_at(sim, out, tok, FileSlot::new(0), 0, 5), 5);
+    assert_eq!(&sim.buf(BufId::new(2))[..5], b"alive");
 }
 
 /// `FileStatus` of `path` into buffer 1; returns the raw result.
 fn status_of(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) -> i32 {
-    let len = put_path(sim, BufId(0), path);
+    let len = put_path(sim, BufId::new(0), path);
     drive(
         sim,
         out,
         tok,
         Op::FileStatus {
-            path_buf: BufId(0),
+            path_buf: BufId::new(0),
             path_off: 0,
             path_len: len,
-            out_buf: BufId(1),
+            out_buf: BufId::new(1),
             out_off: 0,
         },
     )
 }
 
 pub(super) fn fail_dir_sync(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(3), path, dir_open()), 0);
-    sim.set_disk_faults(DiskFaults {
-        sync_fail: 1_000_000,
-        ..Default::default()
-    });
-    assert_eq!(sync_slot(sim, out, tok + 1, FileSlot(3)), -EIO);
+    assert_eq!(
+        open_path(sim, out, tok, FileSlot::new(3), path, dir_open()),
+        0
+    );
+    sim.set_disk_faults(DiskFaults::NONE.with_sync_fail(1_000_000));
+    assert_eq!(sync_slot(sim, out, tok + 1, FileSlot::new(3)), -EIO);
     sim.set_disk_faults(DiskFaults::default());
     assert_eq!(
-        drive(sim, out, tok + 2, Op::FileClose { slot: FileSlot(3) }),
+        drive(
+            sim,
+            out,
+            tok + 2,
+            Op::FileClose {
+                slot: FileSlot::new(3)
+            }
+        ),
         0
     );
 }
@@ -116,18 +137,18 @@ pub(super) fn rename_path(
     old_p: &str,
     new_p: &str,
 ) {
-    let ol = put_path(sim, BufId(0), old_p);
-    let nl = put_path(sim, BufId(1), new_p);
+    let ol = put_path(sim, BufId::new(0), old_p);
+    let nl = put_path(sim, BufId::new(1), new_p);
     assert_eq!(
         drive(
             sim,
             out,
             tok,
             Op::FileRename {
-                old_buf: BufId(0),
+                old_buf: BufId::new(0),
                 old_off: 0,
                 old_len: ol,
-                new_buf: BufId(1),
+                new_buf: BufId::new(1),
                 new_off: 0,
                 new_len: nl,
             },
@@ -137,14 +158,14 @@ pub(super) fn rename_path(
 }
 
 pub(super) fn unlink_path(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
-    let ul = put_path(sim, BufId(0), path);
+    let ul = put_path(sim, BufId::new(0), path);
     assert_eq!(
         drive(
             sim,
             out,
             tok,
             Op::FileUnlink {
-                path_buf: BufId(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: ul,
             },
@@ -154,14 +175,14 @@ pub(super) fn unlink_path(sim: &mut SimIo, out: &mut Completions, tok: u64, path
 }
 
 pub(super) fn mkdir_path(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
-    let len = put_path(sim, BufId(0), path);
+    let len = put_path(sim, BufId::new(0), path);
     assert_eq!(
         drive(
             sim,
             out,
             tok,
             Op::FileMkdir {
-                path_buf: BufId(0),
+                path_buf: BufId::new(0),
                 path_off: 0,
                 path_len: len,
             },
@@ -178,20 +199,39 @@ pub(super) fn create_write_sync(
     path: &str,
     byte: u8,
 ) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, rw_create()), 0);
-    assert_eq!(write_fill(sim, out, tok + 1, FileSlot(0), 0, 16, byte), 16);
-    assert_eq!(sync_slot(sim, out, tok + 2, FileSlot(0)), 0);
+    assert_eq!(
+        open_path(sim, out, tok, FileSlot::new(0), path, rw_create()),
+        0
+    );
+    assert_eq!(
+        write_fill(sim, out, tok + 1, FileSlot::new(0), 0, 16, byte),
+        16
+    );
+    assert_eq!(sync_slot(sim, out, tok + 2, FileSlot::new(0)), 0);
     close_slot0(sim, out, tok + 3);
 }
 
 /// Creates an empty `path` in slot 0 and closes it (tokens `tok`, `tok + 1`).
 pub(super) fn create_empty(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, rw_create()), 0);
+    assert_eq!(
+        open_path(sim, out, tok, FileSlot::new(0), path, rw_create()),
+        0
+    );
     close_slot0(sim, out, tok + 1);
 }
 
 pub(super) fn close_slot0(sim: &mut SimIo, out: &mut Completions, tok: u64) {
-    assert_eq!(drive(sim, out, tok, Op::FileClose { slot: FileSlot(0) }), 0);
+    assert_eq!(
+        drive(
+            sim,
+            out,
+            tok,
+            Op::FileClose {
+                slot: FileSlot::new(0)
+            }
+        ),
+        0
+    );
 }
 
 /// Opens `path` in slot 0 and checks its first 16 bytes are `byte`, leaving it open.
@@ -202,9 +242,12 @@ pub(super) fn assert_open_reads(
     path: &str,
     byte: u8,
 ) {
-    assert_eq!(open_path(sim, out, tok, FileSlot(0), path, rw_open()), 0);
-    assert_eq!(read_at(sim, out, tok + 1, FileSlot(0), 0, 16), 16);
-    assert!(sim.buf(BufId(2))[..16].iter().all(|&b| b == byte));
+    assert_eq!(
+        open_path(sim, out, tok, FileSlot::new(0), path, rw_open()),
+        0
+    );
+    assert_eq!(read_at(sim, out, tok + 1, FileSlot::new(0), 0, 16), 16);
+    assert!(sim.buf(BufId::new(2))[..16].iter().all(|&b| b == byte));
 }
 
 /// [`assert_open_reads`], then closes slot 0 (tokens `tok..tok+3`).
@@ -237,7 +280,7 @@ pub(super) fn ping_pong(
 /// Opening `path` read-write in slot 1 fails with `-ENOENT`.
 pub(super) fn assert_missing(sim: &mut SimIo, out: &mut Completions, tok: u64, path: &str) {
     assert_eq!(
-        open_path(sim, out, tok, FileSlot(1), path, rw_open()),
+        open_path(sim, out, tok, FileSlot::new(1), path, rw_open()),
         -ENOENT
     );
 }
@@ -248,26 +291,40 @@ fn dir_sync_fail_poisoning_sibling_does_not_block_later_synced_sibling() {
     let mut out = Completions::new(16);
     sealed(|| {
         assert_eq!(
-            open_path(&mut sim, &mut out, 1, FileSlot(0), "/f1", rw_create()),
+            open_path(&mut sim, &mut out, 1, FileSlot::new(0), "/f1", rw_create()),
             0
         );
         assert_eq!(
-            drive(&mut sim, &mut out, 2, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                2,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         fail_dir_sync(&mut sim, &mut out, 10, "/");
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 20, FileSlot(0), "/f2", rw_create()),
+            open_path(&mut sim, &mut out, 20, FileSlot::new(0), "/f2", rw_create()),
             0
         );
         assert_eq!(
-            write_fill(&mut sim, &mut out, 21, FileSlot(0), 0, 5, 0x42),
+            write_fill(&mut sim, &mut out, 21, FileSlot::new(0), 0, 5, 0x42),
             5
         );
-        assert_eq!(sync_slot(&mut sim, &mut out, 22, FileSlot(0)), 0);
+        assert_eq!(sync_slot(&mut sim, &mut out, 22, FileSlot::new(0)), 0);
         assert_eq!(
-            drive(&mut sim, &mut out, 23, Op::FileClose { slot: FileSlot(0) }),
+            drive(
+                &mut sim,
+                &mut out,
+                23,
+                Op::FileClose {
+                    slot: FileSlot::new(0)
+                }
+            ),
             0
         );
         sync_dir_path(&mut sim, &mut out, 30, "/");
@@ -276,14 +333,14 @@ fn dir_sync_fail_poisoning_sibling_does_not_block_later_synced_sibling() {
         sim.power_loss();
 
         assert_eq!(
-            open_path(&mut sim, &mut out, 50, FileSlot(0), "/f1", rw_open()),
+            open_path(&mut sim, &mut out, 50, FileSlot::new(0), "/f1", rw_open()),
             -ENOENT
         );
         assert_eq!(
-            open_path(&mut sim, &mut out, 51, FileSlot(0), "/f2", rw_open()),
+            open_path(&mut sim, &mut out, 51, FileSlot::new(0), "/f2", rw_open()),
             0
         );
-        assert_eq!(read_at(&mut sim, &mut out, 52, FileSlot(0), 0, 5), 5);
-        assert!(sim.buf(BufId(2))[..5].iter().all(|&b| b == 0x42));
+        assert_eq!(read_at(&mut sim, &mut out, 52, FileSlot::new(0), 0, 5), 5);
+        assert!(sim.buf(BufId::new(2))[..5].iter().all(|&b| b == 0x42));
     });
 }

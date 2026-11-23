@@ -191,10 +191,7 @@ fn a_refused_token_is_fatal_and_a_new_token_is_rotated_in() {
 /// fetched again. Nothing wrong is ever stored or returned.
 #[test]
 fn corruption_in_transit_never_reaches_the_store_or_the_caller() {
-    let faults = Faults {
-        bit_flip: 150_000,
-        ..Faults::default()
-    };
+    let faults = Faults::NONE.with_bit_flip(150_000);
     let (mut stored, mut fetched) = (0, 0);
     for seed in 0..40 {
         let mut w = world(seed, faults, 6);

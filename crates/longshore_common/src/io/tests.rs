@@ -5,15 +5,13 @@
 
 use super::*;
 
-const LIMITS: Limits = Limits {
-    sockets_max: 1,
-    buffers: 2,
-    buffer_size: 1000,
-    small_buffers: 3,
-    small_buffer_size: 10,
-    ops_max: 1,
-    ..Limits::BASE
-};
+const LIMITS: Limits = Limits::BASE
+    .with_sockets_max(1)
+    .with_buffers(2)
+    .with_buffer_size(1000)
+    .with_small_buffers(3)
+    .with_small_buffer_size(10)
+    .with_ops_max(1);
 
 #[test]
 fn buffers_of_both_sizes_tile_the_pool() {
@@ -32,17 +30,15 @@ fn buffers_of_both_sizes_tile_the_pool() {
 
 #[test]
 fn aligned_buffers_start_on_block_boundary_with_head_padding() {
-    let l = Limits {
-        buffers: 1,
-        buffer_size: 1000,
-        small_buffers: 1,
-        small_buffer_size: 10,
-        aligned_buffers: 2,
-        aligned_buffer_size: 8192,
-        block_size: 4096,
-        ops_max: 1,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_buffers(1)
+        .with_buffer_size(1000)
+        .with_small_buffers(1)
+        .with_small_buffer_size(10)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(8192)
+        .with_block_size(4096)
+        .with_ops_max(1);
     assert_eq!(l.buffer_count(), 4);
     assert_eq!(l.aligned_start(), 4096);
     assert_eq!(l.pool_bytes(), 4096 + 2 * 8192 + 4096);
@@ -60,12 +56,10 @@ fn aligned_buffers_start_on_block_boundary_with_head_padding() {
 #[test]
 #[should_panic(expected = "block_size must be a power of two >= 4096")]
 fn invalid_block_size_panics_when_aligned_buffers_present() {
-    let l = Limits {
-        aligned_buffers: 1,
-        aligned_buffer_size: 4096,
-        block_size: 2048,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_aligned_buffers(1)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(2048);
     let _: usize = l.pool_bytes();
 }
 
@@ -150,22 +144,20 @@ fn completion_new_sets_final_with_no_buffer() {
 
 #[test]
 fn ring_buffers_tile_after_aligned_and_validate_invariants() {
-    let l = Limits {
-        sockets_max: 8,
-        accept_range_start: 2,
-        accept_range_len: 6,
-        buffers: 1,
-        buffer_size: 1000,
-        small_buffers: 1,
-        small_buffer_size: 10,
-        aligned_buffers: 1,
-        aligned_buffer_size: 4096,
-        block_size: 4096,
-        ring_buffers: 2,
-        ring_buffer_size: 256,
-        ops_max: 1,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_sockets_max(8)
+        .with_accept_range_start(2)
+        .with_accept_range_len(6)
+        .with_buffers(1)
+        .with_buffer_size(1000)
+        .with_small_buffers(1)
+        .with_small_buffer_size(10)
+        .with_aligned_buffers(1)
+        .with_aligned_buffer_size(4096)
+        .with_block_size(4096)
+        .with_ring_buffers(2)
+        .with_ring_buffer_size(256)
+        .with_ops_max(1);
     assert_eq!(l.ring_base(), 3);
     assert_eq!(l.buffer_count(), 5);
     assert_eq!(l.ring(0), BufId(3));
@@ -182,33 +174,25 @@ fn ring_buffers_tile_after_aligned_and_validate_invariants() {
 #[test]
 #[should_panic(expected = "ring_buffers must be <= 32_768")]
 fn ring_buffers_above_32768_are_refused() {
-    let l = Limits {
-        ring_buffers: 32_769,
-        ring_buffer_size: 64,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_ring_buffers(32_769)
+        .with_ring_buffer_size(64);
     l.validate();
 }
 
 #[test]
 #[should_panic(expected = "ring_buffer_size must be > 0")]
 fn zero_ring_buffer_size_is_refused() {
-    let l = Limits {
-        ring_buffers: 1,
-        ring_buffer_size: 0,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE.with_ring_buffers(1).with_ring_buffer_size(0);
     l.validate();
 }
 
 #[test]
 #[should_panic(expected = "accept_range_start + accept_range_len must be <= sockets_max")]
 fn accept_range_past_sockets_max_is_refused() {
-    let l = Limits {
-        sockets_max: 4,
-        accept_range_start: 2,
-        accept_range_len: 3,
-        ..Limits::BASE
-    };
+    let l = Limits::BASE
+        .with_sockets_max(4)
+        .with_accept_range_start(2)
+        .with_accept_range_len(3);
     l.validate();
 }

@@ -19,34 +19,33 @@ const SECTOR: u64 = 512;
 const BLOCK: u32 = 4096;
 
 fn storage_limits() -> Limits {
-    Limits {
-        sockets_max: 2,
-        buffers: 2,
-        buffer_size: BLOCK,
-        small_buffers: 2,
-        small_buffer_size: 128,
-        aligned_buffers: 2,
-        aligned_buffer_size: BLOCK,
-        block_size: BLOCK,
-        files_max: 4,
-        ops_max: 8,
-        ..Limits::BASE
-    }
+    Limits::BASE
+        .with_sockets_max(2)
+        .with_buffers(2)
+        .with_buffer_size(BLOCK)
+        .with_small_buffers(2)
+        .with_small_buffer_size(128)
+        .with_aligned_buffers(2)
+        .with_aligned_buffer_size(BLOCK)
+        .with_block_size(BLOCK)
+        .with_files_max(4)
+        .with_ops_max(8)
 }
 
 fn setup_small_writeback_sim(seed: u64) -> SimIo {
     let mut sim = SimIo::new(storage_limits(), seed, Faults::default());
     // Tiny write_log_entries (3) so 4th unsynced write forces oldest writeback eviction.
-    sim.setup_disk(DiskConfig {
-        max_files: 4,
-        max_dirs: 8,
-        max_bytes_per_file: (BLOCK as usize) * 16,
-        max_name_len: 64,
-        write_log_entries: 3,
-        write_log_bytes: (SECTOR as usize) * 8,
-        read_error_sectors: 8,
-        sector_size: SECTOR as u32,
-    });
+    sim.setup_disk(
+        DiskConfig::BASE
+            .with_max_files(4)
+            .with_max_dirs(8)
+            .with_max_bytes_per_file((BLOCK as usize) * 16)
+            .with_max_name_len(64)
+            .with_write_log_entries(3)
+            .with_write_log_bytes((SECTOR as usize) * 8)
+            .with_read_error_sectors(8)
+            .with_sector_size(SECTOR as u32),
+    );
     sim
 }
 
@@ -64,23 +63,21 @@ impl Rig {
     fn wait(&mut self, token: Token, op: Op) -> i32 {
         submit_and_wait_one(&mut self.sim, &mut self.out, token, op, 1_000)
             .unwrap()
-            .result
+            .result()
     }
 
     /// Opens `/wb_eio.dat` read-write in `FileSlot(0)`, creating it if asked.
     fn open_file(&mut self, token: Token, create: bool) -> i32 {
         let plen = write_nul_path(&mut self.sim, self.path_buf, 0, "/wb_eio.dat");
         let open = Op::FileOpen {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             path_buf: self.path_buf,
             path_off: 0,
             path_len: plen,
-            flags: OpenFlags {
-                read: true,
-                write: true,
-                create,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE
+                .with_read(true)
+                .with_write(true)
+                .with_create(create),
         };
         self.wait(token, open)
     }
@@ -89,30 +86,34 @@ impl Rig {
     fn sync_root_dir(&mut self) {
         let dlen = write_nul_path(&mut self.sim, self.path_buf, 0, "/");
         let open_dir = Op::FileOpen {
-            slot: FileSlot(1),
+            slot: FileSlot::new(1),
             path_buf: self.path_buf,
             path_off: 0,
             path_len: dlen,
-            flags: OpenFlags {
-                read: true,
-                directory: true,
-                ..Default::default()
-            },
+            flags: OpenFlags::NONE.with_read(true).with_directory(true),
         };
-        assert_eq!(self.wait(Token(2), open_dir), 0);
+        assert_eq!(self.wait(Token::new(2), open_dir), 0);
         let sync_dir = Op::FileSync {
-            slot: FileSlot(1),
+            slot: FileSlot::new(1),
             datasync: false,
         };
-        assert_eq!(self.wait(Token(3), sync_dir), 0);
-        assert_eq!(self.wait(Token(4), Op::FileClose { slot: FileSlot(1) }), 0);
+        assert_eq!(self.wait(Token::new(3), sync_dir), 0);
+        assert_eq!(
+            self.wait(
+                Token::new(4),
+                Op::FileClose {
+                    slot: FileSlot::new(1)
+                }
+            ),
+            0
+        );
     }
 
     /// Writes sector `sec` filled with `byte`; returns the write result.
     fn write_sector(&mut self, token: Token, sec: u64, byte: u8) -> i32 {
         write_pool_bytes(&mut self.sim, self.w_buf, 0, &[byte; SECTOR as usize]);
         let write = Op::FileWrite {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: self.w_buf,
             off: 0,
             len: SECTOR as u32,
@@ -124,7 +125,7 @@ impl Rig {
     /// Reads sector `sec` into the read buffer; returns the read result.
     fn read_sector_result(&mut self, token: Token, sec: u64) -> i32 {
         let read = Op::FileRead {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             buf: self.r_buf,
             off: 0,
             len: SECTOR as u32,
@@ -144,7 +145,7 @@ impl Rig {
     /// A full (non-data) `FileSync` of the file; returns its result.
     fn sync_file(&mut self, token: Token) -> i32 {
         let sync = Op::FileSync {
-            slot: FileSlot(0),
+            slot: FileSlot::new(0),
             datasync: false,
         };
         self.wait(token, sync)
@@ -158,18 +159,18 @@ fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
         sim: setup_small_writeback_sim(404),
         out: Completions::new(8),
         path_buf: lim.small(0),
-        w_buf: BufId(0),
-        r_buf: BufId(1),
+        w_buf: BufId::new(0),
+        r_buf: BufId::new(1),
     };
 
     // 1. Open and sync directory + initial file so name is durable.
-    assert_eq!(rig.open_file(Token(1), true), 0);
+    assert_eq!(rig.open_file(Token::new(1), true), 0);
     rig.sync_root_dir();
 
     // 2. Write 4 sectors without sync: log capacity is 3, so sector 0 evicts to durable!
     for sec in 0..4u64 {
         assert_eq!(
-            rig.write_sector(Token(10 + sec), sec, 0xA0 + sec as u8),
+            rig.write_sector(Token::new(10 + sec), sec, 0xA0 + sec as u8),
             SECTOR as i32
         );
     }
@@ -177,19 +178,19 @@ fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
     // 3. Inject placed Fail on the next FileSync (op #9): writes in log become poisoned (AS_EIO).
     // Op counts: 1=open file, 2=open dir, 3=sync dir, 4=close dir, 5..8=4 writes, 9=next FileSync.
     rig.sim.place_disk_fault(9, PlacedFault::Fail);
-    assert_eq!(rig.sync_file(Token(20)), -EIO);
+    assert_eq!(rig.sync_file(Token::new(20)), -EIO);
 
     // 4. Second FileSync succeeds, but Linux AS_EIO means poisoned writes are NOT durable.
-    assert_eq!(rig.sync_file(Token(21)), 0);
+    assert_eq!(rig.sync_file(Token::new(21)), 0);
 
     // Before power loss, poisoned sector 3 is still readable in page cache / overlay.
-    let pre = rig.read_sector(Token(22), 3);
+    let pre = rig.read_sector(Token::new(22), 3);
     assert!(pre.iter().all(|&b| b == 0xA3));
 
     // 5. Power loss drops poisoned writes while evicted sector 0 remains durable.
     rig.sim.power_loss();
-    assert_eq!(rig.open_file(Token(30), false), 0);
-    let post0 = rig.read_sector(Token(31), 0);
+    assert_eq!(rig.open_file(Token::new(30), false), 0);
+    let post0 = rig.read_sector(Token::new(31), 0);
     assert!(
         post0.iter().all(|&b| b == 0xA0),
         "evicted sector 0 must survive"
@@ -198,7 +199,7 @@ fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
     // 6. Corrupt sector 0 medium bit, detect via CRC-64/NVME, inject read_error and repair!
     let expected_crc = crc64_nvme(&[0xA0u8; SECTOR as usize]);
     rig.sim.corrupt_medium_bit("/wb_eio.dat", 16, 3).unwrap();
-    let flipped = rig.read_sector(Token(32), 0);
+    let flipped = rig.read_sector(Token::new(32), 0);
     assert_ne!(
         crc64_nvme(&flipped),
         expected_crc,
@@ -206,17 +207,18 @@ fn t4_11_writeback_eviction_as_eio_poison_and_crc_sector_repair() {
     );
 
     // Inject persistent read_error on sector 1 via DiskFaults, observe -EIO, then repair via full-sector write.
-    rig.sim.set_disk_faults(DiskFaults {
-        read_error: 1_000_000,
-        ..DiskFaults::default()
-    });
-    assert_eq!(rig.read_sector_result(Token(33), 1), -EIO);
+    rig.sim
+        .set_disk_faults(DiskFaults::NONE.with_read_error(1_000_000));
+    assert_eq!(rig.read_sector_result(Token::new(33), 1), -EIO);
 
     rig.sim.set_disk_faults(DiskFaults::default());
     // Repair sector 0 and sector 1 with clean full-sector writes + sync.
     for (idx, byte) in [(0u64, 0xA0u8), (1u64, 0xA1u8)] {
-        assert_eq!(rig.write_sector(Token(40 + idx), idx, byte), SECTOR as i32);
+        assert_eq!(
+            rig.write_sector(Token::new(40 + idx), idx, byte),
+            SECTOR as i32
+        );
     }
-    let repaired = rig.read_sector(Token(50), 0);
+    let repaired = rig.read_sector(Token::new(50), 0);
     assert_eq!(crc64_nvme(&repaired), expected_crc);
 }
