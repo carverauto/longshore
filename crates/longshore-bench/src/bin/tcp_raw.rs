@@ -165,7 +165,19 @@ mod linux {
         }
     }
 
-    fn run(a: &Args, sending: bool) {
+    /// The sockets, buffers and ring a run drives, set up before timing.
+    struct Setup {
+        /// Kept open for the run; the ring refers to their descriptors.
+        _socks: Vec<TcpStream>,
+        fds: Vec<i32>,
+        bufs: Vec<Vec<u8>>,
+        ring: Ring,
+        unbatched: bool,
+        zc: bool,
+        fixed_buf: bool,
+    }
+
+    fn setup(a: &Args, sending: bool) -> Setup {
         if let Some(c) = a.cpu {
             pin(c);
         }
@@ -207,6 +219,27 @@ mod linux {
                 .collect();
             ring.register_buffers(&iov).unwrap_or_else(|e| die(e));
         }
+        Setup {
+            _socks: socks,
+            fds,
+            bufs,
+            ring,
+            unbatched,
+            zc,
+            fixed_buf,
+        }
+    }
+
+    fn run(a: &Args, sending: bool) {
+        let Setup {
+            _socks,
+            fds,
+            mut bufs,
+            mut ring,
+            unbatched,
+            zc,
+            fixed_buf,
+        } = setup(a, sending);
 
         let make = |i: usize, buffers: &mut [Vec<u8>]| -> io_uring_sqe {
             let mut s = io_uring_sqe {
@@ -249,6 +282,32 @@ mod linux {
             }
         }
 
+        let t = measure(a, &mut ring, unbatched, &make, &mut bufs);
+        report(a, &t, &ring);
+        // Operations are still in flight and reference `bufs`; exit without unwinding.
+        std::process::exit(0);
+    }
+
+    /// What the timed loop counted, and how long it took.
+    struct Totals {
+        bytes: u64,
+        ops: u64,
+        notifs: u64,
+        copied: u64,
+        wall: f64,
+        cpu: f64,
+        core0: Option<(u64, u64)>,
+    }
+
+    /// The timed loop: keep one operation in flight per connection until
+    /// `a.secs` have passed.
+    fn measure(
+        a: &Args,
+        ring: &mut Ring,
+        unbatched: bool,
+        make: &impl Fn(usize, &mut [Vec<u8>]) -> io_uring_sqe,
+        bufs: &mut [Vec<u8>],
+    ) -> Totals {
         let (mut bytes, mut ops, mut notifs, mut copied) = (0u64, 0u64, 0u64, 0u64);
         let start = Instant::now();
         let cpu0 = thread_cpu_secs();
@@ -281,7 +340,7 @@ mod linux {
                 }
                 bytes += u64::from(c.res.unsigned_abs());
                 ops += 1;
-                ring.push(make(c.user_data as usize, &mut bufs))
+                ring.push(make(c.user_data as usize, bufs))
                     .or_die("one op in flight per connection");
                 if unbatched {
                     // One completion per syscall: the next `enter(1)` submits this
@@ -292,9 +351,23 @@ mod linux {
         }
         let wall = start.elapsed().as_secs_f64();
         let cpu = thread_cpu_secs() - cpu0;
-        let gb = bytes as f64 / 1e9;
+        Totals {
+            bytes,
+            ops,
+            notifs,
+            copied,
+            wall,
+            cpu,
+            core0,
+        }
+    }
+
+    /// Print one run as one JSON object.
+    fn report(a: &Args, t: &Totals, ring: &Ring) {
+        let (wall, cpu, ops) = (t.wall, t.cpu, t.ops);
+        let gb = t.bytes as f64 / 1e9;
         // Whole-core utilization of the pinned CPU, including interrupt time.
-        let core_util = match (a.cpu, core0) {
+        let core_util = match (a.cpu, t.core0) {
             (Some(c), Some((b0, t0))) => {
                 let (b1, t1) = core_busy_and_total(c);
                 if t1 > t0 {
@@ -307,9 +380,7 @@ mod linux {
         };
         println!(
             "{{\"cmd\":\"{}\",\"mode\":\"{}\",\"arch\":\"{}\",\"conns\":{},\"chunk\":{},\"secs\":{:.2},\"gb\":{:.2},\"gb_per_s\":{:.2},\"thread_cpu\":{:.2},\"core_util\":{:.2},\"gb_per_cpu_s\":{:.2},\"ops\":{},\"enters\":{},\"ops_per_enter\":{:.2},\"zc_notifs\":{},\"zc_copied\":{}}}",
-            a.cmd, a.mode, std::env::consts::ARCH, a.conns, a.chunk, wall, gb, gb / wall, cpu / wall, core_util, gb / cpu, ops, ring.enters, ops as f64 / ring.enters as f64, notifs, copied
+            a.cmd, a.mode, std::env::consts::ARCH, a.conns, a.chunk, wall, gb, gb / wall, cpu / wall, core_util, gb / cpu, ops, ring.enters, ops as f64 / ring.enters as f64, t.notifs, t.copied
         );
-        // Operations are still in flight and reference `bufs`; exit without unwinding.
-        std::process::exit(0);
     }
 }
