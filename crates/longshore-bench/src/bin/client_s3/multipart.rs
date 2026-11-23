@@ -6,7 +6,7 @@
 //! `client_s3 multipart`: objects larger than one buffer, uploaded in parts
 //! through the shareable client against a real store, then read back.
 
-use longshore::client::{Client, Error};
+use longshore::client::{Buffer, Client, Error};
 use std::time::Instant;
 
 fn pattern(object: u32, part: u32, i: usize) -> u8 {
@@ -28,60 +28,83 @@ pub fn run(client: &Client, size: usize, parts: u32, objects: u32) {
     let started = Instant::now();
     for object in 0..objects {
         let key = format!("bench/{pid}-multipart-{object}.bin");
-        let id = client
-            .upload_begin(&key)
-            .wait()
-            .unwrap_or_else(|e| fail("begin", e));
-        let sent: Vec<_> = (1..=parts)
-            .map(|part| {
-                let mut body = client.buffer_blocking();
-                for (i, b) in body.as_mut_slice()[..size].iter_mut().enumerate() {
-                    *b = pattern(object, part, i);
-                }
-                client.upload_part(&key, &id, part, body, size)
-            })
-            .collect();
-        let mut stored = Vec::new();
-        let mut scratch = None;
-        for pending in sent {
-            let (part, buffer) = pending.wait();
-            stored.push(part.unwrap_or_else(|e| fail("store a part", e)));
-            scratch = Some(buffer);
-        }
-        let Some(scratch) = scratch else {
-            eprintln!("client_s3: multipart needs at least one part");
-            std::process::exit(2);
-        };
-        let (completed, mut into) = client.upload_complete(&key, &id, &stored, scratch).wait();
-        completed.unwrap_or_else(|e| fail("complete", e));
-        for part in 1..=parts {
-            let first = (u64::from(part) - 1) * size as u64;
-            let (fetched, buffer) = client
-                .fetch_range(&key, first, first + size as u64 - 1, into)
-                .wait();
-            match fetched {
-                Ok(Some(n)) if n == size => {}
-                Ok(other) => {
-                    eprintln!("client_s3: part {part} of {key} read back as {other:?}");
-                    std::process::exit(3);
-                }
-                Err(e) => fail("read a part back", e),
-            }
-            if let Some(at) = (0..size).find(|i| buffer.as_slice()[*i] != pattern(object, part, *i))
-            {
-                eprintln!("client_s3: part {part} of {key} differs at byte {at}");
-                std::process::exit(3);
-            }
-            into = buffer;
-        }
-        drop(into);
+        let into = upload(client, &key, object, size, parts);
+        verify(client, &key, object, size, parts, into);
         client
             .erase(&key)
             .wait()
             .unwrap_or_else(|e| fail("erase", e));
     }
     let secs = started.elapsed().as_secs_f64();
+    let refused = abort_refuses_completion(client, pid, size);
+    println!(
+        "{{\"cmd\":\"client-multipart\",\"arch\":\"{}\",\"threads\":{},\"objects\":{objects},\"parts\":{parts},\"size\":{size},\"object_bytes\":{},\"secs\":{secs:.2},\"verified_parts\":{},\"aborted_upload_refused\":{refused}}}",
+        std::env::consts::ARCH,
+        client.threads(),
+        u64::from(parts) * size as u64,
+        objects * parts,
+    );
+}
 
+/// Upload `object` as `parts` parts in flight together and complete it.
+/// Returns a buffer to read it back into.
+fn upload(client: &Client, key: &str, object: u32, size: usize, parts: u32) -> Buffer {
+    let id = client
+        .upload_begin(key)
+        .wait()
+        .unwrap_or_else(|e| fail("begin", e));
+    let sent: Vec<_> = (1..=parts)
+        .map(|part| {
+            let mut body = client.buffer_blocking();
+            for (i, b) in body.as_mut_slice()[..size].iter_mut().enumerate() {
+                *b = pattern(object, part, i);
+            }
+            client.upload_part(key, &id, part, body, size)
+        })
+        .collect();
+    let mut stored = Vec::new();
+    let mut scratch = None;
+    for pending in sent {
+        let (part, buffer) = pending.wait();
+        stored.push(part.unwrap_or_else(|e| fail("store a part", e)));
+        scratch = Some(buffer);
+    }
+    let Some(scratch) = scratch else {
+        eprintln!("client_s3: multipart needs at least one part");
+        std::process::exit(2);
+    };
+    let (completed, into) = client.upload_complete(key, &id, &stored, scratch).wait();
+    completed.unwrap_or_else(|e| fail("complete", e));
+    into
+}
+
+/// Check every part of `object` with a ranged fetch into `into`.
+fn verify(client: &Client, key: &str, object: u32, size: usize, parts: u32, mut into: Buffer) {
+    for part in 1..=parts {
+        let first = (u64::from(part) - 1) * size as u64;
+        let (fetched, buffer) = client
+            .fetch_range(key, first, first + size as u64 - 1, into)
+            .wait();
+        match fetched {
+            Ok(Some(n)) if n == size => {}
+            Ok(other) => {
+                eprintln!("client_s3: part {part} of {key} read back as {other:?}");
+                std::process::exit(3);
+            }
+            Err(e) => fail("read a part back", e),
+        }
+        if let Some(at) = (0..size).find(|i| buffer.as_slice()[*i] != pattern(object, part, *i)) {
+            eprintln!("client_s3: part {part} of {key} differs at byte {at}");
+            std::process::exit(3);
+        }
+        into = buffer;
+    }
+    drop(into);
+}
+
+/// Begin an upload, store a part, abort it, and check that completing it
+/// is refused.
+fn abort_refuses_completion(client: &Client, pid: u32, size: usize) -> bool {
     let key = format!("bench/{pid}-multipart-aborted.bin");
     let id = client
         .upload_begin(&key)
@@ -101,11 +124,5 @@ pub fn run(client: &Client, size: usize, parts: u32, objects: u32) {
         eprintln!("client_s3: completing an aborted upload ended {completed:?}");
         std::process::exit(3);
     }
-    println!(
-        "{{\"cmd\":\"client-multipart\",\"arch\":\"{}\",\"threads\":{},\"objects\":{objects},\"parts\":{parts},\"size\":{size},\"object_bytes\":{},\"secs\":{secs:.2},\"verified_parts\":{},\"aborted_upload_refused\":{refused}}}",
-        std::env::consts::ARCH,
-        client.threads(),
-        u64::from(parts) * size as u64,
-        objects * parts,
-    );
+    refused
 }
