@@ -266,10 +266,15 @@ fn main() {
     // A buffer still out keeps the I/O threads alive after the last handle.
     let kept = client.buffer_blocking();
     drop(client);
-    assert_eq!(thread_count(), threads_before + threads as usize);
+    // The client the deadline check built ends its thread on its own, after
+    // cancelling the connect still waiting on an address nothing answers.
+    assert_eq!(
+        settles_at(threads_before + threads as usize),
+        threads_before + threads as usize
+    );
     drop(kept);
     assert_eq!(
-        thread_count(),
+        settles_at(threads_before),
         threads_before,
         "the I/O threads did not stop"
     );
@@ -376,6 +381,21 @@ fn main() {
         "ok client: {threads} I/O threads, {CALLERS} caller threads, {} round trips of {SIZE} bytes, a multipart upload of three parts, a write read back under its identity, threads stopped on drop, over 200 operations quiesced 50 times",
         CALLERS * ROUNDS
     );
+
+    /// The number of I/O threads once it reaches `want`, or after six seconds.
+    /// Threads end on their own once the last handle and buffer are gone,
+    /// after stopping what they still have in flight, which quiesce bounds at
+    /// five seconds; counting at once would race that.
+    fn settles_at(want: usize) -> usize {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+        loop {
+            let n = thread_count();
+            if n == want || std::time::Instant::now() >= deadline {
+                return n;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     /// The client's I/O threads alive in this process, by their names.
     /// Counting every task would also count the kernel's io_uring worker
