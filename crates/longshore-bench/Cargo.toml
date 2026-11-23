@@ -6,9 +6,12 @@ version.workspace = true
 publish = false
 license.workspace = true
 
-[dependencies]
+# The check and benchmark programs in src/bin drive the rings, so they are
+# Linux-only (io_uring); elsewhere they build to a stub that uses none of
+# these. This is a tool crate; nothing ships from it. rustls and rcgen are
+# for the benchmark sink's TLS mode.
+[target.'cfg(target_os = "linux")'.dependencies]
 longshore = { workspace = true, features = ["sim", "tls"] }
-# For the benchmark sink's TLS mode. This is a tool crate; nothing ships from it.
 rustls.workspace = true
 rcgen.workspace = true
 
@@ -25,6 +28,9 @@ name = "uring_faults"
 required-features = ["fault-injection"]
 
 [dev-dependencies]
+# The criterion benches and the examples use longshore on every platform
+# (and rustls, further down).
+longshore = { workspace = true, features = ["sim", "tls"] }
 aes-gcm.workspace = true
 aws-lc-rs.workspace = true
 aws-lc-sys.workspace = true
