@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+
 members = [
     "crates/longshore",
     "crates/longshore_common",
@@ -19,8 +20,7 @@ version = "0.2.0"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-# Internal Dependencies. The crates are released together, so each names
-# the others at exactly its own version.
+# Internal Dependencies. The crates are released together all with the same version number.
 longshore = { path = "crates/longshore", version = "=0.2.0", default-features = false }
 longshore_common = { path = "crates/longshore_common", version = "=0.2.0", default-features = false }
 longshore_crc = { path = "crates/longshore_crc", version = "=0.2.0", default-features = false }
@@ -37,12 +37,10 @@ ring = { version = "0.17", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 webpki-roots = "1"
 
-# Test Dependencies.
-hegeltest = "0.52"
+# Test and benchmark Dependencies.
+hegeltest = "0.54"
 loom = "0.7"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }
-
-# Benchmark Dependencies.
 aes-gcm = "0.11"
 aws-lc-rs = "1.19"
 # Oracles to verify`longshore_crc` CRC kernels.
