@@ -26,14 +26,14 @@ impl Clmul for Sse {
     }
     #[inline(always)]
     unsafe fn set(lo: u64, hi: u64) -> __m128i {
-        unsafe { _mm_set_epi64x(hi as i64, lo as i64) }
+        unsafe { _mm_set_epi64x(hi.cast_signed(), lo.cast_signed()) }
     }
     #[inline(always)]
     unsafe fn get(v: __m128i) -> (u64, u64) {
         unsafe {
             (
-                _mm_cvtsi128_si64(v) as u64,
-                _mm_extract_epi64::<1>(v) as u64,
+                _mm_cvtsi128_si64(v).cast_unsigned(),
+                _mm_extract_epi64::<1>(v).cast_unsigned(),
             )
         }
     }
@@ -52,13 +52,16 @@ impl Clmul for Sse {
     #[inline(always)]
     unsafe fn mul(a: u64, b: u64) -> (u64, u64) {
         unsafe {
-            let (a, b) = (_mm_cvtsi64_si128(a as i64), _mm_cvtsi64_si128(b as i64));
+            let (a, b) = (
+                _mm_cvtsi64_si128(a.cast_signed()),
+                _mm_cvtsi64_si128(b.cast_signed()),
+            );
             Self::get(_mm_clmulepi64_si128::<0x00>(a, b))
         }
     }
     #[inline(always)]
     unsafe fn crc32c_u64(state: u32, v: u64) -> u32 {
-        unsafe { _mm_crc32_u64(state as u64, v) as u32 }
+        unsafe { _mm_crc32_u64(u64::from(state), v) as u32 }
     }
     #[inline(always)]
     unsafe fn crc32c_u8(state: u32, v: u8) -> u32 {
