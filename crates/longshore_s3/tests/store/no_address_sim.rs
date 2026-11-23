@@ -11,7 +11,7 @@ use longshore_common::sim::{Faults, SimIo};
 use longshore_dns::Resolver;
 use longshore_http_client::client;
 use longshore_s3::creds::Credentials;
-use longshore_s3::s3::{Checksum, Config, Endpoint, Fatal, Outcome, SubmitError, Vendor, S3};
+use longshore_s3::s3::{Checksum, Config, Done, Endpoint, Fatal, Outcome, SubmitError, Vendor, S3};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[global_allocator]
@@ -33,7 +33,37 @@ const LIMITS: Limits = Limits {
 #[test]
 fn operations_end_when_the_name_never_resolves() {
     let mut io = SimIo::new(LIMITS, 1, Faults::default());
-    // Nothing listens at the nameserver's address, so no query is answered.
+    let mut s3 = s3_behind_a_silent_nameserver();
+    s3.start(&mut io);
+    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
+        .unwrap();
+    s3.store(&mut io, 1, "a", BufId(0), 100, Checksum::None)
+        .unwrap();
+    s3.erase(&mut io, 2, "b").unwrap();
+    assert_eq!(s3.erase(&mut io, 3, "c"), Err(SubmitError::Busy));
+
+    let done = run_until_done(&mut io, &mut s3, 2);
+    for d in &done {
+        assert_eq!(
+            (d.outcome, d.attempts),
+            (Outcome::Fatal(Fatal::NoAddress), 0),
+            "{d:?}"
+        );
+    }
+    // Three attempts of 500 ms each is the time the operations were allowed.
+    assert!(
+        (1_400 * MS..2_500 * MS).contains(&io.now_ns()),
+        "gave up after {} ms",
+        io.now_ns() / MS
+    );
+    // The slots are free again.
+    s3.erase(&mut io, 3, "c").unwrap();
+}
+
+/// A store at a name only a nameserver could resolve. Nothing listens at
+/// the nameserver's address, so no query is answered.
+#[cfg(test)]
+fn s3_behind_a_silent_nameserver() -> S3 {
     let resolver = Resolver::new(longshore_dns::Config {
         servers: vec![SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 53)),
@@ -65,7 +95,7 @@ fn operations_end_when_the_name_never_resolves() {
         tls_records_max: client::TLS_RECORDS_MAX,
         check_idle: true,
     };
-    let mut s3 = S3::new(Config {
+    S3::new(Config {
         vendor: Vendor::S3,
         host: "bucket.objects.test".into(),
         bucket_in_path: None,
@@ -82,19 +112,17 @@ fn operations_end_when_the_name_never_resolves() {
         #[cfg(feature = "tls")]
         tls: None,
         endpoint: Endpoint::Resolved(resolver),
-    });
-    s3.start(&mut io);
-    io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
-        .unwrap();
-    s3.store(&mut io, 1, "a", BufId(0), 100, Checksum::None)
-        .unwrap();
-    s3.erase(&mut io, 2, "b").unwrap();
-    assert_eq!(s3.erase(&mut io, 3, "c"), Err(SubmitError::Busy));
+    })
+}
 
+/// Drives the store with allocation forbidden until `n` operations have
+/// ended, failing if that takes a minute of virtual time.
+#[cfg(test)]
+fn run_until_done(io: &mut SimIo, s3: &mut S3, n: usize) -> Vec<Done> {
     let mut out = Completions::new(16);
     let mut done = Vec::with_capacity(4);
     sealed(|| {
-        while done.len() < 2 {
+        while done.len() < n {
             assert!(
                 io.now_ns() < 60_000 * MS,
                 "operations were still waiting for an address after a minute"
@@ -102,11 +130,11 @@ fn operations_end_when_the_name_never_resolves() {
             io.tick(true, &mut out).expect("simulation deadlock");
             while let Some(c) = out.pop() {
                 if c.token.0 == HEARTBEAT {
-                    s3.tick(&mut io);
+                    s3.tick(io);
                     io.submit(Token(HEARTBEAT), Op::Timeout { nanos: 10 * MS })
                         .unwrap();
                 } else {
-                    assert!(s3.on_completion(&mut io, c), "unrouted completion {c:?}");
+                    assert!(s3.on_completion(io, c), "unrouted completion {c:?}");
                 }
             }
             while let Some(d) = s3.poll() {
@@ -114,19 +142,5 @@ fn operations_end_when_the_name_never_resolves() {
             }
         }
     });
-    for d in &done {
-        assert_eq!(
-            (d.outcome, d.attempts),
-            (Outcome::Fatal(Fatal::NoAddress), 0),
-            "{d:?}"
-        );
-    }
-    // Three attempts of 500 ms each is the time the operations were allowed.
-    assert!(
-        (1_400 * MS..2_500 * MS).contains(&io.now_ns()),
-        "gave up after {} ms",
-        io.now_ns() / MS
-    );
-    // The slots are free again.
-    s3.erase(&mut io, 3, "c").unwrap();
+    done
 }

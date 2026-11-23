@@ -133,58 +133,78 @@ fn builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure()
     // Subprocess partial multi-thread start failure cleanup under lowered RLIMIT_NOFILE.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        use std::os::unix::process::CommandExt;
-        #[cfg(target_os = "linux")]
-        const RLIMIT_NOFILE: i32 = 7;
-        #[cfg(target_os = "macos")]
-        const RLIMIT_NOFILE: i32 = 8;
-        #[repr(C)]
-        struct Rlimit {
-            rlim_cur: u64,
-            rlim_max: u64,
-        }
-        extern "C" {
-            fn setrlimit(resource: i32, rlim: *const Rlimit) -> i32;
-        }
-        if std::env::var_os("LONGSHORE_S3_PARTIAL_START").is_some() {
-            let mut partial = settings("bucket.s3.example.com");
-            partial.address = Some("127.0.0.1:1".parse().unwrap());
-            partial.threads = 32;
-            partial.connections = 1;
-            partial.buffers = 1;
-            partial.operations = 1;
-            partial.waiters = 1;
-            #[cfg(target_os = "linux")]
-            {
-                partial.portable = true;
-            }
-            assert!(matches!(partial.build(), Err(BuildError::Io(_))));
+        if std::env::var_os(PARTIAL_START).is_some() {
+            partial_start_fails_with_io_error();
             return;
         }
-        let exe = std::env::current_exe().unwrap();
-        let mut cmd = std::process::Command::new(exe);
-        let _: &mut std::process::Command = cmd
-            .arg("builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure")
-            .arg("--exact")
-            .env("LONGSHORE_S3_PARTIAL_START", "1");
-        unsafe {
-            let _: &mut std::process::Command = cmd.pre_exec(|| {
-                let lim = Rlimit {
-                    rlim_cur: 24,
-                    rlim_max: 24,
-                };
-                if setrlimit(RLIMIT_NOFILE, &lim) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let out = cmd.output().unwrap();
-        assert!(
-            out.status.success(),
-            "partial start child failed:\nstdout={}\nstderr={}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+        rerun_with_nofile_limit(
+            "builder_validation_edges_and_non_utf8_credentials_and_partial_start_failure",
+            24,
         );
     }
+}
+
+/// Set in the child that runs the partial start.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const PARTIAL_START: &str = "LONGSHORE_S3_PARTIAL_START";
+
+/// 32 threads cannot all start under the child's file limit; the build
+/// fails with an I/O error once some have started.
+#[cfg(test)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn partial_start_fails_with_io_error() {
+    let mut partial = settings("bucket.s3.example.com");
+    partial.address = Some("127.0.0.1:1".parse().unwrap());
+    partial.threads = 32;
+    partial.connections = 1;
+    partial.buffers = 1;
+    partial.operations = 1;
+    partial.waiters = 1;
+    #[cfg(target_os = "linux")]
+    {
+        partial.portable = true;
+    }
+    assert!(matches!(partial.build(), Err(BuildError::Io(_))));
+}
+
+/// Runs `test` again in a child with `PARTIAL_START` set and
+/// `RLIMIT_NOFILE` lowered to `nofile`, and asserts it passes.
+#[cfg(test)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rerun_with_nofile_limit(test: &str, nofile: u64) {
+    use std::os::unix::process::CommandExt;
+    #[cfg(target_os = "linux")]
+    const RLIMIT_NOFILE: i32 = 7;
+    #[cfg(target_os = "macos")]
+    const RLIMIT_NOFILE: i32 = 8;
+    #[repr(C)]
+    struct Rlimit {
+        rlim_cur: u64,
+        rlim_max: u64,
+    }
+    extern "C" {
+        fn setrlimit(resource: i32, rlim: *const Rlimit) -> i32;
+    }
+    let exe = std::env::current_exe().unwrap();
+    let mut cmd = std::process::Command::new(exe);
+    let _: &mut std::process::Command = cmd.arg(test).arg("--exact").env(PARTIAL_START, "1");
+    unsafe {
+        let _: &mut std::process::Command = cmd.pre_exec(move || {
+            let lim = Rlimit {
+                rlim_cur: nofile,
+                rlim_max: nofile,
+            };
+            if setrlimit(RLIMIT_NOFILE, &lim) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "partial start child failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

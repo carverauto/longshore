@@ -6,38 +6,29 @@
 //! Client integration tests on the portable POSIX backend (`kqueue` on macOS,
 //! `epoll` on Linux).
 
+#[cfg(test)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod loopback;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn client_stores_and_fetches_over_loopback_on_portable_backend() {
-    use longshore_common::io::posix::PosixIo;
-    use longshore_common::io::{Completions, Io, Limits, Op, Sock, Token};
-    use longshore_http_client::server::{self, Server};
-    use longshore_s3::client::Builder;
-    use longshore_s3::creds::Credentials;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::mpsc::channel;
-    use std::sync::Arc;
+    use longshore_common::io::{Limits, Sock};
+    use longshore_http_client::server;
+    use loopback::ServerThread;
 
     const SIZE: u32 = 64 * 1024;
     const CONNS: u32 = 2;
-    const WAKE_TOKEN: Token = Token(9 << 40);
 
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_server = stop.clone();
-    let (ready_tx, ready_rx) = channel();
-
-    let server_thread = std::thread::spawn(move || {
-        let mut io = PosixIo::new(Limits {
+    let server = ServerThread::start(
+        Limits {
             sockets_max: 1 + CONNS,
             buffers: 2 * CONNS,
             buffer_size: SIZE,
             ops_max: CONNS * 3 + 3,
             ..Limits::BASE
-        })
-        .expect("server PosixIo");
-        let waker = io.waker().expect("server waker");
-        let mut server = Server::new(server::Config {
+        },
+        server::Config {
             listener: Sock(0),
             connections_max: CONNS,
             first_sock: 1,
@@ -47,45 +38,12 @@ fn client_stores_and_fetches_over_loopback_on_portable_backend() {
             objects_max: 4,
             token_base: 2 << 40,
             checksum: None,
-        });
-        let addr = server
-            .start(&mut io, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .expect("server start");
-        io.submit(WAKE_TOKEN, Op::AwaitWake).expect("arm wake");
-        ready_tx.send((addr, waker)).unwrap();
-
-        let mut out = Completions::new(32);
-        while !stop_server.load(Ordering::Acquire) {
-            io.tick(true, &mut out).expect("server tick");
-            while let Some(c) = out.pop() {
-                if c.token == WAKE_TOKEN {
-                    if !stop_server.load(Ordering::Acquire) {
-                        io.submit(WAKE_TOKEN, Op::AwaitWake).expect("rearm wake");
-                    }
-                } else {
-                    let _: bool = server.on_completion(&mut io, c);
-                }
-            }
-        }
-    });
-
-    let (addr, server_wake) = ready_rx.recv().expect("server did not start");
-
-    let mut b = Builder::new(
-        "bucket.objects.test",
-        "us-test-1",
-        Credentials::new("AKIDEXAMPLE", "secret").unwrap(),
+        },
     );
-    b.port = addr.port();
-    b.address = Some(addr);
-    b.connections = CONNS;
+
+    let mut b = server.builder(CONNS, SIZE);
     b.buffers = 2;
-    b.buffer_size = SIZE;
     b.operations = 4;
-    #[cfg(target_os = "linux")]
-    {
-        b.portable = true;
-    }
 
     let client = b.build().expect("client build on portable backend");
 
@@ -110,9 +68,7 @@ fn client_stores_and_fetches_over_loopback_on_portable_backend() {
     assert_eq!(gone, Ok(None));
 
     drop(client);
-    stop.store(true, Ordering::Release);
-    server_wake.wake();
-    server_thread.join().expect("server thread");
+    server.stop();
 }
 
 #[cfg(target_os = "macos")]

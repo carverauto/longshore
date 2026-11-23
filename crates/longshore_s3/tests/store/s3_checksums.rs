@@ -90,77 +90,22 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
         partial_recv: 200_000,
         ..Faults::default()
     };
-    let (mut stored, mut fetched, mut retried, mut refused) = (0, 0, 0, 0);
+    let mut t = Tally::default();
     for seed in 0..80 {
         let mut w = world_with(seed, faults, 8, true);
         w.fill_tx(BUF, seed as u8);
         let sent = w.io.buf(TX).to_vec();
-        w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
-            .unwrap();
-        let d = w.last();
-        retried += u32::from(d.attempts > 1);
-        match d.outcome {
-            Outcome::Stored => {
-                stored += 1;
-                assert_eq!(
-                    w.server.object("/k"),
-                    Some(&sent[..]),
-                    "seed {seed}: Stored, but the server holds damaged bytes"
-                );
-            }
-            Outcome::Fatal(f) => {
-                refused += 1;
-                assert_refusal_of_damage(seed, f);
-                assert_eq!(w.s3.in_progress(), 0);
-                continue;
-            }
-            o @ (Outcome::AlreadyExists { .. }
-            | Outcome::Fetched { .. }
-            | Outcome::Listed { .. }
-            | Outcome::NotFound
-            | Outcome::Erased
-            | Outcome::Begun { .. }
-            | Outcome::PartStored { .. }
-            | Outcome::Aborted
-            | Outcome::Stat(_)
-            | Outcome::Copied
-            | Outcome::ErasedMany { .. }
-            | Outcome::Report(_)) => panic!("seed {seed}: unexpected store outcome {o:?}"),
-        }
-        w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
-        let fetch = w.last();
-        retried += u32::from(fetch.attempts > 1);
-        match fetch.outcome {
-            Outcome::Fetched { len, verified } => {
-                fetched += 1;
-                assert!(
-                    verified && len == BUF,
-                    "seed {seed}: fetch succeeded unverified"
-                );
-                assert!(
-                    w.io.buf(RX)[..] == sent[..],
-                    "seed {seed}: Fetched, but the bytes are damaged"
-                );
-            }
-            Outcome::Fatal(f) => {
-                refused += 1;
-                assert_refusal_of_damage(seed, f);
-            }
-            o @ (Outcome::Stored
-            | Outcome::AlreadyExists { .. }
-            | Outcome::Listed { .. }
-            | Outcome::NotFound
-            | Outcome::Erased
-            | Outcome::Begun { .. }
-            | Outcome::PartStored { .. }
-            | Outcome::Aborted
-            | Outcome::Stat(_)
-            | Outcome::Copied
-            | Outcome::ErasedMany { .. }
-            | Outcome::Report(_)) => panic!("seed {seed}: unexpected fetch outcome {o:?}"),
+        if store_never_accepts_damage(&mut w, seed, &sent, &mut t) {
+            fetch_never_returns_damage(&mut w, seed, &sent, &mut t);
         }
         assert_eq!(w.s3.in_progress(), 0);
     }
+    let Tally {
+        stored,
+        fetched,
+        retried,
+        refused,
+    } = t;
     // The run must actually exercise the damage paths to mean anything, and
     // damage is mostly retried away: a refusal is the exception.
     // 49 of the 160 operations when this was written. Most of those are
@@ -171,6 +116,92 @@ fn bit_flips_never_become_silent_corruption_with_checksums_on() {
         stored >= 20 && fetched >= 15 && retried >= 15,
         "stored {stored}, fetched {fetched}, retried {retried}, refused {refused}"
     );
+}
+
+/// How the operations of the bit-flip runs ended.
+#[derive(Default)]
+struct Tally {
+    stored: u32,
+    fetched: u32,
+    retried: u32,
+    refused: u32,
+}
+
+/// Stores `sent` with a computed checksum. A store that reports success
+/// must hold exactly `sent`; damage must be refused. Returns whether it
+/// was stored.
+#[cfg(test)]
+fn store_never_accepts_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tally) -> bool {
+    w.s3.store(&mut w.io, 1, "k", TX, BUF, Checksum::Compute)
+        .unwrap();
+    let d = w.last();
+    t.retried += u32::from(d.attempts > 1);
+    match d.outcome {
+        Outcome::Stored => {
+            t.stored += 1;
+            assert_eq!(
+                w.server.object("/k"),
+                Some(sent),
+                "seed {seed}: Stored, but the server holds damaged bytes"
+            );
+            true
+        }
+        Outcome::Fatal(f) => {
+            t.refused += 1;
+            assert_refusal_of_damage(seed, f);
+            false
+        }
+        o @ (Outcome::AlreadyExists { .. }
+        | Outcome::Fetched { .. }
+        | Outcome::Listed { .. }
+        | Outcome::NotFound
+        | Outcome::Erased
+        | Outcome::Begun { .. }
+        | Outcome::PartStored { .. }
+        | Outcome::Aborted
+        | Outcome::Stat(_)
+        | Outcome::Copied
+        | Outcome::ErasedMany { .. }
+        | Outcome::Report(_)) => panic!("seed {seed}: unexpected store outcome {o:?}"),
+    }
+}
+
+/// Fetches what was stored. A fetch that reports success must be verified
+/// and return exactly `sent`; damage must be refused.
+#[cfg(test)]
+fn fetch_never_returns_damage(w: &mut World, seed: u64, sent: &[u8], t: &mut Tally) {
+    w.s3.fetch(&mut w.io, 2, "k", None, RX).unwrap();
+    let fetch = w.last();
+    t.retried += u32::from(fetch.attempts > 1);
+    match fetch.outcome {
+        Outcome::Fetched { len, verified } => {
+            t.fetched += 1;
+            assert!(
+                verified && len == BUF,
+                "seed {seed}: fetch succeeded unverified"
+            );
+            assert!(
+                w.io.buf(RX)[..] == sent[..],
+                "seed {seed}: Fetched, but the bytes are damaged"
+            );
+        }
+        Outcome::Fatal(f) => {
+            t.refused += 1;
+            assert_refusal_of_damage(seed, f);
+        }
+        o @ (Outcome::Stored
+        | Outcome::AlreadyExists { .. }
+        | Outcome::Listed { .. }
+        | Outcome::NotFound
+        | Outcome::Erased
+        | Outcome::Begun { .. }
+        | Outcome::PartStored { .. }
+        | Outcome::Aborted
+        | Outcome::Stat(_)
+        | Outcome::Copied
+        | Outcome::ErasedMany { .. }
+        | Outcome::Report(_)) => panic!("seed {seed}: unexpected fetch outcome {o:?}"),
+    }
 }
 
 /// The same faults with checksums off do let damage through. This is what
