@@ -21,7 +21,7 @@
 - [x] 4.7 Repeat 4.1 and 4.3 after the changes made in answer to the first results. Done at commit `f176238`: every kernel passes on every machine, the rewritten 256-bit and 512-bit ones included
 - [x] 4.8 Decide on what remains behind `crc-fast`: adopted, with the cells tracked in issue #29
 - [x] 4.4 Set lane counts and the order of preference between 256-bit and 512-bit from the runs. Set from the first run; choosing the lane count by length on Arm is in issue #29
-- [ ] 4.5 End-to-end PUT with checksums against a real store, CPU per GB before and after. S3 accepted 18,689 checksummed uploads from the branch; CPU per GB has not been measured
+- [x] 4.5 End-to-end PUT with checksums against a real store, CPU per GB before and after. S3 accepted 18,689 checksummed uploads from the branch (`m24-crc-kernels.md`). Amazon S3 PUT with CRC-64/NVME, same instances, kernel, pinning and 384 connections, client thread at 1.00 core in both: before, `crc-fast` (`m20-preference-and-comparison.md`), 16.4 GB/s on Graviton4 and 13.3 on Zen 5, about 61 and 75 ms of thread CPU per GB; after, the in-tree kernels (`m26-s3-aws-large-instances-current.md`), 16.7 and 14.1 GB/s, about 60 and 71 ms per GB. The after run is also on the ring-per-core branch and on another day, so the difference is not attributed to the kernels alone; it shows no regression
 
 ## 5. Adoption
 - [x] 5.1 Both algorithms switched; `crc-fast` is a development dependency of the benchmark only
