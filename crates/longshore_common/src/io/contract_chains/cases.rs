@@ -7,7 +7,7 @@
 
 use super::collect_chain;
 use crate::io::contract_files::{
-    base_limits, close_file, drive_many, drive_one, open_file, write_path,
+    base_limits, close_file, drive_many, drive_one, open_file, rw_create, write_path,
 };
 use crate::io::must::Must;
 use crate::io::{
@@ -285,33 +285,59 @@ fn aborted_reopen_preserves_direct_flag<IO: Io>(make: &mut impl FnMut(Limits) ->
     let f2 = format!("{root}c_direct_next.dat");
     let missing = format!("{root}c_direct_missing.dat");
 
-    let ro = OpenFlags {
-        read: true,
-        ..Default::default()
-    };
     let rw_direct = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
         direct: true,
-        ..Default::default()
-    };
-    let rw_buf = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        direct: false,
-        ..Default::default()
+        ..rw_create()
     };
     assert_eq!(
         open_file(&mut io, &mut out, 2, FileSlot(0), BufId(0), &f1, rw_direct),
         0
     );
-    let mlen = write_path(&mut io, BufId(0), 0, &missing);
-    let f2len = write_path(&mut io, BufId(1), 0, &f2);
-    let cs = collect_chain(
-        &mut io,
-        &mut out,
+    let cs = aborted_buffered_reopen(&mut io, &mut out, &missing, &f2);
+    assert_eq!(
+        (cs[0].result, cs[1].result, cs[2].result),
+        (-ENOENT, -ECANCELED, -ECANCELED)
+    );
+    // Slot 0 still holds the direct file, so an unaligned write is refused.
+    assert_eq!(
+        drive_one(
+            &mut io,
+            &mut out,
+            Token(13),
+            Op::FileWrite {
+                slot: FileSlot(0),
+                buf: BufId(0),
+                off: 0,
+                len: 4,
+                file_off: 0,
+            },
+        ),
+        -EINVAL
+    );
+    assert_eq!(close_file(&mut io, &mut out, 14, FileSlot(0)), 0);
+}
+
+/// Tokens 10-12: a chain whose failed first open aborts closing slot 0 and
+/// reopening it buffered (not direct) on `f2`.
+fn aborted_buffered_reopen(
+    io: &mut impl Io,
+    out: &mut Completions,
+    missing: &str,
+    f2: &str,
+) -> Vec<Completion> {
+    let ro = OpenFlags {
+        read: true,
+        ..Default::default()
+    };
+    let rw_buf = OpenFlags {
+        direct: false,
+        ..rw_create()
+    };
+    let mlen = write_path(io, BufId(0), 0, missing);
+    let f2len = write_path(io, BufId(1), 0, f2);
+    collect_chain(
+        io,
+        out,
         [
             (
                 Token(10),
@@ -335,25 +361,5 @@ fn aborted_reopen_preserves_direct_flag<IO: Io>(make: &mut impl FnMut(Limits) ->
                 },
             ),
         ],
-    );
-    assert_eq!(
-        (cs[0].result, cs[1].result, cs[2].result),
-        (-ENOENT, -ECANCELED, -ECANCELED)
-    );
-    assert_eq!(
-        drive_one(
-            &mut io,
-            &mut out,
-            Token(13),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(0),
-                off: 0,
-                len: 4,
-                file_off: 0,
-            },
-        ),
-        -EINVAL
-    );
-    assert_eq!(close_file(&mut io, &mut out, 14, FileSlot(0)), 0);
+    )
 }

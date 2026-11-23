@@ -5,7 +5,9 @@
 
 //! Functional contract tests covering all 11 file operations.
 
-use super::{base_limits, close_file, drive_one, open_file, stat_file};
+use super::{
+    base_limits, close_file, drive_one, open_file, read_op, rw_create, stat_file, write_op,
+};
 use crate::io::{BufId, Completions, FileSlot, Io, Limits, Op, OpenFlags, Token, ENOENT};
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root_dir: &str) {
@@ -44,13 +46,7 @@ fn open_close_empty_excl<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str
             &mut io,
             &mut out,
             Token(3),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(1),
-                off: 0,
-                len: 7,
-                file_off: 0,
-            },
+            write_op(FileSlot(0), BufId(1), 7, 0),
         ),
         7
     );
@@ -101,13 +97,7 @@ fn offset_rw_hole_short_eof<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
             &mut io,
             &mut out,
             Token(2),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(0),
-                off: 0,
-                len: 16,
-                file_off: 100,
-            },
+            write_op(FileSlot(0), BufId(0), 16, 100),
         ),
         16
     );
@@ -116,13 +106,7 @@ fn offset_rw_hole_short_eof<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
             &mut io,
             &mut out,
             Token(3),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(1),
-                off: 0,
-                len: 16,
-                file_off: 116,
-            },
+            read_op(FileSlot(0), BufId(1), 16, 116),
         ),
         0
     );
@@ -131,13 +115,7 @@ fn offset_rw_hole_short_eof<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
             &mut io,
             &mut out,
             Token(4),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(1),
-                off: 0,
-                len: 32,
-                file_off: 108,
-            },
+            read_op(FileSlot(0), BufId(1), 32, 108),
         ),
         8
     );
@@ -147,13 +125,7 @@ fn offset_rw_hole_short_eof<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &
             &mut io,
             &mut out,
             Token(5),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: BufId(1),
-                off: 0,
-                len: 16,
-                file_off: 0,
-            },
+            read_op(FileSlot(0), BufId(1), 16, 0),
         ),
         16
     );
@@ -189,13 +161,7 @@ fn direct_io_aligned<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
             &mut io,
             &mut out,
             Token(2),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: w,
-                off: 0,
-                len: 4096,
-                file_off: 4096,
-            },
+            write_op(FileSlot(0), w, 4096, 4096),
         ),
         4096
     );
@@ -204,13 +170,7 @@ fn direct_io_aligned<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
             &mut io,
             &mut out,
             Token(3),
-            Op::FileRead {
-                slot: FileSlot(0),
-                buf: r,
-                off: 0,
-                len: 4096,
-                file_off: 4096,
-            },
+            read_op(FileSlot(0), r, 4096, 4096),
         ),
         4096
     );
@@ -223,20 +183,29 @@ fn sync_reserve_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     let mut io = make(base_limits());
     let mut out = Completions::new(8);
     let path = format!("{root}space.dat");
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
     assert_eq!(
-        open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &path, rw),
-        0
-    );
-    assert_eq!(
-        drive_one(
+        open_file(
             &mut io,
             &mut out,
+            1,
+            FileSlot(0),
+            BufId(0),
+            &path,
+            rw_create()
+        ),
+        0
+    );
+    reserve_sets_or_keeps_size(&mut io, &mut out, &path);
+    write_sync_punch(&mut io, &mut out, &path);
+    assert_eq!(close_file(&mut io, &mut out, 11, FileSlot(0)), 0);
+}
+
+/// Tokens 2-5: reserving grows the file, and reserving with `keep_size` does not.
+fn reserve_sets_or_keeps_size(io: &mut impl Io, out: &mut Completions, path: &str) {
+    assert_eq!(
+        drive_one(
+            io,
+            out,
             Token(2),
             Op::FileReserve {
                 slot: FileSlot(0),
@@ -247,14 +216,11 @@ fn sync_reserve_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
         ),
         0
     );
-    assert_eq!(
-        stat_file(&mut io, &mut out, 3, BufId(0), BufId(1), &path),
-        Ok(8192)
-    );
+    assert_eq!(stat_file(io, out, 3, BufId(0), BufId(1), path), Ok(8192));
     assert_eq!(
         drive_one(
-            &mut io,
-            &mut out,
+            io,
+            out,
             Token(4),
             Op::FileReserve {
                 slot: FileSlot(0),
@@ -265,30 +231,21 @@ fn sync_reserve_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
         ),
         0
     );
-    assert_eq!(
-        stat_file(&mut io, &mut out, 5, BufId(0), BufId(1), &path),
-        Ok(8192)
-    );
+    assert_eq!(stat_file(io, out, 5, BufId(0), BufId(1), path), Ok(8192));
+}
+
+/// Tokens 6-10: write and sync the file, punch its second block, and read zeros
+/// there with the size unchanged (macOS may not support punching).
+fn write_sync_punch(io: &mut impl Io, out: &mut Completions, path: &str) {
     io.buf(BufId(0))[..8192].fill(0xAB);
     assert_eq!(
-        drive_one(
-            &mut io,
-            &mut out,
-            Token(6),
-            Op::FileWrite {
-                slot: FileSlot(0),
-                buf: BufId(0),
-                off: 0,
-                len: 8192,
-                file_off: 0,
-            },
-        ),
+        drive_one(io, out, Token(6), write_op(FileSlot(0), BufId(0), 8192, 0)),
         8192
     );
     assert_eq!(
         drive_one(
-            &mut io,
-            &mut out,
+            io,
+            out,
             Token(7),
             Op::FileSync {
                 slot: FileSlot(0),
@@ -298,8 +255,8 @@ fn sync_reserve_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
         0
     );
     let p = drive_one(
-        &mut io,
-        &mut out,
+        io,
+        out,
         Token(8),
         Op::FilePunch {
             slot: FileSlot(0),
@@ -307,29 +264,15 @@ fn sync_reserve_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
             len: 4096,
         },
     );
-    if !(cfg!(target_os = "macos") && p == -crate::io::posix::errno::linux::EOPNOTSUPP) {
-        assert_eq!(p, 0);
-        assert_eq!(
-            stat_file(&mut io, &mut out, 9, BufId(0), BufId(1), &path),
-            Ok(8192)
-        );
-        assert_eq!(
-            drive_one(
-                &mut io,
-                &mut out,
-                Token(10),
-                Op::FileRead {
-                    slot: FileSlot(0),
-                    buf: BufId(1),
-                    off: 0,
-                    len: 8192,
-                    file_off: 0,
-                },
-            ),
-            8192
-        );
-        assert!(io.buf(BufId(1))[..4096].iter().all(|&b| b == 0xAB));
-        assert!(io.buf(BufId(1))[4096..].iter().all(|&b| b == 0));
+    if cfg!(target_os = "macos") && p == -crate::io::posix::errno::linux::EOPNOTSUPP {
+        return;
     }
-    assert_eq!(close_file(&mut io, &mut out, 11, FileSlot(0)), 0);
+    assert_eq!(p, 0);
+    assert_eq!(stat_file(io, out, 9, BufId(0), BufId(1), path), Ok(8192));
+    assert_eq!(
+        drive_one(io, out, Token(10), read_op(FileSlot(0), BufId(1), 8192, 0)),
+        8192
+    );
+    assert!(io.buf(BufId(1))[..4096].iter().all(|&b| b == 0xAB));
+    assert!(io.buf(BufId(1))[4096..].iter().all(|&b| b == 0));
 }

@@ -5,7 +5,7 @@
 
 //! Shared armed-accept contract checks.
 
-use super::{close_socks, drain_one, drain_until, net_limits, send_all};
+use super::{cancel_until_end, close_socks, drain_one, drain_until, net_limits, send_all};
 use crate::io::must::{fail, must, must_sock, Must};
 use crate::io::{
     BufId, Completion, Completions, Io, Limits, Op, Sock, Token, ECANCELED, EMFILE, ENFILE,
@@ -100,6 +100,31 @@ fn accept_range_full_and_armed_again<IO: Io>(
     });
     let mut out = Completions::new(8);
     let bound = io.must_listen(Sock(0), addr);
+    let accepted = fill_accept_range(&mut io, &mut out, bound);
+    third_client_ends_accept(&mut io, &mut out, bound);
+    close_socks(&mut io, &mut out, &[Sock(5), accepted[0]]);
+    let reused = rearmed_accept_reuses_slot(&mut io, &mut out, bound, accepted[0]);
+    let mut tok = 100;
+    send_all(&mut io, &mut out, Sock(6), BufId(0), b"rearmed", &mut tok);
+    io.must_submit(
+        Token(tok),
+        Op::Recv {
+            sock: reused,
+            buf: BufId(1),
+            off: 0,
+            len: 32,
+        },
+    );
+    assert!(drain_one(&mut io, &mut out, tok).result > 0);
+    close_socks(
+        &mut io,
+        &mut out,
+        &[Sock(0), accepted[1], reused, Sock(3), Sock(4), Sock(6)],
+    );
+}
+
+/// Armed accept 1 takes two clients into the whole accept range 1..3.
+fn fill_accept_range<IO: Io>(io: &mut IO, out: &mut Completions, bound: SocketAddr) -> Vec<Sock> {
     io.must_submit(Token(1), Op::ArmedAccept { listener: Sock(0) });
     for k in 0..2u32 {
         io.must_submit(
@@ -112,7 +137,7 @@ fn accept_range_full_and_armed_again<IO: Io>(
     }
     let mut accepted = Vec::new();
     let mut conns = 0;
-    drain_until(&mut io, &mut out, |_, c| {
+    drain_until(io, out, |_, c| {
         if c.token.0 == 1 {
             assert!(c.more && (1..3).contains(&c.result));
             accepted.push(must_sock(c.result));
@@ -122,8 +147,11 @@ fn accept_range_full_and_armed_again<IO: Io>(
         }
         accepted.len() == 2 && conns == 2
     });
+    accepted
+}
 
-    // 3rd client arrives when range 1..3 is full: dropped and ArmedAccept ends with -ENFILE/-EMFILE.
+/// 3rd client arrives when range 1..3 is full: dropped and ArmedAccept ends with -ENFILE/-EMFILE.
+fn third_client_ends_accept<IO: Io>(io: &mut IO, out: &mut Completions, bound: SocketAddr) {
     io.must_submit(
         Token(12),
         Op::Connect {
@@ -132,7 +160,7 @@ fn accept_range_full_and_armed_again<IO: Io>(
         },
     );
     let (mut accept_err, mut third_done) = (false, false);
-    drain_until(&mut io, &mut out, |_, c| {
+    drain_until(io, out, |_, c| {
         if c.token.0 == 1 {
             assert!(!c.more && c.buf.is_none());
             assert!(c.result == -ENFILE || c.result == -EMFILE, "{c:?}");
@@ -142,7 +170,16 @@ fn accept_range_full_and_armed_again<IO: Io>(
         }
         accept_err && third_done
     });
-    close_socks(&mut io, &mut out, &[Sock(5), accepted[0]]);
+}
+
+/// A new armed accept 2 places a 4th client into the freed slot `freed`.
+/// Returns the accepted socket, with accept 2 no longer armed.
+fn rearmed_accept_reuses_slot<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    bound: SocketAddr,
+    freed: Sock,
+) -> Sock {
     io.must_submit(Token(2), Op::ArmedAccept { listener: Sock(0) });
     io.must_submit(
         Token(13),
@@ -154,9 +191,9 @@ fn accept_range_full_and_armed_again<IO: Io>(
     let mut reused = None;
     let mut accept2_armed = true;
     let mut fourth_ok = false;
-    drain_until(&mut io, &mut out, |_, c| {
+    drain_until(io, out, |_, c| {
         if c.token.0 == 2 {
-            assert!(u32::try_from(c.result) == Ok(accepted[0].0));
+            assert!(u32::try_from(c.result) == Ok(freed.0));
             accept2_armed = c.more;
             reused = Some(must_sock(c.result));
         } else if c.token.0 == 13 {
@@ -166,33 +203,9 @@ fn accept_range_full_and_armed_again<IO: Io>(
         reused.is_some() && fourth_ok
     });
     if accept2_armed {
-        io.must_submit(Token(21), Op::Cancel { target: Token(2) });
-        drain_until(&mut io, &mut out, |_, c| c.token.0 == 2 && !c.more);
+        cancel_until_end(io, out, 21, 2);
     }
-    let mut tok = 100;
-    send_all(&mut io, &mut out, Sock(6), BufId(0), b"rearmed", &mut tok);
-    io.must_submit(
-        Token(tok),
-        Op::Recv {
-            sock: must(reused, "reused socket"),
-            buf: BufId(1),
-            off: 0,
-            len: 32,
-        },
-    );
-    assert!(drain_one(&mut io, &mut out, tok).result > 0);
-    close_socks(
-        &mut io,
-        &mut out,
-        &[
-            Sock(0),
-            accepted[1],
-            must(reused, "reused socket"),
-            Sock(3),
-            Sock(4),
-            Sock(6),
-        ],
-    );
+    must(reused, "reused socket")
 }
 
 fn accept_range_len_zero_returns_enfile<IO: Io>(

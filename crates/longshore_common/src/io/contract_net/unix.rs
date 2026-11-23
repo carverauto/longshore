@@ -7,7 +7,7 @@
 
 use super::{close_socks, drain_one, drain_until, echo_armed, net_limits};
 use crate::io::must::{must, must_sock, Must};
-use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token};
+use crate::io::{BufId, Completion, Completions, Io, Limits, Op, Sock, Token};
 use std::net::SocketAddr;
 
 fn put_bytes(io: &mut impl Io, buf: BufId, bytes: &[u8]) -> u32 {
@@ -78,60 +78,18 @@ fn unix_no_listener_and_bad_paths_leave_slot_free<IO: Io>(
     // Non-listening Unix path completes negatively and leaves Sock(1) free.
     let mut with_nul = unix_path.as_bytes().to_vec();
     with_nul.push(0);
-    let len = put_bytes(&mut io, BufId(0), &with_nul);
-    io.must_submit(
-        Token(1),
-        Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: len,
-        },
-    );
-    let c = drain_one(&mut io, &mut out, 1);
+    let c = connect_unix(&mut io, &mut out, 1, &with_nul);
     assert!(c.result < 0 && !c.more && c.buf.is_none(), "{c:?}");
 
     // Bad paths (missing NUL, interior NUL, overlong) fail negatively and leave Sock(1) free.
-    let no_nul = put_bytes(&mut io, BufId(0), unix_path.as_bytes());
-    io.must_submit(
-        Token(2),
-        Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: no_nul,
-        },
-    );
-    assert!(drain_one(&mut io, &mut out, 2).result < 0);
-
+    assert!(connect_unix(&mut io, &mut out, 2, unix_path.as_bytes()).result < 0);
     let mut interior = b"/tmp/bad\0path".to_vec();
     interior.push(0);
-    let ilen = put_bytes(&mut io, BufId(0), &interior);
-    io.must_submit(
-        Token(3),
-        Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: ilen,
-        },
-    );
-    assert!(drain_one(&mut io, &mut out, 3).result < 0);
-
+    assert!(connect_unix(&mut io, &mut out, 3, &interior).result < 0);
     let mut long_path = vec![b'a'; 109];
     long_path[0] = b'/';
     long_path.push(0);
-    let llen = put_bytes(&mut io, BufId(0), &long_path);
-    io.must_submit(
-        Token(4),
-        Op::ConnectUnix {
-            sock: Sock(1),
-            path_buf: BufId(0),
-            path_off: 0,
-            path_len: llen,
-        },
-    );
-    assert!(drain_one(&mut io, &mut out, 4).result < 0);
+    assert!(connect_unix(&mut io, &mut out, 4, &long_path).result < 0);
 
     // Now reuse Sock(1) for a valid TCP connect.
     let bound = io.must_listen(Sock(0), addr);
@@ -161,6 +119,22 @@ fn unix_no_listener_and_bad_paths_leave_slot_free<IO: Io>(
         a && b
     });
     close_socks(&mut io, &mut out, &[Sock(0), Sock(1), Sock(2)]);
+}
+
+/// Connect `Sock(1)` to the Unix path `path` (taken as is, NUL or not) with
+/// token `tok`, and wait for the completion.
+fn connect_unix(io: &mut impl Io, out: &mut Completions, tok: u64, path: &[u8]) -> Completion {
+    let path_len = put_bytes(io, BufId(0), path);
+    io.must_submit(
+        Token(tok),
+        Op::ConnectUnix {
+            sock: Sock(1),
+            path_buf: BufId(0),
+            path_off: 0,
+            path_len,
+        },
+    );
+    drain_one(io, out, tok)
 }
 
 fn unix_stream_echo<IO: Io>(make: &mut impl FnMut(Limits) -> IO, unix_path: &str) {

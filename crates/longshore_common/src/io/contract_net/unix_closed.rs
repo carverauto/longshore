@@ -5,7 +5,7 @@
 
 //! Shared Unix-domain closed-peer-before-accept regression checks.
 
-use super::{close_socks, drain_one, drain_until, echo_armed, net_limits};
+use super::{cancel_until_end, close_socks, drain_one, drain_until, echo_armed, net_limits};
 use crate::io::must::{must, must_sock, Must};
 use crate::io::{BufId, Completions, Io, Limits, Op, Sock, Token, ECANCELED};
 
@@ -88,32 +88,60 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
     let mut with_nul = unix_path.as_bytes().to_vec();
     with_nul.push(0);
 
-    let was_connected = connect_unix_then_close(&mut io, &mut out, &with_nul, Sock(1), 10);
-    io.must_submit(Token(1), Op::ArmedAccept { listener: Sock(0) });
-    let mut accept_armed = true;
-    if was_connected {
-        let a = drain_one(&mut io, &mut out, 1);
-        assert!(a.result >= 0 && a.more && a.buf.is_none(), "{a:?}");
-        accept_armed = a.more;
-        let closed_srv = must_sock(a.result);
-        io.must_submit(Token(20), Op::ArmedRecv { sock: closed_srv });
-        let eof = drain_one(&mut io, &mut out, 20);
-        assert_eq!((eof.result, eof.more, eof.buf), (0, false, None));
-        close_socks(&mut io, &mut out, &[closed_srv]);
-    }
+    let accept_armed = armed_accept_of_closed_peer(&mut io, &mut out, &with_nul);
+    live_peer_after_closed(&mut io, &mut out, &with_nul, accept_armed);
+    plain_accept_after_closed(&mut io, &mut out, &with_nul);
+    close_socks(&mut io, &mut out, &[Sock(0)]);
+    // Best-effort cleanup: a leftover temporary file does not change the result.
+    let _: Option<()> = std::fs::remove_file(unix_path).ok();
+}
 
-    let len = put_bytes(&mut io, BufId(0), &with_nul);
+/// Submit a Unix connect of `sock` to the path `with_nul` with token `tok`.
+fn submit_connect_unix<IO: Io>(io: &mut IO, tok: u64, sock: Sock, with_nul: &[u8]) {
+    let path_len = put_bytes(io, BufId(0), with_nul);
     io.must_submit(
-        Token(30),
+        Token(tok),
         Op::ConnectUnix {
-            sock: Sock(1),
+            sock,
             path_buf: BufId(0),
             path_off: 0,
-            path_len: len,
+            path_len,
         },
     );
+}
+
+/// A peer that connected and closed before armed accept 1 is accepted, and its
+/// socket reads EOF. Returns whether accept 1 is still armed.
+fn armed_accept_of_closed_peer<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    with_nul: &[u8],
+) -> bool {
+    let was_connected = connect_unix_then_close(io, out, with_nul, Sock(1), 10);
+    io.must_submit(Token(1), Op::ArmedAccept { listener: Sock(0) });
+    if !was_connected {
+        return true;
+    }
+    let a = drain_one(io, out, 1);
+    assert!(a.result >= 0 && a.more && a.buf.is_none(), "{a:?}");
+    let closed_srv = must_sock(a.result);
+    io.must_submit(Token(20), Op::ArmedRecv { sock: closed_srv });
+    let eof = drain_one(io, out, 20);
+    assert_eq!((eof.result, eof.more, eof.buf), (0, false, None));
+    close_socks(io, out, &[closed_srv]);
+    a.more
+}
+
+/// A live peer is then accepted by accept 1 and echoes.
+fn live_peer_after_closed<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    with_nul: &[u8],
+    mut accept_armed: bool,
+) {
+    submit_connect_unix(io, 30, Sock(1), with_nul);
     let (mut live_srv, mut live_conn) = (None, false);
-    drain_until(&mut io, &mut out, |_, c| {
+    drain_until(io, out, |_, c| {
         if c.token.0 == 1 {
             assert!(c.result >= 0 && c.buf.is_none(), "{c:?}");
             accept_armed = c.more;
@@ -126,13 +154,12 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
     });
     let live_srv = must(live_srv, "live server socket");
     if accept_armed {
-        io.must_submit(Token(31), Op::Cancel { target: Token(1) });
-        drain_until(&mut io, &mut out, |_, c| c.token.0 == 1 && !c.more);
+        cancel_until_end(io, out, 31, 1);
     }
     let mut tok = 60u64;
     let (got, recv_armed) = echo_armed(
-        &mut io,
-        &mut out,
+        io,
+        out,
         (Sock(1), live_srv),
         BufId(0),
         b"after-closed-peer",
@@ -141,12 +168,15 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
     );
     assert_eq!(got, b"after-closed-peer");
     if recv_armed {
-        io.must_submit(Token(tok), Op::Cancel { target: Token(3) });
-        drain_until(&mut io, &mut out, |_, c| c.token.0 == 3 && !c.more);
+        cancel_until_end(io, out, tok, 3);
     }
-    close_socks(&mut io, &mut out, &[Sock(1), live_srv]);
+    close_socks(io, out, &[Sock(1), live_srv]);
+}
 
-    let was_connected2 = connect_unix_then_close(&mut io, &mut out, &with_nul, Sock(1), 40);
+/// A plain accept 50 takes a closed peer (which reads EOF) or, if the peer never
+/// connected, a fresh one.
+fn plain_accept_after_closed<IO: Io>(io: &mut IO, out: &mut Completions, with_nul: &[u8]) {
+    let was_connected2 = connect_unix_then_close(io, out, with_nul, Sock(1), 40);
     io.must_submit(
         Token(50),
         Op::Accept {
@@ -155,7 +185,7 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
         },
     );
     if was_connected2 {
-        let a = drain_one(&mut io, &mut out, 50);
+        let a = drain_one(io, out, 50);
         assert_eq!((a.result, a.more, a.buf), (0, false, None));
         io.must_submit(
             Token(51),
@@ -166,21 +196,12 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
                 len: 32,
             },
         );
-        assert_eq!(drain_one(&mut io, &mut out, 51).result, 0);
-        close_socks(&mut io, &mut out, &[Sock(2)]);
+        assert_eq!(drain_one(io, out, 51).result, 0);
+        close_socks(io, out, &[Sock(2)]);
     } else {
-        let len2 = put_bytes(&mut io, BufId(0), &with_nul);
-        io.must_submit(
-            Token(52),
-            Op::ConnectUnix {
-                sock: Sock(1),
-                path_buf: BufId(0),
-                path_off: 0,
-                path_len: len2,
-            },
-        );
+        submit_connect_unix(io, 52, Sock(1), with_nul);
         let (mut a_ok, mut c_ok) = (false, false);
-        drain_until(&mut io, &mut out, |_, c| {
+        drain_until(io, out, |_, c| {
             if c.token.0 == 50 {
                 assert_eq!(c.result, 0);
                 a_ok = true;
@@ -190,11 +211,8 @@ fn unix_closed_peer_before_accept<IO: Io>(make: &mut impl FnMut(Limits) -> IO, u
             }
             a_ok && c_ok
         });
-        close_socks(&mut io, &mut out, &[Sock(1), Sock(2)]);
+        close_socks(io, out, &[Sock(1), Sock(2)]);
     }
-    close_socks(&mut io, &mut out, &[Sock(0)]);
-    // Best-effort cleanup: a leftover temporary file does not change the result.
-    let _: Option<()> = std::fs::remove_file(unix_path).ok();
 }
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, unix_path: &str) {

@@ -29,6 +29,49 @@ pub(crate) fn base_limits() -> Limits {
     }
 }
 
+/// Read-write flags that create the file if it is missing.
+pub(crate) fn rw_create() -> OpenFlags {
+    OpenFlags {
+        read: true,
+        write: true,
+        create: true,
+        ..Default::default()
+    }
+}
+
+/// An open of the path at the start of `path_buf` into `slot`.
+pub(crate) fn open_op(slot: FileSlot, path_buf: BufId, path_len: u32, flags: OpenFlags) -> Op {
+    Op::FileOpen {
+        slot,
+        path_buf,
+        path_off: 0,
+        path_len,
+        flags,
+    }
+}
+
+/// A write of `len` bytes from the start of `buf` at `file_off`.
+pub(crate) fn write_op(slot: FileSlot, buf: BufId, len: u32, file_off: u64) -> Op {
+    Op::FileWrite {
+        slot,
+        buf,
+        off: 0,
+        len,
+        file_off,
+    }
+}
+
+/// A read of `len` bytes from `file_off` into the start of `buf`.
+pub(crate) fn read_op(slot: FileSlot, buf: BufId, len: u32, file_off: u64) -> Op {
+    Op::FileRead {
+        slot,
+        buf,
+        off: 0,
+        len,
+        file_off,
+    }
+}
+
 pub(crate) fn write_path(io: &mut impl Io, buf: BufId, off: u32, path: &str) -> u32 {
     let b = path.as_bytes();
     let dst = &mut io.buf(buf)[off as usize..off as usize + b.len() + 1];
@@ -139,11 +182,19 @@ fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
     let sub = format!("{root}sub");
     let src = format!("{sub}/src.dat");
     let dst = format!("{sub}/dst.dat");
-    let sl = write_path(&mut io, BufId(0), 0, &sub);
+    mkdir_and_write_src(&mut io, &mut out, &sub, &src);
+    rename_over_open_dst(&mut io, &mut out, &src, &dst);
+    sync_root_dir(&mut io, &mut out, root);
+    unlink_dst(&mut io, &mut out, &dst);
+}
+
+/// Tokens 1-4: make `sub`, then create `src` in it holding six bytes.
+fn mkdir_and_write_src(io: &mut impl Io, out: &mut Completions, sub: &str, src: &str) {
+    let sl = write_path(io, BufId(0), 0, sub);
     assert_eq!(
         drive_one(
-            &mut io,
-            &mut out,
+            io,
+            out,
             Token(1),
             Op::FileMkdir {
                 path_buf: BufId(0),
@@ -153,21 +204,15 @@ fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
         ),
         0
     );
-    let rw = OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        ..Default::default()
-    };
     assert_eq!(
-        open_file(&mut io, &mut out, 2, FileSlot(0), BufId(0), &src, rw),
+        open_file(io, out, 2, FileSlot(0), BufId(0), src, rw_create()),
         0
     );
     io.buf(BufId(1))[..6].copy_from_slice(b"kept!!");
     assert_eq!(
         drive_one(
-            &mut io,
-            &mut out,
+            io,
+            out,
             Token(3),
             Op::FileWrite {
                 slot: FileSlot(0),
@@ -179,17 +224,21 @@ fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
         ),
         6
     );
-    assert_eq!(close_file(&mut io, &mut out, 4, FileSlot(0)), 0);
+    assert_eq!(close_file(io, out, 4, FileSlot(0)), 0);
+}
+
+/// Tokens 5-9: rename `src` over an open `dst`; `src` is gone and `dst` has its bytes.
+fn rename_over_open_dst(io: &mut impl Io, out: &mut Completions, src: &str, dst: &str) {
     assert_eq!(
-        open_file(&mut io, &mut out, 5, FileSlot(0), BufId(0), &dst, rw),
+        open_file(io, out, 5, FileSlot(0), BufId(0), dst, rw_create()),
         0
     );
-    let old_len = write_path(&mut io, BufId(0), 0, &src);
-    let new_len = write_path(&mut io, BufId(1), 0, &dst);
+    let old_len = write_path(io, BufId(0), 0, src);
+    let new_len = write_path(io, BufId(1), 0, dst);
     assert_eq!(
         drive_one(
-            &mut io,
-            &mut out,
+            io,
+            out,
             Token(6),
             Op::FileRename {
                 old_buf: BufId(0),
@@ -202,16 +251,13 @@ fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
         ),
         0
     );
-    assert_eq!(
-        stat_file(&mut io, &mut out, 7, BufId(0), BufId(1), &src),
-        Err(-ENOENT)
-    );
-    assert_eq!(
-        stat_file(&mut io, &mut out, 8, BufId(0), BufId(1), &dst),
-        Ok(6)
-    );
-    assert_eq!(close_file(&mut io, &mut out, 9, FileSlot(0)), 0);
+    assert_eq!(stat_file(io, out, 7, BufId(0), BufId(1), src), Err(-ENOENT));
+    assert_eq!(stat_file(io, out, 8, BufId(0), BufId(1), dst), Ok(6));
+    assert_eq!(close_file(io, out, 9, FileSlot(0)), 0);
+}
 
+/// Tokens 10-12: open the root directory and sync it.
+fn sync_root_dir(io: &mut impl Io, out: &mut Completions, root: &str) {
     let dir_path = if root.is_empty() {
         "/"
     } else {
@@ -223,13 +269,13 @@ fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
         ..Default::default()
     };
     assert_eq!(
-        open_file(&mut io, &mut out, 10, FileSlot(1), BufId(0), dir_path, df),
+        open_file(io, out, 10, FileSlot(1), BufId(0), dir_path, df),
         0
     );
     assert_eq!(
         drive_one(
-            &mut io,
-            &mut out,
+            io,
+            out,
             Token(11),
             Op::FileSync {
                 slot: FileSlot(1),
@@ -238,13 +284,16 @@ fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
         ),
         0
     );
-    assert_eq!(close_file(&mut io, &mut out, 12, FileSlot(1)), 0);
+    assert_eq!(close_file(io, out, 12, FileSlot(1)), 0);
+}
 
-    let ul = write_path(&mut io, BufId(0), 0, &dst);
+/// Tokens 13-14: unlink `dst`; it no longer exists.
+fn unlink_dst(io: &mut impl Io, out: &mut Completions, dst: &str) {
+    let ul = write_path(io, BufId(0), 0, dst);
     assert_eq!(
         drive_one(
-            &mut io,
-            &mut out,
+            io,
+            out,
             Token(13),
             Op::FileUnlink {
                 path_buf: BufId(0),
@@ -255,7 +304,7 @@ fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root:
         0
     );
     assert_eq!(
-        stat_file(&mut io, &mut out, 14, BufId(0), BufId(1), &dst),
+        stat_file(io, out, 14, BufId(0), BufId(1), dst),
         Err(-ENOENT)
     );
 }

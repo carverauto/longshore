@@ -215,6 +215,77 @@ pub(crate) fn connect_one<IO: Io>(
     must(accepted, "accepted socket")
 }
 
+/// Cancel armed operation `target` with token `cancel`, and wait for both the
+/// cancel and the target's final completion.
+pub(crate) fn cancel_and_wait<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    cancel: u64,
+    target: u64,
+) {
+    io.must_submit(
+        Token(cancel),
+        Op::Cancel {
+            target: Token(target),
+        },
+    );
+    let (mut c_ok, mut t_end) = (false, false);
+    drain_until(io, out, |_, c| {
+        if c.token.0 == cancel {
+            c_ok = true;
+        } else if c.token.0 == target && !c.more {
+            t_end = true;
+        }
+        c_ok && t_end
+    });
+}
+
+/// Cancel armed operation `target` with token `cancel`, and wait only for the
+/// target's final completion.
+pub(crate) fn cancel_until_end<IO: Io>(
+    io: &mut IO,
+    out: &mut Completions,
+    cancel: u64,
+    target: u64,
+) {
+    io.must_submit(
+        Token(cancel),
+        Op::Cancel {
+            target: Token(target),
+        },
+    );
+    drain_until(io, out, |_, c| c.token.0 == target && !c.more);
+}
+
+/// If bytes of `msg` past `off` remain, send them from the start of `buf` on
+/// `sock` with the next token from `tok`, and return that token.
+pub(crate) fn send_rest<IO: Io>(
+    io: &mut IO,
+    (sock, buf): (Sock, BufId),
+    msg: &[u8],
+    off: usize,
+    tok: &mut u64,
+) -> Option<u64> {
+    if off >= msg.len() {
+        return None;
+    }
+    let rem = msg.len() - off;
+    io.buf(buf)[..rem].copy_from_slice(&msg[off..]);
+    let t = *tok;
+    *tok += 1;
+    io.must_submit(
+        Token(t),
+        Op::Send {
+            sock,
+            buf,
+            off: 0,
+            len: rem as u32,
+            zero_copy: false,
+        },
+    );
+    Some(t)
+}
+
 /// Run the full shared server-networking contract suite against `IO`.
 pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr, unix_path: &str) {
     accept::run_all(make, addr);
