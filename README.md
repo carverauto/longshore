@@ -118,20 +118,81 @@ ring, lock-free mailboxes between cores, and a simulated disk with power
 loss and fault injection.
 [The I/O layer][io] describes each part.
 
-## TLS
+## TLS and crypto providers
 
-HTTPS comes from one of three providers, each a Cargo feature. The handshake
-always runs in rustls; the provider decides who seals and opens the records.
+HTTPS is TLS 1.3 with AES-GCM. The handshake always runs in rustls; the
+crypto provider decides who seals and opens the records, and which crypto
+library rustls uses for the handshake. Each provider is a Cargo feature.
 
-| Cargo.toml | Records sealed and opened by | Notes |
-|---|---|---|
-| `longshore = "0.2"` (or `features = ["tls"]`) | AWS-LC, with no copy | The default and the fastest |
-| `default-features = false, features = ["ring"]` | ring, copying each body once | No AWS-LC and no C toolchain for AWS-LC |
-| `default-features = false, features = ["rustls"]` | rustls's own record layer | rustls allocates a buffer for every record it sends |
-| `default-features = false` | no TLS: plain HTTP | For networks where everything is internal |
+| Provider | Feature flag | Records sealed and opened by | Handshake crypto | Use it when |
+|---|---|---|---|---|
+| AWS-LC | `aws-lc` (default; `tls` is the same) | AWS-LC, with no copy of the body | AWS-LC | Throughput matters most: the fastest |
+| ring | `ring` | ring, copying each body once | ring | You want ring as the only crypto library, with no AWS-LC (and none of its C build) |
+| rustls | `rustls` | rustls's own record layer | ring | You want all of TLS from rustls; it allocates a buffer for every record it sends |
+| none | no provider feature | — | — | Plain HTTP, for networks where everything is internal |
 
-With several compiled in, `Builder::tls_provider(TlsProvider::Ring)` picks
-one; otherwise the first of AWS-LC, ring and rustls is used.
+Measured on an M3 Max in a Linux container, one core, AES-128-GCM over
+16 KiB records: AWS-LC seals at 10.2 GB/s, ring at 6.8 and rustls at 6.2; an
+HTTPS upload runs at 7.2, 5.1 and 4.6 GB/s
+([`bench/results/m29-tls-providers.md`][results]).
+
+### Switching a provider on
+
+AWS-LC, the default:
+
+```toml
+[dependencies]
+longshore = "0.2"
+```
+
+ring only, with no AWS-LC in the build:
+
+```toml
+[dependencies]
+longshore = { version = "0.2", default-features = false, features = ["ring"] }
+```
+
+rustls for everything:
+
+```toml
+[dependencies]
+longshore = { version = "0.2", default-features = false, features = ["rustls"] }
+```
+
+No TLS at all (plain HTTP; `ring` stays in the build for request signing):
+
+```toml
+[dependencies]
+longshore = { version = "0.2", default-features = false }
+```
+
+Then turn HTTPS on in the client with `.tls(true)`, as in [Using it](#using-it).
+Asking for TLS in a build without a provider makes `build()` fail with an
+error that names the feature to enable.
+
+### Choosing at run time
+
+Features add up, so a build can hold several providers, for example
+`features = ["aws-lc", "ring"]`, or because two dependencies ask for
+different ones. The client then uses the first compiled in of AWS-LC, ring
+and rustls, unless told otherwise:
+
+```rust,no_run
+use longshore::client::{Builder, TlsProvider};
+use longshore::store::creds::Credentials;
+
+let credentials = Credentials::new("ACCESS_KEY", "SECRET_KEY").unwrap();
+let client = Builder::new("my-bucket.s3.us-east-1.amazonaws.com", "us-east-1", credentials)
+    .tls(true)
+    .port(443)
+    .tls_provider(TlsProvider::Ring)
+    .build()
+    .unwrap();
+```
+
+Choosing a provider that is not compiled in makes `build()` fail with an
+error that names its feature. `TlsProvider::compiled()` says which are
+available.
 
 ## Requirements
 
