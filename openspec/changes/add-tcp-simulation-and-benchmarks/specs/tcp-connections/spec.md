@@ -32,7 +32,7 @@ driver's operation slots), and SHALL resume or tell the caller when there
 is room, with no further call needed to trigger it.
 
 #### Scenario: Frame memory exhausted at the end of the stream
-- **WHEN** a peer's last frame and the end of its stream arrive while every frame buffer is held, on a plain and on a TLS connection, in ring and in direct mode
+- **WHEN** a peer's last frame and the end of its stream arrive while every frame buffer is held, on a plain and on a TLS connection, in ring and in direct mode, with and without half-close
 - **THEN** the frame is delivered once frame memory is released, and the end is reported after it as orderly
 
 #### Scenario: Shared pool empty
@@ -44,17 +44,92 @@ is room, with no further call needed to trigger it.
 - **THEN** the exchange completes after the pool has room again, and every byte arrives once and in order
 
 ### Requirement: End of stream after everything received
-The TCP set SHALL offer every frame received before the end of a stream
-before it reports the end, and SHALL report the end as orderly only when
-the stream ended between frames and, with TLS, after a close alert.
+The TCP set SHALL NOT report the end of a connection (`Finished`, `Closed`
+or `Down`) while anything received on it is left to pull, in whatever
+order the caller pulls events and frames, and SHALL report the end as
+orderly only when the stream ended between frames, with TLS after a close
+alert, and no send failed.
+
+#### Scenario: Events drained before frames
+- **WHEN** frames and the end of the stream arrive in one turn and the caller pulls every event before it pulls any frame
+- **THEN** no end event is among them, every frame can still be pulled, and the end is reported after the last one
 
 #### Scenario: Data and end in one turn
 - **WHEN** frames, a partial frame and the end of the stream arrive in the same turn
-- **THEN** the whole frames are delivered and the end is reported as a reset
+- **THEN** the whole frames are delivered and the end is then reported as a reset
 
 #### Scenario: Frame that is only a header
 - **WHEN** a header announcing an empty body arrives in two pieces and the stream then ends
 - **THEN** the frame is delivered and the end is reported as orderly
+
+#### Scenario: End with frame memory exhausted
+- **WHEN** the stream ends while every frame buffer is held, with input not yet pulled
+- **THEN** no end is reported until frame memory is released and the input pulled, or the idle timeout passes, or the caller closes
+
+#### Scenario: Closed under it
+- **WHEN** the caller closes a connection whose stream has ended with input left
+- **THEN** the input is dropped, no event follows, and all its memory is free once its operations have ended
+
+### Requirement: Half-close by the peer
+The TCP set SHALL, for a connection opened or accepted with half-close,
+keep it open for sending after its peer has finished its stream in order:
+it SHALL report that the peer has finished once everything received has
+been pulled, SHALL go on sending what the caller queues, and SHALL end the
+connection as orderly when the caller has shut its own side down. Without
+half-close, which is the default, the end of the peer's stream SHALL end
+the connection.
+
+#### Scenario: Request, shutdown, reply
+- **WHEN** a peer sends a request, shuts its write side down and waits, and the caller answers after pulling the request
+- **THEN** the caller is told the peer has finished, its answer is sent and received by the peer, and after the caller's shutdown the connection is reported closed as orderly
+
+#### Scenario: Default
+- **WHEN** the same peer talks to a connection without half-close
+- **THEN** the connection is reported closed as orderly after the request has been pulled, and a send after that is refused as not up
+
+#### Scenario: End inside a frame
+- **WHEN** a peer of a half-close connection ends its stream inside a frame, or without a TLS close alert
+- **THEN** the connection is reported closed as a reset, and the peer is not reported as finished
+
+#### Scenario: Send fails after the peer finished
+- **WHEN** the peer has finished and then resets the connection while the caller's answer is being sent
+- **THEN** the connection is reported closed as a reset, once
+
+#### Scenario: Never answered
+- **WHEN** the peer has finished and the caller neither sends, shuts down nor closes, with an idle timeout set
+- **THEN** the connection is reported closed as timed out when the timeout passes
+
+#### Scenario: Close racing with the answer
+- **WHEN** the caller closes a half-closed connection while its answer is in flight
+- **THEN** the slot is freed once, after the send has ended, and no event names the connection
+
+#### Scenario: Both shut down
+- **WHEN** the caller shut its side down before the peer finished
+- **THEN** the connection is reported closed as orderly when the peer finishes, without the peer being reported as finished first
+
+### Requirement: Errors that say what is wrong
+The TCP set SHALL answer a call on a connection that exists but is not
+open for what was asked (a send or a shutdown before it is up, after its
+end, or after the caller's shutdown) with an error that says so, distinct
+from the error for a handle that names no connection, and SHALL accept
+exactly one frame for a refused connection.
+
+#### Scenario: Shutdown before up
+- **WHEN** the write side of a connection that is still connecting is shut down
+- **THEN** the call fails as not up, and the handle stays valid
+
+#### Scenario: Second frame for a refused connection
+- **WHEN** two frames are sent to a refused connection
+- **THEN** the first is queued and the second is refused
+
+### Requirement: Listener slots reused only when quiet
+The TCP set SHALL give a listener slot to a new listener only when the
+previous listener's close has completed and its accept has made its last
+report.
+
+#### Scenario: Listen right after closing
+- **WHEN** a listener is closed and another is opened at once, repeatedly, while connections arrive and with the close's and the accept's reports in either order
+- **THEN** each listener has at most one accept in flight, and every accepted connection is announced by the listener that accepted it or closed unannounced
 
 ### Requirement: Transport conformance
 Every transport SHALL pass one conformance suite stating what the set

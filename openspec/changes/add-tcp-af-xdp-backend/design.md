@@ -95,6 +95,10 @@ the standard says; that is left out here.
 | LAST-ACK | — (2) | challenge | challenge | of our FIN: → CLOSED, report `ShutDown` | drop, ACK | resend the ACK | exact: → CLOSED | challenge | — (5) | (4) | resend |
 | TIME-WAIT (linger table) | — (7) | new connection if its sequence number is beyond the old one's, else challenge | challenge | ignore | drop, ACK | resend the ACK, restart the wait | exact: remove | challenge | — (7) | — (7) | the wait is over: remove |
 
+The rows CLOSE-WAIT and LAST-ACK are what `Net`'s half-close (change 2)
+needs from a transport: after the peer's FIN is reported as the end of
+the stream, sends go on and are reported, until `shutdown_write`.
+
 1. `Net` holds no connection in a free slot.
 2. `connect` is called once per connection, on a free slot.
 3. `Net` calls neither before the connection is reported up.

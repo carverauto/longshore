@@ -28,6 +28,14 @@ Second of three changes (`add-tcp-crate`, this, `add-tcp-af-xdp-backend`).
   test (`tcp_model`) that checks them after every step of seeded random
   operations; the simulator delivering a tick's completions in a seeded
   order; a conformance suite for transports, which change 3 must pass.
+- Two changes to the machine, found by checking its state tables against
+  the code: an end event is held back until everything received has been
+  pulled, so that no order of pulling loses frames; and half-close, as an
+  option per connection, so that a peer that sends, shuts down and waits
+  can be answered (`Event::Finished`). With them `NetError::NotUp`, one
+  frame for a refused connection, and listener slots reused only when
+  quiet. **BREAKING** for callers: `shutdown_write` on a connection that
+  is not up returns `NotUp` where it returned `Stale`.
 - Working method for this change and the next: tables and invariants
   before code, adversarial scenarios for every requirement, a review at
   the end of each task group.
@@ -55,6 +63,7 @@ Second of three changes (`add-tcp-crate`, this, `add-tcp-af-xdp-backend`).
 
 ## Impact
 - Affected specs: `tcp-connections` (ADDED: checked invariants, exhaustion,
+  the end after everything received, half-close, errors, listener slots,
   transport conformance, simulation, measured defaults)
 - Affected code: `longshore_tcp` tests and defaults, `longshore_common::sim`
   (packet device), `longshore-bench` (`tcp_uring`, benches), `fuzz/`
