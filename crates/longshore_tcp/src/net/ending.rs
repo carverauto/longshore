@@ -63,6 +63,12 @@ impl<T: Transport> Net<T> {
             // The handshake of an accepted connection took too long.
             St::Securing => self.end(slot, Why::Timeout),
             St::Finishing => {
+                let active_until = c.last_active.saturating_add(c.opts.idle_timeout_ns);
+                if self.flushable(slot) && self.now < active_until {
+                    // With half-close it is still answering: its input
+                    // waits for as long as it sends.
+                    return self.deadlines.set(slot, active_until);
+                }
                 // Its caller left its last input unpulled for too long.
                 self.drop_input(slot);
                 self.conns[slot as usize].why = Why::Timeout;

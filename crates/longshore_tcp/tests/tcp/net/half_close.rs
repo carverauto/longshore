@@ -250,3 +250,43 @@ fn a_connection_that_is_not_up_says_so_and_keeps_its_handle() {
     assert_eq!(w.client.close(&mut w.io, c), Ok(()));
     assert_eq!(w.client.close(&mut w.io, c), Err(NetError::Stale));
 }
+
+#[test]
+fn input_left_unpulled_does_not_time_out_while_the_answer_is_being_sent() {
+    let mut w = World::new(39, Faults::NONE);
+    let (c, s) = half_closed_pair(&mut w, prefix().with_idle_timeout_ns(20 * MS));
+    // Two requests and the end of the stream, all there before a pull.
+    assert!(send(&mut w, c, &prefixed(10, 1)));
+    assert!(send(&mut w, c, &prefixed(10, 2)));
+    w.client.shutdown_write(&mut w.io, c).unwrap();
+    for _ in 0..40 {
+        w.turn();
+    }
+    // The caller takes the first and answers it at length, leaving the
+    // second where it is: its backpressure.
+    let first = w.server.next_frame(&mut w.io, s).unwrap().unwrap();
+    w.server.release(first);
+    let started = w.io.now_ns();
+    let mut pieces = 0;
+    while w.io.now_ns() - started < 80 * MS {
+        // The queue may be full for a turn; the next piece goes then.
+        let piece = w.server.send_bytes(&mut w.io, s, &prefixed(500, 3));
+        pieces += u32::from(piece.is_ok());
+        w.turn();
+        while w.client.next_event().is_some() {
+            while let Some(f) = w.client.next_frame(&mut w.io, c).unwrap() {
+                w.client.release(f);
+            }
+        }
+        while let Some(e) = w.server.next_event() {
+            let quiet = matches!(e, Event::Readable(_) | Event::Writable(_));
+            assert!(quiet, "ended while it was sending: {e:?}");
+        }
+    }
+    assert!(pieces > 10, "{pieces} pieces of the answer went out");
+    // The second request is still there, and then the peer has finished.
+    let rest: Vec<Vec<u8>> = w.pull_all(s).into_iter().map(|(_, bytes)| bytes).collect();
+    assert_eq!(rest, [prefixed(10, 2)]);
+    let told = until_told(&mut w, Event::Finished(s));
+    assert_eq!(told.server, [Event::Finished(s)]);
+}
