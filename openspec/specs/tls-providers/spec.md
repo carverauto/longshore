@@ -1,7 +1,10 @@
 # tls-providers Specification
 
 ## Purpose
-TBD - created by archiving change add-tls-providers. Update Purpose after archive.
+Which library protects HTTPS: AWS-LC (the default), ring, or rustls's own
+record layer, each a Cargo feature, chosen per client when several are
+compiled in, or none for a plain build. Measurements:
+`bench/results/m29-tls-providers.md`.
 ## Requirements
 ### Requirement: Provider features
 `longshore` and the crates beneath it SHALL offer three TLS provider
