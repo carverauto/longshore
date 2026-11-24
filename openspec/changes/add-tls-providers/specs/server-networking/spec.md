@@ -1,9 +1,9 @@
 ## MODIFIED Requirements
 
 ### Requirement: TLS as a build feature
-TLS SHALL be built only when a TLS provider feature (`aws-lc` or `ring`) is
+TLS SHALL be built only when a TLS provider feature (`aws-lc`, `ring` or `rustls`) is
 on, with `aws-lc` on by default, and the `longshore` crate built with
-neither SHALL NOT depend on `longshore_tls`, `rustls`, `aws-lc-sys` or
+none SHALL NOT depend on `longshore_tls`, `rustls`, `aws-lc-sys` or
 `aws-lc-rs`.
 
 #### Scenario: Plain build
