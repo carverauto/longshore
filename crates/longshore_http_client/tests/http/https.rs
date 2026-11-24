@@ -8,7 +8,7 @@
 //! opened by `longshore_tls`. Allocation is forbidden throughout, except inside
 //! the handshake's own scoped exception.
 
-#![cfg(feature = "tls")]
+#![cfg(feature = "tls-core")]
 
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};

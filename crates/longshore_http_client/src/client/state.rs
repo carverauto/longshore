@@ -17,7 +17,7 @@ pub(super) enum State {
     /// request's head is already in the head buffer.
     CheckIdle,
     /// TCP is up; the TLS handshake is in progress.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     TlsHandshake,
     SendHead {
         off: u32,

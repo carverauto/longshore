@@ -17,11 +17,13 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-# The record layer under test calls AWS-LC directly. The parsers are compiled
-# from their source files, not through the longshore crate: its checksum
-# dependency has a C-ABI library target that does not link under the
-# fuzzer's instrumentation.
-aws-lc-sys = "0.47"
+# The record layer, with all three providers, through its own crate. The
+# parsers are compiled from their source files, not through the longshore
+# crate: its checksum dependency has a C-ABI library target that does not
+# link under the fuzzer's instrumentation. longshore_tls does not depend on it.
+longshore_tls = { path = "../crates/longshore_tls", features = ["aws-lc", "ring", "rustls"] }
+# rustls's key type, to key its record layer from fuzzer-chosen bytes.
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 
 [[bin]]
 name = "dns_response"

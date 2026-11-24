@@ -5,7 +5,6 @@ Networking for servers on `Io`: operations with several completions,
 accept that stays armed, receive from a buffer ring, socket options,
 Unix-domain sockets, one plain-or-TLS stream for clients and servers, and
 TLS as a build feature.
-
 ## Requirements
 ### Requirement: Operations with several completions
 A completion SHALL say whether more completions will follow for its token.
@@ -121,19 +120,21 @@ depends on no HTTP code, for both the connecting and the accepting side.
 - **THEN** they pass without change to their expectations
 
 ### Requirement: TLS as a build feature
-TLS SHALL be a cargo feature that is on by default, and the `longshore`
-crate built without it SHALL depend on neither `longshore_tls` nor AWS-LC.
+TLS SHALL be built only when a TLS provider feature (`aws-lc`, `ring` or `rustls`) is
+on, with `aws-lc` on by default, and the `longshore` crate built with
+none SHALL NOT depend on `longshore_tls`, `rustls`, `aws-lc-sys` or
+`aws-lc-rs`.
 
 #### Scenario: Plain build
 - **WHEN** the dependencies of `longshore` are listed with default features off, leaving out those used only by tests
-- **THEN** the list holds neither `longshore_tls` nor `aws-lc-sys`
+- **THEN** the list holds none of `longshore_tls`, `rustls`, `aws-lc-sys` and `aws-lc-rs`
 
 #### Scenario: TLS asked for in a plain build
-- **WHEN** a client built without the feature is configured to use TLS
+- **WHEN** a client built without a provider feature is configured to use TLS
 - **THEN** building the client fails with an error that names the feature
 
 #### Scenario: Tests without the feature
-- **WHEN** the workspace's tests run with the feature off
+- **WHEN** the workspace's tests run with no provider feature on
 - **THEN** the tests that need no TLS pass
 
 ### Requirement: Every backend

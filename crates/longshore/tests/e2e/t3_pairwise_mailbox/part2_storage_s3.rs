@@ -265,7 +265,7 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
     let (len, _) = client.fetch("obj", buf).wait();
     assert_eq!(len.expect("fetch"), Some(5));
 
-    #[cfg(not(feature = "tls"))]
+    #[cfg(not(feature = "tls-core"))]
     {
         let bt = Builder::new("127.0.0.1", "us-east-1", creds)
             .port(server.port())
@@ -280,6 +280,6 @@ fn t3_25_s3_client_on_mailbox_plain_vs_tls_feature_gate() {
             Ok(_) => panic!("expected Setting(\"..tls..\"), got Ok(Client)"),
         }
     }
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     let _: BuildError = BuildError::Unsupported;
 }

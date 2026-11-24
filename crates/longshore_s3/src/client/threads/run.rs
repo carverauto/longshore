@@ -7,6 +7,8 @@
 
 use super::{Builder, Lane};
 use crate::client::worker::{Layout, Worker};
+#[cfg(feature = "tls-core")]
+use crate::client::TlsProvider;
 use crate::s3::{Config, CredentialsFile, Endpoint, Vendor, S3};
 use longshore_common::io::posix::PosixIo;
 #[cfg(target_os = "linux")]
@@ -14,7 +16,7 @@ use longshore_common::io::uring::UringIo;
 use longshore_common::io::{BufId, Completions, Io, Limits, Sock};
 use longshore_dns::Resolver;
 use longshore_http_client::client as http;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_tls::handshake::ClientSetup;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -161,12 +163,12 @@ fn limits(b: &Builder) -> (Limits, u32) {
     // Large buffers: two per connection for TLS records, then the lent
     // ones. Small buffers: one head per connection, three for DNS, one for
     // rereading the credentials file.
-    let tls_buffers = if cfg!(feature = "tls") && b.tls {
+    let tls_buffers = if cfg!(feature = "tls-core") && b.tls {
         2 * conns
     } else {
         0
     };
-    let buffer_size = b.buffer_size.max(if cfg!(feature = "tls") && b.tls {
+    let buffer_size = b.buffer_size.max(if cfg!(feature = "tls-core") && b.tls {
         256 * 1024
     } else {
         8192
@@ -256,7 +258,15 @@ fn store_config(b: &Builder, limits: Limits, endpoint: Endpoint) -> std::io::Res
     .with_attempts_max(4)
     .with_backoff_ns(200 * MS)
     .with_backoff_max_ns(5_000 * MS);
-    #[cfg(feature = "tls")]
-    let config = config.with_tls(b.tls.then(|| (ClientSetup::with_public_roots(), 0)));
+    #[cfg(feature = "tls-core")]
+    let config = config.with_tls(match (b.tls, b.tls_provider.or(TlsProvider::preferred())) {
+        (true, Some(p)) => {
+            // `Builder::check` refused a provider that is not compiled in.
+            let setup = ClientSetup::with_public_roots_using(p.into(), false)
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, p.missing()))?;
+            Some((setup, 0))
+        }
+        _ => None,
+    });
     Ok(config)
 }

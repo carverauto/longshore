@@ -12,9 +12,9 @@ use super::super::harness::drive_until;
 use longshore::io::{Completions, Io, Op, Sock, Token};
 #[cfg(feature = "sim")]
 use longshore::sim::SimIo;
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use longshore::stream::{Step, Stream};
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use longshore::tls::handshake::Handshake;
 #[cfg(feature = "sim")]
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -50,7 +50,7 @@ pub(super) fn connect_pair_sim(io: &mut SimIo, out: &mut Completions) {
     }
 }
 
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 pub(super) fn drive_tls_handshakes(
     io: &mut SimIo,
     out: &mut Completions,

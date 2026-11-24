@@ -45,7 +45,7 @@ fn t3_13_s3_client_portable_with_stream_server_plain_and_tls() {
     let (got, _buf) = client.fetch("k1", buf).wait();
     assert_eq!(got.expect("fetch plain"), Some(payload.len()));
 
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     {
         use super::super::harness::make_tls_identity;
         use longshore::client::BuildError;

@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Simulator tests for TLS `Stream` on both the connecting and the accepting side.
-#![cfg(feature = "tls")]
+#![cfg(feature = "tls-core")]
 
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_common::io::{BufId, Completions, Io, Limits, Op, Sock, Token};

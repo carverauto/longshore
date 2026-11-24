@@ -6,12 +6,12 @@
 //! Checking a connection that has been idle, before it carries another request.
 
 use crate::stream::Stream;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use crate::stream::Tls;
 use longshore_common::io::{BufId, Io, Op, EAGAIN};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_common::io::{Sock, Token};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_tls::record::{record_len, CONTENT_APPLICATION_DATA, CONTENT_HANDSHAKE};
 
 /// What a connection that should be silent turned out to hold.
@@ -35,7 +35,7 @@ impl Stream {
     /// byte of `scratch` at `off` is used as the place to read into.
     pub fn check_idle<IO: Io>(&mut self, io: &mut IO, scratch: BufId, off: u32) -> IdleCheck {
         let (sock, token) = (self.sock, self.recv_token);
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         if let Some(t) = self.tls.as_mut().filter(|t| t.active) {
             return t.idle_step(io, sock, token);
         }
@@ -54,7 +54,7 @@ impl Stream {
 
     /// The read submitted by [`Stream::check_idle`] completed with `result`.
     pub fn on_idle_check<IO: Io>(&mut self, io: &mut IO, result: i32) -> IdleCheck {
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             let _: &mut IO = io;
             match result {
@@ -63,7 +63,7 @@ impl Stream {
                 _ => IdleCheck::Closed,
             }
         }
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             let (sock, token) = (self.sock, self.recv_token);
             let Some(t) = self.tls.as_mut().filter(|t| t.active) else {
@@ -91,7 +91,7 @@ impl Stream {
     }
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 impl Tls {
     /// Open every complete record already received, then read again without
     /// waiting. Session tickets are expected at any time and are skipped.

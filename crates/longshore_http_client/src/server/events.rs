@@ -64,9 +64,9 @@ impl Server {
                 self.conns[i].state = State::Free;
             } else {
                 self.accepted += 1;
-                #[cfg(not(feature = "tls"))]
+                #[cfg(not(feature = "tls-core"))]
                 self.recv_head(io, i, 0);
-                #[cfg(feature = "tls")]
+                #[cfg(feature = "tls-core")]
                 match &self.tls {
                     None => self.recv_head(io, i, 0),
                     Some(setup) => {
@@ -88,7 +88,7 @@ impl Server {
             return true;
         }
         // Sends and receives go through the stream.
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         if self.conns[i].state == State::Handshake {
             match self.streams[i].on_handshake(io, kind == K_SEND, c.result()) {
                 Step::Pending => {}

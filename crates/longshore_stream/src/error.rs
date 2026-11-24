@@ -9,7 +9,7 @@
 /// further requests (half of the 2^24 hard limit).
 pub const KEY_RECORDS_RETIRE: u64 = 1 << 23;
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 const _: () = assert!(KEY_RECORDS_RETIRE == longshore_tls::record::KEY_RECORDS_RETIRE);
 
 /// Failure from the TLS handshake or record layer.
@@ -35,7 +35,7 @@ pub enum TlsError {
     Record,
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 impl From<longshore_tls::handshake::TlsError> for TlsError {
     fn from(e: longshore_tls::handshake::TlsError) -> Self {
         use longshore_tls::handshake::TlsError as Inner;

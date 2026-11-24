@@ -39,9 +39,9 @@ pub(super) struct Conn {
     pub(super) chunked: Chunked,
     pub(super) body_base: u32,
     /// Server name for TLS, copied from the request's host.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub(super) name: [u8; 253],
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub(super) name_len: u8,
 }
 
@@ -69,9 +69,9 @@ impl Conn {
             fields: None,
             chunked: Chunked::new(),
             body_base: 0,
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             name: [0; 253],
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             name_len: 0,
         }
     }

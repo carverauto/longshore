@@ -39,7 +39,7 @@ impl Client {
         }
         // Sends and receives go through the stream, which turns TLS records
         // into plaintext results.
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         if state == State::TlsHandshake {
             return match self.streams[i].on_handshake(io, kind == K_SEND, c.result()) {
                 Step::Pending => Handled::Pending,
@@ -108,7 +108,7 @@ impl Client {
             State::Connecting => &[K_CONNECT],
             State::SendHead { .. } | State::SendBody { .. } => &[K_SEND],
             // Either may be outstanding; cancelling the other finds nothing.
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             State::TlsHandshake => &[K_SEND, K_RECV],
             _ => &[K_RECV],
         };

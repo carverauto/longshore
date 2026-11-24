@@ -61,7 +61,7 @@ pub struct Config {
     pub(crate) backoff_max_ns: u64,
     pub(crate) require_checksums: bool,
     pub(crate) http: client::ClientConfig,
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub(crate) tls: Option<(longshore_tls::handshake::ClientSetup, u32)>,
     pub(crate) endpoint: Endpoint,
 }

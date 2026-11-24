@@ -66,7 +66,7 @@ fn head_len_equals_head_max_skips_idle_check_on_reuse() {
 }
 
 #[cfg(test)]
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 mod tls_cases {
     use super::common::*;
     use longshore_stream::TlsError;

@@ -68,6 +68,8 @@ struct Args {
     secs: u64,
     cpu: Option<usize>,
     trust_file: Option<String>,
+    /// The TLS provider the client seals and opens records with.
+    provider: longshore::tls::provider::Provider,
     batch: u32,
     /// Checksum every PUT body with CRC-64/NVME.
     crc: bool,
@@ -83,6 +85,7 @@ pub fn main() {
         secs: 5,
         cpu: None,
         trust_file: None,
+        provider: longshore::tls::provider::Provider::preferred(),
         batch: 1 << 20,
         crc: false,
     };
@@ -105,6 +108,17 @@ pub fn main() {
         };
         match k.as_str() {
             "--tls-cert" => a.trust_file = Some(v),
+            "--provider" => {
+                use longshore::tls::provider::Provider;
+                a.provider = match v.as_str() {
+                    "aws-lc" => Provider::AwsLc,
+                    "ring" => Provider::Ring,
+                    "rustls" => Provider::Rustls,
+                    _ => die(format_args!(
+                        "--provider is aws-lc, ring or rustls, not {v}"
+                    )),
+                }
+            }
             "--batch" => a.batch = num() as u32,
             "--addr" => a.addr = v,
             "--port" => a.port = num() as u16,

@@ -7,7 +7,7 @@
 //! when the last handle, buffer and operation are gone.
 
 use super::lane::Lane;
-use super::Client;
+use super::{Client, TlsProvider};
 use crate::creds::Credentials;
 use crate::s3::{KeyPrefix, Validate};
 use longshore_dns::Family;
@@ -70,6 +70,7 @@ pub struct Builder {
     credentials_validate: Validate,
     checksums: bool,
     tls: bool,
+    tls_provider: Option<TlsProvider>,
     threads: u32,
     pin: Option<(usize, usize)>,
     portable: bool,
@@ -99,6 +100,7 @@ impl Builder {
             checksums: true,
             bucket_in_path: None,
             tls: false,
+            tls_provider: None,
             threads: 1,
             pin: None,
             portable: false,
@@ -116,9 +118,14 @@ impl Builder {
 
     fn check(&self) -> Result<(), BuildError> {
         let bad = |what| Err(BuildError::Setting(what));
-        #[cfg(not(feature = "tls"))]
         if self.tls {
-            return bad("TLS requires the `tls` feature");
+            match self.tls_provider.or(TlsProvider::preferred()) {
+                None => return bad(
+                    "TLS requires the `tls` feature or a provider: `aws-lc`, `ring` or `rustls`",
+                ),
+                Some(p) if !p.compiled() => return bad(p.missing()),
+                Some(_) => {}
+            }
         }
         #[cfg(target_os = "macos")]
         if self.pin.is_some() {

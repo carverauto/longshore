@@ -98,12 +98,12 @@ impl Client {
         if let Some(segment) = segment {
             self.connected = Some((self.conns[i].addr, segment));
         }
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             self.send_head(io, i, 0);
             Handled::Pending
         }
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             let Some(setup) = &self.tls else {
                 self.send_head(io, i, 0);

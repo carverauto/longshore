@@ -11,7 +11,7 @@ license.workspace = true
 # these. This is a tool crate; nothing ships from it. rustls and rcgen are
 # for the benchmark sink's TLS mode.
 [target.'cfg(target_os = "linux")'.dependencies]
-longshore = { workspace = true, features = ["sim", "tls"] }
+longshore = { workspace = true, features = ["sim", "aws-lc", "ring", "rustls"] }
 rustls.workspace = true
 rcgen.workspace = true
 
@@ -30,7 +30,7 @@ required-features = ["fault-injection"]
 [dev-dependencies]
 # The criterion benches and the examples use longshore on every platform
 # (and rustls, further down).
-longshore = { workspace = true, features = ["sim", "tls"] }
+longshore = { workspace = true, features = ["sim", "aws-lc", "ring", "rustls"] }
 aes-gcm.workspace = true
 aws-lc-rs.workspace = true
 aws-lc-sys.workspace = true
@@ -38,6 +38,8 @@ crc.workspace = true
 crc-fast.workspace = true
 crc32c.workspace = true
 crc64fast-nvme.workspace = true
+# Test certificates for the tls_providers bench's handshake.
+rcgen.workspace = true
 # 0.8 pulls in `alloca` on Unix, which compiles a few lines of C. Cross builds
 # from macOS need the musl GCCs on PATH; see bench/README.md. Linking still
 # uses the bundled lld.
@@ -75,6 +77,11 @@ test = true
 
 [[bench]]
 name = "aead_memory"
+harness = false
+test = true
+
+[[bench]]
+name = "tls_providers"
 harness = false
 test = true
 

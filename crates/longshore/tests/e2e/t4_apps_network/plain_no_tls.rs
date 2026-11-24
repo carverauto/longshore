@@ -9,7 +9,7 @@
 use super::super::harness::HttpStoreServer;
 #[cfg(feature = "sim")]
 use super::super::harness::{drive_until, write_pool_bytes};
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 use longshore::client::BuildError;
 use longshore::client::Builder;
 #[cfg(feature = "sim")]
@@ -30,7 +30,7 @@ fn test_creds() -> Credentials {
     .expect("creds")
 }
 
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 #[test]
 fn t4_04_plain_build_rejects_tls_setting_naming_tls() {
     let creds = test_creds();

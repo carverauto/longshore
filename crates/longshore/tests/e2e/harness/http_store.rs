@@ -5,17 +5,17 @@
 
 //! Opaque-box loopback S3-compatible HTTP/1.1 (+ optional TLS 1.3) test server
 //! over `std::net::TcpListener` using `longshore::http::head`,
-//! `longshore::checksum`, and (`#[cfg(feature = "tls")]`) `longshore::tls`.
+//! `longshore::checksum`, and (`#[cfg(feature = "tls-core")]`) `longshore::tls`.
 
 #[path = "http_store_s3.rs"]
 mod s3;
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 pub use super::io_driver::{make_tls_identity, TestIdentity};
 use longshore::http::head::parse_request;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore::tls::handshake::{Handshake, ServerSetup};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore::tls::record::{
     record_len, Direction, CONTENT_ALERT, CONTENT_APPLICATION_DATA, FRAGMENT_MAX, RECORD_MAX,
 };
@@ -28,16 +28,16 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 type MaybeTls = Option<Arc<ServerSetup>>;
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 type MaybeTls = ();
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 fn clone_tls(t: &MaybeTls) -> MaybeTls {
     t.as_ref().map(Arc::clone)
 }
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "MaybeTls is () without the tls feature and an Option<Arc<..>> with it; one signature serves both"
@@ -68,12 +68,12 @@ pub struct HttpStoreServer {
 
 impl HttpStoreServer {
     pub fn start_plain() -> io::Result<Self> {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         return Self::start_inner(None);
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         return Self::start_inner(());
     }
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub fn start_tls(setup: ServerSetup) -> io::Result<Self> {
         Self::start_inner(Some(Arc::new(setup)))
     }
@@ -120,7 +120,7 @@ impl Drop for HttpStoreServer {
 }
 
 #[cfg_attr(
-    not(feature = "tls"),
+    not(feature = "tls-core"),
     expect(
         clippy::trivially_copy_pass_by_ref,
         reason = "MaybeTls is () without the tls feature and an Option<Arc<..>> with it; one signature serves both"
@@ -170,13 +170,13 @@ fn handle_conn(mut s: TcpStream, st: &Mutex<StoreState>, sp: &AtomicBool, tls: M
     // the read loop below ends on a dead socket either way.
     let _: Option<()> = s.set_nonblocking(false).ok();
     let _: Option<()> = s.set_read_timeout(Some(Duration::from_millis(50))).ok();
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     if let Some(setup) = tls {
         // A failed TLS connection just ends; its client sees the failure.
         let _: Option<()> = handle_tls(s, st, sp, &setup).ok();
         return;
     }
-    #[cfg(not(feature = "tls"))]
+    #[cfg(not(feature = "tls-core"))]
     let () = tls;
     let (mut buf, mut tmp) = (Vec::new(), [0u8; 16 * 1024]);
     while !sp.load(Ordering::Acquire) {
@@ -190,7 +190,7 @@ fn handle_conn(mut s: TcpStream, st: &Mutex<StoreState>, sp: &AtomicBool, tls: M
     }
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 fn handle_tls(
     mut s: TcpStream,
     st: &Mutex<StoreState>,

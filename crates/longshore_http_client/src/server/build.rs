@@ -10,17 +10,17 @@ use super::*;
 impl Server {
     pub(super) fn build(
         cfg: ServerConfig,
-        #[cfg(feature = "tls")] tls: Option<(ServerSetup, u32)>,
+        #[cfg(feature = "tls-core")] tls: Option<(ServerSetup, u32)>,
     ) -> Server {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         let streams = streams(&cfg, tls.as_ref().map(|t| t.1));
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         let streams = streams(&cfg);
         Server {
             cfg,
             conns: vec![Conn::FREE; cfg.connections_max() as usize].into_boxed_slice(),
             streams,
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             tls: tls.map(|t| t.0),
             objects: (0..cfg.objects_max())
                 .map(|_| Object::empty(cfg.buffer_size()))
@@ -52,7 +52,7 @@ impl Server {
 /// buffers from `first_tls_buf` when the server speaks TLS.
 fn streams(
     cfg: &ServerConfig,
-    #[cfg(feature = "tls")] first_tls_buf: Option<u32>,
+    #[cfg(feature = "tls-core")] first_tls_buf: Option<u32>,
 ) -> Box<[Stream]> {
     (0..cfg.connections_max())
         .map(|i| {
@@ -62,7 +62,7 @@ fn streams(
                 token(K_SEND),
                 token(K_RECV),
             );
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             let s = match first_tls_buf {
                 Some(first) => s.with_tls_buffers(
                     BufId::new(first + 2 * i),

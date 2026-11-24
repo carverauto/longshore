@@ -41,7 +41,7 @@ impl Config {
             backoff_max_ns: 5_000 * MS,
             require_checksums: false,
             http,
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             tls: None,
             endpoint,
         }
@@ -222,13 +222,13 @@ impl Config {
 
     /// With `Some`, connections use TLS: the handshake setup, and the first
     /// of the `2 * http.connections_max` pool buffers the record layer uses.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub fn tls(&self) -> Option<&(longshore_tls::handshake::ClientSetup, u32)> {
         self.tls.as_ref()
     }
 
     /// This configuration using TLS as `tls` says.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     #[must_use]
     pub fn with_tls(mut self, tls: Option<(longshore_tls::handshake::ClientSetup, u32)>) -> Config {
         self.tls = tls;

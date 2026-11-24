@@ -14,7 +14,7 @@
 //!   http_uring sink --port P [--size BYTES] [--tls-cert FILE]
 //!       Multi-threaded HTTP peer for throughput runs. PUT bodies are discarded
 //!       without copying; GET returns --size bytes.
-//!   http_uring put|get --addr H:P[,H:P...] [--conns N] [--size BYTES] [--secs S] [--cpu N] [--tls-cert FILE] [--batch BYTES] [--crc 1]
+//!   http_uring put|get --addr H:P[,H:P...] [--conns N] [--size BYTES] [--secs S] [--cpu N] [--tls-cert FILE] [--provider aws-lc|ring|rustls] [--batch BYTES] [--crc 1]
 //!       One io_uring thread issuing requests on N connections. Reports GB/s
 //!       (GB = 10^9 bytes) and CPU use as JSON. Several comma-separated
 //!       addresses spread the connections over several links: connection i

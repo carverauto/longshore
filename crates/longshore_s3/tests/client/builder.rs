@@ -6,7 +6,7 @@
 //! Settings an I/O thread could not start with are refused at build, on
 //! every platform, before any thread exists.
 
-use longshore_s3::client::{BuildError, Builder};
+use longshore_s3::client::{BuildError, Builder, TlsProvider};
 use longshore_s3::creds::Credentials;
 use std::net::SocketAddr;
 
@@ -86,7 +86,7 @@ fn a_bucket_in_the_path_must_be_a_bucket_name() {
     assert!(!refused(b));
 }
 
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 #[test]
 fn tls_without_the_feature_is_refused_with_a_setting_error_naming_tls() {
     let b = settings("bucket.s3.example.com").tls(true);
@@ -96,6 +96,35 @@ fn tls_without_the_feature_is_refused_with_a_setting_error_naming_tls() {
         }
         _ => panic!("expected BuildError::Setting when tls feature is off"),
     }
+}
+
+#[test]
+fn a_tls_provider_that_is_not_compiled_in_is_refused_by_its_feature_name() {
+    let all = [TlsProvider::AwsLc, TlsProvider::Ring, TlsProvider::Rustls];
+    for (p, feature) in all.into_iter().zip(["aws-lc", "ring", "rustls"]) {
+        let b = settings("bucket.s3.example.com").tls(true).tls_provider(p);
+        match b.build() {
+            Err(BuildError::Setting(msg)) => {
+                assert!(!p.compiled(), "{p:?} is compiled in but refused: {msg}");
+                assert!(
+                    msg.contains(feature),
+                    "the error must name `{feature}`: {msg}"
+                );
+            }
+            _ => assert!(p.compiled(), "{p:?} is not compiled in but was accepted"),
+        }
+    }
+}
+
+#[test]
+fn the_default_tls_provider_is_the_first_compiled_in_of_aws_lc_ring_and_rustls() {
+    let expected = [TlsProvider::AwsLc, TlsProvider::Ring, TlsProvider::Rustls]
+        .into_iter()
+        .find(|p| p.compiled());
+    assert_eq!(TlsProvider::preferred(), expected);
+    // Without a provider chosen, TLS builds exactly when one is compiled in.
+    let b = settings("bucket.s3.example.com").tls(true);
+    assert_eq!(refused(b), expected.is_none());
 }
 
 #[test]

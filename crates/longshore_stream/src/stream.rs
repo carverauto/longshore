@@ -13,9 +13,9 @@
 
 use crate::TlsError;
 use longshore_common::io::{BufId, Io, Op, Sock, Token};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_tls::handshake::Handshake;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_tls::record::{
     Direction, RecordError, CONTENT_ALERT, CONTENT_APPLICATION_DATA, FRAGMENT_MAX, OVERHEAD,
 };
@@ -31,7 +31,7 @@ pub enum Step {
     Tls(TlsError),
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 pub(super) struct Tls {
     pub(super) handshake: Option<Handshake>,
     pub(super) tx: Direction,
@@ -77,7 +77,7 @@ pub struct Stream {
     pub(super) sock: Sock,
     pub(super) send_token: Token,
     pub(super) recv_token: Token,
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub(super) tls: Option<Tls>,
 }
 
@@ -88,7 +88,7 @@ impl Stream {
             sock,
             send_token,
             recv_token,
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             tls: None,
         }
     }
@@ -99,7 +99,7 @@ impl Stream {
     /// `batch` bounds how much is sealed before each send. Sealing writes the
     /// send buffer, so a batch that fits in the CPU cache is cheaper than one
     /// that does not; it is clamped to at least one record and at most `cap`.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub fn with_tls_buffers(
         mut self,
         tx_buf: BufId,
@@ -145,11 +145,11 @@ impl Stream {
 
     /// True if this stream is protected (its handshake has been started).
     pub fn is_tls(&self) -> bool {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             self.tls.as_ref().is_some_and(|t| t.active)
         }
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             false
         }
@@ -158,13 +158,13 @@ impl Stream {
     /// Decrypted application data is waiting that the reader did not ask for.
     /// After a complete response that means the peer sent more than it declared.
     pub fn has_unread_plaintext(&self) -> bool {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             self.tls
                 .as_ref()
                 .is_some_and(|t| t.active && t.spill_len > 0)
         }
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             false
         }
@@ -173,14 +173,14 @@ impl Stream {
     /// Records protected so far with the current keys, in the busier direction.
     /// Zero without TLS.
     pub fn records(&self) -> u64 {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             self.tls
                 .as_ref()
                 .filter(|t| t.active)
                 .map_or(0, |t| t.tx.sequence().max(t.rx.sequence()))
         }
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             0
         }
@@ -189,7 +189,7 @@ impl Stream {
     /// Forget keys and buffered bytes; the stream is plain again until the
     /// next handshake. Call when the connection closes.
     pub fn reset(&mut self) {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         if let Some(t) = &mut self.tls {
             t.handshake = None;
             t.tx.clear();
@@ -230,7 +230,7 @@ impl Stream {
         zero_copy_min: u32,
     ) {
         let (sock, send_token) = (self.sock, self.send_token);
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         if let Some(t) = self.tls.as_mut().filter(|t| t.active) {
             (t.src, t.src_off, t.src_len, t.sealed) = (buf, off, len, 0);
             t.tx_type = CONTENT_APPLICATION_DATA;
@@ -264,7 +264,7 @@ impl Stream {
     ) {
         let (sock, send_token) = (self.sock, self.send_token);
         io.buf(buf)[off as usize..off as usize + 2].copy_from_slice(&[level, description]);
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         if let Some(t) = self.tls.as_mut().filter(|t| t.active) {
             (t.src, t.src_off, t.src_len, t.sealed) = (buf, off, 2, 0);
             t.tx_type = CONTENT_ALERT;
@@ -287,12 +287,12 @@ impl Stream {
 
     /// Feed a send completion to the stream.
     pub fn on_send<IO: Io>(&mut self, io: &mut IO, result: i32) -> Step {
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             let _: &mut IO = io;
             Step::Done(result)
         }
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             let (sock, send_token) = (self.sock, self.send_token);
             let Some(t) = self.tls.as_mut().filter(|t| t.active) else {
@@ -336,7 +336,7 @@ impl Stream {
     /// Receive up to `max` bytes into `buf` at `off`.
     pub fn recv<IO: Io>(&mut self, io: &mut IO, buf: BufId, off: u32, max: u32) -> Step {
         let (sock, recv_token) = (self.sock, self.recv_token);
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         if let Some(t) = self.tls.as_mut().filter(|t| t.active) {
             (t.dst, t.dst_off, t.dst_max) = (buf, off, max);
             return t.pump_rx(io, sock, recv_token);
@@ -356,12 +356,12 @@ impl Stream {
 
     /// Feed a receive completion to the stream.
     pub fn on_recv<IO: Io>(&mut self, io: &mut IO, result: i32) -> Step {
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             let _: &mut IO = io;
             Step::Done(result)
         }
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             let (sock, recv_token) = (self.sock, self.recv_token);
             let Some(t) = self.tls.as_mut().filter(|t| t.active) else {

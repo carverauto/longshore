@@ -39,7 +39,7 @@ fn client(a: &Args, cfg: client::ClientConfig) -> Client {
             let der = std::fs::read(path).unwrap_or_else(|e| die(format_args!("{path}: {e}")));
             Client::with_tls(
                 cfg,
-                longshore::tls::handshake::ClientSetup::with_roots(&[&der])
+                longshore::tls::handshake::ClientSetup::with_roots_using(a.provider, &[&der])
                     .unwrap_or_else(|e| die(format_args!("certificate: {e:?}"))),
                 a.conns,
             )

@@ -11,7 +11,7 @@ pub mod mock_world;
 pub mod wal_engine;
 
 pub use http_store::HttpStoreServer;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 pub use http_store::{make_tls_identity, TestIdentity};
 #[cfg(target_os = "linux")]
 pub use io_driver::file_uring_bin;

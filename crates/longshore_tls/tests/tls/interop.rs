@@ -14,7 +14,10 @@ use longshore_tls::handshake::{ClientSetup, Handshake, ServerSetup};
 use longshore_tls::record::{
     record_len, Direction, CONTENT_APPLICATION_DATA, CONTENT_HANDSHAKE, OVERHEAD,
 };
+#[cfg(feature = "aws-lc")]
 use rustls::crypto::aws_lc_rs::default_provider;
+#[cfg(not(feature = "aws-lc"))]
+use rustls::crypto::ring::default_provider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use rustls::{CipherSuite, ClientConfig, ClientConnection, Connection, RootCertStore};
 use rustls::{ServerConfig, ServerConnection};
