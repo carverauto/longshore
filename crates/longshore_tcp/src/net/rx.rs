@@ -30,7 +30,7 @@ impl<T: Transport> Net<T> {
     /// Start or continue reading on `slot`, if it should be reading.
     pub(super) fn start_reading(&mut self, d: &mut T::Driver, slot: u32) {
         let c = &self.conns[slot as usize];
-        if c.st != St::Up || c.paused {
+        if c.st != St::Up || c.paused || c.cut_off {
             return;
         }
         match c.opts.rx {
@@ -219,7 +219,7 @@ impl<T: Transport> Net<T> {
                 // No close alert so far: broken, unless one is still to be
                 // opened among what was received.
                 c.cut_off = true;
-                self.end(slot, Why::Reset);
+                self.end_if_opened(slot);
             }
             0 => self.peer_finished(slot),
             // The ring was empty, or we stopped the receive ourselves:

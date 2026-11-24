@@ -88,7 +88,7 @@ impl<T: Transport> Net<T> {
     /// is plaintext to pull.
     pub(super) fn open_ring(&mut self, d: &mut T::Driver, slot: u32, mut behind: bool) -> bool {
         let size = self.cfg.sizes.frame_size;
-        while self.opens(slot) {
+        while self.conns[slot as usize].st == St::Up {
             let chunk = self.front_chunk(slot);
             let c = &mut self.conns[slot as usize];
             let kept = core::mem::take(&mut c.unopened);
@@ -126,12 +126,7 @@ impl<T: Transport> Net<T> {
             }
             if opened.closed() {
                 self.drop_chunks(slot);
-                let ended = &mut self.conns[slot as usize];
-                if core::mem::take(&mut ended.cut_off) {
-                    ended.why = Why::Orderly;
-                } else {
-                    self.peer_finished(slot);
-                }
+                self.peer_finished(slot);
                 break;
             }
             if opened.no_room() {
@@ -141,14 +136,18 @@ impl<T: Transport> Net<T> {
                 }
             }
         }
+        self.end_if_opened(slot);
         self.trim_backlog(slot)
     }
 
-    /// Whether records of `slot` are still opened: while it is up, and
-    /// after its stream ended with records received and not yet opened.
-    fn opens(&self, slot: u32) -> bool {
+    /// The stream of `slot` ended without a close alert: it is a broken
+    /// connection once every record received has been opened and none
+    /// was one. Until then it stays up, with its ring buffers.
+    pub(super) fn end_if_opened(&mut self, slot: u32) {
         let c = &self.conns[slot as usize];
-        c.st == St::Up || (c.st == St::Dying && c.cut_off)
+        if c.st == St::Up && c.cut_off && !c.unopened && self.front_chunk(slot).is_none() {
+            self.end(slot, Why::Reset);
+        }
     }
 
     /// The backlog of `slot` has no room for the next record. `true` when

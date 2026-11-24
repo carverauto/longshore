@@ -123,7 +123,8 @@ pub(super) struct ConnState {
     /// Protected: the transport keeps a whole record that found no room.
     pub(super) unopened: bool,
     /// Protected: the stream ended before a close alert was opened. The
-    /// records not yet opened are still opened, and may hold one.
+    /// connection stays up, reading no more, until the records received
+    /// have been opened: one of them may be the alert.
     pub(super) cut_off: bool,
     pub(super) hdr_have: u32,
     /// A frame being put together in frame memory.

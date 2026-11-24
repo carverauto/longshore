@@ -21,6 +21,10 @@ use longshore_tcp::{
 use longshore_tls::handshake::{ClientSetup, ServerSetup};
 use std::net::SocketAddr;
 
+#[cfg(test)]
+#[path = "tls/ending.rs"]
+mod ending;
+
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
@@ -250,62 +254,6 @@ fn a_record_that_found_no_room_in_frame_memory_is_opened_once_there_is_room() {
     assert_eq!(server.next_event(), Some(Event::Readable(s)));
     let got: Vec<Vec<u8>> = w.pull_all(s).into_iter().map(|(_, bytes)| bytes).collect();
     assert!(got == frames, "{} of 2 frames were pulled", got.len());
-}
-
-/// Two frames of a whole record each, a close alert and the end of the
-/// stream, all there before the server's caller pulls anything: what it
-/// then pulls, and how it is told the connection ended.
-#[cfg(test)]
-fn pulled_after_the_end(seed: u64) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Why) {
-    let certs = certs(NAME);
-    let mut w = World::new_tls(
-        &mut |l| sim(l, seed, Faults::NONE),
-        Limits::BASE,
-        secure::sizes(2, 0, 0),
-        secure::sizes(0, 1, 1),
-        &certs,
-    );
-    let framing = HeaderFraming::length_prefix(32 << 10).unwrap();
-    let opts = ConnOpts::new(Framing::Header(framing));
-    let (c, s) = w.pair(Addr::Ip(sim_addr()), opts);
-    let frames = vec![check::prefixed(16_380, 1), check::prefixed(16_380, 2)];
-    for frame in &frames {
-        assert!(w.send(c, frame));
-    }
-    let (client, io) = w.client();
-    client.shutdown_write(io, c).unwrap();
-    for _ in 0..600 {
-        w.turn();
-    }
-    let (mut got, mut ended) = (Vec::new(), None);
-    w.until(|w, server, e| {
-        match e {
-            Event::Readable(conn) if server && conn == s => {
-                got.extend(w.pull_all(s).into_iter().map(|(_, bytes)| bytes));
-            }
-            Event::Closed { conn, why } if server && conn == s => ended = Some(why),
-            Event::Up(_)
-            | Event::Accepted { .. }
-            | Event::Refused { .. }
-            | Event::Readable(_)
-            | Event::Writable(_)
-            | Event::Down { .. }
-            | Event::Closed { .. }
-            | Event::ListenFailed { .. }
-            | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
-        }
-        ended.is_some()
-    });
-    (frames, got, ended.unwrap())
-}
-
-#[test]
-fn records_received_before_the_end_are_delivered_and_a_close_alert_ends_in_order() {
-    for seed in 0..40 {
-        let (sent, got, why) = pulled_after_the_end(seed);
-        assert!(got == sent, "seed {seed}: {} of 2 frames", got.len());
-        assert_eq!(why, Why::Orderly, "seed {seed}");
-    }
 }
 
 #[test]
