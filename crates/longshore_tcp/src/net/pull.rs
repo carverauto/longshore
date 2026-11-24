@@ -23,10 +23,10 @@ use longshore_common::io::BufId;
 
 /// The input a ring connection reads next.
 #[derive(Clone, Copy)]
-struct Source {
-    buf: BufId,
-    off: u32,
-    avail: u32,
+pub(super) struct Source {
+    pub(super) buf: BufId,
+    pub(super) off: u32,
+    pub(super) avail: u32,
     backlog: bool,
 }
 
@@ -43,6 +43,10 @@ impl<T: Transport> Net<T> {
                 return Ok(Some(self.deliver(d, slot, Mem::Extent(ext), 0, len)));
             }
             let Some(src) = self.source(slot) else {
+                // Protected input is opened as frame memory has room.
+                if self.conns[slot as usize].secure && self.open_ring(d, slot, false) {
+                    continue;
+                }
                 return Ok(None);
             };
             match self.cut(d, slot, src) {
@@ -99,11 +103,15 @@ impl<T: Transport> Net<T> {
                 backlog: true,
             });
         }
+        // A protected connection's ring buffers hold records, not frames.
+        if c.secure {
+            return None;
+        }
         self.front_chunk(slot)
     }
 
     /// The first ring buffer `slot` has not finished with, if any.
-    fn front_chunk(&self, slot: u32) -> Option<Source> {
+    pub(super) fn front_chunk(&self, slot: u32) -> Option<Source> {
         let head = self.conns[slot as usize].chunk_head;
         (head != NONE).then(|| {
             let chunk = &self.chunks[head as usize];
@@ -130,7 +138,7 @@ impl<T: Transport> Net<T> {
     }
 
     /// `n` bytes of `src` are dealt with.
-    fn advance(&mut self, slot: u32, src: Source, n: u32) {
+    pub(super) fn advance(&mut self, slot: u32, src: Source, n: u32) {
         let c = &mut self.conns[slot as usize];
         if src.backlog {
             c.backlog_off += n;
@@ -227,7 +235,7 @@ impl<T: Transport> Net<T> {
     }
 
     /// Forget what `slot` received and did not deliver: its framing broke.
-    fn drop_input(&mut self, slot: u32) {
+    pub(super) fn drop_input(&mut self, slot: u32) {
         self.drop_chunks(slot);
         self.drop_rx(slot);
     }
@@ -241,7 +249,13 @@ impl<T: Transport> Net<T> {
             let slot = self.ring_pending[i];
             self.conns[slot as usize].ring_listed = false;
             while let Some(src) = self.front_chunk(slot) {
-                if !self.spill_chunk(d, slot, src) {
+                let moved = if self.conns[slot as usize].secure {
+                    let _readable: bool = self.open_ring(d, slot, false);
+                    self.front_chunk(slot).is_none()
+                } else {
+                    self.spill_chunk(d, slot, src)
+                };
+                if !moved {
                     // No room for more: it keeps these buffers and reads
                     // no further until it is pulled.
                     self.pause(d, slot);

@@ -12,10 +12,20 @@
 
 use crate::addr::Addr;
 use crate::config::Config;
-use crate::transport::{Happened, Listening, Refused, Span, Transport};
+use crate::transport::{Happened, Listening, Opened, Refused, Role, Span, Transport};
 use core::marker::PhantomData;
 use longshore_common::io::{BufId, Completion, Io, ListenOpts, Op, Shut, Sock, Token};
 use std::net::SocketAddr;
+
+#[cfg(not(feature = "tls-core"))]
+#[path = "kernel/plain.rs"]
+mod secure;
+#[cfg(feature = "tls-core")]
+mod secure;
+
+use secure::Secure;
+#[cfg(feature = "tls-core")]
+pub use secure::Tls;
 
 const RECV: u64 = 0;
 const SEND: u64 = 1;
@@ -36,6 +46,8 @@ pub struct KernelTransport<IO: Io> {
     armed: Box<[bool]>,
     /// Per connection slot: the listener whose single accept will fill it.
     accepting: Box<[u32]>,
+    /// TLS, where it is compiled in and set up.
+    secure: Secure,
     io: PhantomData<fn(&mut IO)>,
 }
 
@@ -51,8 +63,18 @@ impl<IO: Io> KernelTransport<IO> {
             sock_base: config.sock_base,
             armed: vec![false; conns as usize].into_boxed_slice(),
             accepting: vec![0; conns as usize].into_boxed_slice(),
+            secure: Secure::new(conns),
             io: PhantomData,
         }
+    }
+
+    /// The transport with TLS: `tls` says which sides it can take. The
+    /// `Net`'s `Sizes` must have `with_tls`.
+    #[cfg(feature = "tls-core")]
+    #[must_use]
+    pub fn with_tls(mut self, tls: Tls) -> KernelTransport<IO> {
+        self.secure.set(tls);
+        self
     }
 
     fn conn_sock(&self, slot: u32) -> Sock {
@@ -76,9 +98,9 @@ impl<IO: Io> KernelTransport<IO> {
     }
 
     /// A completion on a connection slot.
-    fn conn_happened(&mut self, slot: u32, kind: u64, c: Completion) -> Option<Happened> {
+    fn conn_happened(&mut self, d: &mut IO, slot: u32, kind: u64, c: Completion) -> Happened {
         let result = c.result();
-        Some(match kind {
+        match kind {
             RECV => {
                 let was_armed = core::mem::replace(&mut self.armed[slot as usize], c.more());
                 match c.buf() {
@@ -88,15 +110,23 @@ impl<IO: Io> KernelTransport<IO> {
                         len: result.unsigned_abs(),
                         armed: c.more(),
                     },
-                    None if was_armed => Happened::RecvEnded { slot, result },
+                    None if was_armed => Happened::RecvEnded {
+                        slot,
+                        result: self.secure.end_of_stream(slot, result),
+                    },
+                    None if self.secure.is_on(slot) => self.on_stream(d, slot, false, result),
                     None => Happened::Received { slot, result },
                 }
             }
+            SEND if self.secure.is_on(slot) => self.on_stream(d, slot, true, result),
             SEND => Happened::Sent { slot, result },
             CONNECT => Happened::Connected { slot, result },
             // An armed receive's own last completion clears its flag; it may
             // come after the close's.
-            CLOSE => Happened::Closed { slot },
+            CLOSE => {
+                self.secure.closed(slot);
+                Happened::Closed { slot }
+            }
             SHUTDOWN => Happened::ShutDown { slot, result },
             ACCEPT => {
                 let listener = self.accepting[slot as usize];
@@ -116,12 +146,24 @@ impl<IO: Io> KernelTransport<IO> {
             }
             // A cancel's own completion says nothing new: the operation it
             // cancelled reports its end itself.
-            _ => return None,
-        })
+            _ => Happened::Nothing,
+        }
+    }
+
+    /// A send or receive completion of a slot whose stream is protected.
+    fn on_stream(&mut self, d: &mut IO, slot: u32, sent: bool, result: i32) -> Happened {
+        let shutdown = (
+            self.conn_token(slot, SHUTDOWN),
+            Op::Shutdown {
+                sock: self.conn_sock(slot),
+                how: Shut::Write,
+            },
+        );
+        self.secure.on_io(d, slot, sent, result, shutdown)
     }
 
     /// A completion on a listener slot.
-    fn listener_happened(&self, listener: u32, kind: u64, c: Completion) -> Option<Happened> {
+    fn listener_happened(&self, listener: u32, kind: u64, c: Completion) -> Happened {
         match kind {
             ACCEPT => {
                 // An armed accept names the socket slot it filled.
@@ -130,7 +172,7 @@ impl<IO: Io> KernelTransport<IO> {
                     .ok()
                     .and_then(|sock| sock.checked_sub(first))
                     .filter(|slot| *slot < self.conns);
-                Some(match slot {
+                match slot {
                     Some(slot) => Happened::Accepted {
                         listener,
                         slot,
@@ -141,10 +183,10 @@ impl<IO: Io> KernelTransport<IO> {
                         slot: None,
                         result: c.result().min(-1),
                     },
-                })
+                }
             }
-            CLOSE => Some(Happened::ListenerClosed { listener }),
-            _ => None,
+            CLOSE => Happened::ListenerClosed { listener },
+            _ => Happened::Nothing,
         }
     }
 }
@@ -152,6 +194,14 @@ impl<IO: Io> KernelTransport<IO> {
 impl<IO: Io> Transport for KernelTransport<IO> {
     type Driver = IO;
     type Completion = Completion;
+
+    fn attach(&mut self, config: &Config) {
+        let (socks, tokens) = (self.sock_base + self.listeners, self.token_base);
+        self.secure.attach(config, |slot, kind| {
+            let token = Token::new(tokens + u64::from(slot) * 8 + kind);
+            (Sock::new(socks + slot), token)
+        });
+    }
 
     fn now_ns(&self, d: &IO) -> u64 {
         d.now_ns()
@@ -234,6 +284,18 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         Self::submit(d, self.conn_token(slot, CONNECT), op)
     }
 
+    fn can_secure(&self, client: bool) -> bool {
+        self.secure.can(client)
+    }
+
+    fn secure(&mut self, d: &mut IO, slot: u32, role: Role<'_>) -> Result<(), Refused> {
+        self.secure.start(d, slot, role)
+    }
+
+    fn open(&mut self, d: &mut IO, slot: u32, from: Span, into: Span) -> Option<Opened> {
+        self.secure.open(d, slot, from, into)
+    }
+
     fn recv_armed(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let sock = self.conn_sock(slot);
         Self::submit(d, self.conn_token(slot, RECV), Op::ArmedRecv { sock })?;
@@ -241,14 +303,17 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         Ok(())
     }
 
-    fn recv_into(&mut self, d: &mut IO, slot: u32, into: Span) -> Result<(), Refused> {
+    fn recv_into(&mut self, d: &mut IO, slot: u32, into: Span) -> Result<Option<i32>, Refused> {
+        if self.secure.is_on(slot) {
+            return Ok(self.secure.recv(d, slot, into));
+        }
         let op = Op::Recv {
             sock: self.conn_sock(slot),
             buf: into.buf(),
             off: into.off(),
             len: into.len(),
         };
-        Self::submit(d, self.conn_token(slot, RECV), op)
+        Self::submit(d, self.conn_token(slot, RECV), op).map(|()| None)
     }
 
     fn cancel_recv(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
@@ -261,6 +326,11 @@ impl<IO: Io> Transport for KernelTransport<IO> {
     }
 
     fn send(&mut self, d: &mut IO, slot: u32, from: Span, zero_copy: bool) -> Result<(), Refused> {
+        if self.secure.is_on(slot) {
+            // Sealed into the connection's own buffer and sent from there.
+            self.secure.send(d, slot, from);
+            return Ok(());
+        }
         let op = Op::Send {
             sock: self.conn_sock(slot),
             buf: from.buf(),
@@ -272,6 +342,11 @@ impl<IO: Io> Transport for KernelTransport<IO> {
     }
 
     fn shutdown_write(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
+        if self.secure.is_on(slot) {
+            // A close alert first; the shutdown follows it.
+            self.secure.say_goodbye(d, slot);
+            return Ok(());
+        }
         let op = Op::Shutdown {
             sock: self.conn_sock(slot),
             how: Shut::Write,
@@ -281,7 +356,9 @@ impl<IO: Io> Transport for KernelTransport<IO> {
 
     fn close(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let sock = self.conn_sock(slot);
-        Self::submit(d, self.conn_token(slot, CLOSE), Op::Close { sock })
+        Self::submit(d, self.conn_token(slot, CLOSE), Op::Close { sock })?;
+        self.secure.closing(slot);
+        Ok(())
     }
 
     fn close_listener(&mut self, d: &mut IO, listener: u32) -> Result<(), Refused> {
@@ -293,13 +370,13 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         d.peer_addr(self.conn_sock(slot))
     }
 
-    fn translate(&mut self, completion: Completion) -> Option<Happened> {
+    fn translate(&mut self, d: &mut IO, completion: Completion) -> Option<Happened> {
         let rel = completion.token().get().checked_sub(self.token_base)?;
         let (index, kind) = (u32::try_from(rel / 8).ok()?, rel % 8);
         if index < self.conns {
-            self.conn_happened(index, kind, completion)
+            Some(self.conn_happened(d, index, kind, completion))
         } else if index - self.conns < self.listeners {
-            self.listener_happened(index - self.conns, kind, completion)
+            Some(self.listener_happened(index - self.conns, kind, completion))
         } else {
             None
         }

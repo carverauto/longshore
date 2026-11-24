@@ -155,6 +155,19 @@ impl Stream {
         }
     }
 
+    /// The peer ended the stream in order, with a TLS close alert. An end
+    /// of stream without one was cut short. Always false without TLS.
+    pub fn peer_closed(&self) -> bool {
+        #[cfg(feature = "tls-core")]
+        {
+            self.tls.as_ref().is_some_and(|t| t.active && t.closed)
+        }
+        #[cfg(not(feature = "tls-core"))]
+        {
+            false
+        }
+    }
+
     /// Decrypted application data is waiting that the reader did not ask for.
     /// After a complete response that means the peer sent more than it declared.
     pub fn has_unread_plaintext(&self) -> bool {

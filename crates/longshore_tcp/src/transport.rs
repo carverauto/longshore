@@ -17,6 +17,7 @@
 //! token type of a particular backend.
 
 use crate::addr::Addr;
+use crate::config::Config;
 use longshore_common::io::BufId;
 use std::net::SocketAddr;
 
@@ -28,6 +29,57 @@ pub enum Refused {
     Busy,
     /// The transport cannot do this at all.
     Unsupported,
+}
+
+/// The result a transport reports when TLS failed: a handshake that did
+/// not complete, a record that did not authenticate, an alert from the
+/// peer. (`EPROTO`, negated.)
+pub const TLS_FAILED: i32 = -71;
+
+/// Which side of a TLS handshake a connection takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Role<'a> {
+    /// The side that connected; the peer's certificate must match
+    /// `server_name`.
+    Client { server_name: &'a str },
+    /// The side that accepted.
+    Server,
+}
+
+/// What [`Transport::open`] did.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Opened {
+    consumed: u32,
+    produced: u32,
+    closed: bool,
+}
+
+impl Opened {
+    /// `consumed` bytes taken, `produced` bytes of plaintext written, and
+    /// whether the peer ended the stream in order.
+    pub const fn new(consumed: u32, produced: u32, closed: bool) -> Opened {
+        Opened {
+            consumed,
+            produced,
+            closed,
+        }
+    }
+
+    /// Bytes taken from the ring buffer. Less than offered means the
+    /// destination has no room for the next record.
+    pub const fn consumed(self) -> u32 {
+        self.consumed
+    }
+
+    /// Bytes of plaintext written to the destination.
+    pub const fn produced(self) -> u32 {
+        self.produced
+    }
+
+    /// The peer ended the stream in order; nothing after it is taken.
+    pub const fn closed(self) -> bool {
+        self.closed
+    }
 }
 
 /// How a listener listens, as far as the transport is concerned.
@@ -96,8 +148,14 @@ impl Span {
 /// negated Linux error numbers on failure, as everywhere in longshore.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Happened {
+    /// The completion was the transport's own business; nothing for `Net`.
+    Nothing,
     /// A connect ended.
     Connected { slot: u32, result: i32 },
+    /// A TLS handshake started with [`Transport::secure`] ended: 0, or a
+    /// negated error ([`TLS_FAILED`], or `-ECANCELED` when the connection
+    /// was closed under it).
+    Secured { slot: u32, result: i32 },
     /// A listener accepted a connection into `slot`. `armed` says whether
     /// the listener's armed accept is still running (always false for a
     /// single accept).
@@ -144,6 +202,9 @@ pub trait Transport {
     /// What the driver reports when an operation ends.
     type Completion: Copy;
 
+    /// Called once by `Net::new`, with the configuration resolved against
+    /// the backend's final `Limits`.
+    fn attach(&mut self, config: &Config);
     /// The driver's clock, in nanoseconds: the same clock the caller reads
     /// for `Net::poll`.
     fn now_ns(&self, d: &Self::Driver) -> u64;
@@ -186,10 +247,29 @@ pub trait Transport {
         addr: &Addr,
         scratch: Span,
     ) -> Result<(), Refused>;
+    /// Whether [`Transport::secure`] can work for the connecting side
+    /// (`client`) or the accepting side.
+    fn can_secure(&self, client: bool) -> bool;
+    /// Start a TLS handshake on the connected `slot`; it ends with
+    /// [`Happened::Secured`]. From then on what is sent and received on
+    /// `slot` is protected.
+    fn secure(&mut self, d: &mut Self::Driver, slot: u32, role: Role<'_>) -> Result<(), Refused>;
+    /// Turn `from`, bytes an armed receive delivered on the protected
+    /// `slot`, into plaintext in `into`. `None` when they do not
+    /// authenticate; the connection is then of no further use. With `from`
+    /// empty, takes what arrived behind the handshake.
+    fn open(&mut self, d: &mut Self::Driver, slot: u32, from: Span, into: Span) -> Option<Opened>;
     /// Receive on `slot` from the buffer ring until told otherwise.
     fn recv_armed(&mut self, d: &mut Self::Driver, slot: u32) -> Result<(), Refused>;
-    /// Receive on `slot` once, into `into`.
-    fn recv_into(&mut self, d: &mut Self::Driver, slot: u32, into: Span) -> Result<(), Refused>;
+    /// Receive on `slot` once, into `into`. `Some` result when bytes were
+    /// there already and it ended at once: no [`Happened::Received`]
+    /// follows then.
+    fn recv_into(
+        &mut self,
+        d: &mut Self::Driver,
+        slot: u32,
+        into: Span,
+    ) -> Result<Option<i32>, Refused>;
     /// Stop the receive in flight on `slot`; it reports its end as usual.
     fn cancel_recv(&mut self, d: &mut Self::Driver, slot: u32) -> Result<(), Refused>;
     /// Return a ring buffer named in [`Happened::RingData`].
@@ -213,5 +293,6 @@ pub trait Transport {
     fn peer_addr(&self, d: &Self::Driver, slot: u32) -> Option<SocketAddr>;
 
     /// What `completion` means, or `None` when it is not this transport's.
-    fn translate(&mut self, completion: Self::Completion) -> Option<Happened>;
+    fn translate(&mut self, d: &mut Self::Driver, completion: Self::Completion)
+        -> Option<Happened>;
 }

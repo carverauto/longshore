@@ -10,7 +10,7 @@ use super::state::{
     NONE, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
 };
 use super::Net;
-use crate::addr::Addr;
+use crate::addr::{Addr, ServerName};
 use crate::backoff::Backoff;
 use crate::config::ConnOpts;
 use crate::event::{Event, NetError, Why};
@@ -40,7 +40,17 @@ impl<T: Transport> Net<T> {
         addr: impl Into<Addr>,
         opts: ConnOpts,
     ) -> Result<Conn, NetError> {
-        let addr: Addr = addr.into();
+        self.connect_as(d, addr.into(), opts, None)
+    }
+
+    /// Open a connection, protected with TLS when `name` is given.
+    pub(super) fn connect_as(
+        &mut self,
+        d: &mut T::Driver,
+        addr: Addr,
+        opts: ConnOpts,
+        name: Option<ServerName>,
+    ) -> Result<Conn, NetError> {
         // Deadlines count from now, not from the last `poll`.
         self.now = self.t.now_ns(d);
         if !self.fits(&opts) {
@@ -56,6 +66,10 @@ impl<T: Transport> Net<T> {
         c.unix = matches!(addr, Addr::Unix(_));
         if let Some(r) = opts.reconnect {
             c.backoff = Backoff::new(r.base_ns, r.max_ns, r.jitter_per_mille, seed);
+        }
+        if let Some(name) = name {
+            c.secure = true;
+            self.names[slot as usize] = name;
         }
         self.start_connect(d, slot);
         Ok(self.gens.conn(slot))
@@ -86,6 +100,17 @@ impl<T: Transport> Net<T> {
             return self.end(slot, Why::Reset);
         }
         c.sock_open = true;
+        if c.secure {
+            // Still connecting, as far as the caller and the connect
+            // timeout are concerned, until the handshake is done.
+            return self.begin_secure(d, slot, true);
+        }
+        self.connected(d, slot);
+    }
+
+    /// The connection in `slot` is ready for the caller.
+    pub(super) fn connected(&mut self, d: &mut T::Driver, slot: u32) {
+        let c = &mut self.conns[slot as usize];
         c.st = St::Up;
         c.last_active = self.now;
         c.backoff.reset();
@@ -122,6 +147,8 @@ impl<T: Transport> Net<T> {
                     self.arm_idle(slot);
                 }
             }
+            // The handshake of an accepted connection took too long.
+            St::Securing => self.end(slot, Why::Timeout),
             St::Free | St::Refused | St::Dying | St::Closing => {}
         }
     }
@@ -135,7 +162,7 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         c.why = why;
         self.deadlines.clear(slot);
-        if c.st == St::Refused {
+        if matches!(c.st, St::Refused | St::Securing) {
             // Never reported as a connection, so nothing to report now.
             self.gens.retire(slot);
             self.begin_close(slot, false);
@@ -200,7 +227,7 @@ impl<T: Transport> Net<T> {
                 self.deadlines.clear(slot);
                 self.release_slot(slot);
             }
-            St::Connecting | St::Up | St::Refused | St::Dying => {
+            St::Connecting | St::Securing | St::Up | St::Refused | St::Dying => {
                 // A connect in flight is ended by the close.
                 self.conns[slot as usize].sock_open = true;
                 self.begin_close(slot, false);

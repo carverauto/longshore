@@ -38,6 +38,9 @@ impl<T: Transport> Net<T> {
         if !self.fits(&cfg.conn) {
             return Err(NetError::Framing);
         }
+        if cfg.tls {
+            self.fits_tls(&cfg.conn, false)?;
+        }
         let free = self.listeners.iter().position(|l| l.st == LSt::Free);
         let l = free.ok_or(NetError::NoSlots)? as u32;
         let state = &mut self.listeners[l as usize];
@@ -159,7 +162,6 @@ impl<T: Transport> Net<T> {
         state.backoff_ns = 0;
         let (cfg, listening) = (state.cfg, state.st == LSt::Listening);
         let unix = matches!(state.addr, Addr::Unix(_));
-        let over = state.count >= cfg.limit;
         let seed = self.cfg.sizes.seed ^ u64::from(slot);
         let c = &mut self.conns[slot as usize];
         *c = ConnState::free(cfg.conn, seed);
@@ -174,18 +176,45 @@ impl<T: Transport> Net<T> {
             self.begin_close(slot, false);
             return;
         }
-        if over {
+        if cfg.tls {
+            // Announced, and counted, once its handshake is done.
+            (c.st, c.secure) = (St::Securing, true);
+            if cfg.conn.handshake_timeout_ns > 0 {
+                let at = self.now.saturating_add(cfg.conn.handshake_timeout_ns);
+                self.deadlines.set(slot, at);
+            }
+            self.begin_secure(d, slot, false);
+        } else {
+            self.admit(d, slot);
+        }
+        self.start_accept(d, l);
+    }
+
+    /// Announce the accepted connection in `slot`: as a connection, or at
+    /// the listener's limit as one to refuse.
+    pub(super) fn admit(&mut self, d: &mut T::Driver, slot: u32) {
+        let l = self.conns[slot as usize].listener;
+        let state = &self.listeners[l as usize];
+        let (listening, over) = (state.st == LSt::Listening, state.count >= state.cfg.limit);
+        self.deadlines.clear(slot);
+        let c = &mut self.conns[slot as usize];
+        if !listening {
+            // The listener closed during the handshake: not a connection.
+            c.st = St::Refused;
+            self.gens.retire(slot);
+            self.begin_close(slot, false);
+        } else if over {
             c.st = St::Refused;
             self.queue_event(slot, EV_REFUSED);
         } else {
             c.st = St::Up;
             c.counted = true;
+            c.last_active = self.now;
             self.listeners[l as usize].count += 1;
             self.arm_idle(slot);
             self.queue_event(slot, EV_ACCEPTED);
             self.start_reading(d, slot);
         }
-        self.start_accept(d, l);
     }
 
     pub(super) fn on_accept_failed(&mut self, l: u32, slot: Option<u32>, result: i32) {

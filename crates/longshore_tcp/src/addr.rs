@@ -99,3 +99,42 @@ impl From<UnixPath> for Addr {
         Addr::Unix(p)
     }
 }
+
+/// The name a TLS peer's certificate must match, kept inline so that
+/// naming one allocates nothing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ServerName {
+    bytes: [u8; ServerName::MAX],
+    len: u8,
+}
+
+impl ServerName {
+    /// The longest name: that of a DNS name.
+    pub const MAX: usize = 253;
+
+    /// No name.
+    pub const NONE: ServerName = ServerName {
+        bytes: [0; ServerName::MAX],
+        len: 0,
+    };
+
+    /// `name`, or `None` when it is empty or longer than [`ServerName::MAX`].
+    pub fn new(name: &str) -> Option<ServerName> {
+        let n = name.as_bytes();
+        if n.is_empty() || n.len() > ServerName::MAX {
+            return None;
+        }
+        let mut bytes = [0; ServerName::MAX];
+        bytes[..n.len()].copy_from_slice(n);
+        Some(ServerName {
+            bytes,
+            len: n.len() as u8,
+        })
+    }
+
+    /// The name.
+    pub fn as_str(&self) -> &str {
+        // Built from a `&str` and cut at its end.
+        core::str::from_utf8(&self.bytes[..usize::from(self.len)]).unwrap_or("")
+    }
+}

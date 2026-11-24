@@ -7,7 +7,8 @@
 //! portable backend of the same kernel, and compares what the two carried.
 //! Then a log and its replicas on each: frames received, written with
 //! direct I/O to a file in `--dir`, synced and sent to three peers, under
-//! the allocation guard.
+//! the allocation guard. Then both again over TLS on the ring, once with
+//! each provider.
 //!
 //!   tcp_uring [--v6] [--dir <directory on a file system with O_DIRECT>]
 
@@ -40,6 +41,75 @@ fn log_and_replicate<IO: longshore::io::Io>(
     drop(r);
     // Best-effort cleanup: a leftover file does not change the result.
     let _: Option<()> = std::fs::remove_file(path).ok();
+}
+
+/// A certificate for one name, and what both sides need to use it with
+/// `provider` sealing and opening the records.
+#[cfg(target_os = "linux")]
+fn certs(provider: longshore::tls::provider::Provider) -> longshore::tcp::check::Certs {
+    use die::OrDie;
+    use longshore::tls::handshake::{ClientSetup, ServerSetup};
+    let name = "replica.longshore.test";
+    let k = rcgen::generate_simple_self_signed(vec![name.to_string()]).or_die("certificate");
+    let (cert, key) = (k.cert.der().to_vec(), k.signing_key.serialize_der());
+    let client = ClientSetup::with_roots_using(provider, &[&cert]).or_die("client setup");
+    let server = ServerSetup::new_using(provider, &[&cert], &key).or_die("server setup");
+    longshore::tcp::check::Certs::new(client, server, name)
+}
+
+/// The log and its replicas over TLS on the ring: only the handshakes,
+/// which are over before the seal, allocate.
+#[cfg(target_os = "linux")]
+fn log_and_replicate_tls(
+    addr: std::net::SocketAddr,
+    path: &str,
+    certs: &longshore::tcp::check::Certs,
+) {
+    use die::OrDie;
+    use longshore::io::alloc_guard::sealed;
+    use longshore::io::uring::UringIo;
+    use longshore::io::Limits;
+    use longshore::tcp::check::storage::Replicated;
+    use longshore::tcp::check::{secure, World};
+    let w = World::new_tls(
+        &mut |limits| UringIo::new(limits).or_die("UringIo::new"),
+        Limits::BASE.with_files_max(1),
+        secure::sizes(4, 0, 0),
+        secure::sizes(2, 4, 2),
+        certs,
+    );
+    let mut r = Replicated::over(w, longshore::tcp::Addr::Ip(addr), path);
+    r.round(0);
+    sealed(|| (1..100).for_each(|i| r.round(i)));
+    drop(r);
+    // Best-effort cleanup: a leftover file does not change the result.
+    let _: Option<()> = std::fs::remove_file(path).ok();
+}
+
+/// Every check and the log over TLS on the ring, with `provider` sealing
+/// and opening the records: the frames `plain` carried.
+#[cfg(target_os = "linux")]
+fn tls_on_the_ring(
+    provider: longshore::tls::provider::Provider,
+    addr: std::net::SocketAddr,
+    plain: &[Vec<u8>],
+    unix_path: &str,
+    log_path: &str,
+) {
+    use die::OrDie;
+    use longshore::io::uring::UringIo;
+    let certs = certs(provider);
+    let over_tls = longshore::tcp::check::run_all_tls(
+        &mut |limits| UringIo::new(limits).or_die("UringIo::new"),
+        addr,
+        unix_path,
+        &certs,
+    );
+    if over_tls != plain {
+        let tag = provider.feature();
+        die::die(format_args!("TLS with {tag} carried different frames"));
+    }
+    log_and_replicate_tls(addr, log_path, &certs);
 }
 
 #[cfg(target_os = "linux")]
@@ -101,5 +171,12 @@ fn main() {
         addr,
         &log("posix"),
     );
-    println!("ok tcp_uring v6={v6} frames={} logged=200", ring.len());
+    for provider in longshore::tls::provider::Provider::ALL {
+        let tag = provider.feature();
+        tls_on_the_ring(provider, addr, &ring, &path(tag), &log(tag));
+    }
+    println!(
+        "ok tcp_uring v6={v6} frames={} logged=200 tls=3",
+        ring.len()
+    );
 }

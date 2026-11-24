@@ -69,7 +69,13 @@ impl<IO: Io> Replicated<IO> {
     /// `path`. `make` builds a backend with room for one file.
     pub fn new(make: &mut impl FnMut(Limits) -> IO, addr: Addr, path: &str) -> Replicated<IO> {
         let base = Limits::BASE.with_files_max(1);
-        let mut w = World::new(make, base, sizes(4, 0, 0), sizes(2, 4, 2));
+        let w = World::new(make, base, sizes(4, 0, 0), sizes(2, 4, 2));
+        Replicated::over(w, addr, path)
+    }
+
+    /// The same in a world the caller built: four connections out, four
+    /// in, a listener, and room for one file.
+    pub fn over(mut w: World<IO>, addr: Addr, path: &str) -> Replicated<IO> {
         // Direct mode: a frame is received at the start of its own extent.
         let opts = prefix().with_rx(Rx::Direct);
         let (source, log) = w.pair(addr, opts);

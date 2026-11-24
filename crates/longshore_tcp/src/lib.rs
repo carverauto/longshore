@@ -28,13 +28,17 @@ pub mod net;
 mod sizes;
 pub mod transport;
 
-pub use addr::{Addr, PathError, UnixPath};
+pub use addr::{Addr, PathError, ServerName, UnixPath};
 pub use backoff::Backoff;
-pub use config::{Config, ConfigError, ConnOpts, ListenConfig, Reconnect, Rx, Sizes};
+pub use config::{
+    Config, ConfigError, ConnOpts, ListenConfig, Reconnect, Rx, Sizes, TLS_SEGMENT_MIN,
+};
 pub use deadline::Deadlines;
 pub use event::{Event, NetError, SendError, Why};
 pub use framing::{FrameError, Framing, FramingError, HeaderFraming};
 pub use handle::{Conn, Generations, Listener};
 pub use kernel::KernelTransport;
+#[cfg(feature = "tls-core")]
+pub use kernel::Tls;
 pub use net::{Frame, Net};
-pub use transport::{Happened, Listening, Refused, Span, Transport};
+pub use transport::{Happened, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED};

@@ -20,7 +20,7 @@
 //! Completions only mark connections, and events and frames are pulled, so
 //! nothing can overflow and not pulling is itself backpressure.
 
-use crate::addr::Addr;
+use crate::addr::{Addr, ServerName};
 use crate::config::{Config, ConnOpts};
 use crate::deadline::Deadlines;
 use crate::event::Event;
@@ -37,6 +37,7 @@ mod frames;
 mod listen;
 mod pull;
 mod rx;
+mod secure;
 mod state;
 mod tx;
 
@@ -86,14 +87,22 @@ pub struct Net<T: Transport> {
     drain_reported: bool,
     /// Connections with sends queued.
     tx_busy: u32,
+    /// With TLS: the server name of each connection the caller opened.
+    names: Box<[ServerName]>,
 }
 
 impl<T: Transport> Net<T> {
     /// A `Net` on the share that `cfg` describes of a backend built with
     /// `limits`. All of its tables are allocated here; nothing is
     /// allocated afterwards.
-    pub fn new(transport: T, cfg: Config, limits: &Limits) -> Net<T> {
+    pub fn new(mut transport: T, cfg: Config, limits: &Limits) -> Net<T> {
         let cfg = cfg.resolved(limits);
+        transport.attach(&cfg);
+        let names = if cfg.sizes.tls {
+            cfg.sizes.connects as usize
+        } else {
+            0
+        };
         let s = cfg.sizes;
         let conns = cfg.conns();
         let opts = ConnOpts::new(Framing::Bytes);
@@ -153,6 +162,7 @@ impl<T: Transport> Net<T> {
             drained_owed: false,
             drain_reported: false,
             tx_busy: 0,
+            names: vec![ServerName::NONE; names].into_boxed_slice(),
         }
     }
 
@@ -170,11 +180,13 @@ impl<T: Transport> Net<T> {
     /// Feed one completion of the driver. `false` when it is not the
     /// `Net`'s, and nothing was done.
     pub fn on_completion(&mut self, d: &mut T::Driver, completion: T::Completion) -> bool {
-        let Some(happened) = self.t.translate(completion) else {
+        let Some(happened) = self.t.translate(d, completion) else {
             return false;
         };
         match happened {
+            Happened::Nothing => {}
             Happened::Connected { slot, result } => self.on_connected(d, slot, result),
+            Happened::Secured { slot, result } => self.on_secured(d, slot, result),
             Happened::Accepted {
                 listener,
                 slot,
@@ -194,7 +206,10 @@ impl<T: Transport> Net<T> {
             Happened::RecvEnded { slot, result } => self.on_recv_ended(slot, result),
             Happened::Received { slot, result } => self.on_received(d, slot, result),
             Happened::Sent { slot, result } => self.on_sent(d, slot, result),
-            Happened::ShutDown { .. } => {}
+            Happened::ShutDown { slot, .. } => {
+                self.conns[slot as usize].shutting = false;
+                self.try_free(slot);
+            }
             Happened::Closed { slot } => {
                 self.conns[slot as usize].closed = true;
                 self.try_free(slot);

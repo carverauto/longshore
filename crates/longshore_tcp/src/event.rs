@@ -19,6 +19,20 @@ pub enum Why {
     Timeout,
     /// The peer announced a frame that the framing does not allow.
     Protocol,
+    /// TLS failed: the handshake did not complete, a record did not
+    /// authenticate, or the peer sent an alert.
+    Tls,
+}
+
+impl Why {
+    /// Why a connection ended that failed with the negated error `result`.
+    pub(crate) const fn of(result: i32) -> Why {
+        if result == crate::transport::TLS_FAILED {
+            Why::Tls
+        } else {
+            Why::Reset
+        }
+    }
 }
 
 /// Something for the caller to act on; pulled with `Net::next_event`.
@@ -78,4 +92,8 @@ pub enum NetError {
     Listen(i32),
     /// No frame memory is free.
     NoMemory,
+    /// TLS was asked for and cannot be had: the `Net` was sized without
+    /// `Sizes::with_tls`, the transport has no setup for this side, or the
+    /// server name is empty or too long.
+    NoTls,
 }

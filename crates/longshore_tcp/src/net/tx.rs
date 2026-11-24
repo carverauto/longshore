@@ -150,7 +150,8 @@ impl<T: Transport> Net<T> {
         }
         let s = self.spans[self.span_at(slot, 0)];
         // The kernel copies for a Unix-domain socket whatever it is asked.
-        let zero_copy = !c.unix && s.len >= self.cfg.sizes.zero_copy_min;
+        // Nor is anything sealed for TLS sent from where the caller put it.
+        let zero_copy = !c.unix && !c.secure && s.len >= self.cfg.sizes.zero_copy_min;
         if self
             .t
             .send(d, slot, Span::new(s.buf, s.off, s.len), zero_copy)
@@ -169,7 +170,7 @@ impl<T: Transport> Net<T> {
             return self.try_free(slot);
         }
         let Ok(n) = u32::try_from(result) else {
-            return self.end(slot, Why::Reset);
+            return self.end(slot, Why::of(result));
         };
         c.last_active = self.now;
         let at = self.span_at(slot, 0);
@@ -239,10 +240,13 @@ impl<T: Transport> Net<T> {
     /// Shut `slot`'s write side down once its queue is empty.
     pub(super) fn shut_if_sent(&mut self, d: &mut T::Driver, slot: u32) {
         let c = &self.conns[slot as usize];
-        if c.st != St::Up || !c.shut || c.tx_len > 0 || c.sending {
+        if c.st != St::Up || !c.shut || c.shut_sent || c.tx_len > 0 || c.sending {
             return;
         }
-        if self.t.shutdown_write(d, slot).is_err() {
+        if self.t.shutdown_write(d, slot).is_ok() {
+            let shut = &mut self.conns[slot as usize];
+            (shut.shutting, shut.shut_sent) = (true, true);
+        } else {
             self.add_work(slot, W_SHUT);
         }
     }

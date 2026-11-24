@@ -84,10 +84,11 @@ impl<T: Transport> Net<T> {
                 Span::new(ext.buf(), 0, size)
             }
         };
-        if self.t.recv_into(d, slot, into).is_ok() {
-            self.conns[slot as usize].recv_busy = true;
-        } else {
-            self.add_work(slot, W_READ);
+        match self.t.recv_into(d, slot, into) {
+            Ok(None) => self.conns[slot as usize].recv_busy = true,
+            // Plaintext that was there already: no completion follows.
+            Ok(Some(result)) => self.on_received(d, slot, result),
+            Err(_) => self.add_work(slot, W_READ),
         }
     }
 
@@ -140,7 +141,7 @@ impl<T: Transport> Net<T> {
         }
         let mid_frame = c.hdr_have > 0 || (c.asm.is_some() && c.asm_have > 0);
         let Ok(n) = u32::try_from(result) else {
-            return self.end(slot, Why::Reset);
+            return self.end(slot, Why::of(result));
         };
         if n == 0 {
             // An end of stream inside a frame is a broken connection.
@@ -201,7 +202,10 @@ impl<T: Transport> Net<T> {
             self.ring_pending[self.ring_pending_len] = slot;
             self.ring_pending_len += 1;
         }
-        self.queue_event(slot, EV_READABLE);
+        // Protected: readable once a record has been opened.
+        if !c.secure || self.open_ring(d, slot, false) {
+            self.queue_event(slot, EV_READABLE);
+        }
         if !armed {
             self.start_reading(d, slot);
         }
@@ -214,16 +218,20 @@ impl<T: Transport> Net<T> {
             return self.try_free(slot);
         }
         match result {
-            0 => {
-                let mid_frame = c.hdr_have > 0 || c.asm.is_some();
-                let why = if mid_frame { Why::Reset } else { Why::Orderly };
-                self.end(slot, why);
-            }
+            0 => self.peer_finished(slot),
             // The ring was empty, or we stopped the receive ourselves:
             // armed again on the next `poll` unless reading is paused.
             r if r == -ENOBUFS || r == -ECANCELED => self.add_work(slot, W_READ),
-            _ => self.end(slot, Why::Reset),
+            _ => self.end(slot, Why::of(result)),
         }
+    }
+
+    /// The peer ended the stream: in order, unless inside a frame.
+    pub(super) fn peer_finished(&mut self, slot: u32) {
+        let c = &self.conns[slot as usize];
+        let mid_frame = c.hdr_have > 0 || c.asm.is_some();
+        let why = if mid_frame { Why::Reset } else { Why::Orderly };
+        self.end(slot, why);
     }
 
     /// Stop reading on `slot` until the caller releases frame memory.

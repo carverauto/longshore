@@ -5,6 +5,10 @@
 
 //! How much of everything a `Net` gets.
 
+/// The smallest segment a `Net` with TLS can have: a connection's TLS
+/// buffer holds two records of the largest size.
+pub const TLS_SEGMENT_MIN: u32 = 36 << 10;
+
 /// What to add to the backend for a `Net`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Sizes {
@@ -20,6 +24,7 @@ pub struct Sizes {
     pub(crate) header_max: u32,
     pub(crate) spans: u32,
     pub(crate) zero_copy_min: u32,
+    pub(crate) tls: bool,
     pub(crate) token_base: u64,
     pub(crate) seed: u64,
 }
@@ -45,6 +50,7 @@ impl Sizes {
             header_max: 256,
             spans: 16,
             zero_copy_min: 16 << 10,
+            tls: false,
             token_base: 0,
             seed: 0x6c6f_6e67_7368_6f72,
         }
@@ -96,6 +102,15 @@ impl Sizes {
     }
 
     /// The first of the `Net`'s tokens; it uses [`crate::Config::tokens`] of them.
+    /// Room for TLS: two more buffers of the segment size for every
+    /// connection, which hold its records on the way out and in. Segments
+    /// must then be at least [`TLS_SEGMENT_MIN`] bytes.
+    #[must_use]
+    pub const fn with_tls(mut self, on: bool) -> Sizes {
+        self.tls = on;
+        self
+    }
+
     #[must_use]
     pub const fn with_token_base(mut self, base: u64) -> Sizes {
         self.token_base = base;

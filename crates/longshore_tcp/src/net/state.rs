@@ -39,6 +39,9 @@ pub(super) const W_REFUSE: u8 = 1 << 5;
 pub(super) enum St {
     Free,
     Connecting,
+    /// Accepted by a listener with TLS; the handshake runs. Not yet
+    /// announced to the caller.
+    Securing,
     Up,
     /// Accepted over the listener's limit: one frame may be sent, no reads.
     Refused,
@@ -102,6 +105,12 @@ pub(super) struct ConnState {
     /// Counted among its listener's connections.
     pub(super) counted: bool,
     pub(super) connecting: bool,
+    /// Protected with TLS.
+    pub(super) secure: bool,
+    /// A handshake is in flight in the transport.
+    pub(super) securing: bool,
+    /// A shutdown of the write side is in flight in the transport.
+    pub(super) shutting: bool,
     // Receiving.
     pub(super) armed: bool,
     pub(super) recv_busy: bool,
@@ -129,6 +138,8 @@ pub(super) struct ConnState {
     pub(super) sending: bool,
     pub(super) full: bool,
     pub(super) shut: bool,
+    /// The shutdown has been handed to the transport.
+    pub(super) shut_sent: bool,
 }
 
 impl ConnState {
@@ -151,6 +162,9 @@ impl ConnState {
             redial: false,
             counted: false,
             connecting: false,
+            secure: false,
+            securing: false,
+            shutting: false,
             armed: false,
             recv_busy: false,
             paused: false,
@@ -171,12 +185,18 @@ impl ConnState {
             sending: false,
             full: false,
             shut: false,
+            shut_sent: false,
         }
     }
 
     /// Whether an operation of this connection is still with the transport.
     pub(super) fn in_flight(&self) -> bool {
-        self.sending || self.recv_busy || self.armed || self.connecting
+        self.sending
+            || self.recv_busy
+            || self.armed
+            || self.connecting
+            || self.securing
+            || self.shutting
     }
 }
 

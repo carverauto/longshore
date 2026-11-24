@@ -12,7 +12,7 @@
 //! result belong to the `Net`.
 
 use crate::framing::Framing;
-pub use crate::sizes::Sizes;
+pub use crate::sizes::{Sizes, TLS_SEGMENT_MIN};
 use longshore_common::io::{BufId, Limits};
 
 /// How a connection reads.
@@ -57,6 +57,7 @@ pub struct ConnOpts {
     pub(crate) rx: Rx,
     pub(crate) held_max: u32,
     pub(crate) connect_timeout_ns: u64,
+    pub(crate) handshake_timeout_ns: u64,
     pub(crate) idle_timeout_ns: u64,
     pub(crate) reconnect: Option<Reconnect>,
 }
@@ -71,6 +72,7 @@ impl ConnOpts {
             rx: Rx::Ring,
             held_max: 4 << 20,
             connect_timeout_ns: 10_000_000_000,
+            handshake_timeout_ns: 10_000_000_000,
             idle_timeout_ns: 0,
             reconnect: None,
         }
@@ -100,6 +102,15 @@ impl ConnOpts {
         self
     }
 
+    /// End an accepted connection whose TLS handshake has not finished
+    /// after this long; 0 waits for ever. For a connection the caller
+    /// opens, the connect timeout covers the handshake too.
+    #[must_use]
+    pub const fn with_handshake_timeout_ns(mut self, ns: u64) -> ConnOpts {
+        self.handshake_timeout_ns = ns;
+        self
+    }
+
     /// Close a connection on which nothing was sent or received for this
     /// long; 0 for no limit.
     #[must_use]
@@ -126,6 +137,7 @@ pub struct ListenConfig {
     pub(crate) limit: u32,
     pub(crate) peer_addr: bool,
     pub(crate) bind_retry_ns: u64,
+    pub(crate) tls: bool,
 }
 
 impl ListenConfig {
@@ -139,7 +151,17 @@ impl ListenConfig {
             limit: u32::MAX,
             peer_addr: false,
             bind_retry_ns: 0,
+            tls: false,
         }
+    }
+
+    /// Protect accepted connections with TLS: each is announced once its
+    /// handshake is done. Needs `Sizes::with_tls` and a transport with a
+    /// server setup.
+    #[must_use]
+    pub const fn with_tls(mut self, on: bool) -> ListenConfig {
+        self.tls = on;
+        self
     }
 
     /// Share the port with listeners on other threads (`SO_REUSEPORT`).
@@ -196,7 +218,8 @@ pub enum ConfigError {
     ClassSize,
     /// `frame_size` is not a multiple of the backend's block size.
     FrameAlignment,
-    /// A segment is too small for `header_max`, or a count overflows.
+    /// A segment is too small for `header_max` (or, with TLS, smaller than
+    /// `TLS_SEGMENT_MIN`), or a count overflows.
     TooSmall,
 }
 
@@ -218,6 +241,9 @@ pub struct Config {
     pub(crate) frame_first: BufId,
     pub(crate) segment_first: BufId,
     pub(crate) header_first: BufId,
+    /// With `Sizes::with_tls`: connection `i` has buffers `2 * i` and
+    /// `2 * i + 1` from here.
+    pub(crate) tls_first: BufId,
     pub(crate) ring_first: BufId,
     pub(crate) ring_count: u32,
 }
@@ -257,7 +283,7 @@ impl Config {
             return Err(ConfigError::ClassSize);
         }
         let headers_per_buf = s.segment_size / s.header_max;
-        if headers_per_buf == 0 {
+        if headers_per_buf == 0 || (s.tls && s.segment_size < TLS_SEGMENT_MIN) {
             return Err(ConfigError::TooSmall);
         }
         Ok((conns, headers_per_buf))
@@ -271,9 +297,12 @@ impl Config {
         let s = sizes;
         let (conns, headers_per_buf) = Config::check(&base, &s)?;
         let header_bufs = conns.div_ceil(headers_per_buf);
+        // With TLS, two buffers per connection follow the header areas.
+        let tls_bufs = if s.tls { conns.saturating_mul(2) } else { 0 };
         let small = s
             .segments
             .checked_add(header_bufs)
+            .and_then(|n| n.checked_add(tls_bufs))
             .ok_or(ConfigError::TooSmall)?;
         let sock_base = base.sockets_max();
         let socks = conns
@@ -308,6 +337,7 @@ impl Config {
             frame_first: BufId::new(0),
             segment_first: BufId::new(0),
             header_first: BufId::new(0),
+            tls_first: BufId::new(0),
             ring_first: BufId::new(0),
             ring_count: 0,
         }
@@ -339,6 +369,10 @@ impl Config {
         self.frame_first = limits.aligned(self.aligned_at);
         self.segment_first = limits.small(self.small_at);
         self.header_first = limits.small(self.small_at + self.sizes.segments);
+        if self.sizes.tls {
+            let header_bufs = self.conns().div_ceil(self.headers_per_buf);
+            self.tls_first = limits.small(self.small_at + self.sizes.segments + header_bufs);
+        }
         self.ring_first = BufId::new(limits.ring_base());
         self.ring_count = limits.ring_buffers();
         self

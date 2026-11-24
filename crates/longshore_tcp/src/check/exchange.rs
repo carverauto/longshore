@@ -11,12 +11,15 @@ use longshore_common::io::{Io, Limits};
 use std::net::SocketAddr;
 
 /// Whole frames with a length prefix, in ring mode and in direct mode.
-fn frames_both_ways<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> Vec<Vec<u8>> {
+fn frames_both_ways<IO: Io>(
+    world: &mut impl FnMut(&Addr) -> World<IO>,
+    addr: Addr,
+) -> Vec<Vec<u8>> {
     let lens = [0usize, 1, 3, 500, 1019, 1020, 1021, 2500, 4000, 7, 0, 3000];
     let frames: Vec<Vec<u8>> = lens.iter().map(|l| prefixed(*l, 5)).collect();
     let mut trace = Vec::new();
     for rx in [Rx::Ring, Rx::Direct] {
-        let mut w = World::listening_on(make, &addr);
+        let mut w = world(&addr);
         let (c, s) = w.pair(addr, prefix().with_rx(rx));
         let got = w.exchange(c, s, &frames);
         if got != frames {
@@ -29,7 +32,10 @@ fn frames_both_ways<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> 
 
 /// A 256-byte header whose little-endian u32 at offset 40 is the frame's
 /// whole length, received straight into frame memory.
-fn header_with_size<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> Vec<Vec<u8>> {
+fn header_with_size<IO: Io>(
+    world: &mut impl FnMut(&Addr) -> World<IO>,
+    addr: Addr,
+) -> Vec<Vec<u8>> {
     let framing = must(HeaderFraming::new(256, 40, 4, false, true, 8192), "framing");
     let opts = ConnOpts::new(Framing::Header(framing)).with_rx(Rx::Direct);
     let frame = |size: u32, seed: u8| {
@@ -38,7 +44,7 @@ fn header_with_size<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> 
         f
     };
     let frames = vec![frame(256, 1), frame(257, 2), frame(4096, 3), frame(1000, 4)];
-    let mut w = World::listening_on(make, &addr);
+    let mut w = world(&addr);
     let (c, s) = w.pair(addr, opts);
     let got = w.exchange(c, s, &frames);
     if got != frames {
@@ -48,12 +54,12 @@ fn header_with_size<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> 
 }
 
 /// Raw bytes arrive complete and in order, whatever pieces they come in.
-fn raw_bytes<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> Vec<Vec<u8>> {
+fn raw_bytes<IO: Io>(world: &mut impl FnMut(&Addr) -> World<IO>, addr: Addr) -> Vec<Vec<u8>> {
     let data: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
     let pieces: Vec<Vec<u8>> = data.chunks(1000).map(<[u8]>::to_vec).collect();
     let mut trace = Vec::new();
     for rx in [Rx::Ring, Rx::Direct] {
-        let mut w = World::listening_on(make, &addr);
+        let mut w = world(&addr);
         let (c, s) = w.pair(addr, ConnOpts::new(Framing::Bytes).with_rx(rx));
         let got: Vec<u8> = w.exchange(c, s, &pieces).concat();
         if got != data {
@@ -66,8 +72,8 @@ fn raw_bytes<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> Vec<Vec
 
 /// The peer finishes after its last frame: the frames come first, then an
 /// orderly end, and a listener with peer addresses knows where it came from.
-fn orderly_end_and_peer_address<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) {
-    let mut w = World::listening_on(make, &addr);
+fn orderly_end_and_peer_address<IO: Io>(world: &mut impl FnMut(&Addr) -> World<IO>, addr: Addr) {
+    let mut w = world(&addr);
     let l = w.listen(addr, ListenConfig::new(prefix()).with_peer_addr(true));
     let to = w.dial_addr(l, addr);
     let (c, s) = w.connect(to, prefix());
@@ -117,22 +123,45 @@ pub fn run_all<IO: Io>(
     addr: SocketAddr,
     unix_path: &str,
 ) -> Vec<Vec<u8>> {
+    all(&mut |a| World::listening_on(make, a), addr, unix_path)
+}
+
+/// [`run_all`] with every connection protected by TLS: the same frames.
+#[cfg(feature = "tls-core")]
+pub fn run_all_tls<IO: Io>(
+    make: &mut impl FnMut(Limits) -> IO,
+    addr: SocketAddr,
+    unix_path: &str,
+    certs: &super::Certs,
+) -> Vec<Vec<u8>> {
+    all(
+        &mut |a| World::listening_on_tls(make, a, certs),
+        addr,
+        unix_path,
+    )
+}
+
+fn all<IO: Io>(
+    world: &mut impl FnMut(&Addr) -> World<IO>,
+    addr: SocketAddr,
+    unix_path: &str,
+) -> Vec<Vec<u8>> {
     let tcp = Addr::Ip(addr);
-    let mut trace = frames_both_ways(make, tcp);
-    trace.extend(header_with_size(make, tcp));
-    trace.extend(raw_bytes(make, tcp));
-    orderly_end_and_peer_address(make, tcp);
+    let mut trace = frames_both_ways(world, tcp);
+    trace.extend(header_with_size(world, tcp));
+    trace.extend(raw_bytes(world, tcp));
+    orderly_end_and_peer_address(world, tcp);
     // The same over a Unix-domain socket; each world binds the path anew.
     let unix = must(Addr::unix(unix_path), "unix path");
-    let mut over_unix = frames_both_ways(make, unix);
-    over_unix.extend(header_with_size(make, unix));
-    over_unix.extend(raw_bytes(make, unix));
+    let mut over_unix = frames_both_ways(world, unix);
+    over_unix.extend(header_with_size(world, unix));
+    over_unix.extend(raw_bytes(world, unix));
     if over_unix != trace {
         fail(format_args!(
             "a Unix-domain socket carried other frames than TCP"
         ));
     }
-    orderly_end_and_peer_address(make, unix);
+    orderly_end_and_peer_address(world, unix);
     drop(std::fs::remove_file(unix_path));
     trace
 }

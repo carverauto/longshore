@@ -14,7 +14,7 @@
 
 use crate::{
     Addr, Config, Conn, ConnOpts, Event, Frame, Framing, HeaderFraming, KernelTransport,
-    ListenConfig, Listener, Net, SendError, Sizes,
+    ListenConfig, Listener, Net, SendError, ServerName, Sizes,
 };
 use core::fmt;
 use longshore_common::io::turn::{Class, Turn};
@@ -25,6 +25,13 @@ mod exchange;
 pub mod storage;
 
 pub use exchange::run_all;
+#[cfg(feature = "tls-core")]
+pub use exchange::run_all_tls;
+#[cfg(feature = "tls-core")]
+pub use secure::Certs;
+
+#[cfg(feature = "tls-core")]
+pub mod secure;
 
 /// The harness's own timer, outside both sets' token ranges.
 const TICK: Token = Token::new(1 << 40);
@@ -63,6 +70,8 @@ pub struct World<IO: Io> {
     classes: Turn,
     /// Storage completions of the last turns, for the check to take.
     storage: VecDeque<Completion>,
+    /// With TLS: the name the server's certificate carries.
+    tls: Option<ServerName>,
 }
 
 /// Small sizes, so that frames span ring buffers and queues fill.
@@ -97,13 +106,25 @@ impl<IO: Io> World<IO> {
         client: Sizes,
         server: Sizes,
     ) -> World<IO> {
+        World::build(make, base, (client, server), None, |t, _| t)
+    }
+
+    /// The world, with each set's transport passed through `wrap` (`true`
+    /// for the client's) before its `Net` is built.
+    fn build(
+        make: &mut impl FnMut(Limits) -> IO,
+        base: Limits,
+        (client, server): (Sizes, Sizes),
+        tls: Option<ServerName>,
+        wrap: impl Fn(KernelTransport<IO>, bool) -> KernelTransport<IO>,
+    ) -> World<IO> {
         let (l1, ccfg) = must(Config::plan(base, client), "client plan");
         let after = server.with_token_base(ccfg.token_base() + ccfg.tokens());
         let (limits, scfg) = must(Config::plan(l1, after), "server plan");
         World {
             io: make(limits.with_ops_max(limits.ops_max() + 4)),
-            client: Net::new(KernelTransport::new(&ccfg), ccfg, &limits),
-            server: Net::new(KernelTransport::new(&scfg), scfg, &limits),
+            client: Net::new(wrap(KernelTransport::new(&ccfg), true), ccfg, &limits),
+            server: Net::new(wrap(KernelTransport::new(&scfg), false), scfg, &limits),
             out: Completions::new(64),
             sends: 0,
             ticking: false,
@@ -112,6 +133,7 @@ impl<IO: Io> World<IO> {
                 (ccfg.token_base(), scfg.token_base() + scfg.tokens()),
             ),
             storage: VecDeque::with_capacity(64),
+            tls,
         }
     }
 
@@ -175,6 +197,7 @@ impl<IO: Io> World<IO> {
             ticking,
             classes,
             storage,
+            tls: _,
         } = self;
         classes.dispatch(out, |class, c| match class {
             Class::Storage => storage.push_back(c),
@@ -216,6 +239,7 @@ impl<IO: Io> World<IO> {
 
     /// A listener on the server.
     pub fn listen(&mut self, addr: Addr, cfg: ListenConfig) -> Listener {
+        let cfg = cfg.with_tls(self.tls.is_some());
         must(self.server.listen(&mut self.io, addr, cfg), "listen")
     }
 
@@ -234,7 +258,13 @@ impl<IO: Io> World<IO> {
 
     /// One more connection to `addr`, both ends up.
     pub fn connect(&mut self, addr: Addr, opts: ConnOpts) -> (Conn, Conn) {
-        let c = must(self.client.connect(&mut self.io, addr, opts), "connect");
+        let c = match self.tls {
+            Some(name) => self
+                .client
+                .connect_tls(&mut self.io, addr, name.as_str(), opts),
+            None => self.client.connect(&mut self.io, addr, opts),
+        };
+        let c = must(c, "connect");
         let (mut up, mut accepted) = (false, None);
         self.until(|_, _, e| {
             match e {
