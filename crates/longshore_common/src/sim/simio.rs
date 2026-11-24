@@ -221,6 +221,12 @@ impl SimIo {
         self.world_mut().disk = Some(disk::SimDisk::new(cfg, files_max));
     }
 
+    /// Replace the network fault rates given at construction, from now on:
+    /// for a test that wants a clean set-up and faults after it.
+    pub fn set_faults(&mut self, faults: Faults) {
+        self.world_mut().faults = faults;
+    }
+
     /// Set probabilistic disk fault rates in parts per million.
     pub fn set_disk_faults(&mut self, faults: DiskFaults) {
         self.world_mut().disk_faults = faults;

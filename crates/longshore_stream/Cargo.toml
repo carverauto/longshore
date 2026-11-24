@@ -43,5 +43,9 @@ path = "tests/stream/plain.rs"
 name = "stream_tls"
 path = "tests/stream/tls.rs"
 
+[[test]]
+name = "stream_ring"
+path = "tests/stream/ring.rs"
+
 [lints]
 workspace = true
