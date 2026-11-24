@@ -66,6 +66,8 @@ pub(super) struct SimSock {
     /// For a socket accepted from an IP listener: the address the simulator
     /// gives its peer, the listener's and a port derived from the peer's slot.
     pub(super) accepted_from: Option<SocketAddr>,
+    /// A listener that shares its address with others (`SO_REUSEPORT`).
+    pub(super) reuse_port: bool,
     pub(super) peer_closed: bool,
     /// The peer shut down its write side: receives end once drained.
     pub(super) peer_wr_shut: bool,
@@ -130,6 +132,7 @@ pub struct Virtual {
     pub(super) ring_in_free: Box<[bool]>,
     pub(super) accept_start: u32,
     pub(super) accept_len: u32,
+    pub(super) keep_timing: Option<crate::io::KeepAlive>,
     pub(super) no_delay: bool,
     pub(super) keep_alive: bool,
 }
@@ -144,6 +147,7 @@ impl Virtual {
             rx_head: 0,
             rx_len: 0,
             accepted_from: None,
+            reuse_port: false,
             peer_closed: false,
             peer_wr_shut: false,
             wr_shut: false,
@@ -172,6 +176,7 @@ impl Virtual {
             ring_in_free: vec![true; ring_count].into_boxed_slice(),
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
+            keep_timing: None,
             no_delay: false,
             keep_alive: false,
         }

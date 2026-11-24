@@ -23,6 +23,7 @@ mod completions;
 mod completions_steps;
 #[cfg(feature = "fault-injection")]
 mod fault;
+mod listen;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
 mod ops;
@@ -183,10 +184,13 @@ pub struct UringIo {
     /// The eventfd behind `Io::waker`, or -1 before it is asked for.
     wake_fd: i32,
     measure_segments: bool,
+    keep_timing: Option<crate::io::KeepAlive>,
     no_delay: bool,
     keep_alive: bool,
     last_listen_opts: Option<(bool, bool)>,
     last_connect_opts: Option<(bool, bool)>,
+    last_listen_timing: Option<(u32, u32, u32)>,
+    last_connect_timing: Option<(u32, u32, u32)>,
     /// The next `tick` reports a failure. See [`Fault::TickFails`].
     #[cfg(feature = "fault-injection")]
     fail_tick: bool,

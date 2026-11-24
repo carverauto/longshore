@@ -46,6 +46,60 @@ pub mod sys;
 #[cfg(target_os = "linux")]
 pub mod uring;
 
+/// Keepalive probe timing for TCP sockets: see [`Io::keep_alive_timing`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct KeepAlive {
+    pub(crate) idle_secs: u32,
+    pub(crate) interval_secs: u32,
+    pub(crate) count: u32,
+}
+
+impl KeepAlive {
+    /// Probe after `idle_secs` of silence, then every `interval_secs`, and
+    /// give the connection up after `count` unanswered probes. Each at least 1.
+    #[must_use]
+    pub const fn new(idle_secs: u32, interval_secs: u32, count: u32) -> KeepAlive {
+        assert!(idle_secs > 0 && interval_secs > 0 && count > 0);
+        KeepAlive {
+            idle_secs,
+            interval_secs,
+            count,
+        }
+    }
+}
+
+/// How [`Io::listen_with`] listens.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ListenOpts {
+    pub(crate) reuse_port: bool,
+    pub(crate) backlog: u32,
+}
+
+impl ListenOpts {
+    /// What [`Io::listen`] does: the port to itself, a backlog of 128.
+    pub const DEFAULT: ListenOpts = ListenOpts {
+        reuse_port: false,
+        backlog: 128,
+    };
+
+    /// With `SO_REUSEPORT`: several sockets, each on its own thread and
+    /// backend, listen on one address and the kernel spreads incoming
+    /// connections across them.
+    #[must_use]
+    pub const fn with_reuse_port(mut self, on: bool) -> ListenOpts {
+        self.reuse_port = on;
+        self
+    }
+
+    /// With this many connections allowed to wait to be accepted (at least 1).
+    #[must_use]
+    pub const fn with_backlog(mut self, backlog: u32) -> ListenOpts {
+        assert!(backlog > 0);
+        self.backlog = backlog;
+        self
+    }
+}
+
 /// Which direction of a connection [`Op::Shutdown`] ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Shut {
@@ -307,6 +361,20 @@ pub trait Io {
     /// Bind and listen in slot `sock`. Initialization-time only; may block.
     /// Returns the bound address (useful with port 0).
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// As [`Io::listen`], with options. A backend that cannot honour an
+    /// option refuses with `Unsupported`; it never ignores one.
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        if opts == ListenOpts::DEFAULT {
+            self.listen(sock, addr)
+        } else {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+    }
     /// Bind and listen on a Unix-domain stream socket at `path` in slot
     /// `sock`. Initialization-time only; may block.
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
@@ -316,6 +384,10 @@ pub trait Io {
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected
     /// from now on. Ignored for UDP and Unix-domain sockets.
     fn keep_alive(&mut self, _on: bool) {}
+    /// The probe timing that goes with [`Io::keep_alive`] on TCP sockets
+    /// listened or connected from now on; `None` leaves the system's
+    /// defaults. Accepted sockets take their listener's.
+    fn keep_alive_timing(&mut self, _timing: Option<KeepAlive>) {}
     /// The address of the peer of the connection in slot `sock`, when the
     /// backend knows it: on the ring, for a socket accepted with
     /// [`Op::Accept`] (an armed accept installs sockets the kernel reports

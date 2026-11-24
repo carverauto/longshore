@@ -8,7 +8,8 @@
 use super::{cancel_until_end, close_socks, drain_one, drain_until, net_limits, send_all};
 use crate::io::must::{fail, must, must_sock, Must};
 use crate::io::{
-    BufId, Completion, Completions, Io, Limits, Op, Sock, Token, ECANCELED, EMFILE, ENFILE,
+    BufId, Completion, Completions, Io, Limits, ListenOpts, Op, Sock, Token, ECANCELED, EMFILE,
+    ENFILE,
 };
 use std::net::SocketAddr;
 
@@ -311,7 +312,54 @@ fn a_single_accept_reports_the_peers_address<IO: Io>(
     close_socks(&mut io, &mut out, &[client, listener]);
 }
 
+/// Two listeners share an address only when both ask to, and every
+/// connection to it is accepted by exactly one of them.
+fn listeners_share_a_port_when_both_ask_to<IO: Io>(
+    make: &mut impl FnMut(Limits) -> IO,
+    addr: SocketAddr,
+) {
+    let mut io = make(net_limits());
+    let mut out = Completions::new(8);
+    let shared = ListenOpts::DEFAULT.with_reuse_port(true).with_backlog(16);
+    let bound = must(io.listen_with(Sock(0), addr, shared).ok(), "first listener");
+    assert!(
+        io.listen_with(Sock(1), bound, ListenOpts::DEFAULT).is_err(),
+        "a listener that does not ask to share is refused"
+    );
+    assert!(
+        io.listen_with(Sock(1), bound, shared).is_ok(),
+        "second listener"
+    );
+
+    // One accept on each listener, one connection: exactly one of them takes it.
+    for (tok, listener, sock) in [(1, Sock(0), Sock(6)), (2, Sock(1), Sock(7))] {
+        io.must_submit(Token(tok), Op::Accept { listener, sock });
+    }
+    io.must_submit(
+        Token(3),
+        Op::Connect {
+            sock: Sock(5),
+            addr: bound,
+        },
+    );
+    let (mut accepts, mut connected) = (0u32, false);
+    drain_until(&mut io, &mut out, |_, c| {
+        assert!(c.result >= 0, "{c:?}");
+        accepts += u32::from(c.token.0 == 1 || c.token.0 == 2);
+        connected |= c.token.0 == 3;
+        accepts == 1 && connected
+    });
+    io.must_tick(false, &mut out);
+    assert!(out.is_empty(), "the other listener accepted nothing");
+    close_socks(
+        &mut io,
+        &mut out,
+        &[Sock(0), Sock(1), Sock(5), Sock(6), Sock(7)],
+    );
+}
+
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
+    listeners_share_a_port_when_both_ask_to(make, addr);
     a_single_accept_reports_the_peers_address(make, addr);
     several_accepts_on_one_armed_accept(make, addr);
     accept_range_full_and_armed_again(make, addr);

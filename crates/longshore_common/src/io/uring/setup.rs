@@ -218,10 +218,13 @@ impl UringIo {
             files: Vec::new(),
             wake_fd: -1,
             measure_segments: false,
+            keep_timing: None,
             no_delay: false,
             keep_alive: false,
             last_listen_opts: None,
             last_connect_opts: None,
+            last_listen_timing: None,
+            last_connect_timing: None,
             #[cfg(feature = "fault-injection")]
             fail_tick: false,
         })

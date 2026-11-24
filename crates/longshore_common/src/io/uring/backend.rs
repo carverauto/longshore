@@ -82,15 +82,48 @@ impl Io for UringIo {
         let bound = l.local_addr()?;
         let fd = l.into_raw_fd();
         if self.no_delay || self.keep_alive {
-            if let Err(errno) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
+            if let Err(errno) =
+                apply_tcp_options(fd, self.no_delay, self.keep_alive, self.keep_timing)
+            {
                 let _: i32 = unsafe { close(fd) };
                 return Err(io::Error::from_raw_os_error(errno));
             }
         }
         self.last_listen_opts = Some(read_tcp_options(fd));
+        self.last_listen_timing = Some(read_keep_timing(fd));
         let r = self.ring.update_file(sock.0, fd);
         let _: i32 = unsafe { close(fd) };
         r.map(|_| bound)
+    }
+
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: crate::io::ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        if opts == crate::io::ListenOpts::DEFAULT {
+            return self.listen(sock, addr);
+        }
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.sock_stream[sock.0 as usize] = false;
+        let fd = super::listen::open(addr, opts)?;
+        let bound = super::listen::bound(fd);
+        let r = bound.and_then(|bound| {
+            if self.no_delay || self.keep_alive {
+                apply_tcp_options(fd, self.no_delay, self.keep_alive, self.keep_timing)
+                    .map_err(io::Error::from_raw_os_error)?;
+            }
+            self.last_listen_opts = Some(read_tcp_options(fd));
+            self.last_listen_timing = Some(read_keep_timing(fd));
+            self.ring.update_file(sock.0, fd).map(|_| bound)
+        });
+        let _: i32 = unsafe { close(fd) };
+        r
+    }
+
+    fn keep_alive_timing(&mut self, timing: Option<crate::io::KeepAlive>) {
+        self.keep_timing = timing;
     }
 
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {
@@ -217,6 +250,17 @@ impl UringIo {
         s.cancel_requested = false;
     }
 
+    /// Keepalive `(idle, interval, count)` read from the most recent `listen` descriptor.
+    pub fn last_listen_keep_timing(&self) -> Option<(u32, u32, u32)> {
+        self.last_listen_timing
+    }
+
+    /// Keepalive `(idle, interval, count)` read from the most recent
+    /// descriptor-created `Connect`.
+    pub fn last_connect_keep_timing(&self) -> Option<(u32, u32, u32)> {
+        self.last_connect_timing
+    }
+
     /// `(TCP_NODELAY, SO_KEEPALIVE)` read from the most recent `listen` descriptor.
     pub fn last_listen_tcp_options(&self) -> Option<(bool, bool)> {
         self.last_listen_opts
@@ -271,7 +315,32 @@ impl UringIo {
     }
 }
 
-pub(super) fn apply_tcp_options(fd: c_int, no_delay: bool, keep_alive: bool) -> Result<(), i32> {
+/// Set one integer socket option; the errno on failure.
+pub(super) fn set_int(fd: c_int, level: c_int, name: c_int, value: c_int) -> Result<(), i32> {
+    let len = core::mem::size_of::<c_int>() as u32;
+    let r = unsafe { setsockopt(fd, level, name, (&value as *const c_int).cast(), len) };
+    if r < 0 {
+        return Err(io::Error::last_os_error().raw_os_error().unwrap_or(EINVAL));
+    }
+    Ok(())
+}
+
+pub(super) fn apply_tcp_options(
+    fd: c_int,
+    no_delay: bool,
+    keep_alive: bool,
+    timing: Option<crate::io::KeepAlive>,
+) -> Result<(), i32> {
+    if let (true, Some(t)) = (keep_alive, timing) {
+        set_int(fd, IPPROTO_TCP, TCP_KEEPIDLE, t.idle_secs.cast_signed())?;
+        set_int(
+            fd,
+            IPPROTO_TCP,
+            TCP_KEEPINTVL,
+            t.interval_secs.cast_signed(),
+        )?;
+        set_int(fd, IPPROTO_TCP, TCP_KEEPCNT, t.count.cast_signed())?;
+    }
     let on: c_int = 1;
     let len = core::mem::size_of::<c_int>() as u32;
     if no_delay {
@@ -303,6 +372,27 @@ pub(super) fn apply_tcp_options(fd: c_int, no_delay: bool, keep_alive: bool) -> 
         }
     }
     Ok(())
+}
+
+/// `(idle, interval, count)` keepalive timing read from `fd`; zeros for
+/// what cannot be read.
+pub(super) fn read_keep_timing(fd: c_int) -> (u32, u32, u32) {
+    let read_one = |name: c_int| -> u32 {
+        let mut val: c_int = 0;
+        let mut len = core::mem::size_of::<c_int>() as u32;
+        let p = (&mut val as *mut c_int).cast();
+        let r = unsafe { getsockopt(fd, IPPROTO_TCP, name, p, &mut len) };
+        if r == 0 {
+            val.cast_unsigned()
+        } else {
+            0
+        }
+    };
+    (
+        read_one(TCP_KEEPIDLE),
+        read_one(TCP_KEEPINTVL),
+        read_one(TCP_KEEPCNT),
+    )
 }
 
 pub(super) fn read_tcp_options(fd: c_int) -> (bool, bool) {

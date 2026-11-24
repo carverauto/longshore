@@ -153,7 +153,8 @@ impl Posix {
             Err(e) => return Some(to_linux_errno(e)),
         };
         if self.no_delay || self.keep_alive {
-            if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
+            if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive, self.keep_timing)
+            {
                 let _: i32 = unsafe { close(fd) };
                 return Some(to_linux_errno(e));
             }
@@ -211,6 +212,9 @@ impl Posix {
         }
         match accept_socket(lfd) {
             Ok(new_fd) => {
+                if let Err(e) = self.after_accept(new_fd) {
+                    return Some(-e);
+                }
                 let sidx = sock.0 as usize;
                 self.socks[sidx].reset();
                 self.socks[sidx].fd = new_fd;

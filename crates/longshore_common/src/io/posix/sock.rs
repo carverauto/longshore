@@ -193,7 +193,32 @@ pub(super) fn sockaddr_un_from(nul_terminated: &[u8]) -> Result<(sockaddr_storag
     Ok((storage, len))
 }
 
-pub(super) fn apply_tcp_options(fd: c_int, no_delay: bool, keep_alive: bool) -> Result<(), c_int> {
+/// Set one integer socket option; the errno on failure.
+fn set_int(fd: c_int, level: c_int, name: c_int, value: c_int) -> Result<(), c_int> {
+    let len = size_of::<c_int>() as u32;
+    let r = unsafe { setsockopt(fd, level, name, (&value as *const c_int).cast(), len) };
+    if r < 0 {
+        return Err(os_errno());
+    }
+    Ok(())
+}
+
+pub(super) fn apply_tcp_options(
+    fd: c_int,
+    no_delay: bool,
+    keep_alive: bool,
+    timing: Option<crate::io::KeepAlive>,
+) -> Result<(), c_int> {
+    if let (true, Some(t)) = (keep_alive, timing) {
+        set_int(fd, IPPROTO_TCP, TCP_KEEPIDLE, t.idle_secs.cast_signed())?;
+        set_int(
+            fd,
+            IPPROTO_TCP,
+            TCP_KEEPINTVL,
+            t.interval_secs.cast_signed(),
+        )?;
+        set_int(fd, IPPROTO_TCP, TCP_KEEPCNT, t.count.cast_signed())?;
+    }
     let on: c_int = 1;
     let len = size_of::<c_int>() as u32;
     if no_delay {
@@ -227,6 +252,43 @@ pub(super) fn apply_tcp_options(fd: c_int, no_delay: bool, keep_alive: bool) -> 
     Ok(())
 }
 
+impl Posix {
+    /// Sets what an accepted socket does not take from its listener: Linux
+    /// hands the keepalive timing down, macOS all of it but the idle time.
+    /// On failure the socket is closed and the Linux errno returned, so an
+    /// option asked for is never silently missing.
+    pub(super) fn after_accept(&self, fd: c_int) -> Result<(), i32> {
+        if cfg!(target_os = "macos") {
+            if let (true, Some(t)) = (self.keep_alive, self.keep_timing) {
+                let idle = t.idle_secs.cast_signed();
+                if let Err(e) = set_int(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle) {
+                    let _: i32 = unsafe { close(fd) };
+                    return Err(super::errno::to_linux_errno(e));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `(idle, interval, count)` keepalive timing read from `fd`.
+pub(super) fn read_keep_timing(fd: c_int) -> io::Result<(u32, u32, u32)> {
+    let read_one = |name: c_int| -> io::Result<u32> {
+        let mut val: c_int = 0;
+        let mut len = size_of::<c_int>() as u32;
+        let p = (&mut val as *mut c_int).cast();
+        if unsafe { getsockopt(fd, IPPROTO_TCP, name, p, &mut len) } < 0 {
+            return Err(io::Error::from_raw_os_error(os_errno()));
+        }
+        Ok(val.cast_unsigned())
+    };
+    Ok((
+        read_one(TCP_KEEPIDLE)?,
+        read_one(TCP_KEEPINTVL)?,
+        read_one(TCP_KEEPCNT)?,
+    ))
+}
+
 pub(super) fn read_tcp_options(fd: c_int) -> io::Result<(bool, bool)> {
     let read_one = |level: c_int, name: c_int| -> io::Result<bool> {
         let mut val: c_int = 0;
@@ -243,7 +305,12 @@ pub(super) fn read_tcp_options(fd: c_int) -> io::Result<(bool, bool)> {
 }
 
 impl Posix {
-    pub(super) fn listen_sock(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
+    pub(super) fn listen_sock(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: crate::io::ListenOpts,
+    ) -> io::Result<SocketAddr> {
         let domain = match addr {
             SocketAddr::V4(_) => AF_INET,
             SocketAddr::V6(_) => AF_INET6,
@@ -259,8 +326,15 @@ impl Posix {
                 size_of::<c_int>() as u32,
             );
         }
+        if opts.reuse_port {
+            if let Err(e) = set_int(fd, SOL_SOCKET, SO_REUSEPORT, 1) {
+                let _: i32 = unsafe { close(fd) };
+                return Err(io::Error::from_raw_os_error(e));
+            }
+        }
         if self.no_delay || self.keep_alive {
-            if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive) {
+            if let Err(e) = apply_tcp_options(fd, self.no_delay, self.keep_alive, self.keep_timing)
+            {
                 let _: i32 = unsafe { close(fd) };
                 return Err(io::Error::from_raw_os_error(e));
             }
@@ -271,7 +345,7 @@ impl Posix {
             let _: i32 = unsafe { close(fd) };
             return Err(err);
         }
-        if unsafe { listen(fd, 128) } < 0 {
+        if unsafe { listen(fd, opts.backlog.min(65_535).cast_signed()) } < 0 {
             let err = io::Error::from_raw_os_error(os_errno());
             let _: i32 = unsafe { close(fd) };
             return Err(err);

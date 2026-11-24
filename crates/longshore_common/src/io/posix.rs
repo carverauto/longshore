@@ -89,6 +89,7 @@ pub struct Posix {
     ring_in_free: Box<[bool]>,
     accept_start: u32,
     accept_len: u32,
+    keep_timing: Option<crate::io::KeepAlive>,
     no_delay: bool,
     keep_alive: bool,
     #[cfg(feature = "fault-injection")]
@@ -112,6 +113,7 @@ impl Posix {
             ring_in_free: vec![true; ring_count].into_boxed_slice(),
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
+            keep_timing: None,
             no_delay: false,
             keep_alive: false,
             #[cfg(feature = "fault-injection")]
@@ -160,6 +162,20 @@ impl PosixIo {
         }
     }
 
+    /// Read the keepalive `(idle, interval, count)` from the underlying
+    /// descriptor of `sock`.
+    pub fn keep_timing(&self, sock: Sock) -> io::Result<(u32, u32, u32)> {
+        let s = self
+            .world()
+            .socks
+            .get(sock.0 as usize)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        if s.fd < 0 {
+            return Err(io::Error::from(io::ErrorKind::NotConnected));
+        }
+        sock::read_keep_timing(s.fd)
+    }
+
     /// Read `(TCP_NODELAY, SO_KEEPALIVE)` from the underlying descriptor of `sock`.
     pub fn tcp_options(&self, sock: Sock) -> io::Result<(bool, bool)> {
         let s = self
@@ -198,7 +214,20 @@ impl World for Posix {
     }
 
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
-        self.listen_sock(sock, addr)
+        self.listen_sock(sock, addr, crate::io::ListenOpts::DEFAULT)
+    }
+
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: crate::io::ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        self.listen_sock(sock, addr, opts)
+    }
+
+    fn keep_alive_timing(&mut self, timing: Option<crate::io::KeepAlive>) {
+        self.keep_timing = timing;
     }
 
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {

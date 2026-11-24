@@ -22,6 +22,11 @@ pub const SOCK_CLOEXEC: u64 = 0o2000000;
 
 pub const SOL_SOCKET: c_int = 1;
 pub const SO_KEEPALIVE: c_int = 9;
+pub const SO_REUSEADDR: c_int = 2;
+pub const SO_REUSEPORT: c_int = 15;
+pub const TCP_KEEPIDLE: c_int = 4;
+pub const TCP_KEEPINTVL: c_int = 5;
+pub const TCP_KEEPCNT: c_int = 6;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 1;
 pub const TCP_MAXSEG: c_int = 2;
@@ -127,6 +132,9 @@ const _: () = {
 
 extern "C" {
     pub fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
+    pub fn bind(fd: c_int, addr: *const c_void, len: u32) -> c_int;
+    pub fn listen(fd: c_int, backlog: c_int) -> c_int;
+    pub fn getsockname(fd: c_int, addr: *mut c_void, len: *mut u32) -> c_int;
     pub fn setsockopt(
         fd: c_int,
         level: c_int,

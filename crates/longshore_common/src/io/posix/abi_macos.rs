@@ -24,6 +24,11 @@ pub const SO_ERROR: c_int = 0x1007;
 pub const SO_NOSIGPIPE: c_int = 0x1022;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 0x01;
+pub const SO_REUSEPORT: c_int = 0x0200;
+/// macOS names the idle time `TCP_KEEPALIVE`.
+pub const TCP_KEEPIDLE: c_int = 0x10;
+pub const TCP_KEEPINTVL: c_int = 0x101;
+pub const TCP_KEEPCNT: c_int = 0x102;
 
 pub const MSG_PEEK: c_int = 0x2;
 pub const MSG_DONTWAIT: c_int = 0x80;

@@ -25,6 +25,10 @@ pub const SO_KEEPALIVE: c_int = 9;
 pub const SO_LINGER: c_int = 13;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 1;
+pub const SO_REUSEPORT: c_int = 15;
+pub const TCP_KEEPIDLE: c_int = 4;
+pub const TCP_KEEPINTVL: c_int = 5;
+pub const TCP_KEEPCNT: c_int = 6;
 
 pub const MSG_PEEK: c_int = 0x2;
 pub const MSG_DONTWAIT: c_int = 0x40;
