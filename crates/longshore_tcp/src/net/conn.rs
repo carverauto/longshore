@@ -10,12 +10,13 @@ use super::state::{
     NONE, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
 };
 use super::Net;
+use crate::addr::Addr;
 use crate::backoff::Backoff;
 use crate::config::ConnOpts;
 use crate::event::{Event, NetError, Why};
 use crate::framing::Framing;
 use crate::handle::Conn;
-use crate::transport::Transport;
+use crate::transport::{Refused, Span, Transport};
 use std::net::SocketAddr;
 
 impl<T: Transport> Net<T> {
@@ -36,9 +37,12 @@ impl<T: Transport> Net<T> {
     pub fn connect(
         &mut self,
         d: &mut T::Driver,
-        addr: SocketAddr,
+        addr: impl Into<Addr>,
         opts: ConnOpts,
     ) -> Result<Conn, NetError> {
+        let addr: Addr = addr.into();
+        // Deadlines count from now, not from the last `poll`.
+        self.now = self.t.now_ns(d);
         if !self.fits(&opts) {
             return Err(NetError::Framing);
         }
@@ -49,6 +53,7 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         *c = ConnState::free(opts, seed);
         c.peer = Some(addr);
+        c.unix = matches!(addr, Addr::Unix(_));
         if let Some(r) = opts.reconnect {
             c.backoff = Backoff::new(r.base_ns, r.max_ns, r.jitter_per_mille, seed);
         }
@@ -61,14 +66,8 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         c.st = St::Connecting;
         c.closed = false;
-        let (Some(addr), timeout) = (c.peer, c.opts.connect_timeout_ns) else {
-            return;
-        };
-        if self.t.connect(d, slot, addr).is_ok() {
-            self.conns[slot as usize].connecting = true;
-        } else {
-            self.add_work(slot, W_CONNECT);
-        }
+        let timeout = c.opts.connect_timeout_ns;
+        self.dial(d, slot);
         if timeout > 0 {
             self.deadlines.set(slot, self.now.saturating_add(timeout));
         }
@@ -215,11 +214,7 @@ impl<T: Transport> Net<T> {
     pub(super) fn do_work(&mut self, d: &mut T::Driver, slot: u32) {
         let want = core::mem::take(&mut self.conns[slot as usize].want);
         if want & W_CONNECT != 0 && self.conns[slot as usize].st == St::Connecting {
-            if self.t.connect(d, slot, self.peer_of(slot)).is_ok() {
-                self.conns[slot as usize].connecting = true;
-            } else {
-                self.add_work(slot, W_CONNECT);
-            }
+            self.dial(d, slot);
         }
         if want & W_CLOSE != 0 {
             self.close_socket(d, slot);
@@ -238,9 +233,21 @@ impl<T: Transport> Net<T> {
         }
     }
 
-    fn peer_of(&self, slot: u32) -> SocketAddr {
-        let unspecified = SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0));
-        self.conns[slot as usize].peer.unwrap_or(unspecified)
+    /// Hand the connect of `slot` to the transport, or try again on the
+    /// next `poll` when it has no room. The header area, unused until the
+    /// connection is up, is the transport's scratch memory.
+    fn dial(&mut self, d: &mut T::Driver, slot: u32) {
+        let Some(addr) = self.conns[slot as usize].peer else {
+            return;
+        };
+        let (buf, off) = self.header_area(slot);
+        let scratch = Span::new(buf, off, self.cfg.sizes.header_max);
+        match self.t.connect(d, slot, &addr, scratch) {
+            Ok(()) => self.conns[slot as usize].connecting = true,
+            Err(Refused::Busy) => self.add_work(slot, W_CONNECT),
+            // The transport cannot reach this address at all.
+            Err(Refused::Unsupported) => self.end(slot, Why::Reset),
+        }
     }
 
     /// A refused connection closes once the one frame it may be sent has gone.
@@ -324,7 +331,10 @@ impl<T: Transport> Net<T> {
     pub fn peer(&self, d: &T::Driver, conn: Conn) -> Option<SocketAddr> {
         let slot = self.gens.slot_of(conn)?;
         let c = &self.conns[slot as usize];
-        c.peer.or_else(|| self.t.peer_addr(d, slot))
+        match c.peer {
+            Some(addr) => addr.ip(),
+            None => self.t.peer_addr(d, slot),
+        }
     }
 
     /// Tell the caller a full queue has room again.

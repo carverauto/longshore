@@ -10,6 +10,7 @@
 //! the `Net`'s range: token = base + index * 8 + kind, where the index is a
 //! connection slot, or the connection count plus a listener slot.
 
+use crate::addr::Addr;
 use crate::config::Config;
 use crate::transport::{Happened, Listening, Refused, Span, Transport};
 use core::marker::PhantomData;
@@ -152,6 +153,10 @@ impl<IO: Io> Transport for KernelTransport<IO> {
     type Driver = IO;
     type Completion = Completion;
 
+    fn now_ns(&self, d: &IO) -> u64 {
+        d.now_ns()
+    }
+
     fn bytes<'d>(&self, d: &'d mut IO, buf: BufId) -> &'d mut [u8] {
         d.buf(buf)
     }
@@ -164,13 +169,23 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         &mut self,
         d: &mut IO,
         listener: u32,
-        addr: SocketAddr,
+        addr: &Addr,
         how: Listening,
-    ) -> std::io::Result<SocketAddr> {
-        let opts = ListenOpts::DEFAULT
-            .with_reuse_port(how.reuse_port())
-            .with_backlog(how.backlog().max(1));
-        d.listen_with(self.listener_sock(listener), addr, opts)
+    ) -> std::io::Result<Option<SocketAddr>> {
+        let sock = self.listener_sock(listener);
+        match addr {
+            Addr::Ip(ip) => {
+                let opts = ListenOpts::DEFAULT
+                    .with_reuse_port(how.reuse_port())
+                    .with_backlog(how.backlog().max(1));
+                d.listen_with(sock, *ip, opts).map(Some)
+            }
+            // A path belongs to one listener: there is no port to share.
+            Addr::Unix(_) if how.reuse_port() => {
+                Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+            }
+            Addr::Unix(path) => d.listen_unix(sock, path.as_str()).map(|()| None),
+        }
     }
 
     fn accept_armed(&mut self, d: &mut IO, listener: u32) -> Result<(), Refused> {
@@ -190,13 +205,33 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         Ok(())
     }
 
-    fn connect(&mut self, d: &mut IO, slot: u32, addr: SocketAddr) -> Result<(), Refused> {
+    fn connect(
+        &mut self,
+        d: &mut IO,
+        slot: u32,
+        addr: &Addr,
+        scratch: Span,
+    ) -> Result<(), Refused> {
         let sock = self.conn_sock(slot);
-        Self::submit(
-            d,
-            self.conn_token(slot, CONNECT),
-            Op::Connect { sock, addr },
-        )
+        let op = match addr {
+            Addr::Ip(ip) => Op::Connect { sock, addr: *ip },
+            Addr::Unix(path) => {
+                // The backend reads the path from the pool.
+                let p = path.with_nul();
+                if p.len() > scratch.len() as usize {
+                    return Err(Refused::Unsupported);
+                }
+                let at = scratch.off() as usize;
+                d.buf(scratch.buf())[at..at + p.len()].copy_from_slice(p);
+                Op::ConnectUnix {
+                    sock,
+                    path_buf: scratch.buf(),
+                    path_off: scratch.off(),
+                    path_len: p.len() as u32,
+                }
+            }
+        };
+        Self::submit(d, self.conn_token(slot, CONNECT), op)
     }
 
     fn recv_armed(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {

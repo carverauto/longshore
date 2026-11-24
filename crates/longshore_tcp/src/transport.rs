@@ -16,6 +16,7 @@
 //! the one thing every transport shares. It names no operation, socket or
 //! token type of a particular backend.
 
+use crate::addr::Addr;
 use longshore_common::io::BufId;
 use std::net::SocketAddr;
 
@@ -143,6 +144,9 @@ pub trait Transport {
     /// What the driver reports when an operation ends.
     type Completion: Copy;
 
+    /// The driver's clock, in nanoseconds: the same clock the caller reads
+    /// for `Net::poll`.
+    fn now_ns(&self, d: &Self::Driver) -> u64;
     /// The bytes of a pool buffer.
     fn bytes<'d>(&self, d: &'d mut Self::Driver, buf: BufId) -> &'d mut [u8];
     /// The bytes of two different pool buffers at once.
@@ -153,14 +157,15 @@ pub trait Transport {
         b: BufId,
     ) -> (&'d mut [u8], &'d mut [u8]);
 
-    /// Bind and listen in listener slot `listener`; the bound address.
+    /// Bind and listen in listener slot `listener`; the bound address, for
+    /// an IP address.
     fn listen(
         &mut self,
         d: &mut Self::Driver,
         listener: u32,
-        addr: SocketAddr,
+        addr: &Addr,
         how: Listening,
-    ) -> std::io::Result<SocketAddr>;
+    ) -> std::io::Result<Option<SocketAddr>>;
     /// Accept connections on `listener` until told otherwise, each into a
     /// slot of the transport's choosing from the accept range.
     fn accept_armed(&mut self, d: &mut Self::Driver, listener: u32) -> Result<(), Refused>;
@@ -172,9 +177,15 @@ pub trait Transport {
         listener: u32,
         slot: u32,
     ) -> Result<(), Refused>;
-    /// Connect `slot` to `addr`.
-    fn connect(&mut self, d: &mut Self::Driver, slot: u32, addr: SocketAddr)
-        -> Result<(), Refused>;
+    /// Connect `slot` to `addr`. `scratch` is pool memory the transport may
+    /// use until the connect ends (a Unix path has to lie in the pool).
+    fn connect(
+        &mut self,
+        d: &mut Self::Driver,
+        slot: u32,
+        addr: &Addr,
+        scratch: Span,
+    ) -> Result<(), Refused>;
     /// Receive on `slot` from the buffer ring until told otherwise.
     fn recv_armed(&mut self, d: &mut Self::Driver, slot: u32) -> Result<(), Refused>;
     /// Receive on `slot` once, into `into`.

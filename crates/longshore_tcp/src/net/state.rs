@@ -5,6 +5,7 @@
 
 //! What `Net` keeps per connection, listener, ring buffer and queued send.
 
+use crate::addr::Addr;
 use crate::backoff::Backoff;
 use crate::config::{ConnOpts, ListenConfig};
 use crate::event::Why;
@@ -84,7 +85,9 @@ pub(super) struct ConnState {
     /// The listener that accepted it, or `NONE`.
     pub(super) listener: u32,
     /// Where to dial again.
-    pub(super) peer: Option<SocketAddr>,
+    pub(super) peer: Option<Addr>,
+    /// A Unix-domain socket: never sent from without a copy.
+    pub(super) unix: bool,
     pub(super) backoff: Backoff,
     pub(super) last_active: u64,
     pub(super) ev: u8,
@@ -135,6 +138,7 @@ impl ConnState {
             opts,
             listener: NONE,
             peer: None,
+            unix: false,
             backoff: Backoff::new(1, 1, 0, seed),
             last_active: 0,
             ev: 0,
@@ -189,7 +193,7 @@ pub(super) enum LSt {
 pub(super) struct ListenerState {
     pub(super) st: LSt,
     pub(super) cfg: ListenConfig,
-    pub(super) addr: SocketAddr,
+    pub(super) addr: Addr,
     pub(super) bound: Option<SocketAddr>,
     /// Connections it accepted that are still open, refused ones aside.
     pub(super) count: u32,

@@ -57,7 +57,7 @@ for line in sys.stdin:
 while read -r target dest <&3; do
     case "$target" in ''|\#*) continue ;; esac
     echo "== $target on $dest"
-    cargo build --release --quiet --target "$target" -p longshore-bench --bin contract_uring --bin server_uring --bin file_uring --bin echo_uring --bin http_uring --bin dns_uring --bin client_uring
+    cargo build --release --quiet --target "$target" -p longshore-bench --bin contract_uring --bin server_uring --bin tcp_uring --bin file_uring --bin echo_uring --bin http_uring --bin dns_uring --bin client_uring
     # Built apart from the rest: its feature lets a test break a ring, and
     # no other program is built with that in it.
     cargo build --release --quiet --target "$target" -p longshore-bench --features fault-injection --bin client_faults --bin uring_faults
@@ -67,7 +67,7 @@ while read -r target dest <&3; do
     [ -n "$e2e_notls" ] && [ -x "$e2e_notls" ]
     bin="${CARGO_TARGET_DIR:-target}/$target/release"
     $SSH "$dest" "mkdir -p longshore-bench/$ID/repo"
-    scp -q -o BatchMode=yes "$bin/contract_uring" "$bin/server_uring" "$bin/file_uring" "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$bin/uring_faults" "$dest:longshore-bench/$ID/" </dev/null
+    scp -q -o BatchMode=yes "$bin/contract_uring" "$bin/server_uring" "$bin/tcp_uring" "$bin/file_uring" "$bin/echo_uring" "$bin/http_uring" "$bin/dns_uring" "$bin/client_uring" "$bin/client_faults" "$bin/uring_faults" "$dest:longshore-bench/$ID/" </dev/null
     scp -q -o BatchMode=yes "$e2e_fi" "$dest:longshore-bench/$ID/e2e_sim_fi" </dev/null
     scp -q -o BatchMode=yes "$e2e_notls" "$dest:longshore-bench/$ID/e2e_notls_sim" </dev/null
     COPYFILE_DISABLE=1 tar -cf - --exclude=target --exclude=.git . | $SSH_RAW "$dest" "tar -xf - -C longshore-bench/$ID/repo"
@@ -96,6 +96,8 @@ while read -r target dest <&3; do
         timeout 60 ./server_uring --v6
         timeout 60 ./server_uring --posix
         timeout 60 ./server_uring --posix --v6
+        timeout 60 ./tcp_uring
+        timeout 60 ./tcp_uring --v6
         timeout 60 ./file_uring --dir \"\$file_dir\"
         timeout 60 ./file_uring --dir \"\$file_dir\" --posix
         timeout 60 ./file_uring --dir \"\$file_dir\" --bench --interleave --iters 200

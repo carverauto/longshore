@@ -15,7 +15,9 @@ use longshore_stream as _;
 #[cfg(feature = "tls-core")]
 use longshore_tls as _;
 
+pub mod addr;
 pub mod backoff;
+pub mod check;
 pub mod config;
 pub mod deadline;
 pub mod event;
@@ -26,6 +28,7 @@ pub mod net;
 mod sizes;
 pub mod transport;
 
+pub use addr::{Addr, PathError, UnixPath};
 pub use backoff::Backoff;
 pub use config::{Config, ConfigError, ConnOpts, ListenConfig, Reconnect, Rx, Sizes};
 pub use deadline::Deadlines;

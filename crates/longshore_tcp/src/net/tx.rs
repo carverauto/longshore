@@ -149,7 +149,8 @@ impl<T: Transport> Net<T> {
             return;
         }
         let s = self.spans[self.span_at(slot, 0)];
-        let zero_copy = s.len >= self.cfg.sizes.zero_copy_min;
+        // The kernel copies for a Unix-domain socket whatever it is asked.
+        let zero_copy = !c.unix && s.len >= self.cfg.sizes.zero_copy_min;
         if self
             .t
             .send(d, slot, Span::new(s.buf, s.off, s.len), zero_copy)

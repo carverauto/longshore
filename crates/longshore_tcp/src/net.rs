@@ -20,6 +20,7 @@
 //! Completions only mark connections, and events and frames are pulled, so
 //! nothing can overflow and not pulling is itself backpressure.
 
+use crate::addr::Addr;
 use crate::config::{Config, ConnOpts};
 use crate::deadline::Deadlines;
 use crate::event::Event;
@@ -105,7 +106,7 @@ impl<T: Transport> Net<T> {
         let unused = ListenerState {
             st: LSt::Free,
             cfg: crate::config::ListenConfig::new(opts),
-            addr: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+            addr: Addr::Ip(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
             bound: None,
             count: 0,
             armed: false,

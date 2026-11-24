@@ -9,6 +9,7 @@
 
 use super::state::{best_effort, ConnState, LSt, St, EV_ACCEPTED, EV_REFUSED};
 use super::Net;
+use crate::addr::Addr;
 use crate::config::ListenConfig;
 use crate::event::{Event, NetError};
 use crate::handle::Listener;
@@ -29,9 +30,11 @@ impl<T: Transport> Net<T> {
     pub fn listen(
         &mut self,
         d: &mut T::Driver,
-        addr: SocketAddr,
+        addr: impl Into<Addr>,
         cfg: ListenConfig,
     ) -> Result<Listener, NetError> {
+        let addr: Addr = addr.into();
+        self.now = self.t.now_ns(d);
         if !self.fits(&cfg.conn) {
             return Err(NetError::Framing);
         }
@@ -61,11 +64,11 @@ impl<T: Transport> Net<T> {
     fn bind(&mut self, d: &mut T::Driver, l: u32) -> Result<(), i32> {
         let state = &self.listeners[l as usize];
         let how = Listening::new(state.cfg.reuse_port, state.cfg.backlog);
-        match self.t.listen(d, l, state.addr, how) {
+        match self.t.listen(d, l, &state.addr, how) {
             Ok(bound) => {
                 let up = &mut self.listeners[l as usize];
                 up.st = LSt::Listening;
-                up.bound = Some(bound);
+                up.bound = bound;
                 self.start_accept(d, l);
                 Ok(())
             }
@@ -155,11 +158,13 @@ impl<T: Transport> Net<T> {
         }
         state.backoff_ns = 0;
         let (cfg, listening) = (state.cfg, state.st == LSt::Listening);
+        let unix = matches!(state.addr, Addr::Unix(_));
         let over = state.count >= cfg.limit;
         let seed = self.cfg.sizes.seed ^ u64::from(slot);
         let c = &mut self.conns[slot as usize];
         *c = ConnState::free(cfg.conn, seed);
         c.listener = l;
+        c.unix = unix;
         c.sock_open = true;
         c.last_active = self.now;
         if !listening {
