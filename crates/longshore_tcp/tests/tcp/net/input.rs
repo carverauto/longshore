@@ -287,3 +287,39 @@ fn an_end_waiting_for_frame_memory_is_told_at_the_idle_timeout() {
     assert!(w.io.now_ns() - started >= 50 * MS);
     assert_eq!(elsewhere.len(), 8);
 }
+
+#[test]
+fn a_header_that_is_no_frame_pulled_after_the_end_is_a_protocol_error() {
+    // The prefix announces 8189 bytes: one more than fits 8192 with it.
+    let bad = 8189u32.to_be_bytes();
+    // Whole in the input, and collected from two pieces.
+    for first in [0, 2] {
+        let mut w = World::new(3, Faults::NONE);
+        let (c, s) = w.pair(prefix());
+        if first > 0 {
+            assert!(send(&mut w, c, &bad[..first]));
+            for _ in 0..20 {
+                w.turn();
+                while let Some(e) = w.server.next_event() {
+                    assert_eq!(e, Event::Readable(s));
+                    assert!(w.pull_all(s).is_empty(), "half a header is no frame");
+                }
+            }
+        }
+        // The rest and the end of the stream are both there before the
+        // server's caller looks.
+        assert!(send(&mut w, c, &bad[first..]));
+        w.client.shutdown_write(&mut w.io, c).unwrap();
+        for _ in 0..50 {
+            w.turn();
+        }
+        let mut got = Vec::new();
+        let ended = pull_until_other(&mut w, s, &mut got);
+        assert!(got.is_empty(), "no frame was sent");
+        let broken = Event::Closed {
+            conn: s,
+            why: Why::Protocol,
+        };
+        assert_eq!(ended, broken, "{first} bytes of the header came first");
+    }
+}

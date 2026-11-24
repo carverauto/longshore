@@ -224,8 +224,7 @@ impl<T: Transport> Net<T> {
         }
         let header = &self.t.bytes(d, src.buf)[src.off as usize..(src.off + hl) as usize];
         let Ok(frame_len) = h.frame_len(header) else {
-            self.end(slot, Why::Protocol);
-            self.drop_input(slot);
+            self.broke_framing(slot);
             return Cut::Stop;
         };
         if frame_len as u32 <= src.avail {
@@ -282,7 +281,18 @@ impl<T: Transport> Net<T> {
         self.add_work(slot, W_READ);
     }
 
-    /// Forget what `slot` received and did not deliver: its framing broke.
+    /// What `slot` received is no frame. It ends for that, even when its
+    /// stream had ended already: an end is in order only between frames.
+    pub(super) fn broke_framing(&mut self, slot: u32) {
+        self.end(slot, Why::Protocol);
+        let c = &mut self.conns[slot as usize];
+        if c.st == St::Dying {
+            c.why = Why::Protocol;
+        }
+        self.drop_input(slot);
+    }
+
+    /// Forget what `slot` received and did not deliver.
     pub(super) fn drop_input(&mut self, slot: u32) {
         self.drop_chunks(slot);
         self.drop_rx(slot);

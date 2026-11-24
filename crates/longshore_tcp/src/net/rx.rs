@@ -104,8 +104,7 @@ impl<T: Transport> Net<T> {
         let hl = h.header_len();
         let header = &self.t.bytes(d, hbuf)[hoff as usize..hoff as usize + hl];
         let Ok(frame_len) = h.frame_len(header) else {
-            self.end(slot, Why::Protocol);
-            self.drop_input(slot);
+            self.broke_framing(slot);
             return false;
         };
         let Some(ext) = self.extents.take() else {
