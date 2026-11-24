@@ -10,6 +10,7 @@ members = [
     "crates/longshore_mailbox",
     "crates/longshore_s3",
     "crates/longshore_stream",
+    "crates/longshore_tcp",
     "crates/longshore_tls",
     "crates/longshore-bench",
 ]
@@ -29,6 +30,7 @@ longshore_http_client = { path = "crates/longshore_http_client", version = "=0.2
 longshore_mailbox = { path = "crates/longshore_mailbox", version = "=0.2.0", default-features = false }
 longshore_s3 = { path = "crates/longshore_s3", version = "=0.2.0", default-features = false }
 longshore_stream = { path = "crates/longshore_stream", version = "=0.2.0", default-features = false }
+longshore_tcp = { path = "crates/longshore_tcp", version = "=0.2.0", default-features = false }
 longshore_tls = { path = "crates/longshore_tls", version = "=0.2.0", default-features = false }
 
 # External Dependencies

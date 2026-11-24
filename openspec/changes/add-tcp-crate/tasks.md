@@ -7,10 +7,10 @@
 - [x] 1.6 Real-kernel checks in `longshore-bench` for the above
 
 ## 2. Crate and API
-- [ ] 2.1 `crates/longshore_tcp` (workspace member, lints, license headers, README); `longshore::tcp`
+- [x] 2.1 `crates/longshore_tcp` (workspace member, lints, license headers, README); `longshore::tcp`
 - [ ] 2.2 `Config` and its builder (validated: socket-slot, token and buffer ranges; `Config::limits(base)`), `Net<T: Transport>` borrowing `T::Driver` (`on_completion`, `poll`, `next_deadline`), `Conn`/`Listener` handles with generations, `Event`, errors
 - [ ] 2.3 `Transport` trait with an associated `Driver`: slots, lent receive buffers, reserved send space, transport events; no backend types
-- [ ] 2.4 Framing: `Bytes` and `Header { .. }`, with the length bounds
+- [x] 2.4 Framing: `Bytes` and `Header { .. }`, with the length bounds
 - [ ] 2.5 Frames: `FrameId`, `frame`, `release`, `hold` (ring-lent frames end at the next `poll` unless held), held-bytes budget pausing reads, re-arming after an empty ring
 - [ ] 2.6 Send queues: segments from a shared pool, span queues, `send_lent`, `send_frame`/`send_bytes`, coalescing, zero-copy threshold, `Full` and `Writable`
 - [ ] 2.7 Deadlines: fixed table, `next_deadline`, connect/handshake/idle timeouts, a limit on segments sent per `poll`

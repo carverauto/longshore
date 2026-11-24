@@ -712,6 +712,7 @@ dependencies = [
  "longshore_mailbox",
  "longshore_s3",
  "longshore_stream",
+ "longshore_tcp",
  "longshore_tls",
  "rcgen",
 ]
@@ -800,6 +801,17 @@ name = "longshore_stream"
 version = "0.2.0"
 dependencies = [
  "longshore_common",
+ "longshore_tls",
+ "rcgen",
+]
+
+[[package]]
+name = "longshore_tcp"
+version = "0.2.0"
+dependencies = [
+ "hegeltest",
+ "longshore_common",
+ "longshore_stream",
  "longshore_tls",
  "rcgen",
 ]
