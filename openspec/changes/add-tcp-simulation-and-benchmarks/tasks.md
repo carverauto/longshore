@@ -6,12 +6,12 @@ Each group ends with a review of its own diff (no-mistakes or
 - [x] 0.2 Half-close: `ConnOpts::with_half_close`, `HalfClosed`, `Event::Finished`; sending after the peer's orderly end until the caller's shutdown, close or a failed send (C1)
 - [x] 0.3 `NetError::NotUp` for `shutdown_write` and for sends where the connection is not open for sending (C5); one frame for a refused connection (C4)
 - [x] 0.4 A listener slot is `Free` only when its close has completed and no accept is in flight (C6)
-- [x] 0.5 A scenario test for each of C1 to C6 that fails before its fix; the existing tests and shared checks adjusted to the held-back end
+- [x] 0.5 A scenario test for each of C1 to C6; those for C1, C2, C4 and C5 failed before their fix. The one for C6 and C8 guards the rule but did not fail before it: the simulator cannot show that fault until 1.1. The shared checks gained the half-close exchange and listener slots coming back
 - [x] 0.6 `docs/tcp.md` and the crate docs: the end of a connection, half-close, the order of events
-- [ ] 0.7 Review of group 0
+- [x] 0.7 Review of group 0: ten findings, each closed in a commit of its own. Three were faults (a connection parked under a closing listener reaching the next one, the idle deadline cutting off a half-close answer still being sent, a failed shutdown reported as orderly); only the second could be reproduced by a test
 
 ## 1. The contract, checked
-- [ ] 1.1 Seeded completion order within a tick in `SimIo` (off by default), with its own tests
+- [ ] 1.1 Seeded completion order within a tick in `SimIo` (off by default), with its own tests; with it, tests that reproduce what group 0 could only guard: a listener slot taken again before its accept's last report (C6, C8), and a connection parked under a closing listener
 - [ ] 1.2 `tcp_model`: the adversary, the byte-queue reference and invariants I1 to I12 of `design.md` checked after every step; small pools; `--seed`, `--steps`, `--shrink`
 - [ ] 1.3 Every cell of the connection and listener state tables is either reached by `tcp_model` (a coverage report by state and event says so) or shown unreachable by a debug assertion
 - [ ] 1.4 Every row of the exhaustion table has a scenario test: the pool empty, the taker refused or paused, then woken without a further call
