@@ -162,11 +162,14 @@ impl<T: Transport> Net<T> {
         self.queue_event(slot, if redial { EV_DOWN } else { EV_CLOSED });
     }
 
-    /// The write side of `slot` is shut down.
-    pub(super) fn on_shut_down(&mut self, slot: u32) {
-        let c = &mut self.conns[slot as usize];
-        c.shutting = false;
-        if c.st == St::HalfClosed {
+    /// The shutdown of `slot`'s write side ended, with `result`.
+    pub(super) fn on_shut_down(&mut self, slot: u32, result: i32) {
+        self.conns[slot as usize].shutting = false;
+        if result < 0 {
+            // A shutdown that failed did not end our side in order: the
+            // connection is broken. (Nothing happens if it is closing.)
+            self.end(slot, Why::of(result));
+        } else if self.conns[slot as usize].st == St::HalfClosed {
             // Both sides are done.
             self.settle_end(slot);
         }

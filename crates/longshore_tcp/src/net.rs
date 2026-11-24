@@ -203,7 +203,7 @@ impl<T: Transport> Net<T> {
             Happened::RecvEnded { slot, result } => self.on_recv_ended(slot, result),
             Happened::Received { slot, result } => self.on_received(d, slot, result),
             Happened::Sent { slot, result } => self.on_sent(d, slot, result),
-            Happened::ShutDown { slot, .. } => self.on_shut_down(slot),
+            Happened::ShutDown { slot, result } => self.on_shut_down(slot, result),
             Happened::Closed { slot } => {
                 self.conns[slot as usize].closed = true;
                 self.try_free(slot);
