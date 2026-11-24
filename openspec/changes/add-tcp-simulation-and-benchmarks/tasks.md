@@ -1,6 +1,11 @@
 Each group ends with a review of its own diff (no-mistakes or
 `/code-review`); its findings are fixed before the next group starts.
 
+## 0. Decisions from checking the tables against the code
+- [ ] 0.1 C1: half-close by the peer: support sending after the peer's end, or state that either end ends the connection; spec and table updated
+- [ ] 0.2 C2: the end event and frames not yet pulled: hold the end while input is left, or state the caller's order in the contract
+- [ ] 0.3 C3 to C7 fixed, each with a scenario test that fails before the fix
+
 ## 1. The contract, checked
 - [ ] 1.1 Seeded completion order within a tick in `SimIo` (off by default), with its own tests
 - [ ] 1.2 `tcp_model`: the adversary, the byte-queue reference and invariants I1 to I12 of `design.md` checked after every step; small pools; `--seed`, `--steps`, `--shrink`
