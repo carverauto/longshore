@@ -284,9 +284,14 @@ impl<T: Transport> Net<T> {
         core::mem::take(&mut self.drained_owed).then_some(Event::Drained)
     }
 
-    /// Owe the caller an event for connection `slot`.
+    /// Owe the caller an event for connection `slot`. Only a connection
+    /// the caller has a handle to, or is about to be given one for, is
+    /// owed any: none that is closing, waiting to dial again, or free.
     fn queue_event(&mut self, slot: u32, bit: u8) {
         let c = &mut self.conns[slot as usize];
+        if !matches!(c.st, St::Up | St::Refused | St::Dying) {
+            return;
+        }
         c.ev |= bit;
         if !c.queued {
             c.queued = true;

@@ -188,3 +188,31 @@ fn a_frame_the_backlog_cannot_count_another_hold_for_is_pulled_later() {
     assert_eq!(number(&mut w, &f), HOLDS);
     assert_eq!(w.server.next_frame(&mut w.io, s).unwrap(), None);
 }
+
+#[test]
+fn a_connection_closed_with_input_left_unpulled_owes_no_event() {
+    let mut w = World::new(4, Faults::NONE);
+    let (c, s) = w.pair(prefix());
+    // More input than the caller pulls and one buffer of frame memory
+    // holds: the connection stops reading.
+    for i in 0..6 {
+        assert!(send(&mut w, c, &prefixed(2996, i)));
+        for _ in 0..40 {
+            w.turn();
+            while w.client.next_event().is_some() {}
+        }
+    }
+    assert_eq!(w.server.next_event(), Some(Event::Readable(s)));
+    assert_eq!(w.server.next_event(), None);
+    // One frame is pulled and released, which lets it read again, and
+    // then it is closed with the rest unpulled.
+    let f = w.server.next_frame(&mut w.io, s).unwrap().unwrap();
+    assert!(f.is_held());
+    w.server.release(f);
+    w.server.close(&mut w.io, s).unwrap();
+    for _ in 0..100 {
+        assert_eq!(w.server.next_event(), None);
+        w.turn();
+        while w.client.next_event().is_some() {}
+    }
+}
