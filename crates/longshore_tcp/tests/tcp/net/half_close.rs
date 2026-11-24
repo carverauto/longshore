@@ -72,8 +72,10 @@ fn a_peer_that_sends_shuts_down_and_waits_is_answered() {
     assert_eq!(told.frames, [request]);
     assert_eq!(told.server, [Event::Readable(s), Event::Finished(s)]);
     // The answer goes out after the peer's end; then our side is done too.
+    assert!(!w.server.is_up(s) && w.server.can_send(s));
     assert_eq!(w.server.send_bytes(&mut w.io, s, &answer), Ok(()));
     w.server.shutdown_write(&mut w.io, s).unwrap();
+    assert!(!w.server.can_send(s));
     let ended = Event::Closed {
         conn: s,
         why: Why::Orderly,

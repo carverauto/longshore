@@ -177,6 +177,13 @@ impl<T: Transport> Net<T> {
         self.add_work(slot, W_FLUSH);
     }
 
+    /// Whether a send on `conn` would be accepted, room in its queue
+    /// aside: it is up, or half-closed, or refused and not yet sent its
+    /// one frame, and its write side has not been shut down.
+    pub fn can_send(&self, conn: Conn) -> bool {
+        self.sendable(conn).is_ok()
+    }
+
     /// Bytes queued and not yet sent on `conn`.
     pub fn send_queue(&self, conn: Conn) -> u32 {
         let Some(slot) = self.gens.slot_of(conn) else {

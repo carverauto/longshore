@@ -89,6 +89,8 @@ deadline is due.
 - `shutdown_write` finishes after what is queued, and receiving goes on;
   `close` ends at once, with no event; `drain` stops accepting and reports
   `Event::Drained` when queued sends have gone or its deadline passes.
+- `is_up` says a connection has both directions open; `can_send` says a
+  send would be accepted, which is also true of a half-closed connection.
 - A call on a connection that is not open for it (a send or a shutdown
   before it is up, after its end, or after `shutdown_write`) fails with
   `NotUp`. `Stale` is for a handle that names no connection any more.

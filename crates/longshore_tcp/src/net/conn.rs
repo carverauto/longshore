@@ -305,7 +305,10 @@ impl<T: Transport> Net<T> {
         self.now
     }
 
-    /// Whether `conn` is connected.
+    /// Whether `conn` is connected with both directions open. False from
+    /// the end of the peer's stream on, also while frames received before
+    /// it are left to pull and, with half-close, while the connection can
+    /// still be sent on: [`Net::can_send`] says that.
     pub fn is_up(&self, conn: Conn) -> bool {
         self.gens
             .slot_of(conn)
