@@ -17,9 +17,9 @@
 ## 4. CI and documentation
 - [x] 4.1 CI: ring-only and rustls-only clippy and tests, and a `cargo tree` check that those builds hold no `aws-lc-sys` or `aws-lc-rs`; the plain-build check also excludes `rustls`
 - [x] 4.2 README and crate docs: the four builds (default, ring, rustls, plain), the rustls provider's allocation and `Builder::tls_provider`; `docs/testing.md`, `openspec/project.md` tech stack
-- [ ] 4.3 Fuzz target `tls_record` through the `longshore_tls` crate, all three providers: refusing garbage, identical records, opening each other's
+- [x] 4.3 Fuzz target `tls_record` through the `longshore_tls` crate, all three providers: refusing garbage, identical records, opening each other's
 
 ## 5. Measurement
-- [ ] 5.1 `bench/results/`: record sealing and opening per provider (criterion `tls_providers`), and `http_uring` HTTPS PUT/GET per provider (`--provider`), in the Linux container
+- [x] 5.1 `bench/results/`: record sealing and opening per provider (criterion `tls_providers`), and `http_uring` HTTPS PUT/GET per provider (`--provider`), in the Linux container (`bench/results/m29-tls-providers.md`)
 - [ ] 5.2 *(deferred: run by a colleague with the cloud accounts)* the same on x86-64 and AArch64 cloud hosts
 - [ ] 5.3 *(deferred: run by a colleague with the cloud accounts)* a real store over HTTPS with the `ring` and `rustls` providers, recorded in `bench/results/`
