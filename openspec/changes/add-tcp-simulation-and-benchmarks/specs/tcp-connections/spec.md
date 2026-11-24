@@ -1,5 +1,72 @@
 ## ADDED Requirements
 
+### Requirement: Invariants under any order of operations
+The TCP set SHALL keep its stated invariants (slot ownership, one operation
+of a kind in flight, handles, event order, exactly-once in-order delivery,
+the reported end, memory accounting, deadlines, wakes, progress, no
+allocation) after every step of any sequence of calls, completions and
+deadlines, including calls made in the wrong state or with stale handles
+and completions delivered in any order.
+
+#### Scenario: Random operations
+- **WHEN** seeded random calls, faults and time steps run against a set with the smallest pools, with a tick's completions delivered in a seeded order
+- **THEN** every invariant holds after every step, and what each connection delivered equals what its peer sent, in order
+
+#### Scenario: Close racing with a completion
+- **WHEN** a connection is closed while a connect, a handshake, a send, a receive or a shutdown is in flight, and the close's completion arrives before, between and after theirs
+- **THEN** the slot is freed exactly once, after all of them have ended, and no event names the closed connection
+
+#### Scenario: Slot taken again
+- **WHEN** a slot is given to a new connection, by the set or by the kernel's accept, right after its previous connection was closed
+- **THEN** nothing of the previous connection (a late completion, a queued event, held memory, a deadline) reaches the new one
+
+#### Scenario: Failing seed
+- **WHEN** a run fails
+- **THEN** it reports its seed and step count, and replaying them fails in the same way
+
+### Requirement: Exhaustion without loss
+The TCP set SHALL refuse or pause without losing or duplicating data when
+a pool it takes from is empty (connection slots, frame memory, hold
+counts, send segments, a connection's send queue, the buffer ring, the
+driver's operation slots), and SHALL resume or tell the caller when there
+is room, with no further call needed to trigger it.
+
+#### Scenario: Frame memory exhausted at the end of the stream
+- **WHEN** a peer's last frame and the end of its stream arrive while every frame buffer is held, on a plain and on a TLS connection, in ring and in direct mode
+- **THEN** the frame is delivered once frame memory is released, and the end is reported after it as orderly
+
+#### Scenario: Shared pool empty
+- **WHEN** a send is refused because the shared segment pool is empty while the connection's own queue has room
+- **THEN** the connection is told it can send once a segment is returned, also when the connection told before it has gone
+
+#### Scenario: Every pool
+- **WHEN** each pool in turn is the only one exhausted during an exchange
+- **THEN** the exchange completes after the pool has room again, and every byte arrives once and in order
+
+### Requirement: End of stream after everything received
+The TCP set SHALL offer every frame received before the end of a stream
+before it reports the end, and SHALL report the end as orderly only when
+the stream ended between frames and, with TLS, after a close alert.
+
+#### Scenario: Data and end in one turn
+- **WHEN** frames, a partial frame and the end of the stream arrive in the same turn
+- **THEN** the whole frames are delivered and the end is reported as a reset
+
+#### Scenario: Frame that is only a header
+- **WHEN** a header announcing an empty body arrives in two pieces and the stream then ends
+- **THEN** the frame is delivered and the end is reported as orderly
+
+### Requirement: Transport conformance
+Every transport SHALL pass one conformance suite stating what the set
+relies on: one report per operation, a close reported once, nothing
+reported for a slot after its close and its operations have ended, no
+connection placed in a slot that still owes a report, and a busy refusal
+that changes nothing.
+
+#### Scenario: Kernel transport on three backends
+- **WHEN** the conformance suite runs against the kernel transport on the simulator, the portable backend and the ring
+- **THEN** it passes on each
+
 ### Requirement: Deterministic simulation under faults
 The TCP set SHALL run in the simulator under seeded network faults, and for
 each seed SHALL produce the same trace hash on every run; under every fault

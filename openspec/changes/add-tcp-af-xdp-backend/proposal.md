@@ -51,6 +51,15 @@ benchmarks`, this). The API from change 1 does not change.
 - Tuning on physical hosts with 200 and 300 Gb/s NICs: queues, ring and
   batch sizes, busy polling, interrupt placement, huge pages, NUMA, core
   pinning; profiles and results in `bench/results/`.
+- Built to a stated contract, after what the review of `add-tcp-crate`
+  showed: `design.md` holds the state table of the TCP connection, the
+  ownership table of UMEM chunks, the state table of a queue's socket,
+  eleven invariants and an answer for every empty pool. They are reviewed
+  before any code; a packet-level model test checks them from the first
+  commit, and the transport passes change 2's conformance suite. `close`
+  frees its slot at once and leaves the rest of the close handshake to a
+  fixed linger table, so a slot's next connection never sees its
+  predecessor's packets.
 - Refusal, not fallback: missing driver support, privileges or kernel
   features make building the transport fail with an error naming what is
   missing. AF_XDP's copy mode (the driver copying packets between the NIC

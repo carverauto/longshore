@@ -11,9 +11,26 @@ buffer size, zero-copy threshold, send segment size) are also to be chosen
 by measurement, and the measurements set the baseline that change 3's
 kernel bypass must beat.
 
+The review of `add-tcp-crate` showed what its hand-written scenarios did
+not reach: events in an awkward order (a close racing with a completion)
+and pools empty at an awkward moment (frame memory gone when the stream
+ends). About two dozen such faults were found by a reviewer, a round at a
+time. This change makes them findable by a seed: it states `Net`'s state
+tables and invariants (`design.md`) and checks them with a model test
+under random operations, small pools and reordered completions, before
+anything else is added.
+
 Second of three changes (`add-tcp-crate`, this, `add-tcp-af-xdp-backend`).
 
 ## What Changes
+- The contract first: the connection and listener state tables, twelve
+  invariants and an answer for every empty pool (`design.md`); a model
+  test (`tcp_model`) that checks them after every step of seeded random
+  operations; the simulator delivering a tick's completions in a seeded
+  order; a conformance suite for transports, which change 3 must pass.
+- Working method for this change and the next: tables and invariants
+  before code, adversarial scenarios for every requirement, a review at
+  the end of each task group.
 - Simulation: `KernelTransport<SimIo>` under seeded network faults (resets,
   short writes, partial reads, delays, flipped bits, peers that close and
   listen again), with trace hashes per seed, covering framing, held frames
@@ -37,7 +54,8 @@ Second of three changes (`add-tcp-crate`, this, `add-tcp-af-xdp-backend`).
 - Defaults set from the results; results in `bench/results/`.
 
 ## Impact
-- Affected specs: `tcp-connections` (ADDED: simulation, measured defaults)
+- Affected specs: `tcp-connections` (ADDED: checked invariants, exhaustion,
+  transport conformance, simulation, measured defaults)
 - Affected code: `longshore_tcp` tests and defaults, `longshore_common::sim`
   (packet device), `longshore-bench` (`tcp_uring`, benches), `fuzz/`
 - Depends on `add-tcp-crate`
