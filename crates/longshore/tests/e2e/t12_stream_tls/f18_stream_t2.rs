@@ -7,19 +7,19 @@
 
 #[cfg(feature = "sim")]
 use super::super::harness::write_pool_bytes;
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use super::super::harness::{drive_until, make_tls_identity, read_pool_bytes};
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use super::stream_rig::drive_tls_handshakes;
 #[cfg(feature = "sim")]
 use super::stream_rig::{connect_pair_sim, CLIENT, SERVER};
 #[cfg(feature = "sim")]
 use longshore::io::Io;
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use longshore::io::Op;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore::io::Sock;
-#[cfg(any(feature = "sim", feature = "tls"))]
+#[cfg(any(feature = "sim", feature = "tls-core"))]
 use longshore::io::{BufId, Token};
 #[cfg(feature = "sim")]
 use longshore::io::{Completions, Limits};
@@ -27,16 +27,16 @@ use longshore::io::{Completions, Limits};
 use longshore::sim::{Faults, SimIo};
 #[cfg(feature = "sim")]
 use longshore::stream::Step;
-#[cfg(any(feature = "sim", feature = "tls"))]
+#[cfg(any(feature = "sim", feature = "tls-core"))]
 use longshore::stream::Stream;
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use longshore::stream::TlsError;
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use longshore::tls::handshake::{ClientSetup, Handshake};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore::tls::record::{FRAGMENT_MAX, OVERHEAD};
 
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 #[test]
 fn t2_f18_1_tls_stream_wrong_hostname_returns_bad_certificate() {
     let ident = make_tls_identity(&["expected.test"]);
@@ -73,7 +73,7 @@ fn t2_f18_1_tls_stream_wrong_hostname_returns_bad_certificate() {
     assert!(Handshake::client(&empty_roots, "expected.test").is_ok());
 }
 
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 #[test]
 fn t2_f18_2_tls_stream_spill_path_across_small_dst_receives() {
     let ident = make_tls_identity(&["spill.test"]);
@@ -144,7 +144,7 @@ fn t2_f18_2_tls_stream_spill_path_across_small_dst_receives() {
     assert_eq!(recvd, msg);
 }
 
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 #[test]
 fn t2_f18_3_tls_stream_close_notify_followed_by_eof_returns_done_zero() {
     let ident = make_tls_identity(&["close.test"]);
@@ -260,7 +260,7 @@ fn t2_f18_4_stream_sim_faults_reset_terminates_cleanly() {
     );
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 #[test]
 #[should_panic(expected = "TLS buffers must hold two records")]
 fn t2_f18_5_tls_buffers_below_two_records_panics() {

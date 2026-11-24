@@ -14,5 +14,7 @@
 //! allocation guard. When it finishes, its keys are installed in `record`.
 
 pub mod handshake;
+pub mod provider;
 pub mod record;
+#[cfg(feature = "aws-lc")]
 pub mod wide_gcm;

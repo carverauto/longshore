@@ -56,6 +56,7 @@ mod multipart;
 mod pending;
 use longshore_mailbox::sync;
 mod threads;
+mod tls_provider;
 mod worker;
 
 pub use buffer::Buffer;
@@ -63,6 +64,7 @@ pub use exact::Budget;
 pub use lane::{Lane, KEY_MAX};
 pub use pending::{Output, Pending};
 pub use threads::{BuildError, Builder};
+pub use tls_provider::TlsProvider;
 pub use worker::{Layout, Worker};
 
 use crate::report::Expect;

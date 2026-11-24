@@ -34,13 +34,13 @@ longshore_tls = { path = "crates/longshore_tls", version = "=0.2.0", default-fea
 # External Dependencies
 aws-lc-sys = "0.47"
 ring = { version = "0.17", default-features = false }
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["std"] }
 webpki-roots = "1"
 
 # Test and benchmark Dependencies.
 hegeltest = "0.54"
 loom = "0.7"
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 aes-gcm = "0.11"
 aws-lc-rs = "1.19"
 # Oracles to verify`longshore_crc` CRC kernels.

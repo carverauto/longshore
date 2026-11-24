@@ -17,11 +17,11 @@
 
 use crate::chunked::Chunked;
 use crate::head::{parse_response, HeadWriter, HttpError, ResponseHead};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_common::io::ECANCELED;
 use longshore_common::io::{BufId, Completion, Io, Op, Segment, Sock, Token};
 use longshore_stream::{IdleCheck, Step, Stream};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_tls::handshake::{ClientSetup, Handshake};
 use std::net::SocketAddr;
 
@@ -30,7 +30,7 @@ pub struct Client {
     conns: Box<[Conn]>,
     streams: Box<[Stream]>,
     /// Present when connections use TLS.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     tls: Option<ClientSetup>,
     /// Connections opened so far.
     connects: u64,
@@ -83,11 +83,11 @@ use state::State;
 impl Client {
     /// A client that speaks plain HTTP.
     pub fn new(cfg: ClientConfig) -> Client {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             Self::build(cfg, None)
         }
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             Self::build(cfg)
         }
@@ -96,30 +96,30 @@ impl Client {
     /// A client that speaks HTTPS. Each connection additionally uses two
     /// pool buffers, for sealed records going out and coming in, starting at
     /// `first_tls_buf`: `first_tls_buf..first_tls_buf + 2 * connections_max`.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub fn with_tls(cfg: ClientConfig, setup: ClientSetup, first_tls_buf: u32) -> Client {
         Self::build(cfg, Some((setup, first_tls_buf)))
     }
 
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     fn build(cfg: ClientConfig, tls: Option<(ClientSetup, u32)>) -> Client {
         Self::build_inner(cfg, Some(tls))
     }
 
-    #[cfg(not(feature = "tls"))]
+    #[cfg(not(feature = "tls-core"))]
     fn build(cfg: ClientConfig) -> Client {
         Self::build_inner(cfg)
     }
 
     fn build_inner(
         cfg: ClientConfig,
-        #[cfg(feature = "tls")] tls: Option<Option<(ClientSetup, u32)>>,
+        #[cfg(feature = "tls-core")] tls: Option<Option<(ClientSetup, u32)>>,
     ) -> Client {
         // `ClientConfig::build` has checked the slot, token and head limits.
         let conn = Conn::new();
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         let tls = tls.flatten();
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         let first_tls_buf = tls.as_ref().map(|t| t.1);
         let streams = (0..cfg.connections_max())
             .map(|i| {
@@ -129,7 +129,7 @@ impl Client {
                     token(K_SEND),
                     token(K_RECV),
                 );
-                #[cfg(feature = "tls")]
+                #[cfg(feature = "tls-core")]
                 let s = match first_tls_buf {
                     Some(first) => s.with_tls_buffers(
                         BufId::new(first + 2 * i),
@@ -147,7 +147,7 @@ impl Client {
             cfg,
             conns: vec![conn; cfg.connections_max() as usize].into_boxed_slice(),
             streams,
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tls-core")]
             tls: tls.map(|t| t.0),
             connects: 0,
             idle_closed: 0,

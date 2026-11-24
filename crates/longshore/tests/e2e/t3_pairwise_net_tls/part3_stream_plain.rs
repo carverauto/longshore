@@ -65,7 +65,7 @@ fn plain_idle_connections_hold_no_ring_buffers() {
 }
 
 /// A TLS client and server `Stream` over a connected simulated pair.
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 fn tls_stream_pair(
     tls_limits: longshore::io::Limits,
 ) -> (longshore::sim::SimIo, Completions, Stream, Stream) {
@@ -114,7 +114,7 @@ fn tls_stream_pair(
 }
 
 /// Drives both handshakes for up to 500 ticks; returns whether each side finished.
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 fn drive_handshakes(
     tsim: &mut longshore::sim::SimIo,
     tout: &mut Completions,
@@ -150,7 +150,7 @@ fn drive_handshakes(
 }
 
 /// A TLS client and server complete their handshake over the simulator.
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 fn tls_streams_complete_handshake() {
     use super::super::harness::make_tls_identity;
     use longshore::stream::Step;
@@ -182,7 +182,7 @@ fn tls_streams_complete_handshake() {
 #[test]
 fn t3_16_stream_tls_vs_plain_armed_buffer_ring_invariant() {
     plain_idle_connections_hold_no_ring_buffers();
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     tls_streams_complete_handshake();
 }
 

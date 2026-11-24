@@ -100,9 +100,9 @@ impl S3 {
             None => String::new(),
         };
         // Only the TLS build takes its setup out of `cfg`.
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         let mut cfg = cfg;
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         let (secure, client) = (
             cfg.tls.is_some(),
             match cfg.tls.take() {
@@ -110,7 +110,7 @@ impl S3 {
                 None => Client::new(cfg.http),
             },
         );
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         let (secure, client) = (false, Client::new(cfg.http));
         let slot = Slot {
             state: State::Free,

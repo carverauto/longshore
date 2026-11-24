@@ -6,6 +6,10 @@
 //! Record layer, the refusals: a destination one byte short, records that
 //! are framed correctly and say nothing, unkeyed directions, and a content
 //! type that cannot be carried.
+//!
+//! Keys are set from raw bytes, which the `aws-lc` and `ring` providers
+//! take; rustls's record layer is keyed by a handshake and tested there.
+#![cfg(any(feature = "aws-lc", feature = "ring"))]
 
 use hegel::generators as gs;
 use hegel::TestCase;

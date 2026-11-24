@@ -12,7 +12,7 @@ pub(super) enum State {
     /// Reserved for the accept in flight.
     Accepting,
     /// Accepted; the TLS handshake is in progress.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     Handshake,
     RecvHead {
         have: u32,

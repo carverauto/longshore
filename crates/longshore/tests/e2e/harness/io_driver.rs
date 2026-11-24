@@ -8,7 +8,7 @@
 #[cfg(unix)]
 use longshore::io::{engine::Engine, posix::Posix, Limits};
 use longshore::io::{BufId, Completion, Completions, Io, Op, Token};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore::tls::handshake::{ClientSetup, ServerSetup};
 use std::io;
 use std::net::{SocketAddr, TcpListener};
@@ -356,14 +356,14 @@ pub fn posix_backend(limits: Limits) -> io::Result<Engine<Posix>> {
 }
 
 /// Self-signed DER certificate and PKCS#8 key pair for TLS 1.3 tests.
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 #[derive(Clone, Debug)]
 pub struct TestIdentity {
     pub cert_der: Vec<u8>,
     pub key_der: Vec<u8>,
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 impl TestIdentity {
     pub fn server_setup(&self) -> ServerSetup {
         ServerSetup::new(&[&self.cert_der], &self.key_der).expect("server setup")
@@ -374,7 +374,7 @@ impl TestIdentity {
 }
 
 /// Generates an ephemeral self-signed TLS 1.3 test identity for `names`.
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 pub fn make_tls_identity(names: &[&str]) -> TestIdentity {
     let owned: Vec<String> = names.iter().map(|s| (*s).to_string()).collect();
     let k = rcgen::generate_simple_self_signed(owned).expect("rcgen cert");

@@ -11,6 +11,6 @@ pub mod high_concurrency;
 pub mod parity_fileserver;
 pub mod parity_runners;
 pub mod plain_no_tls;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 pub mod tls_end_to_end;
 pub mod unix_ipc_rpc;

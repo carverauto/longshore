@@ -13,7 +13,7 @@
 use crate::head::{parse_request, Fields, HeadWriter, RequestHead};
 use longshore_common::io::{BufId, Completion, Io, Op, Sock, Token};
 use longshore_stream::{Step, Stream};
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use longshore_tls::handshake::{Handshake, ServerSetup};
 use std::io;
 use std::net::SocketAddr;
@@ -24,7 +24,7 @@ pub struct Server {
     conns: Box<[Conn]>,
     streams: Box<[Stream]>,
     /// Present when the server speaks TLS.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     tls: Option<ServerSetup>,
     objects: Vec<Object>,
     /// Ids of the multipart uploads in progress; zero is a free entry.
@@ -95,11 +95,11 @@ use state::State;
 impl Server {
     /// A plain-HTTP server.
     pub fn new(cfg: ServerConfig) -> Server {
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             Self::build(cfg, None)
         }
-        #[cfg(not(feature = "tls"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             Self::build(cfg)
         }
@@ -107,7 +107,7 @@ impl Server {
 
     /// An HTTPS server. Each connection additionally uses two pool buffers
     /// for sealed records, starting at `first_tls_buf`.
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tls-core")]
     pub fn with_tls(cfg: ServerConfig, setup: ServerSetup, first_tls_buf: u32) -> Server {
         Self::build(cfg, Some((setup, first_tls_buf)))
     }

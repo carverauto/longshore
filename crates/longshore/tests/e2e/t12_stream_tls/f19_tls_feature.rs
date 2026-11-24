@@ -5,24 +5,24 @@
 
 //! Feature 19 E2E tests: optional default-on `tls` Cargo feature across workspace.
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 use super::super::harness::make_tls_identity;
 use super::super::harness::HttpStoreServer;
 #[cfg(feature = "sim")]
 use super::super::harness::{drive_until, write_pool_bytes};
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 use longshore::client::BuildError;
 use longshore::client::Builder;
 #[cfg(feature = "sim")]
 use longshore::io::{BufId, Completions, Io, Limits, Op};
-#[cfg(any(feature = "sim", not(feature = "tls")))]
+#[cfg(any(feature = "sim", not(feature = "tls-core")))]
 use longshore::io::{Sock, Token};
 #[cfg(feature = "sim")]
 use longshore::sim::{Faults, SimIo};
 use longshore::store::creds::Credentials;
 #[cfg(feature = "sim")]
 use longshore::stream::Step;
-#[cfg(any(feature = "sim", not(feature = "tls")))]
+#[cfg(any(feature = "sim", not(feature = "tls-core")))]
 use longshore::stream::Stream;
 use longshore::stream::TlsError;
 use std::path::PathBuf;
@@ -45,7 +45,7 @@ fn describe_tls_err(err: TlsError) -> &'static str {
     }
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 #[test]
 fn t1_f19_1_default_feature_enables_tls_module_and_https_store() {
     let ident = make_tls_identity(&["127.0.0.1", "localhost"]);
@@ -213,7 +213,7 @@ fn t1_f19_5_cargo_tree_default_includes_tls_and_plain_sim_excludes_it() {
     assert!(!plain_tree.contains("aws-lc-sys"));
 }
 
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 #[test]
 fn t2_f19_1_plain_build_rejects_tls_builder_naming_tls() {
     let b = Builder::new(
@@ -238,7 +238,7 @@ fn t2_f19_1_plain_build_rejects_tls_builder_naming_tls() {
     }
 }
 
-#[cfg(not(feature = "tls"))]
+#[cfg(not(feature = "tls-core"))]
 #[test]
 fn t2_f19_2_plain_build_stream_has_no_tls_and_builder_rejects_before_io() {
     let mut s = Stream::new(Sock::new(0), Token::new(1), Token::new(2));

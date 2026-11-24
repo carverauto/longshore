@@ -7,6 +7,7 @@
 //! builder, so they chain; [`Builder::build`] checks the values.
 
 use super::Builder;
+use crate::client::TlsProvider;
 use crate::creds::Credentials;
 use crate::s3::Validate;
 use longshore_dns::Family;
@@ -89,6 +90,15 @@ impl Builder {
     /// HTTPS, verified against the public root certificates.
     pub fn tls(mut self, tls: bool) -> Builder {
         self.tls = tls;
+        self
+    }
+
+    /// The library HTTPS uses, when several are compiled in. Unset, the
+    /// first compiled in of AWS-LC, ring and rustls
+    /// ([`TlsProvider::preferred`]). One that is not compiled in makes
+    /// [`Builder::build`] fail with an error naming its feature.
+    pub fn tls_provider(mut self, provider: TlsProvider) -> Builder {
+        self.tls_provider = Some(provider);
         self
     }
 

@@ -235,8 +235,16 @@
 //!
 //! # Features
 //!
-//! - `tls` (default): TLS 1.3 via `longshore_tls`. Without it `longshore`
-//!   depends on neither `longshore_tls` nor `aws-lc-sys`.
+//! - `aws-lc` (default, also named `tls`): TLS 1.3 with AWS-LC sealing and
+//!   opening records, no copy, and rustls's AWS-LC provider for the
+//!   handshake.
+//! - `ring`: TLS 1.3 with ring sealing and opening records, one copy per
+//!   record, and rustls's ring provider. No AWS-LC in the build.
+//! - `rustls`: TLS 1.3 entirely from rustls, its record layer included, with
+//!   its ring provider. rustls allocates a buffer for each record it seals;
+//!   that runs inside the allocation exception the handshake uses.
+//! - None of the three: plain HTTP, with neither `longshore_tls`, `rustls`
+//!   nor AWS-LC. With several, [`client::Builder::tls_provider`] chooses.
 //! - `sim`: the deterministic simulator, for tests.
 //! - `fault-injection`: lets a test break a running client's ring. Off
 //!   everywhere else.
@@ -253,8 +261,8 @@
 //!   between I/O cores and caller waiter slots.
 //! - [`dns`], [`stream`], [`http`]: the protocols, from `longshore_dns`,
 //!   `longshore_stream` and `longshore_http_client`.
-//! - `tls` (feature `tls`), from `longshore_tls`: TLS 1.3 handshake and
-//!   record layer.
+//! - `tls` (with a TLS provider feature), from `longshore_tls`: TLS 1.3
+//!   handshake and record layer.
 //! - [`checksum`], from `longshore_crc`.
 //! - [`store`], from `longshore_s3`: the object store API: operations,
 //!   signing, retries, listing and credentials.
@@ -274,5 +282,5 @@ pub use longshore_mailbox as mailbox;
 pub use longshore_s3 as store;
 pub use longshore_s3::{client, crypto};
 pub use longshore_stream as stream;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 pub use longshore_tls as tls;

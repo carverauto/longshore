@@ -5,6 +5,10 @@
 
 //! Record layer: RFC 8448 vectors, an independent implementation, tamper
 //! detection, properties, and an allocation check.
+//!
+//! Keys are set from raw bytes, which the `aws-lc` and `ring` providers
+//! take; rustls's record layer is keyed by a handshake and tested there.
+#![cfg(any(feature = "aws-lc", feature = "ring"))]
 
 use hegel::generators as gs;
 use hegel::TestCase;

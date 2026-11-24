@@ -12,10 +12,10 @@
 //! owner sees plaintext lengths either way.
 
 mod error;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 mod handshake;
 mod idle;
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-core")]
 mod records;
 mod stream;
 

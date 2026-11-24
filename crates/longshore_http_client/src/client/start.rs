@@ -35,7 +35,7 @@ impl Client {
         c.sent = false;
         // The name the certificate must match is the host alone: a Host value
         // may carry a port, a server name may not.
-        #[cfg(feature = "tls")]
+        #[cfg(feature = "tls-core")]
         {
             let name = req.host().split(':').next().unwrap_or(req.host());
             c.name[..name.len()].copy_from_slice(name.as_bytes());

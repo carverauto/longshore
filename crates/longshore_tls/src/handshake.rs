@@ -15,15 +15,15 @@
 //! `allow_alloc`, the single sanctioned exception to the rule that nothing
 //! allocates after initialization.
 
+use crate::provider::Provider;
 use crate::record::{Direction, RecordError, Suite, HEADER_LEN};
 use longshore_common::io::alloc_guard::allow_alloc;
-use rustls::crypto::aws_lc_rs as provider;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use rustls::{
-    ClientConfig, ClientConnection, ConnectionTrafficSecrets, RootCertStore, ServerConfig,
-    ServerConnection,
-};
-use std::sync::Arc;
+use rustls::crypto::cipher::AeadKey;
+use rustls::{ClientConnection, ConnectionTrafficSecrets, ServerConnection};
+
+pub use setup::{ClientSetup, ServerSetup};
+
+mod setup;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TlsError {
@@ -59,94 +59,6 @@ fn map(e: &rustls::Error) -> TlsError {
     }
 }
 
-/// TLS 1.3 with the two AES-GCM suites and nothing else, AES-128 first.
-/// With `aes128_only`, just the suite every TLS 1.3 peer must implement.
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "rustls::CipherSuite is foreign and non_exhaustive: every other suite is dropped"
-)]
-fn crypto(aes128_only: bool) -> Arc<rustls::crypto::CryptoProvider> {
-    let mut p = provider::default_provider();
-    p.cipher_suites.retain(|s| match s.suite() {
-        rustls::CipherSuite::TLS13_AES_128_GCM_SHA256 => true,
-        rustls::CipherSuite::TLS13_AES_256_GCM_SHA384 => !aes128_only,
-        _ => false,
-    });
-    p.cipher_suites
-        .sort_by_key(|s| s.suite() != rustls::CipherSuite::TLS13_AES_128_GCM_SHA256);
-    Arc::new(p)
-}
-
-/// Client configuration, built once at initialization.
-pub struct ClientSetup(Arc<ClientConfig>);
-
-impl ClientSetup {
-    /// Trust the Mozilla root set compiled in through `webpki-roots`.
-    pub fn with_public_roots() -> ClientSetup {
-        let mut roots = RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        Self::build(roots, false)
-    }
-
-    /// As [`ClientSetup::with_public_roots`], but offering only AES-128-GCM,
-    /// the faster of the two suites and the one TLS 1.3 requires every peer
-    /// to support.
-    pub fn with_public_roots_aes128() -> ClientSetup {
-        let mut roots = RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        Self::build(roots, true)
-    }
-
-    /// Trust exactly these DER-encoded certificates as roots.
-    pub fn with_roots(der: &[&[u8]]) -> Result<ClientSetup, TlsError> {
-        let mut roots = RootCertStore::empty();
-        for cert in der {
-            roots
-                .add(CertificateDer::from(cert.to_vec()))
-                .map_err(|_| TlsError::Setup)?;
-        }
-        Ok(Self::build(roots, false))
-    }
-
-    #[expect(
-        clippy::expect_used,
-        reason = "crypto() gives AWS-LC's provider, which supports TLS 1.3"
-    )]
-    fn build(roots: RootCertStore, aes128_only: bool) -> ClientSetup {
-        let mut config = ClientConfig::builder_with_provider(crypto(aes128_only))
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .expect("TLS 1.3 is supported by the provider")
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        config.enable_secret_extraction = true;
-        // No tickets are stored: every connection does a full handshake.
-        config.resumption = rustls::client::Resumption::disabled();
-        ClientSetup(Arc::new(config))
-    }
-}
-
-/// Server configuration for the in-tree test server.
-pub struct ServerSetup(Arc<ServerConfig>);
-
-impl ServerSetup {
-    /// `chain` is the certificate chain, leaf first; `key` is its PKCS#8 private key. Both DER.
-    pub fn new(chain: &[&[u8]], key: &[u8]) -> Result<ServerSetup, TlsError> {
-        let chain: Vec<CertificateDer<'static>> = chain
-            .iter()
-            .map(|c| CertificateDer::from(c.to_vec()))
-            .collect();
-        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec()));
-        let mut config = ServerConfig::builder_with_provider(crypto(false))
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(|_| TlsError::Setup)?
-            .with_no_client_auth()
-            .with_single_cert(chain, key)
-            .map_err(|_| TlsError::Setup)?;
-        config.enable_secret_extraction = true;
-        Ok(ServerSetup(Arc::new(config)))
-    }
-}
-
 enum Conn {
     Client(ClientConnection),
     Server(ServerConnection),
@@ -154,7 +66,7 @@ enum Conn {
 
 /// One handshake in progress. Dropping it frees rustls's memory, inside the
 /// allocation exception.
-pub struct Handshake(Option<Conn>);
+pub struct Handshake(Option<Conn>, Provider);
 
 impl Drop for Handshake {
     fn drop(&mut self) {
@@ -185,16 +97,16 @@ impl Handshake {
         allow_alloc(|| {
             let name = rustls::pki_types::ServerName::try_from(server_name.to_owned())
                 .map_err(|_| TlsError::Setup)?;
-            ClientConnection::new(setup.0.clone(), name)
-                .map(|c| Handshake(Some(Conn::Client(c))))
+            ClientConnection::new(setup.config(), name)
+                .map(|c| Handshake(Some(Conn::Client(c)), setup.provider()))
                 .map_err(|_| TlsError::Setup)
         })
     }
 
     pub fn server(setup: &ServerSetup) -> Result<Handshake, TlsError> {
         allow_alloc(|| {
-            ServerConnection::new(setup.0.clone())
-                .map(|c| Handshake(Some(Conn::Server(c))))
+            ServerConnection::new(setup.config())
+                .map(|c| Handshake(Some(Conn::Server(c)), setup.provider()))
                 .map_err(|_| TlsError::Setup)
         })
     }
@@ -307,29 +219,48 @@ impl Handshake {
                 Conn::Server(c) => c.dangerous_extract_secrets(),
             }
             .map_err(|_| TlsError::Handshake)?;
-            for (dir, (seq, secret)) in [(tx, secrets.tx), (rx, secrets.rx)] {
+            let provider = self.1;
+            for (dir, (seq, secret), sending) in [(tx, secrets.tx, true), (rx, secrets.rx, false)] {
                 #[expect(
                     clippy::wildcard_enum_match_arm,
                     reason = "ConnectionTrafficSecrets is foreign and non_exhaustive: any suite but AES-GCM is unsupported"
                 )]
-                match &secret {
-                    ConnectionTrafficSecrets::Aes128Gcm { key, iv } => dir.set_keys(
-                        Suite::Aes128Gcm,
-                        key.as_ref(),
-                        iv.as_ref().try_into().map_err(|_| TlsError::Handshake)?,
-                        seq,
-                    ),
-                    ConnectionTrafficSecrets::Aes256Gcm { key, iv } => dir.set_keys(
-                        Suite::Aes256Gcm,
-                        key.as_ref(),
-                        iv.as_ref().try_into().map_err(|_| TlsError::Handshake)?,
-                        seq,
-                    ),
+                let (suite, key, iv) = match secret {
+                    ConnectionTrafficSecrets::Aes128Gcm { key, iv } => (Suite::Aes128Gcm, key, iv),
+                    ConnectionTrafficSecrets::Aes256Gcm { key, iv } => (Suite::Aes256Gcm, key, iv),
                     _ => return Err(TlsError::UnsupportedSuite),
-                }
-                .map_err(TlsError::Record)?;
+                };
+                let iv: &[u8; 12] = iv.as_ref().try_into().map_err(|_| TlsError::Handshake)?;
+                install(dir, provider, suite, key, iv, seq, sending).map_err(TlsError::Record)?;
             }
             Ok(())
         })
     }
+}
+
+/// Key `dir` for `provider`: rustls's record encryption takes rustls's key
+/// as it is, and seals or opens by the direction; the others take its bytes.
+fn install(
+    dir: &mut Direction,
+    provider: Provider,
+    suite: Suite,
+    key: AeadKey,
+    iv: &[u8; 12],
+    seq: u64,
+    sending: bool,
+) -> Result<(), RecordError> {
+    #[cfg(feature = "rustls")]
+    if provider == Provider::Rustls {
+        let role = if sending {
+            crate::record::Role::Seal
+        } else {
+            crate::record::Role::Open
+        };
+        return dir.set_rustls_keys(suite, key, iv, seq, role);
+    }
+    let _: bool = sending;
+    let keyed = dir.set_keys_with(provider, suite, key.as_ref(), iv, seq);
+    // rustls wipes its copy of the key when it is dropped.
+    drop(key);
+    keyed
 }

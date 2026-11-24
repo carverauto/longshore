@@ -10,7 +10,7 @@ use crate::TlsError;
 use longshore_common::io::{count_result, Io, Op, Sock, Token};
 use longshore_tls::record::{
     record_len, CONTENT_ALERT, CONTENT_APPLICATION_DATA, CONTENT_HANDSHAKE, FRAGMENT_MAX,
-    HEADER_LEN, OVERHEAD, TAG_LEN,
+    HEADER_LEN, OVERHEAD,
 };
 
 impl Tls {
@@ -87,9 +87,9 @@ impl Tls {
             };
             let space = (self.dst_max - produced) as usize;
             let at = (self.dst_off + produced) as usize;
-            // Opening writes the content and then its type byte, so the
-            // destination needs room for both.
-            let needed = len - HEADER_LEN - TAG_LEN;
+            // Opening writes the content and then its type byte (and with
+            // rustls the tag's bytes too), so the destination needs room.
+            let needed = self.rx.open_room(len);
             // The last record of a body usually fits except for its type
             // byte. If the buffer has a byte past the range asked for, the
             // type byte goes there and the byte is put back afterwards.

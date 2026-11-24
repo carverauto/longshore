@@ -7,9 +7,9 @@
 
 #[cfg(feature = "sim")]
 use super::super::harness::{drive_until, read_pool_bytes, write_pool_bytes};
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use super::super::harness::{make_tls_identity, TestIdentity};
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use super::stream_rig::drive_tls_handshakes;
 #[cfg(feature = "sim")]
 use super::stream_rig::{connect_pair_sim, CLIENT, SERVER};
@@ -21,7 +21,7 @@ use longshore::sim::{Faults, SimIo};
 use longshore::stream::Stream;
 #[cfg(feature = "sim")]
 use longshore::stream::{IdleCheck, Step};
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 use longshore::tls::handshake::Handshake;
 use std::process::Command;
 
@@ -124,7 +124,7 @@ fn t1_f18_1_plain_stream_bidirectional_echo() {
     assert_eq!(echoed, payload);
 }
 
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 #[test]
 fn t1_f18_2_tls_stream_client_and_server_handshake_and_echo() {
     let ident: TestIdentity = make_tls_identity(&["stream.test"]);
@@ -185,7 +185,7 @@ fn t1_f18_2_tls_stream_client_and_server_handshake_and_echo() {
 
 /// Receives `len` bytes on the server while the client's send completes;
 /// returns whether the send completed and the bytes received.
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 fn recv_big(
     io: &mut SimIo,
     out: &mut Completions,
@@ -239,7 +239,7 @@ fn recv_big(
     (c_done, recvd)
 }
 
-#[cfg(all(feature = "sim", feature = "tls"))]
+#[cfg(all(feature = "sim", feature = "tls-core"))]
 #[test]
 fn t1_f18_3_tls_stream_batch_clamping_and_zero_copy_threshold() {
     let ident = make_tls_identity(&["batch.test"]);
