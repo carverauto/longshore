@@ -14,15 +14,23 @@
 
 use crate::{
     Addr, Config, Conn, ConnOpts, Event, Frame, Framing, HeaderFraming, KernelTransport,
-    ListenConfig, Listener, Net, Rx, SendError, Sizes, Why,
+    ListenConfig, Listener, Net, SendError, Sizes,
 };
 use core::fmt;
-use longshore_common::io::{Completions, Io, Limits, Op, Token};
-use std::net::SocketAddr;
+use longshore_common::io::turn::{Class, Turn};
+use longshore_common::io::{Completion, Completions, Io, Limits, Op, Token};
+use std::collections::VecDeque;
+
+mod exchange;
+pub mod storage;
+
+pub use exchange::run_all;
 
 /// The harness's own timer, outside both sets' token ranges.
 const TICK: Token = Token::new(1 << 40);
 const TICK_NS: u64 = 250_000;
+/// The first of the 64 tokens a check's file operations use.
+pub const STORAGE: u64 = 1 << 41;
 
 /// Stop the running check with `why`.
 #[track_caller]
@@ -51,6 +59,10 @@ pub struct World<IO: Io> {
     out: Completions,
     sends: u32,
     ticking: bool,
+    /// Which completions are storage's and which the sets'.
+    classes: Turn,
+    /// Storage completions of the last turns, for the check to take.
+    storage: VecDeque<Completion>,
 }
 
 /// Small sizes, so that frames span ring buffers and queues fill.
@@ -95,6 +107,11 @@ impl<IO: Io> World<IO> {
             out: Completions::new(64),
             sends: 0,
             ticking: false,
+            classes: Turn::new(
+                (STORAGE, STORAGE + 64),
+                (ccfg.token_base(), scfg.token_base() + scfg.tokens()),
+            ),
+            storage: VecDeque::with_capacity(64),
         }
     }
 
@@ -148,19 +165,34 @@ impl<IO: Io> World<IO> {
             self.ticking = true;
         }
         must(self.io.tick(true, &mut self.out), "tick");
-        while let Some(c) = self.out.pop() {
-            if c.token() == TICK {
-                self.ticking = false;
-                continue;
+        // Storage completions first, as the owner of a log would take them.
+        let World {
+            io,
+            client,
+            server,
+            out,
+            sends,
+            ticking,
+            classes,
+            storage,
+        } = self;
+        classes.dispatch(out, |class, c| match class {
+            Class::Storage => storage.push_back(c),
+            Class::Network => {
+                // Kind 1 of a connection's tokens is its send.
+                *sends += u32::from(c.token().get() % 8 == 1);
+                if !(client.on_completion(io, c) || server.on_completion(io, c)) {
+                    fail(format_args!("a completion nobody claimed: {c:?}"));
+                }
             }
-            // Kind 1 of a connection's tokens is its send.
-            self.sends += u32::from(c.token().get() % 8 == 1);
-            let taken = self.client.on_completion(&mut self.io, c)
-                || self.server.on_completion(&mut self.io, c);
-            if !taken {
-                fail(format_args!("a completion nobody claimed: {c:?}"));
-            }
-        }
+            Class::Other if c.token() == TICK => *ticking = false,
+            Class::Other => fail(format_args!("a completion nobody claimed: {c:?}")),
+        });
+    }
+
+    /// The next storage completion of the turns so far.
+    pub fn next_storage(&mut self) -> Option<Completion> {
+        self.storage.pop_front()
     }
 
     /// Turn until `done` says so, handing it each event with the side
@@ -273,131 +305,4 @@ impl<IO: Io> World<IO> {
         }
         fail(format_args!("exchange: {bytes} of {total} bytes arrived"))
     }
-}
-
-/// Whole frames with a length prefix, in ring mode and in direct mode.
-fn frames_both_ways<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> Vec<Vec<u8>> {
-    let lens = [0usize, 1, 3, 500, 1019, 1020, 1021, 2500, 4000, 7, 0, 3000];
-    let frames: Vec<Vec<u8>> = lens.iter().map(|l| prefixed(*l, 5)).collect();
-    let mut trace = Vec::new();
-    for rx in [Rx::Ring, Rx::Direct] {
-        let mut w = World::listening_on(make, &addr);
-        let (c, s) = w.pair(addr, prefix().with_rx(rx));
-        let got = w.exchange(c, s, &frames);
-        if got != frames {
-            fail(format_args!("{rx:?}: frames differ from what was sent"));
-        }
-        trace.extend(got);
-    }
-    trace
-}
-
-/// A 256-byte header whose little-endian u32 at offset 40 is the frame's
-/// whole length, received straight into frame memory.
-fn header_with_size<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> Vec<Vec<u8>> {
-    let framing = must(HeaderFraming::new(256, 40, 4, false, true, 8192), "framing");
-    let opts = ConnOpts::new(Framing::Header(framing)).with_rx(Rx::Direct);
-    let frame = |size: u32, seed: u8| {
-        let mut f: Vec<u8> = (0..size).map(|i| (i as u8) ^ seed).collect();
-        f[40..44].copy_from_slice(&size.to_le_bytes());
-        f
-    };
-    let frames = vec![frame(256, 1), frame(257, 2), frame(4096, 3), frame(1000, 4)];
-    let mut w = World::listening_on(make, &addr);
-    let (c, s) = w.pair(addr, opts);
-    let got = w.exchange(c, s, &frames);
-    if got != frames {
-        fail(format_args!("frames differ from what was sent"));
-    }
-    got
-}
-
-/// Raw bytes arrive complete and in order, whatever pieces they come in.
-fn raw_bytes<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) -> Vec<Vec<u8>> {
-    let data: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
-    let pieces: Vec<Vec<u8>> = data.chunks(1000).map(<[u8]>::to_vec).collect();
-    let mut trace = Vec::new();
-    for rx in [Rx::Ring, Rx::Direct] {
-        let mut w = World::listening_on(make, &addr);
-        let (c, s) = w.pair(addr, ConnOpts::new(Framing::Bytes).with_rx(rx));
-        let got: Vec<u8> = w.exchange(c, s, &pieces).concat();
-        if got != data {
-            fail(format_args!("{rx:?}: bytes differ from what was sent"));
-        }
-        trace.push(got);
-    }
-    trace
-}
-
-/// The peer finishes after its last frame: the frames come first, then an
-/// orderly end, and a listener with peer addresses knows where it came from.
-fn orderly_end_and_peer_address<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: Addr) {
-    let mut w = World::listening_on(make, &addr);
-    let l = w.listen(addr, ListenConfig::new(prefix()).with_peer_addr(true));
-    let to = w.dial_addr(l, addr);
-    let (c, s) = w.connect(to, prefix());
-    if let Addr::Ip(listening) = to {
-        let peer = w.server.peer(&w.io, s);
-        if peer.map(|p| p.ip()) != Some(listening.ip()) {
-            fail(format_args!(
-                "peer address {peer:?} of a connection to {listening}"
-            ));
-        }
-    }
-    for i in 0..3 {
-        if !w.send(c, &prefixed(100, i)) {
-            fail(format_args!("queue full"));
-        }
-    }
-    must(w.client.shutdown_write(&mut w.io, c), "shutdown_write");
-    let (mut frames, mut ended) = (0, None);
-    w.until(|w, server, e| {
-        match e {
-            Event::Readable(conn) if server && conn == s && ended.is_none() => {
-                frames += w.pull_all(conn).len();
-            }
-            Event::Closed { conn, why } if server && conn == s => ended = Some(why),
-            Event::Up(_)
-            | Event::Accepted { .. }
-            | Event::Refused { .. }
-            | Event::Readable(_)
-            | Event::Writable(_)
-            | Event::Down { .. }
-            | Event::Closed { .. }
-            | Event::ListenFailed { .. }
-            | Event::Drained => fail(format_args!("unexpected {e:?}")),
-        }
-        ended.is_some()
-    });
-    if (frames, ended) != (3, Some(Why::Orderly)) {
-        fail(format_args!("{frames} frames, then {ended:?}"));
-    }
-}
-
-/// Every check, on TCP at `addr` (port 0 lets the system choose) and on a
-/// Unix-domain socket at `unix_path`. Returns the frames the servers
-/// received over TCP, in order.
-pub fn run_all<IO: Io>(
-    make: &mut impl FnMut(Limits) -> IO,
-    addr: SocketAddr,
-    unix_path: &str,
-) -> Vec<Vec<u8>> {
-    let tcp = Addr::Ip(addr);
-    let mut trace = frames_both_ways(make, tcp);
-    trace.extend(header_with_size(make, tcp));
-    trace.extend(raw_bytes(make, tcp));
-    orderly_end_and_peer_address(make, tcp);
-    // The same over a Unix-domain socket; each world binds the path anew.
-    let unix = must(Addr::unix(unix_path), "unix path");
-    let mut over_unix = frames_both_ways(make, unix);
-    over_unix.extend(header_with_size(make, unix));
-    over_unix.extend(raw_bytes(make, unix));
-    if over_unix != trace {
-        fail(format_args!(
-            "a Unix-domain socket carried other frames than TCP"
-        ));
-    }
-    orderly_end_and_peer_address(make, unix);
-    drop(std::fs::remove_file(unix_path));
-    trace
 }

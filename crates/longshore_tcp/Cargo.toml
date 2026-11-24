@@ -45,5 +45,9 @@ path = "tests/tcp/net.rs"
 name = "tcp_backends"
 path = "tests/tcp/backends.rs"
 
+[[test]]
+name = "tcp_storage"
+path = "tests/tcp/storage.rs"
+
 [lints]
 workspace = true

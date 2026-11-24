@@ -5,8 +5,11 @@
 
 //! Runs the shared `longshore::tcp` checks on real `io_uring` and on the
 //! portable backend of the same kernel, and compares what the two carried.
+//! Then a log and its replicas on each: frames received, written with
+//! direct I/O to a file in `--dir`, synced and sent to three peers, under
+//! the allocation guard.
 //!
-//!   tcp_uring [--v6]
+//!   tcp_uring [--v6] [--dir <directory on a file system with O_DIRECT>]
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -19,6 +22,27 @@ fn main() {
 mod die;
 
 #[cfg(target_os = "linux")]
+#[global_allocator]
+static ALLOC: longshore::io::alloc_guard::Guard = longshore::io::alloc_guard::Guard;
+
+/// A hundred rounds of the log and its replicas, all but the first sealed.
+#[cfg(target_os = "linux")]
+fn log_and_replicate<IO: longshore::io::Io>(
+    make: &mut impl FnMut(longshore::io::Limits) -> IO,
+    addr: std::net::SocketAddr,
+    path: &str,
+) {
+    use longshore::io::alloc_guard::sealed;
+    use longshore::tcp::check::storage::Replicated;
+    let mut r = Replicated::new(make, longshore::tcp::Addr::Ip(addr), path);
+    r.round(0);
+    sealed(|| (1..100).for_each(|i| r.round(i)));
+    drop(r);
+    // Best-effort cleanup: a leftover file does not change the result.
+    let _: Option<()> = std::fs::remove_file(path).ok();
+}
+
+#[cfg(target_os = "linux")]
 fn main() {
     use die::OrDie;
     use longshore::io::posix::PosixIo;
@@ -27,9 +51,12 @@ fn main() {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
     let mut v6 = false;
-    for a in std::env::args().skip(1) {
+    let mut dir = std::env::temp_dir();
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
         match a.as_str() {
             "--v6" => v6 = true,
+            "--dir" => dir = args.next().or_die("--dir needs a directory").into(),
             other => die::die(format_args!("unknown flag {other}")),
         }
     }
@@ -60,5 +87,19 @@ fn main() {
     if ring.is_empty() || ring != portable {
         die::die("the ring and the portable backend carried different frames");
     }
-    println!("ok tcp_uring v6={v6} frames={}", ring.len());
+    let log = |tag: &str| {
+        let name = format!("longshore-tcp-{tag}-{}.dat", std::process::id());
+        dir.join(name).to_string_lossy().into_owned()
+    };
+    log_and_replicate(
+        &mut |limits| UringIo::new(limits).or_die("UringIo::new"),
+        addr,
+        &log("ring"),
+    );
+    log_and_replicate(
+        &mut |limits| PosixIo::new(limits).or_die("PosixIo::new"),
+        addr,
+        &log("posix"),
+    );
+    println!("ok tcp_uring v6={v6} frames={} logged=200", ring.len());
 }

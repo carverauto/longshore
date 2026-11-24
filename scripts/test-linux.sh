@@ -96,8 +96,8 @@ while read -r target dest <&3; do
         timeout 60 ./server_uring --v6
         timeout 60 ./server_uring --posix
         timeout 60 ./server_uring --posix --v6
-        timeout 60 ./tcp_uring
-        timeout 60 ./tcp_uring --v6
+        timeout 60 ./tcp_uring --dir \"\$file_dir\"
+        timeout 60 ./tcp_uring --v6 --dir \"\$file_dir\"
         timeout 60 ./file_uring --dir \"\$file_dir\"
         timeout 60 ./file_uring --dir \"\$file_dir\" --posix
         timeout 60 ./file_uring --dir \"\$file_dir\" --bench --interleave --iters 200
