@@ -34,6 +34,7 @@ pub struct Faults {
     pub(crate) bit_flip: u32,
     pub(crate) delay: u32,
     pub(crate) udp_drop: u32,
+    pub(crate) reorder: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]

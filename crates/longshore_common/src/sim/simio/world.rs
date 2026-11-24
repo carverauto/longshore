@@ -115,6 +115,11 @@ impl World for Virtual {
         self.rng.chance(self.faults.delay)
     }
 
+    fn late(&mut self) -> bool {
+        // Nothing is drawn when it is off: existing traces stay as they are.
+        self.rng.chance(self.faults.reorder)
+    }
+
     fn on_submit(&mut self, op: &Op) -> u64 {
         if op.is_file_op() {
             self.file_op_seq += 1;
