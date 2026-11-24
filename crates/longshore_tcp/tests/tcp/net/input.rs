@@ -149,6 +149,76 @@ fn number(w: &mut World, f: &Frame) -> u32 {
     u32::from_be_bytes(bytes[4..8].try_into().unwrap())
 }
 
+/// Send `frames` counted frames on `c`, while the server's caller pulls
+/// nothing.
+fn send_counted(w: &mut World, c: Conn, frames: u32) {
+    let mut next = 0;
+    while next < frames || w.client.send_queue(c) > 0 {
+        while next < frames {
+            let mut frame = 4u32.to_be_bytes().to_vec();
+            frame.extend(next.to_be_bytes());
+            if !send(w, c, &frame) {
+                break;
+            }
+            next += 1;
+        }
+        w.turn();
+        while w.client.next_event().is_some() {}
+    }
+}
+
+/// Pull, and keep, every frame `s` gives for now: counted from zero.
+fn pull_counted(w: &mut World, s: Conn) -> Vec<Frame> {
+    let mut frames = Vec::new();
+    while let Some(f) = w.server.next_frame(&mut w.io, s).unwrap() {
+        assert_eq!(number(w, &f), frames.len() as u32);
+        frames.push(f);
+    }
+    frames
+}
+
+#[test]
+fn an_end_behind_frames_the_backlog_cannot_count_a_hold_for_waits_for_them() {
+    const HOLDS: u32 = 65_534;
+    const FRAMES: u32 = HOLDS + 40;
+    let client = sizes(4, 0, 0).with_frames(2, 1 << 20);
+    let server = sizes(2, 4, 2).with_frames(4, 1 << 20);
+    let mut w = World::with(1, Faults::NONE, client, server);
+    let (c, s) = w.pair(prefix());
+    send_counted(&mut w, c, FRAMES);
+    w.client.shutdown_write(&mut w.io, c).unwrap();
+    // Everything and the end have arrived before the caller pulls, and it
+    // keeps what it pulls.
+    for _ in 0..200 {
+        w.turn();
+    }
+    let frames = pull_counted(&mut w, s);
+    assert_eq!(frames.len() as u32, HOLDS, "frames held before the limit");
+    // The end is not told while frames wait for a hold.
+    for _ in 0..50 {
+        while let Some(e) = w.server.next_event() {
+            assert_eq!(e, Event::Readable(s));
+            assert!(w.pull_all(s).is_empty(), "a frame without a hold");
+        }
+        w.turn();
+    }
+    for f in frames {
+        w.server.release(f);
+    }
+    let mut rest = Vec::new();
+    let ended = pull_until_other(&mut w, s, &mut rest);
+    let numbers: Vec<u32> = rest
+        .iter()
+        .map(|bytes| u32::from_be_bytes(bytes[4..8].try_into().unwrap()))
+        .collect();
+    assert_eq!(numbers, (HOLDS..FRAMES).collect::<Vec<u32>>());
+    let orderly = Event::Closed {
+        conn: s,
+        why: Why::Orderly,
+    };
+    assert_eq!(ended, orderly);
+}
+
 #[test]
 fn a_frame_the_backlog_cannot_count_another_hold_for_is_pulled_later() {
     // A megabyte of frame memory: a backlog of more eight-byte frames
@@ -159,28 +229,11 @@ fn a_frame_the_backlog_cannot_count_another_hold_for_is_pulled_later() {
     let server = sizes(2, 4, 2).with_frames(4, 1 << 20);
     let mut w = World::with(1, Faults::NONE, client, server);
     let (c, s) = w.pair(prefix());
-    // The server's caller pulls nothing until everything has arrived.
-    let mut next = 0;
-    while next < FRAMES || w.client.send_queue(c) > 0 {
-        while next < FRAMES {
-            let mut frame = 4u32.to_be_bytes().to_vec();
-            frame.extend(next.to_be_bytes());
-            if !send(&mut w, c, &frame) {
-                break;
-            }
-            next += 1;
-        }
-        w.turn();
-        while w.client.next_event().is_some() {}
-    }
+    send_counted(&mut w, c, FRAMES);
     for _ in 0..200 {
         w.turn();
     }
-    let mut frames = Vec::new();
-    while let Some(f) = w.server.next_frame(&mut w.io, s).unwrap() {
-        assert_eq!(number(&mut w, &f), frames.len() as u32);
-        frames.push(f);
-    }
+    let mut frames = pull_counted(&mut w, s);
     assert_eq!(frames.len() as u32, HOLDS, "frames held before the limit");
     // One hold fewer, one frame more: the one that found no hold.
     w.server.release(frames.swap_remove(0));

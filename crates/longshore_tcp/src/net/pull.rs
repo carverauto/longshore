@@ -38,9 +38,19 @@ impl<T: Transport> Net<T> {
         if !matches!(self.conns[slot as usize].st, St::Up | St::Dying) {
             return Ok(None);
         }
+        let frame = self.pull(d, slot);
+        if frame.is_none() && self.conns[slot as usize].st == St::Dying && self.has_input(slot) {
+            // Whatever it is that the input waits for, the end waits too.
+            self.hold_end(slot);
+        }
+        Ok(frame)
+    }
+
+    /// The next frame of `slot`, if one can be cut and lent right now.
+    fn pull(&mut self, d: &mut T::Driver, slot: u32) -> Option<Frame> {
         loop {
             if let Some((ext, len)) = self.conns[slot as usize].ready.take() {
-                return Ok(Some(self.deliver(d, slot, Mem::Extent(ext), 0, len)));
+                return Some(self.deliver(d, slot, Mem::Extent(ext), 0, len));
             }
             let Some(src) = self.source(slot) else {
                 if self.header_whole(slot) {
@@ -49,26 +59,26 @@ impl<T: Transport> Net<T> {
                         continue;
                     }
                     let _stop: Cut = self.out_of_memory(d, slot);
-                    return Ok(None);
+                    return None;
                 }
                 // Protected input is opened as frame memory has room.
                 if self.conns[slot as usize].secure && self.open_ring(d, slot) {
                     continue;
                 }
-                return Ok(None);
+                return None;
             };
             match self.cut(d, slot, src) {
                 Cut::Frame(len) => {
                     let Some(mem) = self.lend(slot, src) else {
                         // The backlog has as many holds as can be counted.
                         self.add_work(slot, W_READ);
-                        return Ok(None);
+                        return None;
                     };
                     self.advance(slot, src, len);
-                    return Ok(Some(self.deliver(d, slot, mem, src.off, len)));
+                    return Some(self.deliver(d, slot, mem, src.off, len));
                 }
                 Cut::Taken(n) => self.advance(slot, src, n),
-                Cut::Stop => return Ok(None),
+                Cut::Stop => return None,
             }
         }
     }
@@ -244,30 +254,19 @@ impl<T: Transport> Net<T> {
     }
 
     /// No frame memory: stop reading, and try again on the next `poll`.
-    /// A connection that has ended keeps its end back until then, so that
-    /// what it received is not lost with it.
     fn out_of_memory(&mut self, d: &mut T::Driver, slot: u32) -> Cut {
-        match self.conns[slot as usize].st {
-            St::Up => {
-                self.pause(d, slot);
-                self.conns[slot as usize].paused = false;
-                self.add_work(slot, W_READ);
-            }
-            St::Dying if self.has_input(slot) => self.hold_end(slot),
-            St::Free
-            | St::Connecting
-            | St::Securing
-            | St::Refused
-            | St::Dying
-            | St::Closing
-            | St::Backoff => {}
+        if self.conns[slot as usize].st == St::Up {
+            self.pause(d, slot);
+            self.conns[slot as usize].paused = false;
+            self.add_work(slot, W_READ);
         }
         Cut::Stop
     }
 
     /// Take back the end owed for the ended `slot` until the next `poll`
-    /// offers its input again. The idle timeout, counted from the first
-    /// time, bounds the wait for frame memory.
+    /// offers its input again: it has input that cannot be pulled for now,
+    /// for want of frame memory or of a hold on its backlog. The idle
+    /// timeout, counted from the first time, bounds the wait.
     fn hold_end(&mut self, slot: u32) {
         let c = &mut self.conns[slot as usize];
         c.ev &= !(EV_CLOSED | EV_DOWN);
