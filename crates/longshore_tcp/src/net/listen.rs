@@ -181,13 +181,17 @@ impl<T: Transport> Net<T> {
             state.armed = armed;
         }
         state.backoff_ns = 0;
+        // A listener that is closing has had its handle retired: the
+        // handle of the slot is already the next listener's, which must
+        // not be given this connection.
+        let by = (state.st == LSt::Listening).then(|| self.lgens.listener(l));
         let c = &mut self.conns[slot as usize];
         if c.st == St::Free {
             self.occupy(d, slot, l, true);
         } else {
             // Every completion of the slot is its last connection's until
             // that one is freed: nothing is started for the new one before.
-            (c.parked, c.parked_by) = (l, Some(self.lgens.listener(l)));
+            (c.parked, c.parked_by) = (l, by);
         }
         self.free_listener(l);
         self.start_accept(d, l);
@@ -200,8 +204,9 @@ impl<T: Transport> Net<T> {
         let l = core::mem::replace(&mut c.parked, NONE);
         let by = c.parked_by.take();
         if l != NONE && c.st == St::Free {
-            // Its listener may have gone, and another taken its slot.
-            let live = by == Some(self.lgens.listener(l));
+            // Its listener may have gone, and another taken its slot; or
+            // it was closing already when the connection came.
+            let live = by.is_some_and(|h| self.lgens.slot_of_listener(h) == Some(l));
             self.occupy(d, slot, l, live);
         }
     }
