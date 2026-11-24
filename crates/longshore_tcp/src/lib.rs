@@ -54,8 +54,14 @@
 //! ```
 //!
 //! A loop with timeouts also sleeps no longer than [`Net::next_deadline`]
-//! allows. `docs/tcp.md` in the repository describes the receive modes,
-//! frame memory, TLS and sizing.
+//! allows.
+//!
+//! The end of a connection is reported only when everything received on
+//! it has been pulled, whatever the caller pulls first. By default the end
+//! of the peer's stream ends the connection; with
+//! [`ConnOpts::with_half_close`] a peer that has finished can still be
+//! answered ([`Event::Finished`]). `docs/tcp.md` in the repository
+//! describes this, the receive modes, frame memory, TLS and sizing.
 
 pub mod addr;
 pub mod backoff;

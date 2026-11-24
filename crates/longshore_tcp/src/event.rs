@@ -50,6 +50,10 @@ pub enum Event {
     Readable(Conn),
     /// A send queue that was full has room again.
     Writable(Conn),
+    /// With half-close: the peer has finished its stream in order and
+    /// everything it sent has been pulled. The connection can still be
+    /// sent on; it ends after `Net::shutdown_write`, or with `Net::close`.
+    Finished(Conn),
     /// A reconnecting connection went down; its handle stays, and
     /// [`Event::Up`] follows when it is back. What was queued to send is
     /// dropped.
@@ -92,6 +96,9 @@ pub enum NetError {
     Listen(i32),
     /// No frame memory is free.
     NoMemory,
+    /// The connection is not open for what was asked: not up yet, ended,
+    /// or refused.
+    NotUp,
     /// TLS was asked for and cannot be had: the `Net` was sized without
     /// `Sizes::with_tls`, the transport has no setup for this side, or the
     /// server name is empty or too long.

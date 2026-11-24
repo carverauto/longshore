@@ -9,6 +9,7 @@ use crate::addr::Addr;
 use crate::backoff::Backoff;
 use crate::config::{ConnOpts, ListenConfig};
 use crate::event::Why;
+use crate::handle::Listener;
 use longshore_common::io::extents::Extent;
 use longshore_common::io::BufId;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -24,8 +25,9 @@ pub(super) const EV_ACCEPTED: u8 = 1 << 1;
 pub(super) const EV_REFUSED: u8 = 1 << 2;
 pub(super) const EV_READABLE: u8 = 1 << 3;
 pub(super) const EV_WRITABLE: u8 = 1 << 4;
-pub(super) const EV_DOWN: u8 = 1 << 5;
-pub(super) const EV_CLOSED: u8 = 1 << 6;
+pub(super) const EV_FINISHED: u8 = 1 << 5;
+pub(super) const EV_DOWN: u8 = 1 << 6;
+pub(super) const EV_CLOSED: u8 = 1 << 7;
 
 // Work to do on the next `poll`, when the driver is at hand.
 pub(super) const W_READ: u8 = 1;
@@ -46,8 +48,13 @@ pub(super) enum St {
     Up,
     /// Accepted over the listener's limit: one frame may be sent, no reads.
     Refused,
-    /// Ended, and the caller has not been told yet. Frames already
-    /// received can still be pulled.
+    /// The stream has ended and input is left to pull. No end is owed
+    /// until it has been pulled.
+    Finishing,
+    /// The peer finished in order and everything was pulled; with
+    /// half-close, sending goes on until the caller shuts down or closes.
+    HalfClosed,
+    /// Ended, with nothing left to pull: the end is owed to the caller.
     Dying,
     /// Being closed: waiting for the close and for operations in flight.
     Closing,
@@ -88,6 +95,11 @@ pub(super) struct ConnState {
     pub(super) opts: ConnOpts,
     /// The listener that accepted it, or `NONE`.
     pub(super) listener: u32,
+    /// That listener's handle, as its caller knows it: the slot may hold
+    /// another listener by the time the connection is announced or freed.
+    pub(super) accepted_by: Option<Listener>,
+    /// The handle of the listener whose connection is parked here.
+    pub(super) parked_by: Option<Listener>,
     /// Where to dial again.
     pub(super) peer: Option<Addr>,
     /// A Unix-domain socket: never sent from without a copy.
@@ -128,10 +140,6 @@ pub(super) struct ConnState {
     /// connection stays up, reading no more, until the records received
     /// have been opened: one of them may be the alert.
     pub(super) cut_off: bool,
-    /// Ended, with input that found no frame memory when it was pulled:
-    /// the caller is told of the end once that input has been pulled, or
-    /// at the idle timeout.
-    pub(super) starved: bool,
     pub(super) hdr_have: u32,
     /// A frame being put together in frame memory.
     pub(super) asm: Option<Extent>,
@@ -157,6 +165,8 @@ pub(super) struct ConnState {
     /// Listed among the connections waiting for a send segment.
     pub(super) seg_listed: bool,
     pub(super) shut: bool,
+    /// A refused connection has been sent its one frame.
+    pub(super) answered: bool,
     /// The shutdown has been handed to the transport.
     pub(super) shut_sent: bool,
 }
@@ -180,6 +190,8 @@ impl ConnState {
             closed: false,
             redial: false,
             parked: NONE,
+            parked_by: None,
+            accepted_by: None,
             counted: false,
             connecting: false,
             secure: false,
@@ -190,7 +202,6 @@ impl ConnState {
             paused: false,
             unopened: false,
             cut_off: false,
-            starved: false,
             hdr_have: 0,
             asm: None,
             asm_have: 0,
@@ -209,6 +220,7 @@ impl ConnState {
             full: false,
             seg_listed: false,
             shut: false,
+            answered: false,
             shut_sent: false,
         }
     }
@@ -266,6 +278,8 @@ pub(super) struct ListenerState {
     pub(super) waiting: bool,
     /// Its close is with the transport.
     pub(super) close_sent: bool,
+    /// Its close has completed; an accept may still have to report.
+    pub(super) close_done: bool,
     pub(super) bind_until: u64,
     /// A failed bind to report, as a negated error number.
     pub(super) failed: Option<i32>,
@@ -285,6 +299,7 @@ impl ListenerState {
             backoff_ns: 0,
             waiting: false,
             close_sent: false,
+            close_done: false,
             bind_until: 0,
             failed: None,
         }

@@ -14,13 +14,14 @@
 
 use crate::{
     Addr, Config, Conn, ConnOpts, Event, Frame, Framing, HeaderFraming, KernelTransport,
-    ListenConfig, Listener, Net, SendError, ServerName, Sizes,
+    ListenConfig, Listener, Net, NetError, SendError, ServerName, Sizes,
 };
 use core::fmt;
 use longshore_common::io::turn::{Class, Turn};
 use longshore_common::io::{Completion, Completions, Io, Limits, Op, Token};
 use std::collections::VecDeque;
 
+mod ending;
 mod exchange;
 pub mod storage;
 
@@ -239,8 +240,14 @@ impl<IO: Io> World<IO> {
 
     /// A listener on the server.
     pub fn listen(&mut self, addr: Addr, cfg: ListenConfig) -> Listener {
+        must(self.try_listen(addr, cfg), "listen")
+    }
+
+    /// A listener on the server, or why there is none: every listener
+    /// slot may still be closing.
+    pub fn try_listen(&mut self, addr: Addr, cfg: ListenConfig) -> Result<Listener, NetError> {
         let cfg = cfg.with_tls(self.tls.is_some());
-        must(self.server.listen(&mut self.io, addr, cfg), "listen")
+        self.server.listen(&mut self.io, addr, cfg)
     }
 
     /// Where to dial `listener`: the address it is bound to (which names
@@ -276,6 +283,7 @@ impl<IO: Io> World<IO> {
                 | Event::Down { .. }
                 | Event::Closed { .. }
                 | Event::ListenFailed { .. }
+                | Event::Finished(_)
                 | Event::Drained => fail(format_args!("connecting: unexpected {e:?}")),
             }
             up && accepted.is_some()

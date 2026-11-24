@@ -36,6 +36,11 @@ Completions only mark connections. The caller pulls events and frames, so
 no event buffer can overflow, and not pulling is the backpressure: a
 connection whose frames are not taken stops reading.
 
+Events and frames can be pulled in any order. In particular the end of a
+connection is never reported while frames received on it are still to be
+pulled: `Readable` comes first, and `Closed` (or `Finished`, or `Down`)
+only after the last frame has been taken.
+
 `Turn` (in `longshore::io::turn`) hands a batch of completions out by token
 range, storage first, then network. With a log on the same backend that
 makes the turn the group commit: syncs are seen before the frames that
@@ -59,15 +64,34 @@ deadline is due.
   as in use (`with_bind_retry_ns`), report peer addresses
   (`with_peer_addr`, at the cost of one accept operation per connection),
   and hold a limit (`with_limit`): one connection over the limit is
-  accepted as `Event::Refused`, may be sent one frame, and is closed.
+  accepted as `Event::Refused`, may be sent one frame (queued in the turn
+  the event is pulled), and is closed without a further event.
+- `close_listener` stops a listener. Its slot can hold a new listener
+  once its close and its last accept have ended, a turn or two later;
+  until then `listen` may answer `NoSlots`. A connection it accepted is
+  announced with its handle even when the listener has been closed since.
 - A handle carries a generation. Once its connection has ended it is stale
   and reaches nothing, whoever has the slot next.
 - `Event::Closed { conn, why }` says how a connection ended: `Orderly`
-  (everything the peer sent was delivered first), `Reset`, `Timeout`,
-  `Protocol` (a frame the framing does not allow) or `Tls`.
-- `shutdown_write` finishes after what is queued; `close` ends at once;
-  `drain` stops accepting and reports `Event::Drained` when queued sends
-  have gone or its deadline passes.
+  (the peer's stream ended between frames, and nothing failed), `Reset`
+  (a broken connection, or a stream that ended inside a frame), `Timeout`,
+  `Protocol` (a frame the framing does not allow) or `Tls`. It comes when
+  everything received has been pulled. A connection whose stream has ended
+  and whose frames are never pulled waits for its caller like any other;
+  the idle timeout, if one is set, or `close` ends the wait.
+- By default the end of the peer's stream ends the connection: what is
+  still queued for it is dropped. With `ConnOpts::with_half_close(true)`
+  a peer that finishes in order (sends its request, shuts its write side
+  down, and waits) can still be answered: `Event::Finished(conn)` says the
+  peer has finished, sends go on, and the connection ends as `Orderly`
+  after `shutdown_write`, or with `close`. A listener sets it for the
+  connections it accepts.
+- `shutdown_write` finishes after what is queued, and receiving goes on;
+  `close` ends at once, with no event; `drain` stops accepting and reports
+  `Event::Drained` when queued sends have gone or its deadline passes.
+- A call on a connection that is not open for it (a send or a shutdown
+  before it is up, after its end, or after `shutdown_write`) fails with
+  `NotUp`. `Stale` is for a handle that names no connection any more.
 
 ## Framing
 

@@ -33,7 +33,9 @@ impl<T: Transport> Net<T> {
     fn sendable(&self, conn: Conn) -> Result<u32, SendError> {
         let slot = self.gens.slot_of(conn).ok_or(SendError::Stale)?;
         let c = &self.conns[slot as usize];
-        if !matches!(c.st, St::Up | St::Refused) || c.shut {
+        // A refused connection is sent one frame.
+        let spent = c.shut || (c.st == St::Refused && c.answered);
+        if !self.flushable(slot) || spent {
             return Err(SendError::NotUp);
         }
         Ok(slot)
@@ -71,7 +73,7 @@ impl<T: Transport> Net<T> {
             (buf, 0)
         };
         fill(&mut self.t.bytes(d, buf)[at as usize..(at + len) as usize]);
-        self.add_work(slot, W_FLUSH);
+        self.queued(slot);
         Ok(())
     }
 
@@ -127,9 +129,10 @@ impl<T: Transport> Net<T> {
             let slot = self.seg_waiters[self.seg_wait_head];
             self.seg_wait_head = (self.seg_wait_head + 1) % self.seg_waiters.len();
             self.seg_wait_len -= 1;
+            let open = self.flushable(slot);
             let c = &mut self.conns[slot as usize];
             c.seg_listed = false;
-            if c.full && matches!(c.st, St::Up | St::Refused) {
+            if c.full && open {
                 c.full = false;
                 return self.mark_writable(slot);
             }
@@ -163,8 +166,15 @@ impl<T: Transport> Net<T> {
         }
         self.extents.hold(ext).map_err(|_| SendError::Stale)?;
         self.push_span(slot, frame.span(), Keep::Extent(ext));
-        self.add_work(slot, W_FLUSH);
+        self.queued(slot);
         Ok(())
+    }
+
+    /// Something was queued on `slot`: it goes out on the next `poll`.
+    fn queued(&mut self, slot: u32) {
+        let c = &mut self.conns[slot as usize];
+        c.answered |= c.st == St::Refused;
+        self.add_work(slot, W_FLUSH);
     }
 
     /// Bytes queued and not yet sent on `conn`.
@@ -179,7 +189,7 @@ impl<T: Transport> Net<T> {
     /// Send the front of `slot`'s queue, unless a send is in flight.
     pub(super) fn flush(&mut self, d: &mut T::Driver, slot: u32) {
         let c = &self.conns[slot as usize];
-        if c.sending || c.tx_len == 0 || !matches!(c.st, St::Up | St::Refused) {
+        if c.sending || c.tx_len == 0 || !self.flushable(slot) {
             return;
         }
         let s = self.spans[self.span_at(slot, 0)];
@@ -198,11 +208,11 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_sent(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
-        let c = &mut self.conns[slot as usize];
-        c.sending = false;
-        if !matches!(c.st, St::Up | St::Refused) {
+        self.conns[slot as usize].sending = false;
+        if !self.flushable(slot) {
             return self.try_free(slot);
         }
+        let c = &mut self.conns[slot as usize];
         let Ok(n) = u32::try_from(result) else {
             return self.end(slot, Why::of(result));
         };
@@ -271,8 +281,8 @@ impl<T: Transport> Net<T> {
     /// goes on.
     pub fn shutdown_write(&mut self, d: &mut T::Driver, conn: Conn) -> Result<(), NetError> {
         let slot = self.gens.slot_of(conn).ok_or(NetError::Stale)?;
-        if self.conns[slot as usize].st != St::Up {
-            return Err(NetError::Stale);
+        if !self.flushable(slot) || self.conns[slot as usize].st == St::Refused {
+            return Err(NetError::NotUp);
         }
         self.conns[slot as usize].shut = true;
         self.shut_if_sent(d, slot);
@@ -282,7 +292,7 @@ impl<T: Transport> Net<T> {
     /// Shut `slot`'s write side down once its queue is empty.
     pub(super) fn shut_if_sent(&mut self, d: &mut T::Driver, slot: u32) {
         let c = &self.conns[slot as usize];
-        if c.st != St::Up || !c.shut || c.shut_sent || c.tx_len > 0 || c.sending {
+        if !self.flushable(slot) || !c.shut || c.shut_sent || c.tx_len > 0 || c.sending {
             return;
         }
         if self.t.shutdown_write(d, slot).is_ok() {

@@ -29,6 +29,7 @@ fn pull_until_other(w: &mut World, conn: Conn, got: &mut Vec<Vec<u8>>) -> Event 
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => {
                 assert!(server, "unexpected {e:?} at the client");
                 other = Some(e);
@@ -136,6 +137,7 @@ fn reading_stopped_for_want_of_frame_memory_goes_on_once_the_input_is_pulled() {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         !got.is_empty()

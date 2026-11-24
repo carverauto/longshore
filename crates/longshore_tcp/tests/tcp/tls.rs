@@ -98,6 +98,7 @@ fn client_closed(w: &mut World<SimIo>, conn: Conn) -> Why {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         ended.is_some()
@@ -222,6 +223,7 @@ fn an_end_without_a_close_alert_is_a_broken_connection() {
                 | Event::Down { .. }
                 | Event::Closed { .. }
                 | Event::ListenFailed { .. }
+                | Event::Finished(_)
                 | Event::Drained => panic!("{rx:?}: unexpected {e:?}"),
             }
             ended.is_some()

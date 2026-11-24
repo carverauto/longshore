@@ -5,6 +5,7 @@
 
 //! The exchanges every backend must carry alike.
 
+use super::ending::{answered_after_shutdown, listener_slots_come_back};
 use super::{fail, must, prefix, prefixed, World};
 use crate::{Addr, ConnOpts, Event, Framing, HeaderFraming, ListenConfig, Rx, Why};
 use longshore_common::io::{Io, Limits};
@@ -106,6 +107,7 @@ fn orderly_end_and_peer_address<IO: Io>(world: &mut impl FnMut(&Addr) -> World<I
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => fail(format_args!("unexpected {e:?}")),
         }
         ended.is_some()
@@ -151,17 +153,21 @@ fn all<IO: Io>(
     trace.extend(header_with_size(world, tcp));
     trace.extend(raw_bytes(world, tcp));
     orderly_end_and_peer_address(world, tcp);
+    trace.extend(answered_after_shutdown(world, tcp));
+    listener_slots_come_back(world, tcp);
     // The same over a Unix-domain socket; each world binds the path anew.
     let unix = must(Addr::unix(unix_path), "unix path");
     let mut over_unix = frames_both_ways(world, unix);
     over_unix.extend(header_with_size(world, unix));
     over_unix.extend(raw_bytes(world, unix));
+    orderly_end_and_peer_address(world, unix);
+    over_unix.extend(answered_after_shutdown(world, unix));
+    listener_slots_come_back(world, unix);
     if over_unix != trace {
         fail(format_args!(
             "a Unix-domain socket carried other frames than TCP"
         ));
     }
-    orderly_end_and_peer_address(world, unix);
     drop(std::fs::remove_file(unix_path));
     trace
 }

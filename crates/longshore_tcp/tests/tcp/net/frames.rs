@@ -104,6 +104,7 @@ fn a_frame_longer_than_the_maximum_closes_the_connection_as_a_protocol_error() {
                 | Event::Down { .. }
                 | Event::Closed { .. }
                 | Event::ListenFailed { .. }
+                | Event::Finished(_)
                 | Event::Drained => panic!("unexpected {e:?}"),
             }
             closed.is_some()

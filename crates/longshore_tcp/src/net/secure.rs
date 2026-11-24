@@ -69,7 +69,14 @@ impl<T: Transport> Net<T> {
             St::Securing if result >= 0 => self.admit(d, slot),
             St::Connecting | St::Securing => return self.end(slot, Why::of(result)),
             // Timed out or closed meanwhile.
-            St::Free | St::Up | St::Refused | St::Dying | St::Closing | St::Backoff => {
+            St::Free
+            | St::Up
+            | St::Refused
+            | St::Finishing
+            | St::HalfClosed
+            | St::Dying
+            | St::Closing
+            | St::Backoff => {
                 return self.try_free(slot);
             }
         }

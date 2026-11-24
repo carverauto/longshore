@@ -26,6 +26,7 @@ fn dropped_at(w: &mut World, conn: Conn) -> u64 {
         | Event::Down { .. }
         | Event::Closed { .. }
         | Event::ListenFailed { .. }
+        | Event::Finished(_)
         | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
     });
     w.io.now_ns()

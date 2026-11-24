@@ -2,12 +2,12 @@ Each group ends with a review of its own diff (no-mistakes or
 `/code-review`); its findings are fixed before the next group starts.
 
 ## 0. The machine the tables describe
-- [ ] 0.1 `Finishing`: an end event is owed only when nothing received is left to pull; the reason is settled then; the flag that withdrew an owed end is removed (C2, C3)
-- [ ] 0.2 Half-close: `ConnOpts::with_half_close`, `HalfClosed`, `Event::Finished`; sending after the peer's orderly end until the caller's shutdown, close or a failed send (C1)
-- [ ] 0.3 `NetError::NotUp` for `shutdown_write` and for sends where the connection is not open for sending (C5); one frame for a refused connection (C4)
-- [ ] 0.4 A listener slot is `Free` only when its close has completed and no accept is in flight (C6)
-- [ ] 0.5 A scenario test for each of C1 to C6 that fails before its fix; the existing tests and shared checks adjusted to the held-back end
-- [ ] 0.6 `docs/tcp.md` and the crate docs: the end of a connection, half-close, the order of events
+- [x] 0.1 `Finishing`: an end event is owed only when nothing received is left to pull; the reason is settled then; the flag that withdrew an owed end is removed (C2, C3)
+- [x] 0.2 Half-close: `ConnOpts::with_half_close`, `HalfClosed`, `Event::Finished`; sending after the peer's orderly end until the caller's shutdown, close or a failed send (C1)
+- [x] 0.3 `NetError::NotUp` for `shutdown_write` and for sends where the connection is not open for sending (C5); one frame for a refused connection (C4)
+- [x] 0.4 A listener slot is `Free` only when its close has completed and no accept is in flight (C6)
+- [x] 0.5 A scenario test for each of C1 to C6 that fails before its fix; the existing tests and shared checks adjusted to the held-back end
+- [x] 0.6 `docs/tcp.md` and the crate docs: the end of a connection, half-close, the order of events
 - [ ] 0.7 Review of group 0
 
 ## 1. The contract, checked

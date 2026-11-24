@@ -60,6 +60,7 @@ pub struct ConnOpts {
     pub(crate) handshake_timeout_ns: u64,
     pub(crate) idle_timeout_ns: u64,
     pub(crate) reconnect: Option<Reconnect>,
+    pub(crate) half_close: bool,
 }
 
 impl ConnOpts {
@@ -75,6 +76,7 @@ impl ConnOpts {
             handshake_timeout_ns: 10_000_000_000,
             idle_timeout_ns: 0,
             reconnect: None,
+            half_close: false,
         }
     }
 
@@ -116,6 +118,16 @@ impl ConnOpts {
     #[must_use]
     pub const fn with_idle_timeout_ns(mut self, ns: u64) -> ConnOpts {
         self.idle_timeout_ns = ns;
+        self
+    }
+
+    /// Keep the connection open for sending after its peer has finished
+    /// its stream in order: `Event::Finished` says so, and the connection
+    /// ends when the caller shuts its own side down or closes it. Without
+    /// this the end of the peer's stream ends the connection.
+    #[must_use]
+    pub const fn with_half_close(mut self, on: bool) -> ConnOpts {
+        self.half_close = on;
         self
     }
 

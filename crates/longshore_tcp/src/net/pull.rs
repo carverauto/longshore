@@ -12,7 +12,7 @@
 //! header that arrives in pieces.
 
 use super::frames::{Frame, Mem};
-use super::state::{best_effort, St, EV_CLOSED, EV_DOWN, EV_READABLE, NONE, W_READ};
+use super::state::{best_effort, St, EV_READABLE, NONE, W_READ};
 use super::Net;
 use crate::config::Rx;
 use crate::event::{NetError, Why};
@@ -35,13 +35,19 @@ impl<T: Transport> Net<T> {
     /// now. Pull until `None` after each [`crate::Event::Readable`].
     pub fn next_frame(&mut self, d: &mut T::Driver, conn: Conn) -> Result<Option<Frame>, NetError> {
         let slot = self.gens.slot_of(conn).ok_or(NetError::Stale)?;
-        if !matches!(self.conns[slot as usize].st, St::Up | St::Dying) {
+        if !matches!(self.conns[slot as usize].st, St::Up | St::Finishing) {
             return Ok(None);
         }
         let frame = self.pull(d, slot);
-        if frame.is_none() && self.conns[slot as usize].st == St::Dying && self.has_input(slot) {
-            // Whatever it is that the input waits for, the end waits too.
-            self.hold_end(slot);
+        if self.conns[slot as usize].st == St::Finishing {
+            if !self.has_input(slot) {
+                // That was the last of it: now the end can be told.
+                self.settle_end(slot);
+            } else if frame.is_none() {
+                // Input that cannot be delivered for now, for want of
+                // frame memory or of a hold: offered again on `poll`.
+                self.add_work(slot, W_READ);
+            }
         }
         Ok(frame)
     }
@@ -263,32 +269,18 @@ impl<T: Transport> Net<T> {
         Cut::Stop
     }
 
-    /// Take back the end owed for the ended `slot` until the next `poll`
-    /// offers its input again: it has input that cannot be pulled for now,
-    /// for want of frame memory or of a hold on its backlog. The idle
-    /// timeout, counted from the first time, bounds the wait.
-    fn hold_end(&mut self, slot: u32) {
-        let c = &mut self.conns[slot as usize];
-        c.ev &= !(EV_CLOSED | EV_DOWN);
-        if !c.starved {
-            c.starved = true;
-            let idle = c.opts.idle_timeout_ns;
-            if idle > 0 {
-                self.deadlines.set(slot, self.now.saturating_add(idle));
-            }
-        }
-        self.add_work(slot, W_READ);
-    }
-
     /// What `slot` received is no frame. It ends for that, even when its
     /// stream had ended already: an end is in order only between frames.
+    /// What is left of its input is dropped.
     pub(super) fn broke_framing(&mut self, slot: u32) {
-        self.end(slot, Why::Protocol);
-        let c = &mut self.conns[slot as usize];
-        if c.st == St::Dying {
-            c.why = Why::Protocol;
-        }
         self.drop_input(slot);
+        let c = &mut self.conns[slot as usize];
+        if c.st == St::Finishing {
+            c.why = Why::Protocol;
+            self.settle_end(slot);
+        } else {
+            self.end(slot, Why::Protocol);
+        }
     }
 
     /// Forget what `slot` received and did not deliver.

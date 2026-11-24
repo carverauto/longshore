@@ -32,6 +32,7 @@ use longshore_common::io::{BufId, Limits};
 use state::{Chunk, ConnState, Keep, ListenerState, St, TxSpan, EV_CLOSED, EV_DOWN, NONE};
 
 mod conn;
+mod ending;
 mod frames;
 mod listen;
 mod pull;
@@ -202,10 +203,7 @@ impl<T: Transport> Net<T> {
             Happened::RecvEnded { slot, result } => self.on_recv_ended(slot, result),
             Happened::Received { slot, result } => self.on_received(d, slot, result),
             Happened::Sent { slot, result } => self.on_sent(d, slot, result),
-            Happened::ShutDown { slot, .. } => {
-                self.conns[slot as usize].shutting = false;
-                self.try_free(slot);
-            }
+            Happened::ShutDown { slot, .. } => self.on_shut_down(slot),
             Happened::Closed { slot } => {
                 self.conns[slot as usize].closed = true;
                 self.try_free(slot);
@@ -289,7 +287,11 @@ impl<T: Transport> Net<T> {
     /// owed any: none that is closing, waiting to dial again, or free.
     fn queue_event(&mut self, slot: u32, bit: u8) {
         let c = &mut self.conns[slot as usize];
-        if !matches!(c.st, St::Up | St::Refused | St::Dying) {
+        let owed = matches!(
+            c.st,
+            St::Up | St::Refused | St::Finishing | St::HalfClosed | St::Dying
+        );
+        if !owed {
             return;
         }
         c.ev |= bit;

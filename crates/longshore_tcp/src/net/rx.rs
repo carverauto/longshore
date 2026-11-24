@@ -134,10 +134,6 @@ impl<T: Transport> Net<T> {
             // lack of frame memory: say so again.
             self.queue_event(slot, EV_READABLE);
         }
-        if self.conns[slot as usize].starved {
-            // The end that was held back for it, behind that input.
-            self.owe_end(slot);
-        }
         self.start_reading(d, slot);
     }
 

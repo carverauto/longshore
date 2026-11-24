@@ -27,6 +27,7 @@ fn next_accepted(w: &mut World) -> (Listener, Conn) {
             | Event::Writable(_)
             | Event::Down { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         accepted.is_some()
@@ -111,6 +112,7 @@ fn a_bind_still_refused_at_its_deadline_is_reported() {
             | Event::Writable(_)
             | Event::Down { .. }
             | Event::Closed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         true
@@ -179,6 +181,7 @@ fn accepts_wait_after_a_failure_and_go_on_when_a_slot_is_free() {
                 | Event::Writable(_)
                 | Event::Down { .. }
                 | Event::ListenFailed { .. }
+                | Event::Finished(_)
                 | Event::Drained => panic!("unexpected {e:?}"),
             }
         }
@@ -208,6 +211,7 @@ fn wait_for(w: &mut World, at_server: bool, wanted: Event) {
         | Event::Down { .. }
         | Event::Closed { .. }
         | Event::ListenFailed { .. }
+        | Event::Finished(_)
         | Event::Drained => panic!("unexpected {e:?}, waiting for {wanted:?}"),
     });
 }

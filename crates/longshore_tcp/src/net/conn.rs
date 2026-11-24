@@ -6,7 +6,7 @@
 //! A connection's life: connecting, ending, closing, dialling again.
 
 use super::state::{
-    St, EV_ACCEPTED, EV_CLOSED, EV_DOWN, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE, NONE,
+    St, EV_ACCEPTED, EV_DOWN, EV_FINISHED, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE, NONE,
     W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
 };
 use super::Net;
@@ -15,7 +15,7 @@ use crate::backoff::Backoff;
 use crate::config::ConnOpts;
 use crate::event::{Event, NetError, Why};
 use crate::framing::Framing;
-use crate::handle::Conn;
+use crate::handle::{Conn, Listener};
 use crate::transport::{Refused, Span, Transport};
 use std::net::SocketAddr;
 
@@ -119,78 +119,11 @@ impl<T: Transport> Net<T> {
         self.start_reading(d, slot);
     }
 
-    /// Set or clear the idle deadline of an `Up` connection.
-    pub(super) fn arm_idle(&mut self, slot: u32) {
-        let c = &self.conns[slot as usize];
-        if c.opts.idle_timeout_ns > 0 {
-            let at = c.last_active.saturating_add(c.opts.idle_timeout_ns);
-            self.deadlines.set(slot, at);
-        } else {
-            self.deadlines.clear(slot);
-        }
-    }
-
-    pub(super) fn on_conn_deadline(&mut self, d: &mut T::Driver, slot: u32) {
-        let c = &self.conns[slot as usize];
-        match c.st {
-            St::Connecting => {
-                // The close ends the connect in flight.
-                self.conns[slot as usize].sock_open = true;
-                self.end(slot, Why::Timeout);
-            }
-            St::Backoff => self.start_connect(d, slot),
-            St::Up => {
-                let idle = c.opts.idle_timeout_ns;
-                if idle > 0 && self.now >= c.last_active.saturating_add(idle) {
-                    self.end(slot, Why::Timeout);
-                } else {
-                    self.arm_idle(slot);
-                }
-            }
-            // The handshake of an accepted connection took too long.
-            St::Securing => self.end(slot, Why::Timeout),
-            St::Dying if c.starved => {
-                // Its last input found no frame memory for too long.
-                self.conns[slot as usize].why = Why::Timeout;
-                self.drop_input(slot);
-                self.owe_end(slot);
-            }
-            St::Free | St::Refused | St::Dying | St::Closing => {}
-        }
-    }
-
-    /// The connection in `slot` has ended for a reason of the peer's or the
-    /// network's. The caller is told; the socket is closed once it has been.
-    pub(super) fn end(&mut self, slot: u32, why: Why) {
-        if self.is_ending(slot) {
-            return;
-        }
-        let c = &mut self.conns[slot as usize];
-        c.why = why;
-        self.deadlines.clear(slot);
-        if matches!(c.st, St::Refused | St::Securing) {
-            // Never reported as a connection, so nothing to report now.
-            self.gens.retire(slot);
-            self.begin_close(slot, false);
-            return;
-        }
-        c.st = St::Dying;
-        self.owe_end(slot);
-    }
-
-    /// Owe the caller the end of the `Dying` `slot`.
-    pub(super) fn owe_end(&mut self, slot: u32) {
-        let c = &self.conns[slot as usize];
-        let redial = c.opts.reconnect.is_some() && c.peer.is_some();
-        self.queue_event(slot, if redial { EV_DOWN } else { EV_CLOSED });
-    }
-
     /// Start closing `slot`; the transport is told on the next `poll`.
     pub(super) fn begin_close(&mut self, slot: u32, redial: bool) {
         let c = &mut self.conns[slot as usize];
         c.st = St::Closing;
         c.redial = redial;
-        c.starved = false;
         c.ev = 0;
         self.deadlines.clear(slot);
         self.add_work(slot, W_CLOSE);
@@ -200,26 +133,22 @@ impl<T: Transport> Net<T> {
     pub(super) fn conn_event(&mut self, slot: u32, bit: u8) -> Event {
         let conn = self.gens.conn(slot);
         let c = &self.conns[slot as usize];
-        // What the caller pulled shows whether the stream ended in a frame.
-        let cut_short = c.why == Why::Orderly && c.mid_frame();
-        let why = if cut_short { Why::Reset } else { c.why };
-        let l = c.listener;
+        let why = c.why;
         match bit {
             EV_UP => Event::Up(conn),
             EV_ACCEPTED => Event::Accepted {
-                listener: self.lgens.listener(l),
+                listener: self.accepted_by(slot),
                 conn,
             },
             EV_REFUSED => {
+                let listener = self.accepted_by(slot);
                 // From here on the connection closes once its queue is empty.
                 self.add_work(slot, W_REFUSE);
-                Event::Refused {
-                    listener: self.lgens.listener(l),
-                    conn,
-                }
+                Event::Refused { listener, conn }
             }
             EV_READABLE => Event::Readable(conn),
             EV_WRITABLE => Event::Writable(conn),
+            EV_FINISHED => Event::Finished(conn),
             EV_DOWN => {
                 self.begin_close(slot, true);
                 Event::Down { conn, why }
@@ -230,6 +159,14 @@ impl<T: Transport> Net<T> {
                 Event::Closed { conn, why }
             }
         }
+    }
+
+    /// The handle its caller knows the listener that accepted `slot` by,
+    /// which may be closed by now. Only for an accepted connection.
+    fn accepted_by(&self, slot: u32) -> Listener {
+        let c = &self.conns[slot as usize];
+        c.accepted_by
+            .unwrap_or_else(|| self.lgens.listener(c.listener))
     }
 
     /// Close a connection now. Its handle is stale at once and no event
@@ -244,7 +181,13 @@ impl<T: Transport> Net<T> {
                 self.deadlines.clear(slot);
                 self.release_slot(slot);
             }
-            St::Connecting | St::Securing | St::Up | St::Refused | St::Dying => {
+            St::Connecting
+            | St::Securing
+            | St::Up
+            | St::Refused
+            | St::Finishing
+            | St::HalfClosed
+            | St::Dying => {
                 // A connect in flight is ended by the close.
                 self.conns[slot as usize].sock_open = true;
                 self.begin_close(slot, false);
@@ -347,9 +290,11 @@ impl<T: Transport> Net<T> {
     fn release_slot(&mut self, slot: u32) {
         let c = &mut self.conns[slot as usize];
         let (listener, counted) = (c.listener, core::mem::take(&mut c.counted));
+        let by = c.accepted_by.take();
         c.st = St::Free;
         c.ev = 0;
-        if listener != NONE && counted {
+        // Counted against its own listener, not a later one in the slot.
+        if listener != NONE && counted && by == Some(self.lgens.listener(listener)) {
             let l = &mut self.listeners[listener as usize];
             l.count = l.count.saturating_sub(1);
         }

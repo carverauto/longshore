@@ -227,9 +227,13 @@ routes the slot's send and receive completions through its stream.
 | `Alerting` | — | send: when the alert has gone, → `Secure` and the shutdown is submitted (`ShutDown` at once if the driver has no room). receive: as `Secure` | — (once) | → `AlertAborted` | stays |
 | `AlertAborted` | — | send: → `Plain`, `ShutDown` reported as cancelled. receive: reported as it is | — | stays | stays |
 
-## Where the merged code falls short of the tables
-Found by checking against the code. Group 0 of the tasks closes each one,
-with a scenario test that fails first.
+## Where the merged code fell short of the tables
+Found by checking against the code, and closed in group 0. C1, C2, C4 and
+C5 have scenario tests that failed before their fix. The test for C6 and
+C8 passed on the old code too: the simulator does not deliver a closed
+listener's last accept report late enough to show the fault, so that test
+guards the rule without having reproduced the fault. The seeded
+completion order of task 1.1 is what will.
 
 - **C1 Half-close by the peer ends everything.** Decided: supported, as
   above (`Finishing`, `HalfClosed`, `Event::Finished`, the option).
@@ -248,6 +252,12 @@ with a scenario test that fails first.
   a connection its predecessor accepted. To fix as for connections: a
   listener slot is `Free` only when its close has completed and no accept
   is in flight (the listener table says so).
+- **C8 A connection outlives its listener's slot.** Found while fixing
+  C6: a connection's events and its count against the listener's limit
+  went by the listener's slot, so a connection announced or freed after
+  its listener was closed named, or was counted against, whatever
+  listener had the slot by then. Fixed with C6: a connection keeps the
+  handle of the listener that accepted it.
 - **C7 The connect timeout marks the socket open whether or not there is
   one**, and relies on the backend reporting the close of an empty socket
   slot like any other. Kept, as assumption A2 of the conformance suite.

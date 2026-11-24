@@ -49,6 +49,7 @@ fn pulled_after_the_end(seed: u64) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Why) {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         ended.is_some()
@@ -94,6 +95,7 @@ fn turn_and_hear(w: &mut World<SimIo>, s: Conn, heard: &mut Heard) {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
     }
