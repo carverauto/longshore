@@ -76,6 +76,12 @@ fn a_peer_that_sends_shuts_down_and_waits_is_answered() {
     assert_eq!(w.server.send_bytes(&mut w.io, s, &answer), Ok(()));
     w.server.shutdown_write(&mut w.io, s).unwrap();
     assert!(!w.server.can_send(s));
+    // Shutting down again does nothing; sending is what is refused.
+    assert_eq!(w.server.shutdown_write(&mut w.io, s), Ok(()));
+    assert_eq!(
+        w.server.send_bytes(&mut w.io, s, &answer),
+        Err(SendError::NotUp)
+    );
     let ended = Event::Closed {
         conn: s,
         why: Why::Orderly,

@@ -116,7 +116,7 @@ not yet called.
 | `Free` | `Stale` (1) | `Stale` | `Stale` | `Stale` |
 | `Connecting` | handle retired, → `Closing`, the close is submitted at once; no event | `NotUp` | `NotUp` | none |
 | `Securing` | — (2) | — (2) | — (2) | — (2) |
-| `Up` | as `Connecting` | marked; the shutdown goes out when the queue is empty and no send is in flight; once | queued; `Full` when the queue or the segment pool is full; `NotUp` after `shutdown_write` | frames in order; none when nothing can be cut yet |
+| `Up` | as `Connecting` | marked; the shutdown goes out when the queue is empty and no send is in flight; a second call does nothing | queued; `Full` when the queue or the segment pool is full; `NotUp` after `shutdown_write` | frames in order; none when nothing can be cut yet |
 | `Refused` | as `Connecting` | `NotUp` | one frame is queued; a second is `NotUp` (3) | none: it does not read |
 | `Finishing` | as `Connecting` | open for sending: as `Up`; else `NotUp` | open for sending: as `Up`; else `NotUp` | frames received before the end, in order. Pulling the last settles the end (4). Input that cannot be delivered yet (no frame memory, no hold left) stays, and so does the state |
 | `HalfClosed` | as `Connecting` | as `Up`; when the shutdown has completed: → `Dying` (`Orderly`) | as `Up` | none: everything was pulled |

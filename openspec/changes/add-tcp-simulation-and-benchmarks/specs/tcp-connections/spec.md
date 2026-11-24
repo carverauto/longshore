@@ -109,8 +109,8 @@ the connection.
 
 ### Requirement: Errors that say what is wrong
 The TCP set SHALL answer a call on a connection that exists but is not
-open for what was asked (a send or a shutdown before it is up, after its
-end, or after the caller's shutdown) with an error that says so, distinct
+open for what was asked (a send or a shutdown before it is up or after
+its end, a send after the caller's shutdown) with an error that says so, distinct
 from the error for a handle that names no connection, and SHALL accept
 exactly one frame for a refused connection.
 
