@@ -212,7 +212,11 @@ ring's size, which bounds the turn.
   the listener uses the armed accept. Past the limit one refusal slot per
   listener accepts the connection, reports `Event::Refused { conn }` so the
   caller can send one frame, and closes after it. Accept failures for lack
-  of descriptors back off from 5 ms, doubling to 1 s.
+  of descriptors back off from 5 ms, doubling to 1 s. With every slot of
+  the accept range in use the kernel has nowhere to install a connection it
+  accepts and drops it (the peer sees a reset) and the accept fails in the
+  same way: size `accepts` above the listener's `limit`, which refuses in
+  order, with a frame.
 - `Event::Closed { conn, why }` distinguishes `Orderly` (peer finished after
   all data arrived), `Reset`, `Timeout`, `Protocol`, `Local`.
 - `shutdown_write(conn)` sends what is queued, then shuts down the write
@@ -229,17 +233,57 @@ bounds how many it hands to `Net` per turn; `poll` itself sends at most a
 configured number of queued segments per call.
 
 ### TLS
-`connect` and `listen` take an optional `ClientSetup` or `ServerSetup`; the
-connection runs through `longshore_stream::Stream`, so any TLS provider
-works. `Stream` today receives only with `Op::Recv` into a buffer it is
-given, which serves direct mode. For ring mode it gains a second receive
-path: `Stream::on_ring_recv(io, ring_buf, len, dst)` opens the records in a
-ring buffer straight into the destination (frame memory), keeps the tail of
-a record that continues in the next ring buffer in the connection's TLS
-receive buffer, and returns the ring buffer at once, since plaintext never
-stays in it. The HTTP server can use the same path later. For a
-kernel-bypass transport, the record layer (`longshore_tls::record`, which
-does no I/O) is reused directly.
+TLS is sized with `Sizes::with_tls` (two more buffers of the segment size
+per connection, in the small class, which hold its records on the way out
+and in; segments are then at least `TLS_SEGMENT_MIN`) and set up on the
+transport: `KernelTransport::with_tls(Tls)` takes a `ClientSetup`, a
+`ServerSetup` or both. `Net::connect_tls(addr, server_name, opts)` opens a
+protected connection and `ListenConfig::with_tls` protects what a listener
+accepts; both fail with `NetError::NoTls` when TLS was not sized or the
+transport has no setup for that side. The server name is kept inline per
+connect slot, so reconnecting needs nothing from the caller.
+
+Each connection slot has one `longshore_stream::Stream`, built when the
+transport is attached and keyed in place, so any TLS provider works. `Net`
+owns the handshake's place in a connection's life and the transport its
+bytes:
+- A connection the caller opens stays connecting until the handshake is
+  done; the connect timeout covers both, and `Event::Up` follows.
+- An accepted connection is announced (and counted against the listener's
+  limit) only when its handshake is done. One that has not finished after
+  `ConnOpts::with_handshake_timeout_ns` (10 s by default) is closed without
+  the caller hearing of it.
+- A failed handshake, a record that does not authenticate and an alert
+  from the peer end the connection with `Why::Tls`.
+- `shutdown_write` sends a close alert before the shutdown. An end of
+  stream without a close alert was cut short and ends the connection as
+  `Why::Reset`; with one it is `Why::Orderly`.
+
+Receiving in direct mode goes through `Stream::recv` into the frame's own
+memory: a record that fits what is left of the frame is opened straight
+into it, one that does not is opened in place in the connection's receive
+buffer and its bytes copied from there. Receiving in ring mode uses
+`Stream::on_ring_recv`: the records in a ring buffer are opened straight
+into frame memory, where frames are then lent in place exactly as from a
+backlog, and a record that continues in the next ring buffer is carried in
+the connection's receive buffer. No plaintext is ever in a ring buffer, so
+it goes back as soon as its records are opened. A record is opened whole:
+frame memory holds at least one (`RING_DST_MIN`, 16,401 bytes) for a
+protected connection in ring mode. Ring mode is the faster of the two for
+TLS.
+
+Sends are sealed from where they lie (a segment, or a held frame lent
+with `send_lent`) into the connection's send buffer and are never sent
+zero-copy. The handshake is rustls's and remains the one sanctioned
+allocation; everything after it runs under `alloc_guard`.
+
+The transport seam carries this with `attach` (called once by `Net::new`
+with the resolved `Config`), `can_secure`, `secure(slot, role)` ending in
+`Happened::Secured`, and `open(slot, from, into)` for ring buffers;
+`translate` gets the driver, since a stream submits its own next send or
+receive, and may answer `Happened::Nothing`; `recv_into` may end at once
+when plaintext is there already. For a kernel-bypass transport, the record
+layer (`longshore_tls::record`, which does no I/O) is reused directly.
 
 ### Additions to `Io`
 - `Op::Shutdown { sock, how: Read | Write | Both }` (`IORING_OP_SHUTDOWN`,

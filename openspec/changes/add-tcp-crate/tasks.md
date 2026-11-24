@@ -20,15 +20,15 @@
 ## 3. Kernel transport
 - [x] 3.1 `KernelTransport<IO: Io>`: connect, listen, accept (armed), `Rx::Ring` (armed receive, frames lent in place, spanning frames assembled) and `Rx::Direct` (header then body into frame memory)
 - [x] 3.2 Sends from segments, one in flight per connection; zero-copy above the threshold on TCP without TLS only
-- [ ] 3.3 Unix-domain sockets; TLS through `longshore_stream::Stream` with any provider, in both receive modes
+- [x] 3.3 Unix-domain sockets; TLS through `longshore_stream::Stream` with any provider, in both receive modes
 
 ## 4. Tests
-- [ ] 4.1 Units: framing (both kinds, bounds), handle generations, backoff, deadline table, send coalescing
-- [ ] 4.2 API over `UringIo` (real kernel) and `PosixIo`: TCP and Unix, with and without TLS; every scenario of the spec deltas
-- [ ] 4.3 Allocation check under `alloc_guard`
-- [ ] 4.4 File writes and syncs and a `Net` on one `Io`, completions routed by token
-- [ ] 4.5 Receive, direct-I/O write and three lent sends of one frame without a copy; reuse only at zero holds
-- [ ] 4.6 The same exchange on `UringIo`, `PosixIo` and `SimIo` gives the same frames
+- [x] 4.1 Units: framing (both kinds, bounds), handle generations, backoff, deadline table, send coalescing
+- [x] 4.2 API over `UringIo` (real kernel) and `PosixIo`: TCP and Unix, with and without TLS; every scenario of the spec deltas
+- [x] 4.3 Allocation check under `alloc_guard`
+- [x] 4.4 File writes and syncs and a `Net` on one `Io`, completions routed by token
+- [x] 4.5 Receive, direct-I/O write and three lent sends of one frame without a copy; reuse only at zero holds
+- [x] 4.6 The same exchange on `UringIo`, `PosixIo` and `SimIo` gives the same frames
 
 ## 5. Documentation
 - [ ] 5.1 `docs/tcp.md` (the API, the two receive modes, sizing), README section, crate docs with an example

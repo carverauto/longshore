@@ -134,7 +134,7 @@ asked to.
 
 ### Requirement: Closing
 The set SHALL report how each connection ended (orderly, reset, timeout,
-protocol error, or closed locally), SHALL shut down the write side after
+protocol error, TLS failure, or closed locally), SHALL shut down the write side after
 sending what is queued when asked, and SHALL drain on request: stop
 accepting, finish queued sends, then report that it has drained.
 
@@ -186,3 +186,15 @@ from any TLS provider.
 #### Scenario: TLS per endpoint
 - **WHEN** a listener is given a server setup and a client connects with a client setup, in ring mode and in direct mode
 - **THEN** frames cross the connection encrypted and arrive unchanged
+
+#### Scenario: Handshake that never starts
+- **WHEN** a peer connects to a listener with TLS and sends nothing until the handshake timeout
+- **THEN** the set closes the connection without announcing it, and its slot serves the next peer
+
+#### Scenario: Certificate for another name
+- **WHEN** a client connects with TLS to a server whose certificate does not carry the expected name
+- **THEN** the connect ends with a TLS failure
+
+#### Scenario: End without a close alert
+- **WHEN** a protected connection's peer closes without sending a close alert
+- **THEN** the connection is reported as reset, not as ended in order

@@ -19,9 +19,7 @@ servers.
 ## Part of longshore
 
 This crate is one of the pieces of [longshore](https://crates.io/crates/longshore),
-an object storage client for Linux `io_uring`. Most programs want that crate,
-which gathers these under one name. The crates are released together, so
-depend on them at the same version.
+an object storage client for Linux `io_uring`. 
 
 - Documentation: <https://docs.rs/longshore_tcp>
 - Repository: <https://github.com/carverauto/longshore>

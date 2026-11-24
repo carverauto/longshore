@@ -20,6 +20,12 @@ mod frames;
 #[cfg(test)]
 #[path = "net/lifecycle.rs"]
 mod lifecycle;
+#[cfg(test)]
+#[path = "net/listening.rs"]
+mod listening;
+
+#[global_allocator]
+static ALLOC: longshore_common::io::alloc_guard::Guard = longshore_common::io::alloc_guard::Guard;
 
 const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7)), 7000);
 const MS: u64 = 1_000_000;
