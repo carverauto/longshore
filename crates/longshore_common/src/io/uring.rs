@@ -23,6 +23,7 @@ mod completions;
 mod completions_steps;
 #[cfg(feature = "fault-injection")]
 mod fault;
+mod listen;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
 mod ops;
@@ -167,6 +168,9 @@ pub struct UringIo {
     ring_in_ring: Box<[bool]>,
     slots: Box<[Slot]>,
     sock_stream: Box<[bool]>,
+    /// Per socket slot: the peer's address, for a socket accepted with a
+    /// single accept.
+    sock_peer: Box<[Option<SocketAddr>]>,
     /// Completions the kernel still owes: one per SQE pushed, and one more
     /// after each that says more follow (a zero-copy send's notification).
     in_flight: u32,
@@ -180,10 +184,13 @@ pub struct UringIo {
     /// The eventfd behind `Io::waker`, or -1 before it is asked for.
     wake_fd: i32,
     measure_segments: bool,
+    keep_timing: Option<crate::io::KeepAlive>,
     no_delay: bool,
     keep_alive: bool,
     last_listen_opts: Option<(bool, bool)>,
     last_connect_opts: Option<(bool, bool)>,
+    last_listen_timing: Option<(u32, u32, u32)>,
+    last_connect_timing: Option<(u32, u32, u32)>,
     /// The next `tick` reports a failure. See [`Fault::TickFails`].
     #[cfg(feature = "fault-injection")]
     fail_tick: bool,

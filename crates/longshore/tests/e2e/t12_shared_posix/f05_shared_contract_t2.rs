@@ -10,7 +10,7 @@ use super::f05_shared_contract::{for_each_backend, workspace_root};
 use crate::e2e::harness::posix_backend;
 #[cfg(unix)]
 use crate::e2e::harness::unused_loopback_addr;
-use crate::e2e::harness::{drive_until, submit_and_wait_one, write_pool_bytes, TempDir};
+use crate::e2e::harness::{drive_until, submit_and_wait_one, write_pool_bytes};
 use longshore::io::contract;
 #[cfg(target_os = "linux")]
 use longshore::io::uring::UringIo;
@@ -23,45 +23,41 @@ use std::net::SocketAddr;
 use std::process::Command;
 
 #[test]
-fn t2_f05_1_test_linux_sh_fails_when_hosts_file_missing() {
+fn t2_f05_1_test_linux_sh_refuses_a_machine_without_a_destination() {
     let root = workspace_root();
-    let missing = root.join("nonexistent_test_hosts_e2e_check");
+    // A Rust target and nothing after it: refused before anything is built.
     let out = Command::new("sh")
         .arg(root.join("scripts/test-linux.sh"))
-        .env("LONGSHORE_TEST_HOSTS_FILE", &missing)
+        .arg("x86_64-unknown-linux-musl")
         .output()
         .expect("run test-linux.sh");
     assert!(
         !out.status.success(),
-        "test-linux.sh must fail when hosts file is missing"
+        "test-linux.sh must fail when a machine has no SSH destination"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("not found") || stderr.contains("not exercised"),
+        stderr.contains("names no SSH destination") && stderr.contains("not exercised"),
         "expected descriptive error, got: {stderr}"
     );
 }
 
 #[test]
-fn t2_f05_2_test_linux_sh_fails_when_hosts_file_empty_or_comments() {
+fn t2_f05_2_test_linux_sh_refuses_an_option_it_does_not_know() {
     let root = workspace_root();
-    let dir = TempDir::new("empty_hosts").expect("tempdir");
-    let hosts = dir.file_path("hosts");
-    std::fs::write(&hosts, "# comment only\n\n   # trailing comment\n").expect("write hosts");
-
     let out = Command::new("sh")
         .arg(root.join("scripts/test-linux.sh"))
-        .env("LONGSHORE_TEST_HOSTS_FILE", &hosts)
+        .arg("--no-such-option")
         .output()
         .expect("run test-linux.sh");
     assert!(
         !out.status.success(),
-        "test-linux.sh must fail when hosts file has 0 hosts"
+        "test-linux.sh must fail on an unknown option"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("0 hosts") || stderr.contains("not exercised"),
-        "expected 0 hosts diagnostic, got: {stderr}"
+        stderr.contains("unknown option"),
+        "expected unknown-option diagnostic, got: {stderr}"
     );
 }
 

@@ -34,9 +34,28 @@ impl<W: World> Io for Engine<W> {
         self.world.listen(sock, addr)
     }
 
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: crate::io::ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.world.listen_with(sock, addr, opts)
+    }
+
+    fn keep_alive_timing(&mut self, timing: Option<crate::io::KeepAlive>) {
+        self.world.keep_alive_timing(timing);
+    }
+
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         self.world.listen_unix(sock, path)
+    }
+
+    fn peer_addr(&self, sock: Sock) -> Option<SocketAddr> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.world.peer_addr(sock)
     }
 
     fn no_delay(&mut self, on: bool) {

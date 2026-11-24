@@ -93,9 +93,17 @@ impl UringIo {
         s.sock = sock.0;
         s.is_stream = true;
         s.op_sock = Some(listener);
+        // The kernel writes the peer's address into the slot, which stays
+        // put until the accept completes.
+        s.addr = sockaddr_any::default();
+        s.addr_len = size_of::<sockaddr_any>() as u32;
+        let (addr, addr_len) = (&raw mut s.addr as u64, &raw mut s.addr_len as u64);
+        self.sock_peer[sock.0 as usize] = None;
         let mut sqe = self.fixed(listener);
         sqe.opcode = IORING_OP_ACCEPT;
         sqe.file_index = sock.0 + 1;
+        sqe.addr = addr;
+        sqe.off = addr_len;
         sqe
     }
 
@@ -171,6 +179,21 @@ impl UringIo {
         s
     }
 
+    /// A shutdown of one or both directions; the slot stays open.
+    #[inline]
+    pub(super) fn prep_shutdown(
+        &mut self,
+        i: u32,
+        sock: Sock,
+        how: crate::io::Shut,
+    ) -> io_uring_sqe {
+        self.slots[i as usize].op_sock = Some(sock);
+        let mut s = self.fixed(sock);
+        s.opcode = IORING_OP_SHUTDOWN;
+        s.len = how.raw();
+        s
+    }
+
     /// A close: cancels the slot's other operations, shuts a stream down,
     /// then closes the fixed file.
     pub(super) fn prep_close(&mut self, i: u32, sock: Sock) -> io_uring_sqe {
@@ -204,6 +227,7 @@ impl UringIo {
                 });
             }
         }
+        self.sock_peer[sock.0 as usize] = None;
         if core::mem::replace(&mut self.sock_stream[sock.0 as usize], false) {
             self.push(io_uring_sqe {
                 opcode: IORING_OP_SHUTDOWN,

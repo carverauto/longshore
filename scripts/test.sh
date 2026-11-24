@@ -6,7 +6,7 @@
 
 # The gate's test command: unit, simulation and property tests on this
 # machine, the model-checked tests of the client's hand-offs, then the real
-# io_uring checks on Linux hosts.
+# io_uring checks on a Linux kernel.
 set -eu
 cd "$(dirname "$0")/.."
 

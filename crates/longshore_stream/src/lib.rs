@@ -17,8 +17,10 @@ mod handshake;
 mod idle;
 #[cfg(feature = "tls-core")]
 mod records;
+mod ring;
 mod stream;
 
 pub use error::{TlsError, KEY_RECORDS_RETIRE};
 pub use idle::IdleCheck;
+pub use ring::{RingBytes, RingDst, RingStep, RING_DST_MIN};
 pub use stream::{Step, Stream};

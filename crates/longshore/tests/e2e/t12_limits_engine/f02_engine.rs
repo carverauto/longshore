@@ -202,6 +202,7 @@ fn readiness_world(flag: Arc<AtomicBool>) -> TestWorld {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }

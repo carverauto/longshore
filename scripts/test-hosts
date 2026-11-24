@@ -1,0 +1,13 @@
+# More machines for scripts/test-linux.sh, which needs none: it always runs
+# the real-kernel checks on this machine (in a container when this is not
+# Linux). Each machine listed here runs them too, over SSH, and the script
+# fails if one of them cannot be reached.
+#
+# One machine per line: <rust-target> <ssh-destination>
+#
+#   aarch64-unknown-linux-musl user@arm-host
+#   x86_64-unknown-linux-musl  user@x86-host
+#
+# For a single run, give the same pairs to the script instead:
+#
+#   scripts/test-linux.sh aarch64-unknown-linux-musl user@arm-host

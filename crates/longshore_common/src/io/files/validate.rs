@@ -65,6 +65,7 @@ pub(super) fn check_non_lifecycle(
         | Op::Send { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
+        | Op::Shutdown { .. }
         | Op::Close { .. }
         | Op::AwaitWake
         | Op::ReadFile { .. }
@@ -117,6 +118,7 @@ fn check_path_op(op: &Op, pool: &[u8], limits: &Limits) -> Result<(), i32> {
         | Op::Send { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
+        | Op::Shutdown { .. }
         | Op::Close { .. }
         | Op::AwaitWake
         | Op::ReadFile { .. }
@@ -193,6 +195,7 @@ pub(super) fn slot_of(op: &Op) -> Option<FileSlot> {
         | Op::Send { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
+        | Op::Shutdown { .. }
         | Op::Close { .. }
         | Op::AwaitWake
         | Op::ReadFile { .. }

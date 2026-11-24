@@ -23,6 +23,7 @@ pub enum OpKind {
     Recv,
     ArmedRecv,
     RecvNow,
+    Shutdown,
     Close,
     AwaitWake,
     ReadFile,
@@ -54,6 +55,7 @@ impl OpKind {
             Op::Recv { .. } => Self::Recv,
             Op::ArmedRecv { .. } => Self::ArmedRecv,
             Op::RecvNow { .. } => Self::RecvNow,
+            Op::Shutdown { .. } => Self::Shutdown,
             Op::Close { .. } => Self::Close,
             Op::AwaitWake => Self::AwaitWake,
             Op::ReadFile { .. } => Self::ReadFile,
@@ -197,6 +199,7 @@ impl TestWorld {
             | Op::Recv { sock, .. }
             | Op::ArmedRecv { sock }
             | Op::RecvNow { sock, .. }
+            | Op::Shutdown { sock, .. }
             | Op::Close { sock } => Some(sock),
             Op::AwaitWake
             | Op::ReadFile { .. }
@@ -287,6 +290,7 @@ impl World for TestWorld {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
             | Op::Timeout { .. }
@@ -322,6 +326,7 @@ impl World for TestWorld {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }

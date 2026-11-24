@@ -25,12 +25,24 @@ cargo clippy --workspace --exclude longshore-bench --exclude longshore_tls --all
 cargo bench -p longshore-bench --bench <name>   # criterion microbenchmarks (see bench/README.md)
 ```
 
-`scripts/test-linux.sh` cross-compiles the check programs for
-`aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`, copies them to
-the hosts listed in `~/.config/longshore/test-hosts` (or
-`$LONGSHORE_TEST_HOSTS_FILE`), and runs them. That file has one
-`<rust-target> <ssh-destination>` per line. If it is missing or lists zero
-hosts, the script exits non-zero and reports that `io_uring` was not exercised.
+`scripts/test-linux.sh` runs the real-kernel checks and needs no
+configuration. On Linux it builds the check programs and runs them on that
+machine. Elsewhere it starts a Linux container with `docker` or `podman`
+and runs itself there, on the kernel of the container host. The list of
+checks is `scripts/linux-checks.sh`.
+
+For a kernel or hardware the machine at hand does not have, it then runs
+the same checks on other machines over SSH: those listed in
+`scripts/test-hosts`, which is part of the repository, and those given as
+parameters, each a `<rust-target> <ssh-destination>` pair:
+
+```sh
+scripts/test-linux.sh aarch64-unknown-linux-musl user@arm-host
+```
+
+If no Linux kernel can be reached, or one of those machines cannot, the
+script exits non-zero and says that `io_uring` was not exercised. It reads
+no environment variable and no file outside the repository.
 
 `scripts/test-model.sh` builds `longshore_mailbox` and `longshore_s3` with their
 locks, atomics and thread parking replaced by

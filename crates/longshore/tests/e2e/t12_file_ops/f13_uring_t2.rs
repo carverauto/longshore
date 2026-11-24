@@ -68,26 +68,23 @@ fn t2_f13_4_file_uring_non_direct_or_missing_dir_diagnostic() {
     );
 }
 
-/// `T2-F13-5`: Unknown `file_uring` flag and `test-linux.sh` with missing hosts fail non-zero.
+/// `T2-F13-5`: Unknown `file_uring` flag and `test-linux.sh` given a machine without a destination fail non-zero.
 #[test]
 fn t2_f13_5_bad_flag_and_test_linux_missing_host_fail() {
     let root = repo_root();
     let out = std::process::Command::new("sh")
         .current_dir(&root)
         .arg("scripts/test-linux.sh")
-        .env(
-            "LONGSHORE_TEST_HOSTS_FILE",
-            "/nonexistent/longshore_missing_hosts",
-        )
+        .arg("x86_64-unknown-linux-musl")
         .output()
         .expect("run test-linux.sh");
     assert!(
         !out.status.success(),
-        "test-linux.sh must fail non-zero when hosts file is missing"
+        "test-linux.sh must fail non-zero for a machine without an SSH destination"
     );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("io_uring was not exercised") || err.contains("not found"),
+        err.contains("io_uring was not exercised"),
         "expected explicit error on stderr, got: {err}"
     );
 

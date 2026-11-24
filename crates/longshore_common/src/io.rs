@@ -22,6 +22,7 @@ pub mod contract_chains;
 pub mod contract_files;
 pub mod contract_net;
 pub mod engine;
+pub mod extents;
 pub use completion::{Completion, Completions};
 pub mod files;
 mod ids;
@@ -29,6 +30,7 @@ pub use files::{file_size, FileSlot, OpenFlags};
 pub use ids::{BufId, FileId, Sock, Token};
 pub mod limits;
 mod must;
+pub mod turn;
 pub use limits::Limits;
 #[cfg(unix)]
 pub mod posix;
@@ -45,6 +47,82 @@ pub mod ring;
 pub mod sys;
 #[cfg(target_os = "linux")]
 pub mod uring;
+
+/// Keepalive probe timing for TCP sockets: see [`Io::keep_alive_timing`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct KeepAlive {
+    pub(crate) idle_secs: u32,
+    pub(crate) interval_secs: u32,
+    pub(crate) count: u32,
+}
+
+impl KeepAlive {
+    /// Probe after `idle_secs` of silence, then every `interval_secs`, and
+    /// give the connection up after `count` unanswered probes. Each at least 1.
+    #[must_use]
+    pub const fn new(idle_secs: u32, interval_secs: u32, count: u32) -> KeepAlive {
+        assert!(idle_secs > 0 && interval_secs > 0 && count > 0);
+        KeepAlive {
+            idle_secs,
+            interval_secs,
+            count,
+        }
+    }
+}
+
+/// How [`Io::listen_with`] listens.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ListenOpts {
+    pub(crate) reuse_port: bool,
+    pub(crate) backlog: u32,
+}
+
+impl ListenOpts {
+    /// What [`Io::listen`] does: the port to itself, a backlog of 128.
+    pub const DEFAULT: ListenOpts = ListenOpts {
+        reuse_port: false,
+        backlog: 128,
+    };
+
+    /// With `SO_REUSEPORT`: several sockets, each on its own thread and
+    /// backend, listen on one address and the kernel spreads incoming
+    /// connections across them.
+    #[must_use]
+    pub const fn with_reuse_port(mut self, on: bool) -> ListenOpts {
+        self.reuse_port = on;
+        self
+    }
+
+    /// With this many connections allowed to wait to be accepted (at least 1).
+    #[must_use]
+    pub const fn with_backlog(mut self, backlog: u32) -> ListenOpts {
+        assert!(backlog > 0);
+        self.backlog = backlog;
+        self
+    }
+}
+
+/// Which direction of a connection [`Op::Shutdown`] ends.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Shut {
+    /// No more receives: later receives complete with 0.
+    Read,
+    /// No more sends: the peer reads end of stream after the data sent.
+    Write,
+    /// Both directions.
+    Both,
+}
+
+impl Shut {
+    /// The `how` argument of `shutdown(2)`: the same on Linux and macOS.
+    pub(crate) const fn raw(self) -> u32 {
+        match self {
+            Shut::Read => 0,
+            Shut::Write => 1,
+            Shut::Both => 2,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Op {
@@ -104,6 +182,12 @@ pub enum Op {
         off: u32,
         len: u32,
     },
+    /// Shut down one or both directions of connected stream socket `sock`,
+    /// leaving its slot open. After the write side is shut down the peer
+    /// reads end of stream once it has read everything sent; after the read
+    /// side is shut down, receives on `sock` complete with 0. Completes with
+    /// 0, or a negated errno (`-ENOTCONN` on a socket that is not connected).
+    Shutdown { sock: Sock, how: Shut },
     /// Close socket slot `sock`. Gives every other operation in flight on
     /// `sock` (including an [`Op::Accept`] waiting on a closed listener) its
     /// final completion without waiting for the peer, in no fixed order
@@ -227,6 +311,7 @@ pub const ECONNREFUSED: i32 = 111;
 pub const EPIPE: i32 = 32;
 pub const ETIME: i32 = 62;
 pub const ECANCELED: i32 = 125;
+pub const EADDRINUSE: i32 = 98;
 pub const ENOENT: i32 = 2;
 pub const EBADF: i32 = 9;
 pub const EAGAIN: i32 = 11;
@@ -236,6 +321,7 @@ pub const ENFILE: i32 = 23;
 pub const EMFILE: i32 = 24;
 pub const ENAMETOOLONG: i32 = 36;
 pub const ENOBUFS: i32 = 105;
+pub const ENOTCONN: i32 = 107;
 pub const EOVERFLOW: i32 = 75;
 
 /// A byte count or slot index as a completion result. Linux never moves more
@@ -278,6 +364,20 @@ pub trait Io {
     /// Bind and listen in slot `sock`. Initialization-time only; may block.
     /// Returns the bound address (useful with port 0).
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// As [`Io::listen`], with options. A backend that cannot honour an
+    /// option refuses with `Unsupported`; it never ignores one.
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        if opts == ListenOpts::DEFAULT {
+            self.listen(sock, addr)
+        } else {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+    }
     /// Bind and listen on a Unix-domain stream socket at `path` in slot
     /// `sock`. Initialization-time only; may block.
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
@@ -287,6 +387,18 @@ pub trait Io {
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected
     /// from now on. Ignored for UDP and Unix-domain sockets.
     fn keep_alive(&mut self, _on: bool) {}
+    /// The probe timing that goes with [`Io::keep_alive`] on TCP sockets
+    /// listened or connected from now on; `None` leaves the system's
+    /// defaults. Accepted sockets take their listener's.
+    fn keep_alive_timing(&mut self, _timing: Option<KeepAlive>) {}
+    /// The address of the peer of the connection in slot `sock`, when the
+    /// backend knows it: on the ring, for a socket accepted with
+    /// [`Op::Accept`] (an armed accept installs sockets the kernel reports
+    /// no address for); on the portable backend, for any connected TCP
+    /// socket. `None` otherwise, and for Unix-domain sockets.
+    fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
+        None
+    }
     /// Return a buffer-ring buffer named in an [`Op::ArmedRecv`] completion
     /// back to the backend's ring without submitting an operation.
     fn give_back(&mut self, id: BufId);

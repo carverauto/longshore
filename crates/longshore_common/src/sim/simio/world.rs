@@ -23,18 +23,41 @@ impl World for Virtual {
     }
 
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr> {
+        self.listen_with(sock, addr, crate::io::ListenOpts::DEFAULT)
+    }
+
+    /// The backlog is not modelled: a connect waits until it is accepted.
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: crate::io::ListenOpts,
+    ) -> io::Result<SocketAddr> {
         let target = Some(SimAddr::Ip(addr));
-        if self
-            .socks
-            .iter()
-            .any(|s| s.state == SockState::Listening && s.addr == target)
-        {
+        // An address is shared only when every listener on it asks to.
+        if self.socks.iter().any(|s| {
+            s.state == SockState::Listening
+                && s.addr == target
+                && !(s.reuse_port && opts.reuse_port)
+        }) {
             return Err(io::Error::from(io::ErrorKind::AddrInUse));
         }
         let s = &mut self.socks[sock.0 as usize];
         s.state = SockState::Listening;
         s.addr = target;
+        s.reuse_port = opts.reuse_port;
         Ok(addr)
+    }
+
+    fn keep_alive_timing(&mut self, timing: Option<crate::io::KeepAlive>) {
+        self.keep_timing = timing;
+    }
+
+    fn peer_addr(&self, sock: Sock) -> Option<SocketAddr> {
+        let s = &self.socks[sock.0 as usize];
+        (s.state == SockState::Open)
+            .then_some(s.accepted_from)
+            .flatten()
     }
 
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {
@@ -132,6 +155,7 @@ impl World for Virtual {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }

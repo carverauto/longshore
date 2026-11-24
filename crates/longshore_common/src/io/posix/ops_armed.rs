@@ -34,6 +34,9 @@ impl Posix {
         }
         match accept_socket(lfd) {
             Ok(new_fd) => {
+                if let Err(e) = self.after_accept(new_fd) {
+                    return Some(Attempt::single(-e));
+                }
                 let end = self.accept_start + self.accept_len;
                 let slot = (self.accept_start..end)
                     .find(|&k| self.socks[k as usize].kind == SockKind::Free);

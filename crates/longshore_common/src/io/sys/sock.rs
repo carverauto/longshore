@@ -22,6 +22,11 @@ pub const SOCK_CLOEXEC: u64 = 0o2000000;
 
 pub const SOL_SOCKET: c_int = 1;
 pub const SO_KEEPALIVE: c_int = 9;
+pub const SO_REUSEADDR: c_int = 2;
+pub const SO_REUSEPORT: c_int = 15;
+pub const TCP_KEEPIDLE: c_int = 4;
+pub const TCP_KEEPINTVL: c_int = 5;
+pub const TCP_KEEPCNT: c_int = 6;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 1;
 pub const TCP_MAXSEG: c_int = 2;
@@ -79,6 +84,29 @@ impl sockaddr_any {
         }
     }
 
+    /// The address this holds, if it is an IPv4 or IPv6 one.
+    pub fn to_socket_addr(&self) -> Option<std::net::SocketAddr> {
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+        let r = &self.rest;
+        let port = u16::from_be_bytes([r[0], r[1]]);
+        if self.family == AF_INET {
+            let ip = Ipv4Addr::new(r[2], r[3], r[4], r[5]);
+            Some(SocketAddr::V4(SocketAddrV4::new(ip, port)))
+        } else if self.family == AF_INET6 {
+            let flow = u32::from_ne_bytes([r[2], r[3], r[4], r[5]]);
+            let ip: [u8; 16] = r[6..22].try_into().ok()?;
+            let scope = u32::from_ne_bytes([r[22], r[23], r[24], r[25]]);
+            Some(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::from(ip),
+                port,
+                flow,
+                scope,
+            )))
+        } else {
+            None
+        }
+    }
+
     /// The kernel's form of a NUL-terminated Unix-domain socket path, and its length.
     pub fn from_unix(nul_terminated: &[u8]) -> (sockaddr_any, u32) {
         assert!(
@@ -104,6 +132,9 @@ const _: () = {
 
 extern "C" {
     pub fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
+    pub fn bind(fd: c_int, addr: *const c_void, len: u32) -> c_int;
+    pub fn listen(fd: c_int, backlog: c_int) -> c_int;
+    pub fn getsockname(fd: c_int, addr: *mut c_void, len: *mut u32) -> c_int;
     pub fn setsockopt(
         fd: c_int,
         level: c_int,

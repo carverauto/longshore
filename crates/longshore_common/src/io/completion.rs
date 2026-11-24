@@ -99,6 +99,25 @@ impl Completions {
         self.items[self.len] = c;
         self.len += 1;
     }
+    /// Remove every completion `take` accepts and hand it to `f`, in arrival
+    /// order; the others stay, in their order. One pass, no allocation.
+    pub fn drain_where(
+        &mut self,
+        take: impl Fn(&Completion) -> bool,
+        mut f: impl FnMut(Completion),
+    ) {
+        let mut kept = 0;
+        for i in 0..self.len {
+            let c = self.items[i];
+            if take(&c) {
+                f(c);
+            } else {
+                self.items[kept] = c;
+                kept += 1;
+            }
+        }
+        self.len = kept;
+    }
     pub fn pop(&mut self) -> Option<Completion> {
         if self.len == 0 {
             return None;

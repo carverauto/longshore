@@ -82,7 +82,15 @@ impl Virtual {
             s.rx_head = 0;
             s.rx_len = 0;
             s.peer_closed = false;
+            (s.peer_wr_shut, s.wr_shut, s.rd_shut) = (false, false, false);
             s.reset = false;
+            s.accepted_from = None;
+        }
+        if let Some(SimAddr::Ip(listening)) = addr {
+            // The simulator has no client addresses: the listener's own
+            // address and a port derived from the client's slot.
+            let port = 49_152 + (c % 16_384) as u16;
+            self.socks[sock.0 as usize].accepted_from = Some(SocketAddr::new(listening.ip(), port));
         }
         Some(0)
     }
@@ -146,7 +154,10 @@ impl Virtual {
         if self.socks[s].reset {
             return Some(-ECONNRESET);
         }
-        if self.socks[s].state != SockState::Open || self.socks[s].peer_closed {
+        if self.socks[s].state != SockState::Open
+            || self.socks[s].peer_closed
+            || self.socks[s].wr_shut
+        {
             return Some(-EPIPE);
         }
         if self.rng.chance(self.faults.reset) {
@@ -157,6 +168,10 @@ impl Virtual {
         if self.socks[peer].state != SockState::Open || self.socks[peer].peer as usize != s {
             // The far end closed and its slot now belongs to another connection.
             return Some(-EPIPE);
+        }
+        if self.socks[peer].rd_shut {
+            // The far end reads no more: what arrives is dropped.
+            return Some(count_result(len));
         }
         let space = SOCK_BUF - self.socks[peer].rx_len;
         if space == 0 || len == 0 {
@@ -202,9 +217,12 @@ impl Virtual {
         if self.socks[s].state != SockState::Open {
             return Some(-EPIPE);
         }
+        if self.socks[s].rd_shut {
+            return Some(0);
+        }
         let avail = self.socks[s].rx_len;
         if avail == 0 {
-            if self.socks[s].peer_closed {
+            if self.socks[s].peer_closed || self.socks[s].peer_wr_shut {
                 return Some(0);
             }
             // Nothing has arrived: a plain read waits, a read that
@@ -232,6 +250,30 @@ impl Virtual {
         Some(count_result(n))
     }
 
+    /// Shuts one or both directions of a connected stream down.
+    pub(super) fn sim_shutdown(&mut self, sock: Sock, how: crate::io::Shut) -> Option<i32> {
+        use crate::io::Shut;
+        let s = sock.0 as usize;
+        if self.socks[s].state != SockState::Open || self.is_udp(sock) {
+            return Some(-crate::io::ENOTCONN);
+        }
+        if matches!(how, Shut::Write | Shut::Both) && !self.socks[s].wr_shut {
+            self.socks[s].wr_shut = true;
+            let peer = self.socks[s].peer as usize;
+            if !self.socks[s].peer_closed
+                && self.socks[peer].state == SockState::Open
+                && self.socks[peer].peer as usize == s
+            {
+                self.socks[peer].peer_wr_shut = true;
+            }
+        }
+        if matches!(how, Shut::Read | Shut::Both) {
+            self.socks[s].rd_shut = true;
+            self.socks[s].rx_len = 0;
+        }
+        Some(0)
+    }
+
     pub(super) fn sim_close(&mut self, sock: Sock) -> Option<i32> {
         let s = sock.0 as usize;
         if self.socks[s].state == SockState::Open {
@@ -247,6 +289,7 @@ impl Virtual {
         }
         self.socks[s].state = SockState::Free;
         self.socks[s].addr = None;
+        self.socks[s].accepted_from = None;
         Some(0)
     }
 }

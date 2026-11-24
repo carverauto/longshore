@@ -54,12 +54,31 @@ pub trait World {
     fn register_file(&mut self, path: &str) -> io::Result<FileId>;
     /// Bind and listen on `sock` at `addr`, returning the bound address.
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// As [`World::listen`], with options; refuses those it cannot honour.
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: crate::io::ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        if opts == crate::io::ListenOpts::DEFAULT {
+            self.listen(sock, addr)
+        } else {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+    }
     /// Bind and listen on a Unix-domain stream socket at `path` in `sock`.
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
     /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected from now on.
     fn no_delay(&mut self, _on: bool) {}
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected from now on.
     fn keep_alive(&mut self, _on: bool) {}
+    /// The probe timing that goes with `keep_alive`.
+    fn keep_alive_timing(&mut self, _timing: Option<crate::io::KeepAlive>) {}
+    /// The peer's address of the connection in `sock`, if known.
+    fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
+        None
+    }
     /// Return a buffer-ring buffer back to the world's ring.
     fn give_back(&mut self, _id: BufId) {}
     /// Ask to measure TCP segment sizes on future connects, if supported.

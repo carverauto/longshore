@@ -11,7 +11,7 @@
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_common::io::posix::PosixIo;
 use longshore_common::io::{
-    BufId, Completions, Io, Limits, Op, Sock, Token, ECANCELED, ENFILE, ENOBUFS,
+    BufId, Completions, Io, KeepAlive, Limits, Op, Sock, Token, ECANCELED, ENFILE, ENOBUFS,
 };
 use std::net::SocketAddr;
 
@@ -121,6 +121,23 @@ fn accept_and_connect(io: &mut PosixIo, out: &mut Completions, addr: SocketAddr)
             }
         }
     }
+}
+
+/// Keepalive timing set before a listen and a connect is on the listener,
+/// the connected socket and the accepted one.
+#[test]
+fn posix_keep_alive_timing_is_applied_and_inherited() {
+    let mut io = PosixIo::new(ARMED_LIMITS).unwrap();
+    io.keep_alive(true);
+    io.keep_alive_timing(Some(KeepAlive::new(60, 10, 6)));
+    let mut out = Completions::new(8);
+    let addr = io
+        .listen(Sock::new(0), "127.0.0.1:0".parse().unwrap())
+        .unwrap();
+    let accepted = armed_accept_and_connect(&mut io, &mut out, addr);
+    assert_eq!(io.keep_timing(Sock::new(0)).unwrap(), (60, 10, 6));
+    assert_eq!(io.keep_timing(Sock::new(1)).unwrap(), (60, 10, 6));
+    assert_eq!(io.keep_timing(accepted).unwrap(), (60, 10, 6));
 }
 
 #[test]

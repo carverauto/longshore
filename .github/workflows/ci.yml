@@ -24,7 +24,7 @@ env:
   # own. Raise it deliberately, with the lint fixes it asks for.
   RUST_VERSION: "1.100.0"
   # The crates whose code depends on the TLS provider.
-  TLS_CRATES: -p longshore_tls -p longshore_stream -p longshore_http_client -p longshore_s3 -p longshore
+  TLS_CRATES: -p longshore_tls -p longshore_stream -p longshore_tcp -p longshore_http_client -p longshore_s3 -p longshore
 
 jobs:
   check:
@@ -94,7 +94,7 @@ jobs:
           cargo test -p longshore --lib --no-default-features
           cargo test -p longshore --doc --no-default-features
           for provider in ring rustls; do
-            cargo test -p longshore_tls -p longshore_stream -p longshore_http_client -p longshore_s3 --no-default-features --features "$provider"
+            cargo test -p longshore_tls -p longshore_stream -p longshore_tcp -p longshore_http_client -p longshore_s3 --no-default-features --features "$provider"
             cargo test -p longshore --lib --no-default-features --features "$provider"
           done
           cargo test -p longshore_common --features fault-injection

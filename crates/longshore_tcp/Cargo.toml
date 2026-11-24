@@ -1,0 +1,57 @@
+[package]
+name = "longshore_tcp"
+description = "TCP connections over longshore I/O: framing, frames lent in place, caller-owned time"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+readme = "README.md"
+autotests = false
+
+[features]
+default = ["aws-lc"]
+# TLS with the default provider, AWS-LC. Kept in line with the other crates.
+tls = ["aws-lc"]
+# TLS 1.3 with AWS-LC sealing and opening records.
+aws-lc = ["tls-core", "longshore_stream/aws-lc", "longshore_tls/aws-lc"]
+# TLS 1.3 with ring sealing and opening records. No AWS-LC in the build.
+ring = ["tls-core", "longshore_stream/ring", "longshore_tls/ring"]
+# TLS 1.3 entirely from rustls, with its ring provider.
+rustls = ["tls-core", "longshore_stream/rustls", "longshore_tls/rustls"]
+# Turned on by `aws-lc`, `ring` or `rustls`: the TLS code itself, without a provider.
+# Not meant to be named on its own.
+tls-core = ["longshore_stream/tls-core", "dep:longshore_tls"]
+
+[dependencies]
+longshore_common.workspace = true
+longshore_stream.workspace = true
+longshore_tls = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Turns the simulator on for this crate's own tests.
+longshore_common = { workspace = true, features = ["sim"] }
+hegeltest.workspace = true
+rcgen.workspace = true
+
+[[test]]
+name = "tcp_units"
+path = "tests/tcp/units.rs"
+
+[[test]]
+name = "tcp_net"
+path = "tests/tcp/net.rs"
+
+[[test]]
+name = "tcp_backends"
+path = "tests/tcp/backends.rs"
+
+[[test]]
+name = "tcp_storage"
+path = "tests/tcp/storage.rs"
+
+[[test]]
+name = "tcp_tls"
+path = "tests/tcp/tls.rs"
+
+[lints]
+workspace = true

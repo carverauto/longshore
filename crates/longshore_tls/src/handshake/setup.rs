@@ -66,7 +66,8 @@ fn public_roots() -> RootCertStore {
     roots
 }
 
-/// Client configuration, built once at initialization.
+/// Client configuration, built once at initialization. A clone shares it.
+#[derive(Clone)]
 pub struct ClientSetup(Arc<ClientConfig>, Provider);
 
 impl ClientSetup {
@@ -145,7 +146,8 @@ impl ClientSetup {
     }
 }
 
-/// Server configuration for the in-tree test server.
+/// Server configuration, built once at initialization. A clone shares it.
+#[derive(Clone)]
 pub struct ServerSetup(Arc<ServerConfig>, Provider);
 
 impl ServerSetup {

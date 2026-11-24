@@ -1,0 +1,99 @@
+// Copyright 2026 Carver Automation Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License").
+// SPDX-License-Identifier: Apache-2.0
+
+//! What a `Net` tells its caller, and why it refuses.
+
+use crate::handle::{Conn, Listener};
+
+/// How a connection ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Why {
+    /// The peer finished: everything it sent was delivered first.
+    Orderly,
+    /// The connection broke: a reset, a failed connect, or an end of
+    /// stream in the middle of a frame.
+    Reset,
+    /// A connect or idle timeout passed.
+    Timeout,
+    /// The peer announced a frame that the framing does not allow.
+    Protocol,
+    /// TLS failed: the handshake did not complete, a record did not
+    /// authenticate, or the peer sent an alert.
+    Tls,
+}
+
+impl Why {
+    /// Why a connection ended that failed with the negated error `result`.
+    pub(crate) const fn of(result: i32) -> Why {
+        if result == crate::transport::TLS_FAILED {
+            Why::Tls
+        } else {
+            Why::Reset
+        }
+    }
+}
+
+/// Something for the caller to act on; pulled with `Net::next_event`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Event {
+    /// A connection the caller opened is up, or up again.
+    Up(Conn),
+    /// A listener accepted a connection.
+    Accepted { listener: Listener, conn: Conn },
+    /// A listener at its limit accepted a connection only to refuse it:
+    /// the caller may send it one frame, and it is closed after that.
+    Refused { listener: Listener, conn: Conn },
+    /// Frames are waiting: pull them with `Net::next_frame` until it
+    /// returns `None`.
+    Readable(Conn),
+    /// A send queue that was full has room again.
+    Writable(Conn),
+    /// A reconnecting connection went down; its handle stays, and
+    /// [`Event::Up`] follows when it is back. What was queued to send is
+    /// dropped.
+    Down { conn: Conn, why: Why },
+    /// A connection ended. Its handle is stale from here on.
+    Closed { conn: Conn, why: Why },
+    /// A listener that was retrying its bind gave up; `errno` is negated.
+    ListenFailed { listener: Listener, errno: i32 },
+    /// Draining is over: queued sends have gone, or the deadline passed.
+    Drained,
+}
+
+/// Why a send was not queued.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SendError {
+    /// The handle no longer names a connection.
+    Stale,
+    /// The connection is not up.
+    NotUp,
+    /// The connection's queue or the segment pool is full. `Event::Writable`
+    /// follows when there is room.
+    Full,
+    /// Longer than a send segment.
+    TooLarge,
+    /// The frame is lent from the buffer ring: hold it first.
+    NotHeld,
+}
+
+/// Why `Net` refused something other than a send.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NetError {
+    /// The handle no longer names a connection or listener.
+    Stale,
+    /// Every slot of the kind needed is in use.
+    NoSlots,
+    /// The framing's header or longest frame does not fit the sizes the
+    /// `Net` was built with.
+    Framing,
+    /// Listening failed with this negated error number.
+    Listen(i32),
+    /// No frame memory is free.
+    NoMemory,
+    /// TLS was asked for and cannot be had: the `Net` was sized without
+    /// `Sizes::with_tls`, the transport has no setup for this side, or the
+    /// server name is empty or too long.
+    NoTls,
+}

@@ -26,6 +26,22 @@ impl<W: World> Engine<W> {
         }
     }
 
+    /// Marks the pending operation `target` names as cancelled: 0, or
+    /// `-ENOENT` when it is no longer pending.
+    fn resolve_cancel(&mut self, target: Option<u64>) -> i32 {
+        match self.pending.iter_mut().find(|q| target == Some(q.id)) {
+            Some(q) => {
+                if !q.cancelled {
+                    q.cancelled = true;
+                    let op = q.op;
+                    self.world.on_cancel(&op);
+                }
+                0
+            }
+            None => -ENOENT,
+        }
+    }
+
     fn resolve_or_attempt(&mut self, p: &Pending) -> Option<Attempt> {
         match p.op {
             Op::Timeout { .. } => (self.world.now_ns() >= p.deadline)
@@ -36,20 +52,7 @@ impl<W: World> Engine<W> {
                 .swap(false, Ordering::AcqRel)
                 .then_some(0)
                 .map(Attempt::single),
-            Op::Cancel { .. } => {
-                let target = p.cancel_target;
-                match self.pending.iter_mut().find(|q| target == Some(q.id)) {
-                    Some(q) => {
-                        if !q.cancelled {
-                            q.cancelled = true;
-                            let op = q.op;
-                            self.world.on_cancel(&op);
-                        }
-                        Some(Attempt::single(0))
-                    }
-                    None => Some(Attempt::single(-ENOENT)),
-                }
-            }
+            Op::Cancel { .. } => Some(Attempt::single(self.resolve_cancel(p.cancel_target))),
             Op::FileRead { slot, .. }
             | Op::FileWrite { slot, .. }
             | Op::FileSync { slot, .. }
@@ -84,6 +87,7 @@ impl<W: World> Engine<W> {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::ReadFile { .. }
             | Op::FileOpen { .. }
@@ -205,6 +209,7 @@ impl<W: World> Engine<W> {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -274,6 +279,7 @@ fn op_socket(op: &Op) -> Option<Sock> {
         | Op::Send { sock: s, .. }
         | Op::Recv { sock: s, .. }
         | Op::RecvNow { sock: s, .. }
+        | Op::Shutdown { sock: s, .. }
         | Op::ArmedRecv { sock: s } => Some(s),
         Op::Close { .. }
         | Op::AwaitWake
@@ -309,6 +315,7 @@ fn is_short_rw(op: &Op, result: i32) -> bool {
         | Op::Send { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
+        | Op::Shutdown { .. }
         | Op::Close { .. }
         | Op::AwaitWake
         | Op::ReadFile { .. }

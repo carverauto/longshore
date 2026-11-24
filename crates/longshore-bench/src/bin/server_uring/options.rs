@@ -82,11 +82,14 @@ pub(super) fn check_uring_getsockopt(addr: SocketAddr) {
     let mut io = UringIo::new(LIMITS).or_die("UringIo::new");
     io.no_delay(true);
     io.keep_alive(true);
+    io.keep_alive_timing(Some(longshore::io::KeepAlive::new(60, 10, 6)));
     let mut out = Completions::new(8);
     let bound = io.listen(LISTENER, addr).or_die("listen");
     assert_eq!(io.last_listen_tcp_options(), Some((true, true)));
+    assert_eq!(io.last_listen_keep_timing(), Some((60, 10, 6)));
     let (accepted, accept_armed) = accept_and_connect(&mut io, &mut out, bound);
     assert_eq!(io.last_connect_tcp_options(), Some((true, true)));
+    assert_eq!(io.last_connect_keep_timing(), Some((60, 10, 6)));
     if accept_armed {
         cancel_accept(&mut io, &mut out);
     }

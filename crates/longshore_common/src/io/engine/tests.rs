@@ -55,6 +55,7 @@ impl World for MockWorld {
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -101,6 +102,7 @@ impl World for MockWorld {
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
             | Op::Timeout { .. }
