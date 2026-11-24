@@ -73,20 +73,25 @@ impl<T: Transport> Net<T> {
                 return self.try_free(slot);
             }
         }
-        // What the peer sent right behind its handshake is with the stream.
-        let up = &self.conns[slot as usize];
-        if up.st == St::Up && up.opts.rx == Rx::Ring && self.open_ring(d, slot, true) {
-            self.queue_event(slot, EV_READABLE);
+        let up = &mut self.conns[slot as usize];
+        if up.st == St::Up && up.opts.rx == Rx::Ring {
+            // What the peer sent right behind its handshake is with the
+            // stream, to be asked for like a record it keeps.
+            up.unopened = true;
+            if self.open_ring(d, slot) {
+                self.queue_event(slot, EV_READABLE);
+            }
         }
     }
 
     /// Open the records in the ring buffers of the protected `slot` into
-    /// its backlog, as far as frame memory has room; with `behind`, first
-    /// what arrived behind the handshake. A record the transport kept for
-    /// lack of room is asked for again, with no bytes when there are none.
+    /// its backlog, as far as frame memory has room. What the transport
+    /// itself holds (a record kept for lack of room, or what arrived
+    /// behind the handshake) is asked for with no bytes when there are
+    /// none, and again from `poll` while there is no frame memory for it.
     /// Buffers that are done go back on the next `poll`. `true` when there
     /// is plaintext to pull.
-    pub(super) fn open_ring(&mut self, d: &mut T::Driver, slot: u32, mut behind: bool) -> bool {
+    pub(super) fn open_ring(&mut self, d: &mut T::Driver, slot: u32) -> bool {
         let size = self.cfg.sizes.frame_size;
         while self.conns[slot as usize].st == St::Up {
             let chunk = self.front_chunk(slot);
@@ -94,10 +99,9 @@ impl<T: Transport> Net<T> {
             let kept = core::mem::take(&mut c.unopened);
             let from = match chunk {
                 Some(src) => Span::new(src.buf, src.off, src.avail),
-                None if behind || kept => Span::new(self.cfg.header_first, 0, 0),
+                None if kept => Span::new(self.cfg.header_first, 0, 0),
                 None => break,
             };
-            behind = false;
             let ext = match c.backlog {
                 Some(ext) => ext,
                 None => {

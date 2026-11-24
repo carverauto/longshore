@@ -120,7 +120,9 @@ pub(super) struct ConnState {
     pub(super) armed: bool,
     pub(super) recv_busy: bool,
     pub(super) paused: bool,
-    /// Protected: the transport keeps a whole record that found no room.
+    /// Protected: the transport holds plaintext to ask for with no bytes:
+    /// a whole record that found no room, or what arrived behind the
+    /// handshake.
     pub(super) unopened: bool,
     /// Protected: the stream ended before a close alert was opened. The
     /// connection stays up, reading no more, until the records received

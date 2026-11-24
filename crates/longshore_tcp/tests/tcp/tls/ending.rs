@@ -8,6 +8,7 @@
 //! whenever frame memory lets the records be opened.
 
 use super::*;
+use longshore_common::io::{Completions, Op, Token};
 
 /// Two frames of a whole record each, a close alert and the end of the
 /// stream, all there before the server's caller pulls anything: what it
@@ -155,4 +156,100 @@ fn an_end_that_finds_no_frame_memory_waits_for_it_and_loses_nothing() {
         assert_eq!(heard.got, [check::prefixed(100, 2)], "seed {seed}");
         assert_eq!(heard.ended, Some(Why::Orderly), "seed {seed}");
     }
+}
+
+/// A timer of the test's own, so that time passes when nothing else does.
+const BEAT: Token = Token::new(1 << 45);
+
+/// One turn of both sets by hand. While `withheld` is given, the server
+/// is not told that its sends have ended, so it does not go on to its
+/// next receive: what the client sends meanwhile piles up in its socket.
+fn turn_by_hand(
+    w: &mut World<SimIo>,
+    out: &mut Completions,
+    mut withheld: Option<&mut Vec<longshore_common::io::Completion>>,
+) {
+    let now = w.io().now_ns();
+    {
+        let (client, io) = w.client();
+        client.poll(io, now);
+    }
+    {
+        let (server, io) = w.server();
+        server.poll(io, now);
+        drop(io.submit(BEAT, Op::Timeout { nanos: 250_000 }));
+        io.tick(true, out).unwrap();
+    }
+    while let Some(c) = out.pop() {
+        let taken = {
+            let (client, io) = w.client();
+            c.token() == BEAT || client.on_completion(io, c)
+        };
+        if taken {
+            continue;
+        }
+        match withheld.as_deref_mut() {
+            // Kind 1 of a connection's tokens is its send.
+            Some(later) if c.token().get() % 8 == 1 => later.push(c),
+            Some(_) | None => {
+                let (server, io) = w.server();
+                assert!(server.on_completion(io, c), "nobody claimed {c:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_frame_behind_the_handshake_waits_for_frame_memory_and_is_delivered() {
+    let certs = certs(NAME);
+    let mut w = world(&certs, 1);
+    let addr = Addr::Ip(sim_addr());
+    let l = w.listen(addr, ListenConfig::new(prefix()));
+    let to = w.dial_addr(l, addr);
+    let c = {
+        let (client, io) = w.client();
+        client.connect_tls(io, to, NAME, prefix()).unwrap()
+    };
+    // All frame memory is in use elsewhere when the handshake ends.
+    let elsewhere: Vec<_> = std::iter::from_fn(|| w.server().0.extents().take()).collect();
+    let frame = check::prefixed(100, 5);
+    let mut out = Completions::new(64);
+    let (mut later, mut sent) = (Vec::new(), false);
+    // The client finishes first and sends its frame; the server reads the
+    // end of the handshake and the frame in one receive.
+    for _ in 0..400 {
+        turn_by_hand(&mut w, &mut out, Some(&mut later));
+        if let Some(e) = w.client().0.next_event() {
+            assert_eq!(e, Event::Up(c));
+            assert!(w.send(c, &frame));
+            sent = true;
+        }
+    }
+    assert!(sent, "the client never came up");
+    let (server, io) = w.server();
+    for done in later {
+        assert!(server.on_completion(io, done));
+    }
+    let mut s = None;
+    for _ in 0..200 {
+        turn_by_hand(&mut w, &mut out, None);
+        match w.server().0.next_event() {
+            Some(Event::Accepted { conn, .. }) => s = Some(conn),
+            Some(e) => panic!("unexpected {e:?} without frame memory"),
+            None => {}
+        }
+    }
+    let s = s.expect("the server never accepted");
+    for ext in elsewhere {
+        assert_eq!(w.server().0.extents().release(ext), Ok(true));
+    }
+    let mut got = Vec::new();
+    for _ in 0..200 {
+        turn_by_hand(&mut w, &mut out, None);
+        while let Some(e) = w.server().0.next_event() {
+            assert_eq!(e, Event::Readable(s));
+            got.extend(w.pull_all(s).into_iter().map(|(_, bytes)| bytes));
+        }
+    }
+    assert_eq!(got, [frame]);
 }

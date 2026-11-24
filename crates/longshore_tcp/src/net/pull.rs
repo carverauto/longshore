@@ -52,7 +52,7 @@ impl<T: Transport> Net<T> {
                     return Ok(None);
                 }
                 // Protected input is opened as frame memory has room.
-                if self.conns[slot as usize].secure && self.open_ring(d, slot, false) {
+                if self.conns[slot as usize].secure && self.open_ring(d, slot) {
                     continue;
                 }
                 return Ok(None);
@@ -98,7 +98,7 @@ impl<T: Transport> Net<T> {
     /// Whether `slot` has received bytes the caller has not pulled.
     pub(super) fn has_input(&self, slot: u32) -> bool {
         let c = &self.conns[slot as usize];
-        c.ready.is_some() || c.unopened || self.source(slot).is_some() || self.header_whole(slot)
+        c.ready.is_some() || self.source(slot).is_some() || self.header_whole(slot)
     }
 
     /// Whether a ring connection's header area holds a whole header whose
@@ -271,7 +271,7 @@ impl<T: Transport> Net<T> {
             while let Some(src) = self.front_chunk(slot) {
                 let moved = if self.conns[slot as usize].secure {
                     let had = self.source(slot).is_some();
-                    if self.open_ring(d, slot, false) && !had {
+                    if self.open_ring(d, slot) && !had {
                         self.queue_event(slot, EV_READABLE);
                     }
                     self.front_chunk(slot).is_none()

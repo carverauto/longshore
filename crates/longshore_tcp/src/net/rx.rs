@@ -125,6 +125,10 @@ impl<T: Transport> Net<T> {
 
     /// `poll` found `slot` wanting to read again.
     pub(super) fn resume_reading(&mut self, d: &mut T::Driver, slot: u32) {
+        if self.conns[slot as usize].unopened {
+            // What the transport holds had no frame memory to go to.
+            let _readable: bool = self.open_ring(d, slot);
+        }
         if self.has_input(slot) {
             // Input the caller stopped pulling, or could not pull for
             // lack of frame memory: say so again.
@@ -200,7 +204,7 @@ impl<T: Transport> Net<T> {
             self.ring_pending_len += 1;
         }
         // Protected: readable once a record has been opened.
-        if !c.secure || self.open_ring(d, slot, false) {
+        if !c.secure || self.open_ring(d, slot) {
             self.queue_event(slot, EV_READABLE);
         }
         if !armed {
