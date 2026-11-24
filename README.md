@@ -131,10 +131,25 @@ library rustls uses for the handshake. Each provider is a Cargo feature.
 | rustls | `rustls` | rustls's own record layer | ring | You want all of TLS from rustls; it allocates a buffer for every record it sends |
 | none | no provider feature | — | — | Plain HTTP, for networks where everything is internal |
 
-Measured on an M3 Max in a Linux container, one core, AES-128-GCM over
-16 KiB records: AWS-LC seals at 10.2 GB/s, ring at 6.8 and rustls at 6.2; an
-HTTPS upload runs at 7.2, 5.1 and 4.6 GB/s
-([`bench/results/m29-tls-providers.md`][results]).
+### Performance
+
+One client core, AES-128-GCM, 16 KiB records, in a Linux container on an
+Apple M3 Max. GB = 10^9 bytes. HTTPS runs over loopback with 8 connections
+and 8 MiB bodies; CPU is the client thread's per GB moved.
+
+| Provider | Seal | Open | HTTPS PUT | CPU per GB | HTTPS GET | CPU per GB |
+|---|---|---|---|---|---|---|
+| none (plain HTTP) | — | — | 12.1 GB/s | 82 ms | 4.08 GB/s | 245 ms |
+| AWS-LC | 10.2 GB/s | 11.1 GB/s | 7.20 GB/s | 139 ms | 2.99 GB/s | 333 ms |
+| ring | 6.8 GB/s | 6.6 GB/s | 5.14 GB/s | 195 ms | 2.59 GB/s | 385 ms |
+| rustls | 6.2 GB/s | 6.7 GB/s | 4.61 GB/s | 217 ms | 2.49 GB/s | 402 ms |
+
+Seal and open are the record layer alone (`cargo bench -p longshore-bench
+--bench tls_providers`); PUT and GET are `http_uring --provider`. What TLS
+adds to an upload's CPU is about twice as much with ring as with AWS-LC.
+Conditions and ranges are in
+[`bench/results/m29-tls-providers.md`][results]; x86-64 and cloud hosts are
+still to be measured.
 
 ### Switching a provider on
 
