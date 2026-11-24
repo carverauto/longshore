@@ -260,6 +260,10 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         (c.tx_head, c.full) = (0, false);
         (c.shut, c.shut_sent) = (false, false);
+        if self.segs_len > 0 {
+            // It may have been told of a segment it never took.
+            self.segment_returned();
+        }
     }
 
     /// Send what is queued on `conn`, then shut its write side down: the

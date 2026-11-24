@@ -227,3 +227,45 @@ fn a_connection_refused_for_want_of_a_segment_is_told_when_one_returns() {
     });
     assert!(send(&mut w, c3, &frame), "a segment after Writable");
 }
+
+#[test]
+fn a_segment_its_waiter_never_took_goes_to_the_next_one_waiting() {
+    // One segment for the whole set.
+    let client = sizes(4, 0, 0).with_segments(1, 4096);
+    let mut w = World::with(2, Faults::NONE, client, sizes(2, 4, 2));
+    let (c1, _) = w.pair(prefix());
+    let (c2, s2) = w.connect(prefix());
+    let (c3, _) = w.connect(prefix());
+    let frame = prefixed(2996, 7);
+    assert!(send(&mut w, c1, &frame));
+    assert!(!send(&mut w, c2, &frame) && !send(&mut w, c3, &frame));
+    // The second is told of the segment and is closed without using it.
+    let mut told = false;
+    w.until(|w, server, e| match e {
+        Event::Writable(conn) if !server && !told => {
+            assert_eq!(conn, c2, "the one that waited longest");
+            w.client.close(&mut w.io, c2).unwrap();
+            told = true;
+            false
+        }
+        Event::Writable(conn) if !server => {
+            assert_eq!(conn, c3);
+            true
+        }
+        Event::Readable(_) if server => false,
+        Event::Closed { conn, .. } if server => {
+            assert_eq!(conn, s2);
+            false
+        }
+        Event::Up(_)
+        | Event::Accepted { .. }
+        | Event::Refused { .. }
+        | Event::Readable(_)
+        | Event::Writable(_)
+        | Event::Down { .. }
+        | Event::Closed { .. }
+        | Event::ListenFailed { .. }
+        | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
+    });
+    assert!(send(&mut w, c3, &frame), "a segment after Writable");
+}

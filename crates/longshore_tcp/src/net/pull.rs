@@ -12,7 +12,7 @@
 //! header that arrives in pieces.
 
 use super::frames::{Frame, Mem};
-use super::state::{best_effort, St, NONE, W_READ};
+use super::state::{best_effort, St, EV_READABLE, NONE, W_READ};
 use super::Net;
 use crate::config::Rx;
 use crate::event::{NetError, Why};
@@ -270,7 +270,10 @@ impl<T: Transport> Net<T> {
             self.conns[slot as usize].ring_listed = false;
             while let Some(src) = self.front_chunk(slot) {
                 let moved = if self.conns[slot as usize].secure {
-                    let _readable: bool = self.open_ring(d, slot, false);
+                    let had = self.source(slot).is_some();
+                    if self.open_ring(d, slot, false) && !had {
+                        self.queue_event(slot, EV_READABLE);
+                    }
                     self.front_chunk(slot).is_none()
                 } else {
                     self.spill_chunk(d, slot, src)

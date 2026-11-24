@@ -11,7 +11,7 @@
 
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_common::io::posix::PosixIo;
-use longshore_common::io::Limits;
+use longshore_common::io::{Io, Limits};
 use longshore_common::sim::{DiskConfig, Faults, SimIo};
 use longshore_tcp::check::storage::Replicated;
 use longshore_tcp::check::{self, prefix, secure, Certs, World};
@@ -250,6 +250,39 @@ fn a_record_that_found_no_room_in_frame_memory_is_opened_once_there_is_room() {
     assert_eq!(server.next_event(), Some(Event::Readable(s)));
     let got: Vec<Vec<u8>> = w.pull_all(s).into_iter().map(|(_, bytes)| bytes).collect();
     assert!(got == frames, "{} of 2 frames were pulled", got.len());
+}
+
+#[test]
+fn records_opened_when_frame_memory_returns_are_announced() {
+    let certs = certs(NAME);
+    let mut w = world(&certs, 1);
+    let (c, s) = w.pair(Addr::Ip(sim_addr()), prefix());
+    let frame = check::prefixed(100, 3);
+    assert!(w.send(c, &frame));
+    // Every time bytes arrive all frame memory is in use elsewhere, and
+    // it is free again before the set is next polled.
+    let mut elsewhere = Vec::new();
+    let mut readable = false;
+    for _ in 0..200 {
+        let now = w.io().now_ns();
+        let (server, io) = w.server();
+        for ext in elsewhere.drain(..) {
+            assert_eq!(server.extents().release(ext), Ok(true));
+        }
+        server.poll(io, now);
+        elsewhere.extend(std::iter::from_fn(|| server.extents().take()));
+        w.turn();
+        let (client, _) = w.client();
+        assert_eq!(client.next_event(), None);
+        if let Some(e) = w.server().0.next_event() {
+            assert_eq!(e, Event::Readable(s));
+            readable = true;
+            break;
+        }
+    }
+    assert!(readable, "the frame was opened and never announced");
+    let got: Vec<Vec<u8>> = w.pull_all(s).into_iter().map(|(_, bytes)| bytes).collect();
+    assert_eq!(got, [frame]);
 }
 
 #[test]
