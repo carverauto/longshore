@@ -15,10 +15,11 @@ real-kernel checks) has to be cross-compiled and run on a Linux host.
 
 ```sh
 cargo test --workspace          # unit, simulation and property tests
-cargo test --workspace --exclude longshore-bench --no-default-features  # plain build without longshore_tls / aws-lc-sys
+cargo test --workspace --exclude longshore-bench --exclude longshore_tls --no-default-features  # plain build without TLS
+cargo test -p longshore_tls -p longshore_stream -p longshore_http_client -p longshore_s3 --no-default-features --features ring    # TLS through ring; likewise `rustls`
 cargo test -p longshore_common --features fault-injection               # stale-readiness and fault-injection tests
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo clippy --workspace --exclude longshore-bench --all-targets --no-default-features -- -D warnings
+cargo clippy --workspace --exclude longshore-bench --exclude longshore_tls --all-targets --no-default-features -- -D warnings
 ./scripts/test-model.sh         # the client's hand-offs, model checked
 ./scripts/test.sh               # the tests and the model, then the real-kernel checks
 cargo bench -p longshore-bench --bench <name>   # criterion microbenchmarks (see bench/README.md)

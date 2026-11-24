@@ -11,10 +11,13 @@ small crates, and a ninth, `longshore`, that gathers them under one name.
 - Rust, stable toolchain, edition 2021
 - Linux 6.1 or later on x86-64 and AArch64 (`io_uring` through raw system
   calls), plus portable POSIX readiness (`kqueue` on macOS, `epoll` on Linux)
-- Optional `tls` Cargo feature (on by default across `longshore_stream`,
-  `longshore_http_client`, `longshore_s3`, and `longshore`): AWS-LC (through
-  `aws-lc-sys`) for AES-GCM and `rustls` for the TLS 1.3 handshake only;
-  `--no-default-features` excludes `longshore_tls`, `rustls`, and `aws-lc-sys`
+- TLS 1.3 from one of three provider features across `longshore_tls`,
+  `longshore_stream`, `longshore_http_client`, `longshore_s3`, and
+  `longshore`: `aws-lc` (default, also `tls`: AWS-LC through `aws-lc-sys`
+  seals records with no copy), `ring` (ring seals in place), `rustls`
+  (rustls's own record layer, allocating per sealed record); `rustls` runs
+  every handshake; with several compiled in, `Builder::tls_provider` picks;
+  `--no-default-features` excludes `longshore_tls`, `rustls`, and AWS-LC
 - `longshore_crc`'s own x86-64 and AArch64 kernels for CRC-64/NVME and CRC-32C
   (zero external dependencies; `crc-fast` is a dev/bench oracle only), `ring`
   for SHA-256 and HMAC

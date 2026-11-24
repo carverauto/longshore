@@ -115,8 +115,23 @@ The client is built on `longshore::io`, a single-threaded operation queue
 that other storage code can use directly. It has direct file I/O with linked
 chains, server-side networking with armed accept and receive over a buffer
 ring, lock-free mailboxes between cores, and a simulated disk with power
-loss and fault injection. TLS is a Cargo feature that is on by default.
+loss and fault injection.
 [The I/O layer][io] describes each part.
+
+## TLS
+
+HTTPS comes from one of three providers, each a Cargo feature. The handshake
+always runs in rustls; the provider decides who seals and opens the records.
+
+| Cargo.toml | Records sealed and opened by | Notes |
+|---|---|---|
+| `longshore = "0.2"` (or `features = ["tls"]`) | AWS-LC, with no copy | The default and the fastest |
+| `default-features = false, features = ["ring"]` | ring, copying each body once | No AWS-LC and no C toolchain for AWS-LC |
+| `default-features = false, features = ["rustls"]` | rustls's own record layer | rustls allocates a buffer for every record it sends |
+| `default-features = false` | no TLS: plain HTTP | For networks where everything is internal |
+
+With several compiled in, `Builder::tls_provider(TlsProvider::Ring)` picks
+one; otherwise the first of AWS-LC, ring and rustls is used.
 
 ## Requirements
 

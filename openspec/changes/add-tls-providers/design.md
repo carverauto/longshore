@@ -32,8 +32,11 @@ cryptographic library: `record.rs` and the provider chosen in `handshake.rs`.
   `encrypt` and copies the encoded record out; `encrypt` allocates a
   `Vec` per record, so the call, and dropping the two boxes, run inside
   `allow_alloc`, the exception the handshake already uses. Opening calls
-  `decrypt` on the record where it lies, which allocates nothing.
-  `Direction::open` therefore takes the record as `&mut [u8]`.
+  `decrypt` where the record lies (`open_in_place`) or on a copy of
+  ciphertext and tag in the destination (`open`, which then needs 16 more
+  bytes: `Direction::open_room`); neither allocates. rustls's keys cannot be
+  copied, so a rustls direction is keyed to seal or to open, and only from
+  the handshake's own key type.
 - **Key wiping.** AWS-LC's context and ring's key are held inline and
   wiped with volatile writes on `clear`; rustls's boxes are dropped, and
   what rustls leaves in freed memory is outside longshore's control.

@@ -37,8 +37,11 @@ offer it. It was also slower than AWS-LC for AES-128-GCM on 16 KiB records
   the record buffer and sealing in place) or rustls's encrypter and
   decrypter. Records are byte-identical across the three; AWS-LC and ring
   allocate nothing per record.
-- **BREAKING** (`longshore_tls` only): `Direction::open` takes the record as
-  `&mut [u8]`, since rustls decrypts where the record lies.
+- `Direction::open` keeps its signature; with rustls, which decrypts the
+  tag's bytes along with the ciphertext, it needs 16 more bytes of
+  destination, which the new `Direction::open_room` reports. rustls's
+  record layer is keyed from a handshake only: rustls offers no public way
+  to build a 16-byte key from raw bytes.
 - The 8-way AES-GCM selection (`wide_gcm`) applies to the AWS-LC provider only.
 - CI lints and tests the ring-only build and checks its dependency tree
   holds no AWS-LC crate.
@@ -50,4 +53,4 @@ offer it. It was also slower than AWS-LC for AES-128-GCM on 16 KiB records
   `Cargo.toml`), the feature lists of the four crates above,
   `longshore_s3` client `Builder`, `.github/workflows/ci.yml`, README,
   `docs/testing.md`, a new `bench/results/` entry comparing the providers
-- Not breaking for `longshore` users: the default build and `features = ["tls"]` behave as today
+- Not breaking: the default build and `features = ["tls"]` behave as today
