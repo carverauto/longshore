@@ -1,9 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Connection set allocated at build
-`longshore_tcp` SHALL size its connections, listeners, frame pool, receive
-buffers, send segments and deadlines from its configuration when the set is
-built, and SHALL NOT allocate afterwards, the TLS handshake excepted.
+`longshore_tcp` SHALL allocate its connection, listener, queue and deadline
+tables when the set is built, SHALL take its frame, send and TLS buffers
+and its socket slots from ranges of the backend's pool named in its
+configuration, and SHALL NOT allocate afterwards, the TLS handshake
+excepted.
 
 #### Scenario: Traffic under the allocation guard
 - **WHEN** connections are opened, frames are sent and received both ways, and connections are closed and reopened under `alloc_guard` after the set is built
@@ -44,13 +46,19 @@ connection as a protocol error.
 ### Requirement: Received frames lent in place
 Received frames SHALL be lent to the caller without a copy whenever the
 frame lies within one receive buffer or the connection receives directly
-into frame memory, SHALL stay valid until the caller releases them, and a
-connection SHALL stop reading while the frames it has delivered and not
-had released exceed its held-bytes budget.
+into frame memory. A frame in frame memory SHALL stay valid until the
+caller releases it; a frame lent from the shared buffer ring SHALL stay
+valid until the caller's next `poll` unless the caller holds it, which
+moves it into frame memory. A connection SHALL stop reading while the
+frame memory it holds exceeds its held-bytes budget.
 
 #### Scenario: Frames held across turns
 - **WHEN** the caller holds received frames over several calls to `poll` and then releases them
 - **THEN** their bytes stay unchanged until released, and their memory is reused after
+
+#### Scenario: A slow consumer does not starve the ring
+- **WHEN** one connection's frames from the buffer ring are neither released nor held while other connections keep receiving
+- **THEN** every ring buffer is back in the ring after the next `poll`, and the other connections keep receiving
 
 #### Scenario: Backpressure by not reading
 - **WHEN** the caller holds frames up to a connection's budget while the peer keeps sending
@@ -93,12 +101,17 @@ a maximum delay.
 A listener SHALL support sharing its port across the program's cores with
 `SO_REUSEPORT`, retrying a bind refused with `EADDRINUSE` until a deadline,
 limiting its connections with one refusal slot through which the caller can
-send a final frame, and backing off accepts after a failure for lack of
-descriptors.
+send a final frame, backing off accepts after a failure for lack of
+descriptors, and reporting each accepted connection's peer address when
+asked to.
 
 #### Scenario: One port, every core
 - **WHEN** four sets on four threads listen on the same address with port sharing and clients connect many times
 - **THEN** every connection is accepted by exactly one set
+
+#### Scenario: Peer address
+- **WHEN** a listener opened with peer addresses accepts a connection from a known address and port
+- **THEN** the set reports that address and port for the connection
 
 #### Scenario: Over the limit
 - **WHEN** a client connects while the listener is at its connection limit
@@ -120,12 +133,21 @@ accepting, finish queued sends, then report that it has drained.
 
 ### Requirement: Time owned by the caller
 The set SHALL take the current time from the caller on every `poll`, SHALL
-report the earliest deadline it needs, and SHALL handle no more than a
-configured number of completions per `poll`.
+report the earliest deadline it needs, and SHALL neither wait for nor
+collect completions itself: the caller routes them to it.
 
 #### Scenario: Sleeping until the next deadline
 - **WHEN** the only pending work is a connect timeout
 - **THEN** `next_deadline` returns that timeout's instant, and a `poll` at that instant reports the timeout
+
+### Requirement: One backend shared with other I/O
+The set SHALL borrow its backend on each call, so that file operations and
+other clients run on the same backend and thread, each receiving only its
+own completions.
+
+#### Scenario: Log writes and frames on one ring
+- **WHEN** one thread drives file writes and syncs and a TCP set on the same `Io`, routing completions by token
+- **THEN** every file operation and every frame completes correctly, and neither receives the other's completions
 
 ### Requirement: Transports behind one API
 The set's API SHALL name no type of a particular backend, and the kernel
@@ -138,5 +160,5 @@ from any TLS provider.
 - **THEN** it produces the same frames in the same order on each
 
 #### Scenario: TLS per endpoint
-- **WHEN** a listener is given a server setup and a client connects with a client setup
+- **WHEN** a listener is given a server setup and a client connects with a client setup, in ring mode and in direct mode
 - **THEN** frames cross the connection encrypted and arrive unchanged

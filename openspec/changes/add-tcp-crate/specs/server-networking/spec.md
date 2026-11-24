@@ -10,8 +10,8 @@ backend and the simulator.
 - **THEN** the peer reads all the data and then end of stream, and can still send back
 
 ### Requirement: Peer address of an accepted connection
-The `Io` trait SHALL report the address of the peer of an accepted
-connection.
+The `Io` trait SHALL report the address of the peer of a connection
+accepted with a single accept operation.
 
 #### Scenario: Peer address
 - **WHEN** a client connects from a known address and the server accepts it
@@ -33,3 +33,13 @@ can listen on one address.
 #### Scenario: Two listeners, one port
 - **WHEN** two rings listen on the same address with port sharing
 - **THEN** both listens succeed and each accepts some of the incoming connections
+
+### Requirement: Stream receives from the buffer ring
+A stream SHALL accept received bytes delivered in buffer-ring buffers, for
+plain and TLS connections; with TLS it SHALL open records into the caller's
+destination, carry a record that continues in the next ring buffer, and
+leave no plaintext in a ring buffer.
+
+#### Scenario: TLS records across ring buffers
+- **WHEN** a TLS peer sends data whose records straddle the ring buffers an armed receive delivers
+- **THEN** the stream yields the same plaintext as with ordinary receives, and each ring buffer can be given back as soon as the stream has consumed it

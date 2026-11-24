@@ -42,18 +42,36 @@ offers nothing specific to io_uring.
 
 ### Layers
 ```
-caller's state machines (UltraGraphDB roles, ...)
+caller's loop: owns the backend, decides where the thread waits
   Net<T: Transport>      handles, framing, held frames, send queues,
                          deadlines, reconnect, accept policy, drain
-  Transport              backend seam: byte streams over lent buffers
-    KernelTransport<IO: Io>    kernel TCP: io_uring | portable | simulator
-    (change 3) XdpTransport    AF_XDP + user-space TCP
+  Transport              backend seam: byte streams over lent buffers,
+                         with an associated Driver the caller owns
+    KernelTransport<IO: Io>    Driver = IO: io_uring | portable | simulator
+    (change 3) XdpTransport    Driver = the core's AF_XDP sockets
 ```
 `Net` holds everything that does not depend on how bytes reach the wire, so
 a second transport reuses it whole. `Transport` speaks in slots, lent
 receive buffers, reserved send space and transport events; it names no
-`Op`, `BufId` or `Sock`. `KernelTransport` is written against `Io`, so it
-runs on `UringIo`, `PosixIo` and `SimIo` without further work.
+`Op`, `BufId` or `Sock`.
+
+### Net borrows the backend; it never owns it and never waits
+Every existing component borrows the `Io` (`Client::on_completion(io, c)`),
+and so does `Net`: `net.on_completion(&mut io, completion, &mut events)`
+for a completion whose token is in `Net`'s range, `net.poll(&mut io, now,
+&mut events)` for deadlines and queued sends, `net.next_deadline()`. `Net`
+never calls `tick` and never blocks. The owner ticks once per turn, routes
+completions by token (`Config::token_base`, as the HTTP client does) and
+chooses where the thread sleeps.
+
+This is what a database needs. A request is receive, log append, sync,
+reply; network and file I/O for a partition belong on the thread that owns
+it, and by default on one ring: one place to block, one system call per
+turn for sends, writes and syncs together. The owner may instead run a
+second ring on the same thread (a polled NVMe ring, `IORING_SETUP_IOPOLL`,
+cannot carry sockets) or busy-poll a NIC queue (change 3) and check the
+file ring without blocking. `Net` works unchanged in each case because it
+only borrows.
 
 ### One `Net` per thread
 No locks and no `Send` bound on the data path. A program with N cores runs
@@ -61,13 +79,19 @@ N `Net`s; messages between them use `longshore_mailbox`. Each core listens
 on the same address with `SO_REUSEPORT`, so the kernel spreads connections
 across cores without a shared socket (replacing UltraGraphDB's dup).
 
-### Everything sized at build
-`Config` fixes: connections and listeners; the frame pool (count × maximum
-frame size); the receive buffer ring (count × size); send segments (count ×
-size); the deadline table (one entry per connection and listener, so no
-heap). `Net::new` allocates and registers it all; nothing allocates after,
-checked under `alloc_guard`. The TLS handshake keeps its sanctioned
-exception.
+### Memory comes from the backend's pool, sized at build
+The `Io` backend owns the one buffer pool, sized by `Limits`: a large
+class, a small class and one buffer ring. `Net` allocates no buffer; its
+`Config` names what it uses in the shared `Io`: a range of socket slots
+(with the accept range inside it), a token base, a range of large buffers
+for frames, a range of buffers for send segments (small or large class), a
+range for TLS record buffers when TLS is used, and the shared buffer ring.
+`Config::limits(base)` returns `Limits` with `Net`'s needs added (buffers,
+sockets, and operations: each connection in ring mode holds one operation
+for its armed receive), so an owner that also runs files or the S3 client
+on the same `Io` sizes it once. `Net`'s own tables (connections, queues,
+deadlines) are allocated in `Net::new`; nothing allocates after, checked
+under `alloc_guard`. The TLS handshake keeps its sanctioned exception.
 
 ### Handles
 `Conn { slot: u32, gen: u32 }` and `Listener { slot, gen }` are `Copy`. A
@@ -86,35 +110,50 @@ header or above `max_frame` closes the connection with
 `Closed::Protocol`.
 
 ### Receiving: two modes, chosen per endpoint
-- `Rx::Ring` (default for listeners with many connections): one armed
-  receive per connection from a shared buffer ring. A frame that lies whole
-  inside one ring buffer is lent in place; the buffer goes back to the ring
-  when every frame in it is released. A frame that spans buffers, or is
-  larger than one, is assembled into a frame from the pool: one copy, for
-  that frame only.
-- `Rx::Direct` (default for links with large frames): the connection
-  receives the header into its own small area, then the body straight
-  into a pool frame of the exact size. No copy for any frame; two receives
-  per frame.
+- `Rx::Ring` (many connections, small frames): one armed receive per
+  connection from the `Io`'s buffer ring. A frame that lies whole inside
+  one ring buffer is lent in place. A frame that spans buffers, or is
+  larger than one, is assembled into a frame buffer: one copy, for that
+  frame only.
+- `Rx::Direct` (links with large frames): the connection receives the
+  header into its own small area, then the body straight into a frame
+  buffer taken from the pool when the header arrives. No copy for any
+  frame; two receives per frame. If the pool is empty the connection does
+  not read until a frame is released.
 Change 2's benchmarks set the defaults and the ring buffer size.
 
 ### Holding frames
-`Event::Frame { conn, frame }` carries a `FrameId`. `net.frame(id)` gives
-the bytes; `net.release(id)` returns the memory. Frames may be held across
-turns (UltraGraphDB parks requests), so nothing needs copying out. Each
-connection has a held-bytes budget; at the budget the connection stops
-reading (the armed receive is cancelled, or no receive is posted) and
-resumes when releases bring it under. Nothing is refused.
+`Event::Frame { conn, frame }` carries a `FrameId`; `net.frame(id)` gives
+the bytes and `net.release(id)` returns the memory.
+- A frame in a frame buffer (direct mode, or assembled) may be held as long
+  as the caller likes: UltraGraphDB parks requests without copying them.
+- A frame lent from a ring buffer pins that whole buffer, and the ring is
+  shared by every connection on the `Io`: an empty ring ends every armed
+  receive with `-ENOBUFS`. So a ring-lent frame is valid until the caller's
+  next `poll`; `net.hold(id)` moves it into a frame buffer (one copy) to
+  keep it longer, and frames neither released nor held by then are released.
+  The ring therefore refills every turn whatever one consumer does.
+Each connection has a held-bytes budget counting the frame buffers it
+holds; at the budget the connection stops reading (its armed receive is
+cancelled, or no receive is posted) and resumes when releases bring it
+under. When the ring runs dry `Net` re-arms receives as buffers return.
+Nothing is refused.
 
 ### Sending
 `net.send_frame(conn, len, |buf| ..)` reserves `len` bytes in the
 connection's send queue, which is a chain of send segments taken from a
 shared pool of registered buffers, and lets the caller serialise into them
 in place. Frames queued back to back in a segment go out as one send;
-segments at or above a size go zero-copy (`SEND_ZC`). A full queue or an
-empty segment pool returns `SendError::Full`; `Event::Writable` follows
-when space frees. `send_bytes` does the same for `Framing::Bytes`. With
-TLS, the stream seals from the segment into its record buffer.
+sends at or above a size go zero-copy (`SEND_ZC`) on TCP sockets; Unix
+sockets and TLS connections never do (the kernel would copy anyway, and
+TLS sends its own record buffer). One send is in flight per connection, and
+its segment belongs to the kernel until the send completes (for zero copy,
+until the kernel's release notice), so a connection that keeps queueing
+uses a second segment meanwhile: the segment range is sized at twice the
+number of connections sending at once, at least. A full queue or an empty
+segment pool returns `SendError::Full`; `Event::Writable` follows when
+space frees. `send_bytes` does the same for `Framing::Bytes`. With TLS,
+the stream seals from the segment into its record buffer.
 
 ### Connections over time
 - `connect(addr, opts)`: timeout; optional `Reconnect { base, max, jitter }`
@@ -122,7 +161,12 @@ TLS, the stream seals from the segment into its record buffer.
   `Event::Up`; queued sends are dropped on `Down`. Jitter comes from a
   seeded generator, so simulation stays deterministic.
 - `listen(addr, opts)`: `reuse_port`, backlog, bind retry until a deadline
-  on `EADDRINUSE`, a connection limit. Past the limit one refusal slot per
+  on `EADDRINUSE`, a connection limit, and `peer_addr`. An armed accept
+  installs registered descriptors and returns no address, and on Linux 6.1
+  nothing can ask a registered descriptor for its peer; so a listener with
+  `peer_addr` accepts one connection per operation with an address buffer
+  and re-arms itself, and `net.peer(conn)` returns the address. Without it
+  the listener uses the armed accept. Past the limit one refusal slot per
   listener accepts the connection, reports `Event::Refused { conn }` so the
   caller can send one frame, and closes after it. Accept failures for lack
   of descriptors back off from 5 ms, doubling to 1 s.
@@ -133,23 +177,32 @@ TLS, the stream seals from the segment into its record buffer.
   queued sends finish, and reports `Event::Drained`.
 
 ### Time
-The caller passes `now` (nanoseconds from `Io::now_ns`) to `poll`.
+The caller passes `now` (nanoseconds from the backend's clock) to `poll`.
 Deadlines (connect, handshake, idle, reconnect, bind retry, accept backoff,
 drain) sit in a fixed table; `next_deadline()` returns the earliest, so the
-caller sleeps exactly as long as it may (smoltcp's `poll_at`). `poll`
-handles at most a configured number of completions per call, so one turn of
-the caller's loop stays bounded.
+caller sleeps exactly as long as it may (smoltcp's `poll_at`), by a timeout
+operation or a bounded wait of its own. The owner routes completions, so it
+bounds how many it hands to `Net` per turn; `poll` itself sends at most a
+configured number of queued segments per call.
 
 ### TLS
 `connect` and `listen` take an optional `ClientSetup` or `ServerSetup`; the
 connection runs through `longshore_stream::Stream`, so any TLS provider
-works. For a kernel-bypass transport, the record layer (`longshore_tls::
-record`, which does no I/O) is reused directly.
+works. `Stream` today receives only with `Op::Recv` into a buffer it is
+given, which serves direct mode. For ring mode it gains a second receive
+path: `Stream::on_ring_recv(io, ring_buf, len, dst)` opens the records in a
+ring buffer straight into the destination (frame memory), keeps the tail of
+a record that continues in the next ring buffer in the connection's TLS
+receive buffer, and returns the ring buffer at once, since plaintext never
+stays in it. The HTTP server can use the same path later. For a
+kernel-bypass transport, the record layer (`longshore_tls::record`, which
+does no I/O) is reused directly.
 
 ### Additions to `Io`
 - `Op::Shutdown { sock, how: Read | Write | Both }` (`IORING_OP_SHUTDOWN`,
   Linux 5.11; `shutdown(2)` in the portable backend; modelled in `SimIo`).
-- The peer address of an accepted socket, readable by slot.
+- `Op::Accept` reports the peer's address (kept per operation slot, read
+  with `Io::peer_addr(sock)` after the completion).
 - Keepalive idle, interval and count applied with `SO_KEEPALIVE`.
 - `listen` options: `SO_REUSEPORT` and the backlog.
 All within Linux 6.1; options are set where the existing `no_delay` and
@@ -163,13 +216,25 @@ All within Linux 6.1; options are set where the existing `no_delay` and
   on top later without changing `Net`.
 - A shared listening socket across cores: `SO_REUSEPORT` gives each core its
   own queue and needs no descriptor shared between rings.
+- `Net` owning the `Io` and ticking it: a partition could then not run its
+  log, the S3 client and its connections on one ring.
+- Network and file I/O on separate threads: two hand-offs and wake-ups per
+  request, for nothing a second ring on the same thread does not give.
+- Holding ring-lent frames without a copy: one slow consumer would pin the
+  shared ring and stall every connection.
 - One mode of receiving: the ring wastes nothing on many small connections
   but copies frames that span buffers; direct receives copy nothing but post
   two receives per frame. Both are kept and measured.
 
 ## Risks / Trade-offs
-- Frames spanning ring buffers are copied → bounded to those frames; links
-  with large frames use `Rx::Direct`; change 2 measures both.
+- Frames spanning ring buffers, and ring-lent frames the caller holds, are
+  copied → bounded to those frames; links with large or parked frames use
+  `Rx::Direct`; change 2 measures both.
+- Direct mode with many connections and 1 MiB frames could ask for
+  gigabytes of locked memory → the frame range is sized by frames in
+  flight, not by connections; a connection waits for a frame buffer.
+- A listener that reports peer addresses accepts one connection per
+  operation → one more submission per accept; measured in change 2.
 - Many connections with deep send queues exhaust send segments → `Full`
   with `Writable`, never an allocation; sizes are in `Config`.
 - `Op::Shutdown` breaks outside `Io` implementations → noted as breaking;

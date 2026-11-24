@@ -22,8 +22,10 @@ This is the first of three changes:
 ## What Changes
 - New crate `longshore_tcp`, re-exported by `longshore` as `tcp`:
   - `Net<T: Transport>`: a fixed set of connections and listeners driven
-    from the caller's loop. `poll(now, ..)` delivers events,
-    `next_deadline()` says when to call again.
+    from the caller's loop. It borrows the backend on each call and never
+    waits: the caller routes completions to it (`on_completion`), calls
+    `poll(now, ..)`, and reads `next_deadline()`, so file I/O and other
+    clients share the same ring and thread.
   - `Transport`: the backend seam. It names no io_uring type, so a kernel
     bypass backend fits behind it (change 3). `KernelTransport<IO: Io>` is
     the first: io_uring on Linux, the portable backend and the simulator
@@ -33,8 +35,10 @@ This is the first of three changes:
   - Framing: raw bytes, or frames with a fixed-size header carrying the
     length (a 4-byte prefix, or UltraGraphDB's 256-byte header with the
     size at offset 40), up to a maximum frame size.
-  - Received frames lent in place and held until released; a per-connection
-    budget of held bytes pauses reading (backpressure without refusal).
+  - Received frames lent in place; frames in frame memory held until
+    released, ring-lent frames until the next `poll` unless held; a
+    per-connection budget of held bytes pauses reading (backpressure
+    without refusal).
   - Frames serialised by the caller straight into registered send memory;
     queued frames coalesced into one send; zero-copy send above a size.
   - Connect with timeout; reconnect with exponential backoff and jitter;
@@ -46,7 +50,8 @@ This is the first of three changes:
 - `longshore_common::io` gains what UltraGraphDB needs and the `Io` trait
   lacks: shutting down one direction (`Op::Shutdown`), the peer address of
   an accepted connection, keepalive timings, and `SO_REUSEPORT` and the
-  backlog when listening. All within Linux 6.1. **BREAKING** for code
+  backlog when listening. `longshore_stream::Stream` gains a receive path
+  for buffer-ring buffers, so TLS works with armed receives. All within Linux 6.1. **BREAKING** for code
   outside longshore that implements `Io` or matches `Op` exhaustively:
   `Op::Shutdown` is a new variant.
 - Tests in this change: framing and handle units, the API against
@@ -55,8 +60,9 @@ This is the first of three changes:
 
 ## Impact
 - Affected specs: `tcp-connections` (ADDED), `server-networking` (ADDED
-  requirements: half-close, peer address, keepalive timing, shared port)
+  requirements: half-close, peer address, keepalive timing, shared port,
+  stream receives from the buffer ring)
 - Affected code: new `crates/longshore_tcp`; `longshore_common::io`
-  (`Op`, `UringIo`, `PosixIo`, `SimIo`); `longshore` facade; README,
+  (`Op`, `UringIo`, `PosixIo`, `SimIo`); `longshore_stream`; `longshore` facade; README,
   `docs/`, `openspec/project.md` (ten crates)
 - Breaking only as above; the new `Io` methods have defaults
