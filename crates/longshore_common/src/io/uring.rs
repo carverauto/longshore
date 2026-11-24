@@ -167,6 +167,9 @@ pub struct UringIo {
     ring_in_ring: Box<[bool]>,
     slots: Box<[Slot]>,
     sock_stream: Box<[bool]>,
+    /// Per socket slot: the peer's address, for a socket accepted with a
+    /// single accept.
+    sock_peer: Box<[Option<SocketAddr>]>,
     /// Completions the kernel still owes: one per SQE pushed, and one more
     /// after each that says more follow (a zero-copy send's notification).
     in_flight: u32,

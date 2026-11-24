@@ -44,6 +44,11 @@ impl Io for UringIo {
         self.measure_segments = on;
     }
 
+    fn peer_addr(&self, sock: Sock) -> Option<SocketAddr> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.sock_peer[sock.0 as usize]
+    }
+
     fn no_delay(&mut self, on: bool) {
         self.no_delay = on;
     }

@@ -205,6 +205,14 @@ impl World for Posix {
         self.listen_unix_sock(sock, path)
     }
 
+    fn peer_addr(&self, sock: Sock) -> Option<SocketAddr> {
+        let s = &self.socks[sock.0 as usize];
+        if s.fd < 0 || s.kind != SockKind::Open {
+            return None;
+        }
+        sock::peer_of(s.fd)
+    }
+
     fn no_delay(&mut self, on: bool) {
         self.no_delay = on;
     }

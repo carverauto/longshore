@@ -229,6 +229,7 @@ impl UringIo {
         } else {
             if let Ok(slot) = u32::try_from(c.res) {
                 if slot < self.limits.sockets_max {
+                    self.sock_peer[slot as usize] = None;
                     self.sock_stream[slot as usize] = true;
                 }
             }
@@ -271,6 +272,7 @@ impl UringIo {
             let s = self.slots[i as usize];
             if c.res >= 0 {
                 self.sock_stream[s.sock as usize] = true;
+                self.sock_peer[s.sock as usize] = s.addr.to_socket_addr();
             }
         }
         if state == State::FileSlotOpen {

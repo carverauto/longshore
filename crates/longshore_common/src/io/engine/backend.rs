@@ -39,6 +39,11 @@ impl<W: World> Io for Engine<W> {
         self.world.listen_unix(sock, path)
     }
 
+    fn peer_addr(&self, sock: Sock) -> Option<SocketAddr> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.world.peer_addr(sock)
+    }
+
     fn no_delay(&mut self, on: bool) {
         self.world.no_delay(on);
     }

@@ -66,6 +66,17 @@ pub(super) fn sockaddr_from(addr: SocketAddr) -> (sockaddr_storage, u32) {
     (storage, len)
 }
 
+/// The address of the peer of connected socket `fd`, if it has an IP one.
+pub(super) fn peer_of(fd: c_int) -> Option<SocketAddr> {
+    let mut peer = sockaddr_storage::default();
+    let mut len = size_of::<sockaddr_storage>() as u32;
+    let r = unsafe { getpeername(fd, (&mut peer as *mut sockaddr_storage).cast(), &mut len) };
+    if r != 0 {
+        return None;
+    }
+    sockaddr_to(&peer).ok()
+}
+
 pub(super) fn sockaddr_to(storage: &sockaddr_storage) -> io::Result<SocketAddr> {
     let family = c_int::from(storage.ss_family);
     if family == AF_INET {

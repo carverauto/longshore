@@ -316,6 +316,14 @@ pub trait Io {
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected
     /// from now on. Ignored for UDP and Unix-domain sockets.
     fn keep_alive(&mut self, _on: bool) {}
+    /// The address of the peer of the connection in slot `sock`, when the
+    /// backend knows it: on the ring, for a socket accepted with
+    /// [`Op::Accept`] (an armed accept installs sockets the kernel reports
+    /// no address for); on the portable backend, for any connected TCP
+    /// socket. `None` otherwise, and for Unix-domain sockets.
+    fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
+        None
+    }
     /// Return a buffer-ring buffer named in an [`Op::ArmedRecv`] completion
     /// back to the backend's ring without submitting an operation.
     fn give_back(&mut self, id: BufId);

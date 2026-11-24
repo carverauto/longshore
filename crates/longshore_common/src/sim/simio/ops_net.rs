@@ -84,6 +84,13 @@ impl Virtual {
             s.peer_closed = false;
             (s.peer_wr_shut, s.wr_shut, s.rd_shut) = (false, false, false);
             s.reset = false;
+            s.accepted_from = None;
+        }
+        if let Some(SimAddr::Ip(listening)) = addr {
+            // The simulator has no client addresses: the listener's own
+            // address and a port derived from the client's slot.
+            let port = 49_152 + (c % 16_384) as u16;
+            self.socks[sock.0 as usize].accepted_from = Some(SocketAddr::new(listening.ip(), port));
         }
         Some(0)
     }
@@ -282,6 +289,7 @@ impl Virtual {
         }
         self.socks[s].state = SockState::Free;
         self.socks[s].addr = None;
+        self.socks[s].accepted_from = None;
         Some(0)
     }
 }

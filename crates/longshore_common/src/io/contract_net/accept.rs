@@ -268,7 +268,51 @@ fn accept_range_len_zero_returns_enfile<IO: Io>(
     close_socks(&mut io, &mut out, &[Sock(0), Sock(1)]);
 }
 
+/// A socket accepted with a single accept has its peer's address: the
+/// loopback address the client connected from, with the client's own port.
+fn a_single_accept_reports_the_peers_address<IO: Io>(
+    make: &mut impl FnMut(Limits) -> IO,
+    addr: SocketAddr,
+) {
+    let mut io = make(net_limits());
+    let mut out = Completions::new(8);
+    let (listener, client, server) = (Sock(0), Sock(1), Sock(6));
+    let bound = io.must_listen(listener, addr);
+    assert_eq!(io.peer_addr(server), None, "before the accept");
+    io.must_submit(
+        Token(1),
+        Op::Accept {
+            listener,
+            sock: server,
+        },
+    );
+    io.must_submit(
+        Token(2),
+        Op::Connect {
+            sock: client,
+            addr: bound,
+        },
+    );
+    let (mut accepted, mut connected) = (false, false);
+    drain_until(&mut io, &mut out, |_, c| {
+        assert!(c.result >= 0, "{c:?}");
+        accepted |= c.token.0 == 1;
+        connected |= c.token.0 == 2;
+        accepted && connected
+    });
+    let peer = must(io.peer_addr(server), "peer address of an accepted socket");
+    assert_eq!(peer.ip(), bound.ip());
+    assert!(peer.port() != 0 && peer.port() != bound.port(), "{peer}");
+
+    // The address goes with the connection: gone once the slot is closed.
+    io.must_submit(Token(3), Op::Close { sock: server });
+    let _: Completion = drain_one(&mut io, &mut out, 3);
+    assert_eq!(io.peer_addr(server), None, "after the close");
+    close_socks(&mut io, &mut out, &[client, listener]);
+}
+
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
+    a_single_accept_reports_the_peers_address(make, addr);
     several_accepts_on_one_armed_accept(make, addr);
     accept_range_full_and_armed_again(make, addr);
     accept_range_len_zero_returns_enfile(make, addr);

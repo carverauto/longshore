@@ -37,6 +37,13 @@ impl World for Virtual {
         Ok(addr)
     }
 
+    fn peer_addr(&self, sock: Sock) -> Option<SocketAddr> {
+        let s = &self.socks[sock.0 as usize];
+        (s.state == SockState::Open)
+            .then_some(s.accepted_from)
+            .flatten()
+    }
+
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()> {
         if path.is_empty() || path.as_bytes().contains(&0) {
             return Err(io::Error::from(io::ErrorKind::InvalidInput));

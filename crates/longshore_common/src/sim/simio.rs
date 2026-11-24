@@ -63,6 +63,9 @@ pub(super) struct SimSock {
     pub(super) rx: Box<[u8]>,
     pub(super) rx_head: usize,
     pub(super) rx_len: usize,
+    /// For a socket accepted from an IP listener: the address the simulator
+    /// gives its peer, the listener's and a port derived from the peer's slot.
+    pub(super) accepted_from: Option<SocketAddr>,
     pub(super) peer_closed: bool,
     /// The peer shut down its write side: receives end once drained.
     pub(super) peer_wr_shut: bool,
@@ -140,6 +143,7 @@ impl Virtual {
             rx: vec![0u8; SOCK_BUF].into_boxed_slice(),
             rx_head: 0,
             rx_len: 0,
+            accepted_from: None,
             peer_closed: false,
             peer_wr_shut: false,
             wr_shut: false,

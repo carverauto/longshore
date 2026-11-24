@@ -79,6 +79,29 @@ impl sockaddr_any {
         }
     }
 
+    /// The address this holds, if it is an IPv4 or IPv6 one.
+    pub fn to_socket_addr(&self) -> Option<std::net::SocketAddr> {
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+        let r = &self.rest;
+        let port = u16::from_be_bytes([r[0], r[1]]);
+        if self.family == AF_INET {
+            let ip = Ipv4Addr::new(r[2], r[3], r[4], r[5]);
+            Some(SocketAddr::V4(SocketAddrV4::new(ip, port)))
+        } else if self.family == AF_INET6 {
+            let flow = u32::from_ne_bytes([r[2], r[3], r[4], r[5]]);
+            let ip: [u8; 16] = r[6..22].try_into().ok()?;
+            let scope = u32::from_ne_bytes([r[22], r[23], r[24], r[25]]);
+            Some(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::from(ip),
+                port,
+                flow,
+                scope,
+            )))
+        } else {
+            None
+        }
+    }
+
     /// The kernel's form of a NUL-terminated Unix-domain socket path, and its length.
     pub fn from_unix(nul_terminated: &[u8]) -> (sockaddr_any, u32) {
         assert!(

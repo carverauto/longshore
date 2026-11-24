@@ -60,6 +60,10 @@ pub trait World {
     fn no_delay(&mut self, _on: bool) {}
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected from now on.
     fn keep_alive(&mut self, _on: bool) {}
+    /// The peer's address of the connection in `sock`, if known.
+    fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
+        None
+    }
     /// Return a buffer-ring buffer back to the world's ring.
     fn give_back(&mut self, _id: BufId) {}
     /// Ask to measure TCP segment sizes on future connects, if supported.
