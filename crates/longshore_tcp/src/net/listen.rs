@@ -220,8 +220,7 @@ impl<T: Transport> Net<T> {
         let seed = self.cfg.sizes.seed ^ u64::from(slot);
         let c = &mut self.conns[slot as usize];
         c.renew(cfg.conn, seed);
-        c.listener = l;
-        c.accepted_by = Some(by);
+        c.accepted_by = if live { by } else { Listener::NONE };
         c.unix = unix;
         c.sock_open = true;
         c.last_active = self.now;
@@ -248,20 +247,22 @@ impl<T: Transport> Net<T> {
     /// Announce the accepted connection in `slot`: as a connection, or at
     /// the listener's limit as one to refuse.
     pub(super) fn admit(&mut self, d: &mut T::Driver, slot: u32) {
-        let l = self.conns[slot as usize].listener;
-        let state = &self.listeners[l as usize];
         // The listener that accepted it, not a later one in its slot.
-        let live = self.conns[slot as usize].accepted_by == Some(self.lgens.listener(l));
-        let listening = live && state.st == LSt::Listening;
-        let over = state.count >= state.cfg.limit;
+        let by = self.conns[slot as usize].accepted_by;
+        let listening = self
+            .lgens
+            .slot_of_listener(by)
+            .filter(|l| self.listeners[*l as usize].st == LSt::Listening);
         self.deadlines.clear(slot);
         let c = &mut self.conns[slot as usize];
-        if !listening {
+        let Some(l) = listening else {
             // The listener closed during the handshake: not a connection.
             c.st = St::Refused;
             self.gens.retire(slot);
-            self.begin_close(slot, false);
-        } else if over {
+            return self.begin_close(slot, false);
+        };
+        let state = &self.listeners[l as usize];
+        if state.count >= state.cfg.limit {
             c.st = St::Refused;
             self.queue_event(slot, EV_REFUSED);
         } else {
@@ -274,7 +275,6 @@ impl<T: Transport> Net<T> {
             self.start_reading(d, slot);
         }
     }
-
     pub(super) fn on_accept_failed(&mut self, l: u32, slot: Option<u32>, result: i32) {
         let state = &mut self.listeners[l as usize];
         match slot {

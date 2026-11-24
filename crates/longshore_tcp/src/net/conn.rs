@@ -137,11 +137,11 @@ impl<T: Transport> Net<T> {
         match bit {
             EV_UP => Event::Up(conn),
             EV_ACCEPTED => Event::Accepted {
-                listener: self.accepted_by(slot),
+                listener: self.conns[slot as usize].accepted_by,
                 conn,
             },
             EV_REFUSED => {
-                let listener = self.accepted_by(slot);
+                let listener = self.conns[slot as usize].accepted_by;
                 // From here on the connection closes once its queue is empty.
                 self.add_work(slot, W_REFUSE);
                 Event::Refused { listener, conn }
@@ -159,14 +159,6 @@ impl<T: Transport> Net<T> {
                 Event::Closed { conn, why }
             }
         }
-    }
-
-    /// The handle its caller knows the listener that accepted `slot` by,
-    /// which may be closed by now. Only for an accepted connection.
-    fn accepted_by(&self, slot: u32) -> Listener {
-        let c = &self.conns[slot as usize];
-        c.accepted_by
-            .unwrap_or_else(|| self.lgens.listener(c.listener))
     }
 
     /// Close a connection now. Its handle is stale at once and no event
@@ -289,16 +281,15 @@ impl<T: Transport> Net<T> {
     /// The slot holds nothing any more.
     fn release_slot(&mut self, slot: u32) {
         let c = &mut self.conns[slot as usize];
-        let (listener, counted) = (c.listener, core::mem::take(&mut c.counted));
-        let by = c.accepted_by.take();
+        let counted = core::mem::take(&mut c.counted);
+        let by = core::mem::replace(&mut c.accepted_by, Listener::NONE);
         c.st = St::Free;
         c.ev = 0;
         // Counted against its own listener, not a later one in the slot.
-        if listener != NONE && counted && by == Some(self.lgens.listener(listener)) {
-            let l = &mut self.listeners[listener as usize];
-            l.count = l.count.saturating_sub(1);
+        if let Some(l) = self.lgens.slot_of_listener(by).filter(|_| counted) {
+            let listener = &mut self.listeners[l as usize];
+            listener.count = listener.count.saturating_sub(1);
         }
-        self.conns[slot as usize].listener = NONE;
         if slot < self.cfg.sizes.connects {
             self.free[self.free_len] = slot;
             self.free_len += 1;

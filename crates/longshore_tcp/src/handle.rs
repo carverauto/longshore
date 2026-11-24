@@ -34,6 +34,12 @@ pub struct Listener {
 }
 
 impl Listener {
+    /// A handle that names no listener, ever.
+    pub(crate) const NONE: Listener = Listener {
+        slot: u32::MAX,
+        generation: u32::MAX,
+    };
+
     /// The listener's slot.
     #[inline]
     pub const fn slot(self) -> u32 {

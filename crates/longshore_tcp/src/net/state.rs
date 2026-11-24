@@ -93,11 +93,10 @@ pub(super) struct Chunk {
 pub(super) struct ConnState {
     pub(super) st: St,
     pub(super) opts: ConnOpts,
-    /// The listener that accepted it, or `NONE`.
-    pub(super) listener: u32,
-    /// That listener's handle, as its caller knows it: the slot may hold
-    /// another listener by the time the connection is announced or freed.
-    pub(super) accepted_by: Option<Listener>,
+    /// The listener that accepted it, by the handle its caller knows it
+    /// by: the slot may hold another listener by the time the connection
+    /// is announced or freed. `Listener::NONE` for one the caller opened.
+    pub(super) accepted_by: Listener,
     /// The handle of the listener whose connection is parked here.
     pub(super) parked_by: Option<Listener>,
     /// Where to dial again.
@@ -176,7 +175,6 @@ impl ConnState {
         ConnState {
             st: St::Free,
             opts,
-            listener: NONE,
             peer: None,
             unix: false,
             backoff: Backoff::new(1, 1, 0, seed),
@@ -191,7 +189,7 @@ impl ConnState {
             redial: false,
             parked: NONE,
             parked_by: None,
-            accepted_by: None,
+            accepted_by: Listener::NONE,
             counted: false,
             connecting: false,
             secure: false,
