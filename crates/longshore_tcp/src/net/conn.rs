@@ -6,8 +6,8 @@
 //! A connection's life: connecting, ending, closing, dialling again.
 
 use super::state::{
-    ConnState, St, EV_ACCEPTED, EV_CLOSED, EV_DOWN, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE,
-    NONE, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
+    St, EV_ACCEPTED, EV_CLOSED, EV_DOWN, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE, NONE,
+    W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
 };
 use super::Net;
 use crate::addr::{Addr, ServerName};
@@ -61,7 +61,7 @@ impl<T: Transport> Net<T> {
         let slot = self.free[top];
         let seed = self.cfg.sizes.seed ^ (u64::from(slot) << 32) ^ self.now;
         let c = &mut self.conns[slot as usize];
-        *c = ConnState::free(opts, seed);
+        c.renew(opts, seed);
         c.peer = Some(addr);
         c.unix = matches!(addr, Addr::Unix(_));
         if let Some(r) = opts.reconnect {
@@ -187,7 +187,10 @@ impl<T: Transport> Net<T> {
     pub(super) fn conn_event(&mut self, slot: u32, bit: u8) -> Event {
         let conn = self.gens.conn(slot);
         let c = &self.conns[slot as usize];
-        let (why, l) = (c.why, c.listener);
+        // What the caller pulled shows whether the stream ended in a frame.
+        let cut_short = c.why == Why::Orderly && c.mid_frame();
+        let why = if cut_short { Why::Reset } else { c.why };
+        let l = c.listener;
         match bit {
             EV_UP => Event::Up(conn),
             EV_ACCEPTED => Event::Accepted {
@@ -222,7 +225,8 @@ impl<T: Transport> Net<T> {
         let slot = self.gens.slot_of(conn).ok_or(NetError::Stale)?;
         self.gens.retire(slot);
         match self.conns[slot as usize].st {
-            St::Free | St::Closing => {}
+            St::Free => {}
+            St::Closing => self.conns[slot as usize].redial = false,
             St::Backoff => {
                 self.deadlines.clear(slot);
                 self.release_slot(slot);
@@ -240,6 +244,9 @@ impl<T: Transport> Net<T> {
     /// What `poll` owes connection `slot`.
     pub(super) fn do_work(&mut self, d: &mut T::Driver, slot: u32) {
         let want = core::mem::take(&mut self.conns[slot as usize].want);
+        if want & W_ADMIT != 0 {
+            self.admit_parked(d, slot);
+        }
         if want & W_CONNECT != 0 && self.conns[slot as usize].st == St::Connecting {
             self.dial(d, slot);
         }
@@ -337,6 +344,9 @@ impl<T: Transport> Net<T> {
         if slot < self.cfg.sizes.connects {
             self.free[self.free_len] = slot;
             self.free_len += 1;
+        }
+        if self.conns[slot as usize].parked != NONE {
+            self.add_work(slot, W_ADMIT);
         }
     }
 

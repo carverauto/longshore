@@ -38,6 +38,8 @@ const S_DST: BufId = BufId::new(5);
 /// The destination is handed over in pieces of this size, so records are
 /// opened at every position in it and the "no room" path is taken.
 const DST_PIECE: u32 = RING_DST_MIN + 1000;
+/// What is left of a destination that is nearly full: no record fits.
+const TIGHT: u32 = 64;
 
 #[cfg(test)]
 fn limits(ring_buffer_size: u32) -> Limits {
@@ -114,6 +116,10 @@ fn pair(seed: u64, faults: Faults, ring_buffer_size: u32, tls: bool) -> Pair {
 struct Sink {
     got: Vec<u8>,
     closed: bool,
+    /// Offer each ring buffer first with a destination that is nearly full.
+    tight: bool,
+    /// Times the stream kept a whole record with every byte offered taken.
+    kept: u32,
 }
 
 #[cfg(test)]
@@ -122,18 +128,25 @@ impl Sink {
     /// destination over in pieces.
     fn feed(&mut self, p: &mut Pair, buf: BufId, len: u32) -> Result<(), TlsError> {
         let mut consumed = 0;
+        let mut at = if self.tight { DST_PIECE - TIGHT } else { 0 };
         loop {
             let from = RingBytes::new(buf, consumed, len - consumed);
-            let dst = RingDst::new(S_DST, 0, DST_PIECE);
+            let dst = RingDst::new(S_DST, at, DST_PIECE - at);
             let step = p.server.on_ring_recv(&mut p.io, from, dst)?;
-            self.got
-                .extend_from_slice(&p.io.buf(S_DST)[..step.produced() as usize]);
+            let (start, end) = (at as usize, (at + step.produced()) as usize);
+            self.got.extend_from_slice(&p.io.buf(S_DST)[start..end]);
             consumed += step.consumed();
             self.closed |= step.closed();
-            // Everything taken and nothing more to hand out, or the stream ended.
-            if step.closed() || (consumed == len && step.produced() == 0) {
+            // The stream ended, or every record there is has been opened.
+            if step.closed() || !step.no_room() {
+                assert!(
+                    step.closed() || consumed == len,
+                    "bytes left without a reason"
+                );
                 return Ok(());
             }
+            self.kept += u32::from(consumed == len);
+            at = 0;
         }
     }
 }
@@ -142,9 +155,23 @@ impl Sink {
 /// Send `data` from the client; receive it on the server through an armed
 /// receive. Returns what arrived, or the error the stream reported.
 fn transfer(p: &mut Pair, data: &[u8], close_after: bool) -> Result<Sink, TlsError> {
+    transfer_into(p, data, close_after, false)
+}
+
+#[cfg(test)]
+/// `transfer`, with each ring buffer offered first to a destination that
+/// is nearly full when `tight`.
+fn transfer_into(
+    p: &mut Pair,
+    data: &[u8],
+    close_after: bool,
+    tight: bool,
+) -> Result<Sink, TlsError> {
     let mut sink = Sink {
         got: Vec::new(),
         closed: false,
+        tight,
+        kept: 0,
     };
     // What arrived behind the handshake (session tickets) comes first.
     sink.feed(p, S_DST, 0)?;
@@ -200,6 +227,18 @@ fn tls_records_straddling_ring_buffers_open_to_what_was_sent() {
         let sink = transfer(&mut p, &data, false).unwrap();
         assert!(sink.got == data, "ring buffers of {ring}");
     }
+}
+
+#[test]
+fn a_record_kept_for_want_of_room_is_reported_and_opens_with_no_more_bytes() {
+    // Ring buffers far smaller than a record: every record is carried,
+    // and is whole exactly when the ring buffer that ends it is taken.
+    let mut p = pair(7, Faults::default(), 700, true);
+    let data = pattern(100_000, 6);
+    // Nothing follows the data, so its last record ends a ring buffer.
+    let sink = transfer_into(&mut p, &data, false, true).unwrap();
+    assert!(sink.got == data);
+    assert!(sink.kept > 0, "no record was kept with all bytes taken");
 }
 
 #[test]

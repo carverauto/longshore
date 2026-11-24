@@ -43,6 +43,14 @@ impl<T: Transport> Net<T> {
                 return Ok(Some(self.deliver(d, slot, Mem::Extent(ext), 0, len)));
             }
             let Some(src) = self.source(slot) else {
+                if self.header_whole(slot) {
+                    // The input ended with a header: its frame may be whole.
+                    if self.begin_frame(d, slot) {
+                        continue;
+                    }
+                    let _stop: Cut = self.out_of_memory(d, slot);
+                    return Ok(None);
+                }
                 // Protected input is opened as frame memory has room.
                 if self.conns[slot as usize].secure && self.open_ring(d, slot, false) {
                     continue;
@@ -51,13 +59,12 @@ impl<T: Transport> Net<T> {
             };
             match self.cut(d, slot, src) {
                 Cut::Frame(len) => {
-                    let mem = self.lend(slot, src);
-                    self.advance(slot, src, len);
-                    let Some(mem) = mem else {
+                    let Some(mem) = self.lend(slot, src) else {
                         // The backlog has as many holds as can be counted.
                         self.add_work(slot, W_READ);
                         return Ok(None);
                     };
+                    self.advance(slot, src, len);
                     return Ok(Some(self.deliver(d, slot, mem, src.off, len)));
                 }
                 Cut::Taken(n) => self.advance(slot, src, n),
@@ -90,7 +97,20 @@ impl<T: Transport> Net<T> {
 
     /// Whether `slot` has received bytes the caller has not pulled.
     pub(super) fn has_input(&self, slot: u32) -> bool {
-        self.conns[slot as usize].ready.is_some() || self.source(slot).is_some()
+        let c = &self.conns[slot as usize];
+        c.ready.is_some() || c.unopened || self.source(slot).is_some() || self.header_whole(slot)
+    }
+
+    /// Whether a ring connection's header area holds a whole header whose
+    /// frame has not been started.
+    fn header_whole(&self, slot: u32) -> bool {
+        let c = &self.conns[slot as usize];
+        match c.opts.framing {
+            Framing::Header(h) => {
+                c.opts.rx == Rx::Ring && c.asm.is_none() && c.hdr_have == h.header_len() as u32
+            }
+            Framing::Bytes => false,
+        }
     }
 
     fn source(&self, slot: u32) -> Option<Source> {
@@ -264,6 +284,12 @@ impl<T: Transport> Net<T> {
                     self.ring_pending_len += 1;
                     break;
                 }
+            }
+            let c = &mut self.conns[slot as usize];
+            if !c.ring_listed && c.paused && c.held < c.opts.held_max {
+                // It keeps no ring buffer any more: read on.
+                c.paused = false;
+                self.add_work(slot, W_READ);
             }
         }
     }

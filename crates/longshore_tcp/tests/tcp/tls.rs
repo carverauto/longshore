@@ -15,7 +15,9 @@ use longshore_common::io::Limits;
 use longshore_common::sim::{DiskConfig, Faults, SimIo};
 use longshore_tcp::check::storage::Replicated;
 use longshore_tcp::check::{self, prefix, secure, Certs, World};
-use longshore_tcp::{Addr, Conn, Event, ListenConfig, NetError, Rx, Why};
+use longshore_tcp::{
+    Addr, Conn, ConnOpts, Event, Framing, HeaderFraming, ListenConfig, NetError, Rx, Why,
+};
 use longshore_tls::handshake::{ClientSetup, ServerSetup};
 use std::net::SocketAddr;
 
@@ -222,6 +224,32 @@ fn an_end_without_a_close_alert_is_a_broken_connection() {
         });
         assert_eq!(ended, Some(Why::Reset), "{rx:?}");
     }
+}
+
+#[test]
+fn a_record_that_found_no_room_in_frame_memory_is_opened_once_there_is_room() {
+    let certs = certs(NAME);
+    let mut w = world(&certs, 1);
+    // Frame memory holds 32 KiB: two frames of a whole record each fill
+    // it, and the second record's plaintext needs a byte more than is left
+    // behind the first while that one has not been pulled.
+    let framing = HeaderFraming::length_prefix(32 << 10).unwrap();
+    let opts = ConnOpts::new(Framing::Header(framing));
+    let (c, s) = w.pair(Addr::Ip(sim_addr()), opts);
+    let frames = [check::prefixed(16_380, 1), check::prefixed(16_380, 2)];
+    for frame in &frames {
+        assert!(w.send(c, frame));
+    }
+    // Everything arrives before the server's caller pulls anything.
+    for _ in 0..600 {
+        w.turn();
+        let (client, _) = w.client();
+        assert_eq!(client.next_event(), None);
+    }
+    let (server, _) = w.server();
+    assert_eq!(server.next_event(), Some(Event::Readable(s)));
+    let got: Vec<Vec<u8>> = w.pull_all(s).into_iter().map(|(_, bytes)| bytes).collect();
+    assert!(got == frames, "{} of 2 frames were pulled", got.len());
 }
 
 #[test]

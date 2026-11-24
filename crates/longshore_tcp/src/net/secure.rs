@@ -7,7 +7,7 @@
 //! runs and how long it may take, and where the plaintext of an armed
 //! receive goes. The records themselves are the transport's business.
 
-use super::state::{best_effort, St, EV_READABLE};
+use super::state::{best_effort, St, EV_READABLE, W_READ};
 use super::Net;
 use crate::addr::{Addr, ServerName};
 use crate::config::{ConnOpts, Rx};
@@ -82,23 +82,31 @@ impl<T: Transport> Net<T> {
 
     /// Open the records in the ring buffers of the protected `slot` into
     /// its backlog, as far as frame memory has room; with `behind`, first
-    /// what arrived behind the handshake. Buffers that are done go back on
-    /// the next `poll`. `true` when there is plaintext to pull.
+    /// what arrived behind the handshake. A record the transport kept for
+    /// lack of room is asked for again, with no bytes when there are none.
+    /// Buffers that are done go back on the next `poll`. `true` when there
+    /// is plaintext to pull.
     pub(super) fn open_ring(&mut self, d: &mut T::Driver, slot: u32, mut behind: bool) -> bool {
         let size = self.cfg.sizes.frame_size;
         while self.conns[slot as usize].st == St::Up {
             let chunk = self.front_chunk(slot);
+            let c = &mut self.conns[slot as usize];
+            let kept = core::mem::take(&mut c.unopened);
             let from = match chunk {
                 Some(src) => Span::new(src.buf, src.off, src.avail),
-                None if behind => Span::new(self.cfg.header_first, 0, 0),
+                None if behind || kept => Span::new(self.cfg.header_first, 0, 0),
                 None => break,
             };
             behind = false;
-            let c = &mut self.conns[slot as usize];
             let ext = match c.backlog {
                 Some(ext) => ext,
                 None => {
                     let Some(ext) = self.extents.take() else {
+                        if kept {
+                            // Asked for again when frame memory is free.
+                            c.unopened = true;
+                            self.add_work(slot, W_READ);
+                        }
                         break;
                     };
                     (c.backlog, c.backlog_off, c.backlog_len) = (Some(ext), 0, 0);
@@ -121,8 +129,11 @@ impl<T: Transport> Net<T> {
                 self.peer_finished(slot);
                 break;
             }
-            if opened.consumed() < from.len() && !self.make_room(slot, have, opened.produced()) {
-                break;
+            if opened.no_room() {
+                self.conns[slot as usize].unopened = true;
+                if !self.make_room(slot, have, opened.produced()) {
+                    break;
+                }
             }
         }
         self.trim_backlog(slot)

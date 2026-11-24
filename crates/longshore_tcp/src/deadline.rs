@@ -81,20 +81,4 @@ impl Deadlines {
         self.fresh = false;
         Some(slot as u32)
     }
-
-    /// Hand each slot whose deadline is at or before `now_ns` to `f`, in
-    /// slot order, removing its deadline first (`f` may set a new one
-    /// through its own means afterwards). Costs nothing when none is due.
-    pub fn expire(&mut self, now_ns: u64, mut f: impl FnMut(u32)) {
-        if self.earliest().is_none_or(|e| e > now_ns) {
-            return;
-        }
-        for slot in 0..self.at.len() {
-            if self.at[slot] <= now_ns {
-                self.at[slot] = NONE;
-                f(slot as u32);
-            }
-        }
-        self.fresh = false;
-    }
 }

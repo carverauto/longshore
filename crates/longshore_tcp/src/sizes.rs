@@ -101,7 +101,6 @@ impl Sizes {
         self
     }
 
-    /// The first of the `Net`'s tokens; it uses [`crate::Config::tokens`] of them.
     /// Room for TLS: two more buffers of the segment size for every
     /// connection, which hold its records on the way out and in. Segments
     /// must then be at least [`TLS_SEGMENT_MIN`] bytes.
@@ -111,6 +110,7 @@ impl Sizes {
         self
     }
 
+    /// The first of the `Net`'s tokens; it uses [`crate::Config::tokens`] of them.
     #[must_use]
     pub const fn with_token_base(mut self, base: u64) -> Sizes {
         self.token_base = base;

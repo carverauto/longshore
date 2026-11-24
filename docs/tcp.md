@@ -114,7 +114,9 @@ once, by the receive.
 segment; frames queued in one turn share segments and leave in fewer
 sends. `send_bytes` copies a slice in. `send_lent(conn, &frame)` queues a
 held frame from where it lies. A full queue returns `SendError::Full`, and
-`Event::Writable` follows when there is room. Sends above
+`Event::Writable` follows when there is room. So does an empty segment
+pool: each segment that returns is announced to the connection that has
+waited for one longest. Sends above
 `Sizes::with_zero_copy_min` are zero-copy on TCP without TLS.
 
 ## TLS

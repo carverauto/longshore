@@ -164,7 +164,8 @@ impl Secure {
         let bytes = RingBytes::new(from.buf(), from.off(), from.len());
         let dst = RingDst::new(into.buf(), into.off(), into.len());
         let step = stream.on_ring_recv(d, bytes, dst).ok()?;
-        Some(Opened::new(step.consumed(), step.produced(), step.closed()))
+        let opened = Opened::new(step.consumed(), step.produced(), step.closed());
+        Some(opened.with_no_room(step.no_room()))
     }
 
     /// A receive into `into`; the result when plaintext was there already.

@@ -15,14 +15,23 @@ use longshore_tcp::{
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[cfg(test)]
+#[path = "net/accepting.rs"]
+mod accepting;
+#[cfg(test)]
 #[path = "net/frames.rs"]
 mod frames;
+#[cfg(test)]
+#[path = "net/input.rs"]
+mod input;
 #[cfg(test)]
 #[path = "net/lifecycle.rs"]
 mod lifecycle;
 #[cfg(test)]
 #[path = "net/listening.rs"]
 mod listening;
+#[cfg(test)]
+#[path = "net/slots.rs"]
+mod slots;
 
 #[global_allocator]
 static ALLOC: longshore_common::io::alloc_guard::Guard = longshore_common::io::alloc_guard::Guard;

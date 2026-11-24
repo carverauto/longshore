@@ -52,6 +52,7 @@ pub struct Opened {
     consumed: u32,
     produced: u32,
     closed: bool,
+    no_room: bool,
 }
 
 impl Opened {
@@ -62,13 +63,28 @@ impl Opened {
             consumed,
             produced,
             closed,
+            no_room: false,
         }
     }
 
-    /// Bytes taken from the ring buffer. Less than offered means the
-    /// destination has no room for the next record.
+    /// The same, with whether the destination had no room for the next
+    /// record.
+    #[must_use]
+    pub const fn with_no_room(mut self, no_room: bool) -> Opened {
+        self.no_room = no_room;
+        self
+    }
+
+    /// Bytes taken from the ring buffer.
     pub const fn consumed(self) -> u32 {
         self.consumed
+    }
+
+    /// The destination has no room for the next record: one in the bytes
+    /// not taken, or one the transport keeps whole. `Net` asks again with
+    /// a new destination, and with no bytes when all were taken.
+    pub const fn no_room(self) -> bool {
+        self.no_room
     }
 
     /// Bytes of plaintext written to the destination.

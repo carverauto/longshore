@@ -61,14 +61,21 @@ pub struct RingStep {
     consumed: u32,
     produced: u32,
     closed: bool,
+    no_room: bool,
 }
 
 impl RingStep {
-    /// Bytes of the ring buffer taken. Less than was offered means the
-    /// destination has no room for the next record: call again with the
-    /// rest of the ring buffer and a new destination.
+    /// Bytes of the ring buffer taken.
     pub const fn consumed(self) -> u32 {
         self.consumed
+    }
+
+    /// The destination has no room for the next record: call again with
+    /// the rest of the ring buffer and a new destination. The record may
+    /// be one the stream keeps whole, with every byte of the ring buffer
+    /// taken: the next call then has no bytes to offer.
+    pub const fn no_room(self) -> bool {
+        self.no_room
     }
 
     /// Bytes of plaintext written to the destination.
@@ -118,6 +125,7 @@ impl Stream {
             consumed: n,
             produced: n,
             closed: false,
+            no_room: n < from.len,
         })
     }
 }
@@ -146,6 +154,7 @@ impl crate::stream::Tls {
             consumed: 0,
             produced: 0,
             closed: self.closed,
+            no_room: false,
         };
         // Records carried from earlier buffers come first.
         while !step.closed && self.rx_end > self.rx_start {
@@ -168,7 +177,10 @@ impl crate::stream::Tls {
             let len = self.carried_len(io)?;
             let at = self.rx_start as usize;
             match self.open_one(io, (self.rx_buf, at, len), dst, step.produced)? {
-                Opened::NoRoom => return Ok(step),
+                Opened::NoRoom => {
+                    step.no_room = true;
+                    return Ok(step);
+                }
                 Opened::Data(n) => step.produced += n,
                 Opened::Closed => step.closed = true,
             }
@@ -193,7 +205,10 @@ impl crate::stream::Tls {
                 break;
             };
             match self.open_one(io, (from.buf, at, len), dst, step.produced)? {
-                Opened::NoRoom => break,
+                Opened::NoRoom => {
+                    step.no_room = true;
+                    break;
+                }
                 Opened::Data(n) => step.produced += n,
                 Opened::Closed => step.closed = true,
             }

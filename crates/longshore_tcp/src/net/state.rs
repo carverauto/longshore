@@ -11,7 +11,7 @@ use crate::config::{ConnOpts, ListenConfig};
 use crate::event::Why;
 use longshore_common::io::extents::Extent;
 use longshore_common::io::BufId;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 pub(super) const NONE: u32 = u32::MAX;
 
@@ -34,6 +34,7 @@ pub(super) const W_CLOSE: u8 = 1 << 2;
 pub(super) const W_SHUT: u8 = 1 << 3;
 pub(super) const W_CONNECT: u8 = 1 << 4;
 pub(super) const W_REFUSE: u8 = 1 << 5;
+pub(super) const W_ADMIT: u8 = 1 << 6;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum St {
@@ -102,6 +103,10 @@ pub(super) struct ConnState {
     pub(super) sock_open: bool,
     pub(super) closed: bool,
     pub(super) redial: bool,
+    /// The listener whose next connection the kernel has already put in
+    /// this slot, while operations of the last one are still in flight; or
+    /// `NONE`. It becomes a connection once the slot is free.
+    pub(super) parked: u32,
     /// Counted among its listener's connections.
     pub(super) counted: bool,
     pub(super) connecting: bool,
@@ -115,6 +120,8 @@ pub(super) struct ConnState {
     pub(super) armed: bool,
     pub(super) recv_busy: bool,
     pub(super) paused: bool,
+    /// Protected: the transport keeps a whole record that found no room.
+    pub(super) unopened: bool,
     pub(super) hdr_have: u32,
     /// A frame being put together in frame memory.
     pub(super) asm: Option<Extent>,
@@ -137,6 +144,8 @@ pub(super) struct ConnState {
     pub(super) tx_len: u32,
     pub(super) sending: bool,
     pub(super) full: bool,
+    /// Listed among the connections waiting for a send segment.
+    pub(super) seg_listed: bool,
     pub(super) shut: bool,
     /// The shutdown has been handed to the transport.
     pub(super) shut_sent: bool,
@@ -160,6 +169,7 @@ impl ConnState {
             sock_open: false,
             closed: false,
             redial: false,
+            parked: NONE,
             counted: false,
             connecting: false,
             secure: false,
@@ -168,6 +178,7 @@ impl ConnState {
             armed: false,
             recv_busy: false,
             paused: false,
+            unopened: false,
             hdr_have: 0,
             asm: None,
             asm_have: 0,
@@ -184,9 +195,26 @@ impl ConnState {
             tx_len: 0,
             sending: false,
             full: false,
+            seg_listed: false,
             shut: false,
             shut_sent: false,
         }
+    }
+
+    /// Start the slot over for a new connection. Its places in the `Net`'s
+    /// lists are not the connection's, and stay.
+    pub(super) fn renew(&mut self, opts: ConnOpts, seed: u64) {
+        *self = ConnState {
+            queued: self.queued,
+            working: self.working,
+            seg_listed: self.seg_listed,
+            ..ConnState::free(opts, seed)
+        };
+    }
+
+    /// Whether the bytes received so far end inside a frame.
+    pub(super) fn mid_frame(&self) -> bool {
+        self.hdr_have > 0 || (self.asm.is_some() && self.asm_have > 0)
     }
 
     /// Whether an operation of this connection is still with the transport.
@@ -220,9 +248,33 @@ pub(super) struct ListenerState {
     pub(super) armed: bool,
     /// The slot a single accept in flight will fill.
     pub(super) single: Option<u32>,
-    /// Wait before the next accept after one failed; 0 when none failed.
+    /// The wait after the last failed accept; 0 when the last one worked.
     pub(super) backoff_ns: u64,
+    /// An accept failed and its wait is not over.
+    pub(super) waiting: bool,
+    /// Its close is with the transport.
+    pub(super) close_sent: bool,
     pub(super) bind_until: u64,
     /// A failed bind to report, as a negated error number.
     pub(super) failed: Option<i32>,
+}
+
+impl ListenerState {
+    /// A listener slot nothing listens in.
+    pub(super) fn unused(opts: ConnOpts) -> ListenerState {
+        ListenerState {
+            st: LSt::Free,
+            cfg: ListenConfig::new(opts),
+            addr: Addr::Ip(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
+            bound: None,
+            count: 0,
+            armed: false,
+            single: None,
+            backoff_ns: 0,
+            waiting: false,
+            close_sent: false,
+            bind_until: 0,
+            failed: None,
+        }
+    }
 }

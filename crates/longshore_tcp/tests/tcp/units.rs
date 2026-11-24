@@ -171,20 +171,16 @@ fn the_earliest_deadline_is_tracked_through_sets_and_clears() {
 }
 
 #[test]
-fn due_deadlines_fire_once_in_slot_order() {
+fn due_deadlines_are_handed_out_once_each_in_slot_order() {
     let mut d = Deadlines::new(5);
     for (slot, at) in [(0, 50), (1, 200), (2, 50), (4, 100)] {
         d.set(slot, at);
     }
-    let mut fired = Vec::new();
-    d.expire(49, |s| fired.push(s));
-    assert!(fired.is_empty());
-    d.expire(100, |s| fired.push(s));
-    assert_eq!(fired, [0, 2, 4]);
+    assert_eq!(d.next_due(49), None);
+    let due: Vec<u32> = std::iter::from_fn(|| d.next_due(100)).collect();
+    assert_eq!(due, [0, 2, 4]);
     assert_eq!((d.earliest(), d.get(0)), (Some(200), None));
-    fired.clear();
-    d.expire(100, |s| fired.push(s));
-    assert!(fired.is_empty(), "nothing fires twice");
-    d.expire(u64::MAX - 1, |s| fired.push(s));
-    assert_eq!((fired, d.earliest()), (vec![1], None));
+    assert_eq!(d.next_due(100), None, "nothing is due twice");
+    assert_eq!(d.next_due(u64::MAX - 1), Some(1));
+    assert_eq!(d.earliest(), None);
 }

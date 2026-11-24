@@ -7,7 +7,7 @@
 //! with peer addresses), the connection limit, and backing off after an
 //! accept fails.
 
-use super::state::{best_effort, ConnState, LSt, St, EV_ACCEPTED, EV_REFUSED};
+use super::state::{LSt, St, EV_ACCEPTED, EV_REFUSED, NONE};
 use super::Net;
 use crate::addr::Addr;
 use crate::config::ListenConfig;
@@ -47,7 +47,8 @@ impl<T: Transport> Net<T> {
         state.cfg = cfg;
         state.addr = addr;
         (state.bound, state.count, state.armed, state.single) = (None, 0, false, None);
-        (state.backoff_ns, state.failed) = (0, None);
+        (state.backoff_ns, state.waiting, state.close_sent) = (0, false, false);
+        state.failed = None;
         match self.bind(d, l) {
             Ok(()) => {}
             Err(e) if e == -EADDRINUSE && cfg.bind_retry_ns > 0 => {
@@ -109,27 +110,32 @@ impl<T: Transport> Net<T> {
             LSt::Binding => state.st = LSt::Free,
             LSt::Listening => {
                 state.st = LSt::Closing;
-                // Retried from `poll` if the driver has no room.
-                best_effort(self.t.close_listener(d, l));
+                self.send_listener_close(d, l);
             }
+        }
+    }
+
+    /// Hand the close of listener `l` to the transport, unless it has it
+    /// already. `poll` tries again when the driver has no room.
+    fn send_listener_close(&mut self, d: &mut T::Driver, l: u32) {
+        if !self.listeners[l as usize].close_sent && self.t.close_listener(d, l).is_ok() {
+            self.listeners[l as usize].close_sent = true;
         }
     }
 
     pub(super) fn on_listener_closed(&mut self, l: u32) {
         let state = &mut self.listeners[l as usize];
         state.st = LSt::Free;
-        state.armed = false;
+        (state.armed, state.close_sent) = (false, false);
     }
 
     /// Keep an accept running on listener `l`, if it should have one.
     pub(super) fn start_accept(&mut self, d: &mut T::Driver, l: u32) {
         let state = &self.listeners[l as usize];
-        if state.st == LSt::Closing && !state.armed && state.single.is_none() {
-            // The close found no room in the driver earlier.
-            best_effort(self.t.close_listener(d, l));
-            return;
+        if state.st == LSt::Closing {
+            return self.send_listener_close(d, l);
         }
-        if state.st != LSt::Listening || state.backoff_ns != 0 || self.draining.is_some() {
+        if state.st != LSt::Listening || state.waiting || self.draining.is_some() {
             return;
         }
         if !state.cfg.peer_addr {
@@ -160,11 +166,35 @@ impl<T: Transport> Net<T> {
             state.armed = armed;
         }
         state.backoff_ns = 0;
+        let c = &mut self.conns[slot as usize];
+        if c.st == St::Free {
+            self.occupy(d, slot, l);
+        } else {
+            // Every completion of the slot is its last connection's until
+            // that one is freed: nothing is started for the new one before.
+            c.parked = l;
+        }
+        self.start_accept(d, l);
+    }
+
+    /// The connection the kernel put in `slot` while the one before it
+    /// was still ending takes the slot, now that it is free.
+    pub(super) fn admit_parked(&mut self, d: &mut T::Driver, slot: u32) {
+        let c = &mut self.conns[slot as usize];
+        let l = core::mem::replace(&mut c.parked, NONE);
+        if l != NONE && c.st == St::Free {
+            self.occupy(d, slot, l);
+        }
+    }
+
+    /// Make `slot`, free until now, the connection listener `l` accepted.
+    fn occupy(&mut self, d: &mut T::Driver, slot: u32, l: u32) {
+        let state = &self.listeners[l as usize];
         let (cfg, listening) = (state.cfg, state.st == LSt::Listening);
         let unix = matches!(state.addr, Addr::Unix(_));
         let seed = self.cfg.sizes.seed ^ u64::from(slot);
         let c = &mut self.conns[slot as usize];
-        *c = ConnState::free(cfg.conn, seed);
+        c.renew(cfg.conn, seed);
         c.listener = l;
         c.unix = unix;
         c.sock_open = true;
@@ -187,7 +217,6 @@ impl<T: Transport> Net<T> {
         } else {
             self.admit(d, slot);
         }
-        self.start_accept(d, l);
     }
 
     /// Announce the accepted connection in `slot`: as a connection, or at
@@ -232,7 +261,7 @@ impl<T: Transport> Net<T> {
         }
         // Out of descriptors, most likely: wait before accepting again.
         let wait = (state.backoff_ns * 2).clamp(ACCEPT_BACKOFF_MIN_NS, ACCEPT_BACKOFF_MAX_NS);
-        state.backoff_ns = wait;
+        (state.backoff_ns, state.waiting) = (wait, true);
         let at = self.now.saturating_add(wait);
         self.deadlines.set(self.cfg.conns() + l, at);
     }
@@ -241,14 +270,11 @@ impl<T: Transport> Net<T> {
         let state = &mut self.listeners[l as usize];
         match state.st {
             LSt::Listening => {
-                // The wait after a failed accept is over; keep its length
-                // so that the next failure waits longer.
-                let waited = core::mem::take(&mut state.backoff_ns);
+                // The wait after a failed accept is over. Its length stays
+                // until an accept works, so that the next failure waits
+                // longer; `poll` tries again if the driver has no room.
+                state.waiting = false;
                 self.start_accept(d, l);
-                let after = &mut self.listeners[l as usize];
-                if !after.armed && after.single.is_none() {
-                    after.backoff_ns = waited;
-                }
             }
             LSt::Binding => match self.bind(d, l) {
                 Ok(()) => {}

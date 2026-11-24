@@ -20,7 +20,7 @@
 //! Completions only mark connections, and events and frames are pulled, so
 //! nothing can overflow and not pulling is itself backpressure.
 
-use crate::addr::{Addr, ServerName};
+use crate::addr::ServerName;
 use crate::config::{Config, ConnOpts};
 use crate::deadline::Deadlines;
 use crate::event::Event;
@@ -29,8 +29,7 @@ use crate::handle::Generations;
 use crate::transport::{Happened, Transport};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::{BufId, Limits};
-use state::{Chunk, ConnState, Keep, LSt, ListenerState, St, TxSpan, EV_CLOSED, EV_DOWN, NONE};
-use std::net::{Ipv4Addr, SocketAddr};
+use state::{Chunk, ConnState, Keep, ListenerState, St, TxSpan, EV_CLOSED, EV_DOWN, NONE};
 
 mod conn;
 mod frames;
@@ -57,6 +56,11 @@ pub struct Net<T: Transport> {
     /// Free send segments, as a stack of indexes.
     segs: Box<[u32]>,
     segs_len: usize,
+    /// Connections refused a send segment because none was free, as a
+    /// ring: one is told each time a segment returns.
+    seg_waiters: Box<[u32]>,
+    seg_wait_head: usize,
+    seg_wait_len: usize,
     /// Per ring buffer.
     chunks: Box<[Chunk]>,
     /// Ring buffers to give back on the next `poll`.
@@ -112,18 +116,7 @@ impl<T: Transport> Net<T> {
             len: 0,
             keep: Keep::Segment(0),
         };
-        let unused = ListenerState {
-            st: LSt::Free,
-            cfg: crate::config::ListenConfig::new(opts),
-            addr: Addr::Ip(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
-            bound: None,
-            count: 0,
-            armed: false,
-            single: None,
-            backoff_ns: 0,
-            bind_until: 0,
-            failed: None,
-        };
+        let unused = ListenerState::unused(opts);
         let chunk = Chunk {
             off: 0,
             len: 0,
@@ -142,6 +135,9 @@ impl<T: Transport> Net<T> {
             extents: Extents::new(cfg.frame_first, s.frames),
             segs: (0..s.segments).rev().collect(),
             segs_len: s.segments as usize,
+            seg_waiters: vec![0; conns as usize].into_boxed_slice(),
+            seg_wait_head: 0,
+            seg_wait_len: 0,
             chunks: vec![chunk; cfg.ring_count as usize].into_boxed_slice(),
             returns: vec![BufId::new(0); cfg.ring_count as usize].into_boxed_slice(),
             returns_len: 0,

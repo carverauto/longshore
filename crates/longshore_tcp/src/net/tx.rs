@@ -90,16 +90,50 @@ impl<T: Transport> Net<T> {
     /// A new span on a fresh segment, at the end of `slot`'s queue.
     fn push_segment(&mut self, slot: u32, len: u32) -> Result<BufId, SendError> {
         let c = &mut self.conns[slot as usize];
-        let top = self.segs_len.checked_sub(1);
-        let (Some(top), true) = (top, c.tx_len < self.cfg.sizes.spans) else {
+        if c.tx_len == self.cfg.sizes.spans {
+            // Its own next send to finish makes room.
             c.full = true;
             return Err(SendError::Full);
+        }
+        let Some(top) = self.segs_len.checked_sub(1) else {
+            // Any connection's next segment to return makes room.
+            c.full = true;
+            self.wait_for_segment(slot);
+            return Err(SendError::Full);
         };
+        c.full = false;
         self.segs_len = top;
         let index = self.segs[top];
         let buf = self.segment_buf(index);
         self.push_span(slot, Span::new(buf, 0, len), Keep::Segment(index));
         Ok(buf)
+    }
+
+    /// List `slot` among the connections waiting for a segment, once.
+    fn wait_for_segment(&mut self, slot: u32) {
+        let c = &mut self.conns[slot as usize];
+        if !c.seg_listed {
+            c.seg_listed = true;
+            let at = (self.seg_wait_head + self.seg_wait_len) % self.seg_waiters.len();
+            self.seg_waiters[at] = slot;
+            self.seg_wait_len += 1;
+        }
+    }
+
+    /// A segment is free again: tell the connection that has waited
+    /// longest and still waits.
+    fn segment_returned(&mut self) {
+        while self.seg_wait_len > 0 {
+            let slot = self.seg_waiters[self.seg_wait_head];
+            self.seg_wait_head = (self.seg_wait_head + 1) % self.seg_waiters.len();
+            self.seg_wait_len -= 1;
+            let c = &mut self.conns[slot as usize];
+            c.seg_listed = false;
+            if c.full && matches!(c.st, St::Up | St::Refused) {
+                c.full = false;
+                return self.mark_writable(slot);
+            }
+        }
     }
 
     fn push_span(&mut self, slot: u32, span: Span, keep: Keep) {
@@ -213,6 +247,9 @@ impl<T: Transport> Net<T> {
         if c.tx_len == 0 {
             self.tx_busy -= 1;
         }
+        if matches!(s.keep, Keep::Segment(_)) {
+            self.segment_returned();
+        }
     }
 
     /// Drop everything queued on `slot`.
@@ -221,7 +258,8 @@ impl<T: Transport> Net<T> {
             self.pop_span(slot);
         }
         let c = &mut self.conns[slot as usize];
-        (c.tx_head, c.full, c.shut) = (0, false, false);
+        (c.tx_head, c.full) = (0, false);
+        (c.shut, c.shut_sent) = (false, false);
     }
 
     /// Send what is queued on `conn`, then shut its write side down: the

@@ -139,14 +139,11 @@ impl<T: Transport> Net<T> {
         if c.st != St::Up {
             return self.try_free(slot);
         }
-        let mid_frame = c.hdr_have > 0 || (c.asm.is_some() && c.asm_have > 0);
         let Ok(n) = u32::try_from(result) else {
             return self.end(slot, Why::of(result));
         };
         if n == 0 {
-            // An end of stream inside a frame is a broken connection.
-            let why = if mid_frame { Why::Reset } else { Why::Orderly };
-            return self.end(slot, why);
+            return self.peer_finished(slot);
         }
         c.last_active = self.now;
         match (c.opts.framing, c.asm) {
@@ -226,12 +223,10 @@ impl<T: Transport> Net<T> {
         }
     }
 
-    /// The peer ended the stream: in order, unless inside a frame.
+    /// The peer ended the stream: in order, unless it turns out to have
+    /// ended inside a frame once the caller has pulled what was received.
     pub(super) fn peer_finished(&mut self, slot: u32) {
-        let c = &self.conns[slot as usize];
-        let mid_frame = c.hdr_have > 0 || c.asm.is_some();
-        let why = if mid_frame { Why::Reset } else { Why::Orderly };
-        self.end(slot, why);
+        self.end(slot, Why::Orderly);
     }
 
     /// Stop reading on `slot` until the caller releases frame memory.
@@ -269,6 +264,7 @@ impl<T: Transport> Net<T> {
         ];
         (c.hdr_have, c.asm_have, c.asm_len) = (0, 0, 0);
         (c.backlog_off, c.backlog_len, c.paused) = (0, 0, false);
+        c.unopened = false;
         for ext in held.into_iter().flatten() {
             // Net's own hold; frames the caller pulled keep theirs.
             best_effort(self.extents.release(ext));
