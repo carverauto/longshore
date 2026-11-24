@@ -22,6 +22,7 @@ pub mod contract_chains;
 pub mod contract_files;
 pub mod contract_net;
 pub mod engine;
+pub mod extents;
 pub use completion::{Completion, Completions};
 pub mod files;
 mod ids;
@@ -29,6 +30,7 @@ pub use files::{file_size, FileSlot, OpenFlags};
 pub use ids::{BufId, FileId, Sock, Token};
 pub mod limits;
 mod must;
+pub mod turn;
 pub use limits::Limits;
 #[cfg(unix)]
 pub mod posix;

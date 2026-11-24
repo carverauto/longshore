@@ -3,8 +3,8 @@
 - [x] 1.2 `Op::Accept` records the peer address; `Io::peer_addr(sock)` on all three backends
 - [x] 1.3 Keepalive idle, interval and count; `SO_REUSEPORT` and backlog on listen
 - [x] 1.4 `longshore_stream`: `Stream::on_ring_recv` for plain and TLS (records opened into the destination, a record continuing across ring buffers), with simulator tests
-- [ ] 1.5 `Extents` (hold counts and generations over the aligned buffer class) and `Turn` (token classes, storage-first dispatch) in `longshore_common`, with tests
-- [ ] 1.6 Real-kernel checks in `longshore-bench` for the above
+- [x] 1.5 `Extents` (hold counts and generations over the aligned buffer class) and `Turn` (token classes, storage-first dispatch) in `longshore_common`, with tests
+- [x] 1.6 Real-kernel checks in `longshore-bench` for the above
 
 ## 2. Crate and API
 - [ ] 2.1 `crates/longshore_tcp` (workspace member, lints, license headers, README); `longshore::tcp`
