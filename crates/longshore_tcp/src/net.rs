@@ -29,7 +29,7 @@ use crate::handle::Generations;
 use crate::transport::{Happened, Transport};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::{BufId, Limits};
-use state::{Chunk, ConnState, Keep, ListenerState, St, TxSpan, EV_CLOSED, EV_DOWN, NONE};
+use state::{Chunk, ConnState, Keep, ListenerState, St, TxSpan, NONE};
 
 mod conn;
 mod ending;
@@ -316,8 +316,8 @@ impl<T: Transport> Net<T> {
 
     /// Stop every `Up` connection from being told of an end twice.
     fn is_ending(&self, slot: u32) -> bool {
-        let c = &self.conns[slot as usize];
-        c.ev & (EV_CLOSED | EV_DOWN) != 0
-            || matches!(c.st, St::Dying | St::Closing | St::Free | St::Backoff)
+        // An end is owed only in `Dying`.
+        let st = self.conns[slot as usize].st;
+        matches!(st, St::Dying | St::Closing | St::Free | St::Backoff)
     }
 }

@@ -273,14 +273,11 @@ impl<T: Transport> Net<T> {
     /// stream had ended already: an end is in order only between frames.
     /// What is left of its input is dropped.
     pub(super) fn broke_framing(&mut self, slot: u32) {
-        self.drop_input(slot);
-        let c = &mut self.conns[slot as usize];
-        if c.st == St::Finishing {
-            c.why = Why::Protocol;
-            self.settle_end(slot);
-        } else {
-            self.end(slot, Why::Protocol);
+        if self.conns[slot as usize].st == St::Finishing {
+            return self.fail_finishing(slot, Why::Protocol, true);
         }
+        self.drop_input(slot);
+        self.end(slot, Why::Protocol);
     }
 
     /// Forget what `slot` received and did not deliver.

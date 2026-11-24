@@ -70,9 +70,7 @@ impl<T: Transport> Net<T> {
                     return self.deadlines.set(slot, active_until);
                 }
                 // Its caller left its last input unpulled for too long.
-                self.drop_input(slot);
-                self.conns[slot as usize].why = Why::Timeout;
-                self.settle_end(slot);
+                self.fail_finishing(slot, Why::Timeout, true);
             }
             St::Free | St::Refused | St::Dying | St::Closing => {}
         }
@@ -85,27 +83,14 @@ impl<T: Transport> Net<T> {
             return;
         }
         let c = &mut self.conns[slot as usize];
-        match c.st {
-            St::Refused | St::Securing => {
-                // Never reported as a connection, so nothing to report now.
-                c.why = why;
-                self.gens.retire(slot);
-                return self.begin_close(slot, false);
-            }
-            St::Finishing => {
-                // A failure after the stream's end is how it ends.
-                if c.why == Why::Orderly {
-                    c.why = why;
-                }
-                return self.settle_end(slot);
-            }
-            St::Free
-            | St::Connecting
-            | St::Up
-            | St::HalfClosed
-            | St::Dying
-            | St::Closing
-            | St::Backoff => {}
+        if matches!(c.st, St::Refused | St::Securing) {
+            // Never reported as a connection, so nothing to report now.
+            c.why = why;
+            self.gens.retire(slot);
+            return self.begin_close(slot, false);
+        }
+        if c.st == St::Finishing {
+            return self.fail_finishing(slot, why, false);
         }
         c.why = why;
         self.deadlines.clear(slot);
@@ -113,6 +98,21 @@ impl<T: Transport> Net<T> {
         if self.conns[slot as usize].st == St::Finishing {
             self.queue_event(slot, EV_READABLE);
         }
+    }
+
+    /// Something failed for `slot`, whose stream has ended with input
+    /// left: that is how it ends, unless an earlier failure already is.
+    /// With `drop_input` what is left of its input goes, and the end is
+    /// owed at once.
+    pub(super) fn fail_finishing(&mut self, slot: u32, why: Why, drop_input: bool) {
+        if drop_input {
+            self.drop_input(slot);
+        }
+        let c = &mut self.conns[slot as usize];
+        if c.why == Why::Orderly {
+            c.why = why;
+        }
+        self.settle_end(slot);
     }
 
     /// The stream of `slot` has ended, for the reason it holds. While
