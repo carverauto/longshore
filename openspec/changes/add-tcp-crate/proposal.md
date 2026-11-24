@@ -39,6 +39,11 @@ This is the first of three changes:
     released, ring-lent frames until the next `poll` unless held; a
     per-connection budget of held bytes pauses reading (backpressure
     without refusal).
+  - Frame memory is block-aligned extents with hold counts: a received
+    frame is written to a direct-I/O log and sent on to N peers from where
+    it was received (`send_lent`), so each payload byte moves once.
+  - A turn order for the owner's loop (`Turn`): storage completions before
+    network, one submission per turn for the log write, sync and sends.
   - Frames serialised by the caller straight into registered send memory;
     queued frames coalesced into one send; zero-copy send above a size.
   - Connect with timeout; reconnect with exponential backoff and jitter;

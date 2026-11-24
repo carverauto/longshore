@@ -18,6 +18,10 @@ Second of three changes (`add-tcp-crate`, this, `add-tcp-af-xdp-backend`).
   short writes, partial reads, delays, flipped bits, peers that close and
   listen again), with trace hashes per seed, covering framing, held frames
   and backpressure, reconnect, refusal, half-close and drain.
+- Storage and network faults in one run: power loss with torn writes
+  (the simulated disk) while frames are being received, logged from their
+  extents and replicated, checking that nothing is acknowledged before it
+  is durable and no extent is reused while held.
 - A packet-level simulated device for the transport seam, so that change
   3's user-space TCP can be tested deterministically too (loss,
   reordering, duplication, delay at the packet level).
@@ -26,7 +30,10 @@ Second of three changes (`add-tcp-crate`, this, `add-tcp-af-xdp-backend`).
 - Benchmarks: a `tcp_uring` tool and criterion benches measuring
   request/response latency (p50, p99, p999) at UltraGraphDB's frame sizes,
   one-way throughput per core with 64 KiB and 1 MiB frames, and connection
-  scale to 4,096, each against a plain `epoll` baseline on the same host.
+  scale to 4,096, each against a plain `epoll` baseline on the same host;
+  and the whole path, wire to durable to replicated to answered, with the
+  log written by write and sync against `O_DSYNC` writes on a preallocated
+  file, and the turn sleeping against spinning.
 - Defaults set from the results; results in `bench/results/`.
 
 ## Impact

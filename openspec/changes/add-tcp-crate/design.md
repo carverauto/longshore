@@ -83,9 +83,10 @@ across cores without a shared socket (replacing UltraGraphDB's dup).
 The `Io` backend owns the one buffer pool, sized by `Limits`: a large
 class, a small class and one buffer ring. `Net` allocates no buffer; its
 `Config` names what it uses in the shared `Io`: a range of socket slots
-(with the accept range inside it), a token base, a range of large buffers
-for frames, a range of buffers for send segments (small or large class), a
-range for TLS record buffers when TLS is used, and the shared buffer ring.
+(with the accept range inside it), a token base, a range of block-aligned
+buffers for frames (see extents below), a range of buffers for send
+segments (small or large class), a range for TLS record buffers when TLS
+is used, and the shared buffer ring.
 `Config::limits(base)` returns `Limits` with `Net`'s needs added (buffers,
 sockets, and operations: each connection in ring mode holds one operation
 for its armed receive), so an owner that also runs files or the S3 client
@@ -109,6 +110,21 @@ UltraGraphDB's is `{256, 40, 4, false, true, 1 MiB}`. A length below the
 header or above `max_frame` closes the connection with
 `Closed::Protocol`.
 
+### Frame memory is extents: received where it will rest
+Network buffers and log buffers are the same buffers. Frame memory is the
+`Io` pool's block-aligned class (sockets may receive into and send from
+it; only file operations require it), so a frame received in direct mode
+lies contiguous, header first, in a buffer a direct-I/O log write takes as
+it is, padded to the block size. An extent table in `longshore_common`
+(`Extents`) keeps, per aligned buffer, a hold count and a generation, both
+plain integers since one thread owns them: `Net` takes one hold when it
+delivers a frame, `release` drops it, and the caller adds holds of its own
+(the log until the write is durable, each peer's send queue until its send
+completes). The buffer is free at zero; a `FrameId` or span with an old
+generation is refused. Every payload byte is therefore moved once, by the
+kernel's receive copy, and never again: not into the log, not into send
+queues.
+
 ### Receiving: two modes, chosen per endpoint
 - `Rx::Ring` (many connections, small frames): one armed receive per
   connection from the `Io`'s buffer ring. A frame that lies whole inside
@@ -130,8 +146,8 @@ the bytes and `net.release(id)` returns the memory.
 - A frame lent from a ring buffer pins that whole buffer, and the ring is
   shared by every connection on the `Io`: an empty ring ends every armed
   receive with `-ENOBUFS`. So a ring-lent frame is valid until the caller's
-  next `poll`; `net.hold(id)` moves it into a frame buffer (one copy) to
-  keep it longer, and frames neither released nor held by then are released.
+  next `poll`; `net.hold(id)` moves it into an extent (one copy; several
+  small frames pack into one batch extent) to keep it longer, and frames neither released nor held by then are released.
   The ring therefore refills every turn whatever one consumer does.
 Each connection has a held-bytes budget counting the frame buffers it
 holds; at the budget the connection stops reading (its armed receive is
@@ -140,7 +156,11 @@ under. When the ring runs dry `Net` re-arms receives as buffers return.
 Nothing is refused.
 
 ### Sending
-`net.send_frame(conn, len, |buf| ..)` reserves `len` bytes in the
+A connection's send queue is a queue of spans `(buffer, offset, length)`.
+`net.send_lent(conn, frame, range)` queues a span on an extent the caller
+already holds, taking one more hold until the send completes: forwarding a
+received frame, or replicating it to N peers, copies nothing. For frames
+the caller builds, `net.send_frame(conn, len, |buf| ..)` reserves `len` bytes in the
 connection's send queue, which is a chain of send segments taken from a
 shared pool of registered buffers, and lets the caller serialise into them
 in place. Frames queued back to back in a segment go out as one send;
@@ -154,6 +174,22 @@ number of connections sending at once, at least. A full queue or an empty
 segment pool returns `SendError::Full`; `Event::Writable` follows when
 space frees. `send_bytes` does the same for `Framing::Bytes`. With TLS,
 the stream seals from the segment into its record buffer.
+
+### The turn
+The owner's loop has a fixed order, offered as a small helper (`Turn`) and
+documented for owners that write their own:
+1. collect: one `tick` submits everything queued and takes completions;
+2. storage completions first, so what became durable can be answered;
+3. network completions: sends, then receives, frames to the state machines;
+4. flush: the turn's log extents in one linked write and sync
+   (`submit_chain`), and `net.poll` for queued sends;
+5. sleep until `next_deadline`, or go again if work is queued.
+The turn is the group commit: frames received in turn N are written in turn
+N's one submission, together with the replies for turn N-1. Completions
+are dispatched by token class out of the batch already collected, so a
+sync completion never waits behind a burst of receives, without a second
+ring. The batch is bounded by the `Completions` capacity and the buffer
+ring's size, which bounds the turn.
 
 ### Connections over time
 - `connect(addr, opts)`: timeout; optional `Reconnect { base, max, jitter }`
@@ -227,6 +263,9 @@ All within Linux 6.1; options are set where the existing `no_delay` and
   two receives per frame. Both are kept and measured.
 
 ## Risks / Trade-offs
+- A log written in place from extents needs padding to the block size
+  between extents → the caller's log format must allow it (UltraGraphDB's
+  decision); small frames are packed into one batch extent instead.
 - Frames spanning ring buffers, and ring-lent frames the caller holds, are
   copied → bounded to those frames; links with large or parked frames use
   `Rx::Direct`; change 2 measures both.

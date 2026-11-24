@@ -4,13 +4,14 @@
 - [ ] 1.3 Decision recorded in `bench/results/` and `design.md`
 
 ## 2. AF_XDP plumbing (longshore_common, Linux)
-- [ ] 2.1 UMEM on huge pages, NUMA-local; fill, completion, receive and transmit rings; zero-copy and copy modes; need-wakeup and busy polling
+- [ ] 2.1 The `Io` pool on huge pages, NUMA-local, in 4 KiB chunks, registered as io_uring buffers and as UMEM; fill, completion, receive and transmit rings; zero-copy and copy modes; need-wakeup and busy polling
 - [ ] 2.2 XDP program: steer the program's flows to the XSK map, pass everything else; loading and unloading
 - [ ] 2.3 Multi-buffer frames for jumbo MTU; checksum offload where the driver has it
-- [ ] 2.4 Refusal checks: driver zero-copy support, privileges, kernel features; errors naming what is missing
+- [ ] 2.4 `Op::PollFd` (multishot poll on an outside descriptor) and the may-sleep rule in `Turn`
+- [ ] 2.5 Refusal checks: driver zero-copy support, privileges, kernel features; errors naming what is missing
 
 ## 3. XdpTransport
-- [ ] 3.1 `Transport` implementation: one socket per queue per core, connections, lent receive buffers from UMEM, send space in UMEM frames
+- [ ] 3.1 `Transport` implementation: one socket per queue per core, connections, the one move from receive chunks into extents (with the caller's optional pass), extents and segments transmitted in place
 - [ ] 3.2 User-space TCP from the spike: window scaling, SACK, timestamps, large windows, DCTCP with ECN and CUBIC, batched transmission
 - [ ] 3.3 Flow placement: RSS-aware source ports for connects; flow rules or per-queue listeners
 - [ ] 3.4 Neighbours and routes through netlink

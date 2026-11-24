@@ -18,6 +18,14 @@ SHALL be reported closed, never silently lost or duplicated.
 - **WHEN** bits are flipped on a TLS connection in the simulator
 - **THEN** the connection is closed with an error and no corrupted frame is delivered
 
+### Requirement: Storage and network faults together
+The simulator SHALL run a TCP set and file I/O on one backend under network
+faults and power loss in the same seeded run.
+
+#### Scenario: Power loss mid-turn
+- **WHEN** power is lost at a seeded point while frames are received, written from their extents and forwarded, over one thousand seeds
+- **THEN** after recovery every frame that was answered is in the log, and no extent was reused while a write or send still held it
+
 ### Requirement: Packet-level simulation for user-space transports
 The simulator SHALL offer a packet device with seeded loss, reordering,
 duplication and delay, so that a transport with its own TCP can be tested
@@ -29,7 +37,8 @@ deterministically behind the same API.
 
 ### Requirement: Defaults chosen by measurement
 The TCP set's defaults SHALL be chosen by recorded benchmarks: the receive
-mode, receive buffer size, zero-copy threshold and send segment size that
+mode, receive buffer size, zero-copy threshold, send segment size, log
+sync method and turn wait strategy that
 measure best for request-and-response at UltraGraphDB's frame sizes and
 for bulk transfer, recorded in `bench/results/` against an `epoll`
 baseline on the same host.

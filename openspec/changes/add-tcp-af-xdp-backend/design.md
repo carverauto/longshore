@@ -7,8 +7,9 @@ M3 Max VM; on download the kernel's receive copy dominates.
 
 ## Goals / Non-Goals
 - Goals: line rate on a 200 Gb/s NIC and as close as the hosts allow on
-  300 Gb/s, with fewer cores and lower p99 latency than kernel TCP; zero
-  copy from NIC to caller and back; the change 1 API unchanged.
+  300 Gb/s, with fewer cores and lower p99 latency than kernel TCP; one
+  move per payload byte on receive and none on transmit; the change 1 API
+  unchanged.
 - Non-Goals: Unix-domain sockets over AF_XDP (they stay on the kernel
   transport); sharing a connection between kernel TCP and the user-space
   stack; DPDK.
@@ -17,9 +18,23 @@ M3 Max VM; on download the kernel's receive copy dominates.
 - **AF_XDP, not DPDK**: in-kernel drivers, no NIC unbinding, other traffic
   stays with the kernel through `XDP_PASS`.
 - **One socket per queue per core**: the core that owns a queue owns its
-  rings, its connections and its share of UMEM; no locks, as everywhere in
-  longshore. UMEM is per core unless a shared UMEM measures better.
-- **Zero copy by default, copy mode on request**: copy mode exists for
+  rings and its connections; no locks, as everywhere in longshore.
+- **The pool is the UMEM**: each core's `Io` pool, on huge pages, is
+  registered as io_uring buffers and as that core's UMEM. Receive chunks
+  come from a class of the pool; extents (change 1) are transmitted in
+  place through multi-buffer descriptors. Nothing in the `Net` API or in
+  the caller changes: frames are still extents with hold counts.
+- **One move on receive**: payload is moved once from receive chunks into
+  its extent, where it is block-aligned for the log and contiguous for the
+  caller; the caller's checksum can run in the same pass. Receive is thus
+  not zero-copy and does not need to be: it costs what kernel TCP's one
+  copy costs, without the kernel's per-packet work.
+- **One wait point**: idle, the thread sleeps in its ring with a multishot
+  poll (`Op::PollFd`) armed on the AF_XDP socket; busy, it spins on the
+  queue and ticks the ring without waiting.
+- **Driver zero-copy mode by default, copy mode on request**: this is
+  AF_XDP's own setting (whether the driver copies packets between the NIC
+  and the UMEM), separate from the one move above. Copy mode exists for
   development hosts and VMs; production refuses rather than degrade
   silently.
 - **Flow placement**: on connect, choose a source port whose RSS hash lands
@@ -55,5 +70,8 @@ transport unless they choose otherwise.
 
 ## Open Questions
 - smoltcp extended, or a stack written in tree (settled by the spike).
-- Shared or per-core UMEM; huge page size (2 MiB or 1 GiB).
+- Huge page size (2 MiB or 1 GiB).
+- Whether transmit fragments may point anywhere inside an extent on every
+  target driver (to be verified on the NICs before the pool layout is
+  fixed).
 - Whether zcrx makes AF_XDP unnecessary on some of the target NICs.

@@ -3,7 +3,8 @@
 - [ ] 1.2 `Op::Accept` records the peer address; `Io::peer_addr(sock)` on all three backends
 - [ ] 1.3 Keepalive idle, interval and count; `SO_REUSEPORT` and backlog on listen
 - [ ] 1.4 `longshore_stream`: `Stream::on_ring_recv` for plain and TLS (records opened into the destination, a record continuing across ring buffers), with simulator tests
-- [ ] 1.5 Real-kernel checks in `longshore-bench` for the above
+- [ ] 1.5 `Extents` (hold counts and generations over the aligned buffer class) and `Turn` (token classes, storage-first dispatch) in `longshore_common`, with tests
+- [ ] 1.6 Real-kernel checks in `longshore-bench` for the above
 
 ## 2. Crate and API
 - [ ] 2.1 `crates/longshore_tcp` (workspace member, lints, license headers, README); `longshore::tcp`
@@ -11,7 +12,7 @@
 - [ ] 2.3 `Transport` trait with an associated `Driver`: slots, lent receive buffers, reserved send space, transport events; no backend types
 - [ ] 2.4 Framing: `Bytes` and `Header { .. }`, with the length bounds
 - [ ] 2.5 Frames: `FrameId`, `frame`, `release`, `hold` (ring-lent frames end at the next `poll` unless held), held-bytes budget pausing reads, re-arming after an empty ring
-- [ ] 2.6 Send queues: segments from a shared pool, `send_frame`/`send_bytes`, coalescing, zero-copy threshold, `Full` and `Writable`
+- [ ] 2.6 Send queues: segments from a shared pool, span queues, `send_lent`, `send_frame`/`send_bytes`, coalescing, zero-copy threshold, `Full` and `Writable`
 - [ ] 2.7 Deadlines: fixed table, `next_deadline`, connect/handshake/idle timeouts, a limit on segments sent per `poll`
 - [ ] 2.8 Connect with reconnect policy (backoff, seeded jitter, `Down`/`Up`); listen with reuse port, bind retry, connection limit and refusal slot, accept backoff, `peer_addr` (single accepts) and `peer(conn)`
 - [ ] 2.9 Close, `shutdown_write`, `drain`; closing reasons
@@ -26,7 +27,8 @@
 - [ ] 4.2 API over `UringIo` (real kernel) and `PosixIo`: TCP and Unix, with and without TLS; every scenario of the spec deltas
 - [ ] 4.3 Allocation check under `alloc_guard`
 - [ ] 4.4 File writes and syncs and a `Net` on one `Io`, completions routed by token
-- [ ] 4.5 The same exchange on `UringIo`, `PosixIo` and `SimIo` gives the same frames
+- [ ] 4.5 Receive, direct-I/O write and three lent sends of one frame without a copy; reuse only at zero holds
+- [ ] 4.6 The same exchange on `UringIo`, `PosixIo` and `SimIo` gives the same frames
 
 ## 5. Documentation
 - [ ] 5.1 `docs/tcp.md` (the API, the two receive modes, sizing), README section, crate docs with an example

@@ -68,6 +68,21 @@ frame memory it holds exceeds its held-bytes budget.
 - **WHEN** a connection in direct receive mode receives frames of up to the maximum frame size
 - **THEN** each frame's bytes are received straight into the memory lent to the caller
 
+### Requirement: One move per payload byte
+Frame memory SHALL be block-aligned buffers with a hold count and a
+generation each; a received frame SHALL be usable, where it was received,
+as the source of a direct-I/O file write and of sends to any number of
+connections, and its buffer SHALL be reused only when every hold is
+released.
+
+#### Scenario: Receive, log, replicate
+- **WHEN** a frame received in direct mode is written to a file with direct I/O and sent to three other connections
+- **THEN** the file and the three peers hold the frame's bytes, and the frame was not copied after it was received
+
+#### Scenario: Buffer reused only at zero holds
+- **WHEN** a frame is held by a file write and two sends, and they complete one after another
+- **THEN** its buffer returns to the pool after the last of them and not before, and an old `FrameId` for it is refused
+
 ### Requirement: Sending from registered memory
 The caller SHALL serialise each frame directly into registered send memory
 reserved by the set; the set SHALL send frames queued back to back with as
@@ -148,6 +163,15 @@ own completions.
 #### Scenario: Log writes and frames on one ring
 - **WHEN** one thread drives file writes and syncs and a TCP set on the same `Io`, routing completions by token
 - **THEN** every file operation and every frame completes correctly, and neither receives the other's completions
+
+### Requirement: Storage completions before network completions
+The turn helper SHALL dispatch a batch of completions by class, storage
+before network, and SHALL submit a turn's file writes, sync and sends
+together.
+
+#### Scenario: A sync behind a burst
+- **WHEN** one batch holds a file sync completion after two hundred receive completions
+- **THEN** the sync completion is dispatched first
 
 ### Requirement: Transports behind one API
 The set's API SHALL name no type of a particular backend, and the kernel

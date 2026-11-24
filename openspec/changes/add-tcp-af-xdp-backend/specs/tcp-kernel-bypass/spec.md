@@ -21,11 +21,15 @@ window scaling, selective acknowledgement, timestamps and loss recovery.
 - **WHEN** 100 GB are transferred each way between the AF_XDP transport and a Linux TCP peer while one packet in ten thousand is dropped and some are reordered
 - **THEN** the received bytes match the sent bytes on both sides
 
-### Requirement: Zero copy and memory at build
-The AF_XDP transport SHALL allocate its UMEM and rings when built, SHALL
-NOT allocate afterwards, and in zero-copy mode SHALL deliver received
-payload to the caller and take sent payload from the caller without
-copying it.
+### Requirement: One move on receive, none on transmit, memory at build
+The AF_XDP transport SHALL use the backend's buffer pool as its UMEM,
+allocated when built, SHALL NOT allocate afterwards, SHALL move received
+payload exactly once, into block-aligned frame memory, and SHALL transmit
+frames from frame memory without copying them.
+
+#### Scenario: Receive, log, replicate over AF_XDP
+- **WHEN** a frame received over the AF_XDP transport is written to a file with direct I/O and sent to three peers
+- **THEN** its payload was moved once on receive and not again
 
 #### Scenario: Allocation guard
 - **WHEN** traffic runs over the AF_XDP transport under `alloc_guard` after build
@@ -59,3 +63,12 @@ the results and the tuning that produced them SHALL be recorded in
 #### Scenario: Results recorded
 - **WHEN** the backend is declared ready
 - **THEN** `bench/results/` holds, per NIC: GB/s and cores at line rate, CPU per GB, and p50/p99 request latency for both transports, with host, NIC, driver, kernel and settings named
+
+### Requirement: One wait point
+A thread driving the AF_XDP transport and a ring SHALL sleep only in the
+ring, with the transport's socket armed there, and only when no source has
+work in flight.
+
+#### Scenario: Idle then traffic
+- **WHEN** the thread is asleep with nothing in flight and a packet arrives
+- **THEN** the thread wakes and delivers the frame, and while idle it used no CPU

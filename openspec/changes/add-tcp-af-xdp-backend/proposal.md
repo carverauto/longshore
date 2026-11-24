@@ -4,9 +4,10 @@
 At 200 and 300 Gb/s a NIC delivers 25 to 37.5 GB/s. Kernel TCP spends each
 core on the receive copy (`copy_to_user` was 58% of the client on an HTTPS
 download, milestone 28), softirq and interrupt work, and system-call
-boundaries, so line rate needs many cores. AF_XDP hands NIC queues' frames
-straight to user memory (UMEM) with zero copy; a TCP stack on the core that
-owns the queue then delivers payload in place. These NICs are benchmarked
+boundaries, so line rate needs many cores. AF_XDP hands NIC queues' packets
+straight to user memory (UMEM) without the kernel's stack; a TCP stack on
+the core that owns the queue then moves payload once into frame memory and
+transmits from it in place. These NICs are benchmarked
 routinely, so this backend is held to line-rate numbers, not a proof of
 concept.
 
@@ -14,11 +15,26 @@ Third of three changes (`add-tcp-crate`, `add-tcp-simulation-and-
 benchmarks`, this). The API from change 1 does not change.
 
 ## What Changes
-- `XdpTransport` behind the `Transport` seam: one AF_XDP socket per NIC
-  queue per core; UMEM on huge pages, NUMA-local to the NIC, registered at
-  build; fill, completion, receive and transmit rings; an XDP program that
+- `XdpTransport` behind the `Transport` seam, its `Driver` the core's
+  AF_XDP sockets: one socket per NIC queue per core; fill, completion,
+  receive and transmit rings; an XDP program that
   steers the program's flows to its sockets and passes all other traffic
   to the kernel.
+- One pool for both worlds: the `Io` buffer pool on huge pages,
+  NUMA-local to the NIC, laid out in 4 KiB chunks and registered both as
+  io_uring buffers and as the UMEM. Extents from change 1 are then
+  transmitted in place (packet headers in one fragment, payload fragments
+  pointing into the extent), and files and the S3 client keep running on
+  the thread's ring from the same memory.
+- One move on receive, as with kernel TCP: packets arrive in UMEM chunks
+  after their headers, which no direct-I/O write can take, so the
+  transport moves payload once into its extent, and the caller may fuse a
+  pass of its own (a checksum) into that move.
+- Waiting: `Op::PollFd`, a multishot poll on an outside descriptor, lets
+  the thread sleep in its one ring with the AF_XDP socket armed there when
+  idle, and spin on the NIC queue under load; the `Turn` helper asks each
+  source whether the thread may sleep. The same rule serves a polled NVMe
+  ring, which only needs attention while it has operations in flight.
 - A user-space TCP stack fit for 200 Gb/s: window scaling, SACK,
   timestamps, windows of several megabytes, a data-centre congestion
   control (DCTCP with ECN, and CUBIC), batched transmission, jumbo frames
@@ -30,13 +46,15 @@ benchmarks`, this). The API from change 1 does not change.
   neighbour (ARP/NDP) and route data read from the kernel.
 - TLS through the `longshore_tls` record layer, which does no I/O.
 - io_uring zero-copy receive (`zcrx`, Linux 6.15+) evaluated in the same
-  benchmarks as an option for kernel TCP.
+  benchmarks as an option for kernel TCP; its payload lands in pages the
+  kernel chooses, so it too is followed by the one move into an extent.
 - Tuning on physical hosts with 200 and 300 Gb/s NICs: queues, ring and
   batch sizes, busy polling, interrupt placement, huge pages, NUMA, core
   pinning; profiles and results in `bench/results/`.
 - Refusal, not fallback: missing driver support, privileges or kernel
   features make building the transport fail with an error naming what is
-  missing. Copy mode runs only when asked for.
+  missing. AF_XDP's copy mode (the driver copying packets between the NIC
+  and the UMEM) runs only when asked for.
 
 ## Impact
 - Affected specs: `tcp-kernel-bypass` (ADDED)
