@@ -88,5 +88,5 @@ pub use handle::{Conn, Generations, Listener};
 pub use kernel::KernelTransport;
 #[cfg(feature = "tls-core")]
 pub use kernel::Tls;
-pub use net::{Frame, Net};
+pub use net::{Frame, Net, Usage};
 pub use transport::{Happened, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED};

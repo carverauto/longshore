@@ -40,8 +40,10 @@ mod rx;
 mod secure;
 mod state;
 mod tx;
+mod usage;
 
 pub use frames::Frame;
+pub use usage::Usage;
 
 /// Connections and listeners over a transport `T`.
 pub struct Net<T: Transport> {
