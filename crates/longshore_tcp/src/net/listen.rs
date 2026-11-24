@@ -7,7 +7,7 @@
 //! with peer addresses), the connection limit, and backing off after an
 //! accept fails.
 
-use super::state::{LSt, St, EV_ACCEPTED, EV_REFUSED, NONE};
+use super::state::{LSt, ListenerState, St, EV_ACCEPTED, EV_REFUSED, NONE};
 use super::Net;
 use crate::addr::Addr;
 use crate::config::ListenConfig;
@@ -41,14 +41,15 @@ impl<T: Transport> Net<T> {
         if cfg.tls {
             self.fits_tls(&cfg.conn, false)?;
         }
-        let free = self.listeners.iter().position(|l| l.st == LSt::Free);
+        // A slot whose failed bind is still to be reported keeps its handle.
+        let unused = |l: &ListenerState| l.st == LSt::Free && l.failed.is_none();
+        let free = self.listeners.iter().position(unused);
         let l = free.ok_or(NetError::NoSlots)? as u32;
         let state = &mut self.listeners[l as usize];
         state.cfg = cfg;
         state.addr = addr;
         (state.bound, state.count, state.armed, state.single) = (None, 0, false, None);
         (state.backoff_ns, state.waiting, state.close_sent) = (0, false, false);
-        state.failed = None;
         match self.bind(d, l) {
             Ok(()) => {}
             Err(e) if e == -EADDRINUSE && cfg.bind_retry_ns > 0 => {
@@ -105,6 +106,8 @@ impl<T: Transport> Net<T> {
     pub(super) fn stop_listener(&mut self, d: &mut T::Driver, l: u32) {
         let state = &mut self.listeners[l as usize];
         self.deadlines.clear(self.cfg.conns() + l);
+        // Its handle is stale: there is nobody to report a failed bind to.
+        state.failed = None;
         match state.st {
             LSt::Free | LSt::Closing => {}
             LSt::Binding => state.st = LSt::Free,

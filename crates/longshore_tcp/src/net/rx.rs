@@ -105,6 +105,7 @@ impl<T: Transport> Net<T> {
         let header = &self.t.bytes(d, hbuf)[hoff as usize..hoff as usize + hl];
         let Ok(frame_len) = h.frame_len(header) else {
             self.end(slot, Why::Protocol);
+            self.drop_input(slot);
             return false;
         };
         let Some(ext) = self.extents.take() else {
@@ -133,6 +134,10 @@ impl<T: Transport> Net<T> {
             // Input the caller stopped pulling, or could not pull for
             // lack of frame memory: say so again.
             self.queue_event(slot, EV_READABLE);
+        }
+        if self.conns[slot as usize].starved {
+            // The end that was held back for it, behind that input.
+            self.owe_end(slot);
         }
         self.start_reading(d, slot);
     }

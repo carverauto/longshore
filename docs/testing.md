@@ -28,8 +28,8 @@ cargo bench -p longshore-bench --bench <name>   # criterion microbenchmarks (see
 `scripts/test-linux.sh` runs the real-kernel checks and needs no
 configuration. On Linux it builds the check programs and runs them on that
 machine. Elsewhere it starts a Linux container with `docker` or `podman`
-(`--runtime <program>` names another) and runs itself there, on the kernel
-of the container host. The list of checks is `scripts/linux-checks.sh`.
+and runs itself there, on the kernel of the container host. The list of
+checks is `scripts/linux-checks.sh`.
 
 For a kernel or hardware the machine at hand does not have, it then runs
 the same checks on other machines over SSH: those listed in

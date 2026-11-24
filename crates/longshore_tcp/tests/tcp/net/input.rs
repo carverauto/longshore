@@ -9,6 +9,7 @@
 //! from it than can be counted.
 
 use super::*;
+use longshore_common::io::extents::Extent;
 
 /// Turn until the server has events for `conn`, and pull every frame of
 /// each `Readable`. Anything but `Readable` for `conn` ends it: that event.
@@ -215,4 +216,74 @@ fn a_connection_closed_with_input_left_unpulled_owes_no_event() {
         w.turn();
         while w.client.next_event().is_some() {}
     }
+}
+
+/// All of a frame that is only a header has arrived in pieces, and the
+/// end of the stream behind it, while all frame memory is in use
+/// elsewhere: the frame has nowhere to go. The connection at the server,
+/// whose connections have the options `accepted`, and that frame memory.
+fn ended_without_frame_memory(w: &mut World, accepted: ConnOpts) -> (Conn, Vec<Extent>) {
+    let _: Listener = w.listen(ListenConfig::new(accepted));
+    let (c, s) = w.connect(prefix());
+    let elsewhere = std::iter::from_fn(|| w.server.extents().take()).collect();
+    // A length prefix of zero, two bytes at a time, and then the end.
+    assert!(send(w, c, &[0, 0]));
+    for _ in 0..20 {
+        w.turn();
+        while let Some(e) = w.server.next_event() {
+            assert_eq!(e, Event::Readable(s));
+            assert!(w.pull_all(s).is_empty(), "half a header is no frame");
+        }
+    }
+    assert!(send(w, c, &[0, 0]));
+    w.client.shutdown_write(&mut w.io, c).unwrap();
+    (s, elsewhere)
+}
+
+#[test]
+fn an_end_whose_last_frame_finds_no_frame_memory_waits_for_it_and_loses_nothing() {
+    let mut w = World::new(9, Faults::NONE);
+    let (s, elsewhere) = ended_without_frame_memory(&mut w, prefix());
+    // However often the caller pulls, the end is not told before the frame.
+    let mut asked = 0;
+    for _ in 0..400 {
+        w.turn();
+        while w.client.next_event().is_some() {}
+        while let Some(e) = w.server.next_event() {
+            assert_eq!(e, Event::Readable(s));
+            assert!(w.pull_all(s).is_empty(), "a frame without frame memory");
+            asked += 1;
+        }
+    }
+    assert!(asked > 0, "the input was never offered");
+    for ext in elsewhere {
+        assert_eq!(w.server.extents().release(ext), Ok(true));
+    }
+    let mut got = Vec::new();
+    let ended = pull_until_other(&mut w, s, &mut got);
+    assert_eq!(got, [prefixed(0, 0)]);
+    let orderly = Event::Closed {
+        conn: s,
+        why: Why::Orderly,
+    };
+    assert_eq!(ended, orderly);
+}
+
+#[test]
+fn an_end_waiting_for_frame_memory_is_told_at_the_idle_timeout() {
+    let mut w = World::new(9, Faults::NONE);
+    let idle = prefix().with_idle_timeout_ns(50 * MS);
+    // Frame memory that is never given back.
+    let (s, elsewhere) = ended_without_frame_memory(&mut w, idle);
+    let started = w.io.now_ns();
+    let mut got = Vec::new();
+    let ended = pull_until_other(&mut w, s, &mut got);
+    assert!(got.is_empty(), "a frame without frame memory");
+    let timed_out = Event::Closed {
+        conn: s,
+        why: Why::Timeout,
+    };
+    assert_eq!(ended, timed_out);
+    assert!(w.io.now_ns() - started >= 50 * MS);
+    assert_eq!(elsewhere.len(), 8);
 }

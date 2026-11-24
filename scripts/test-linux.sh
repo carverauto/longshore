@@ -6,16 +6,15 @@
 
 # Runs the real-kernel checks. Needs no configuration.
 #
-#   scripts/test-linux.sh [--runtime <program>] [<rust-target> <ssh-destination>]...
+#   scripts/test-linux.sh [<rust-target> <ssh-destination>]...
 #
 # io_uring code is only compiled for Linux, so `cargo test` on a Mac never
 # executes it. This script builds the check programs and runs them
 # (`scripts/linux-checks.sh`) on a Linux kernel:
 #
 # - On Linux: on this machine.
-# - Elsewhere: in a Linux container, with `docker` or `podman` (or the
-#   program given with --runtime), on the kernel of the container host. The
-#   container runs this same script.
+# - Elsewhere: in a Linux container, with `docker` or `podman`, on the
+#   kernel of the container host. The container runs this same script.
 #
 # Then it runs them on every other machine it is told of, over SSH, for a
 # kernel or hardware this machine does not have: the machines listed in
@@ -43,62 +42,74 @@ for line in sys.stdin:
 ' | tail -n 1
 }
 
+# Where cargo puts what it builds, as cargo itself tells it.
+target_dir() {
+    cargo metadata --format-version 1 --no-deps | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["target_directory"])
+'
+}
+
 # Build every check program, for the Rust target $1 (this machine's when
-# empty), and gather them in the directory $2.
+# empty), and gather them in the directory $2 of cargo's target directory.
+# Every step is checked by hand: the caller may be where `set -e` is off.
 stage() {
     target_flag=""
-    out="${CARGO_TARGET_DIR:-target}/release"
+    built=$(target_dir) || return 1
+    [ -n "$built" ] || return 1
+    out="$built/release"
     if [ -n "$1" ]; then
         target_flag="--target $1"
-        out="${CARGO_TARGET_DIR:-target}/$1/release"
+        out="$built/$1/release"
     fi
+    staged="$built/$2"
     bins=""
     for p in $PROGRAMS; do bins="$bins --bin $p"; done
     # $target_flag and $bins are lists of words.
     # shellcheck disable=SC2086
-    cargo build --release --quiet $target_flag -p longshore-bench $bins
+    cargo build --release --quiet $target_flag -p longshore-bench $bins || return 1
     # Built apart from the rest: its feature lets a test break a ring, and
     # no other program is built with that in it.
     bins=""
     for p in $FAULT_PROGRAMS; do bins="$bins --bin $p"; done
     # shellcheck disable=SC2086
-    cargo build --release --quiet $target_flag -p longshore-bench --features fault-injection $bins
+    cargo build --release --quiet $target_flag -p longshore-bench --features fault-injection $bins || return 1
     # shellcheck disable=SC2086
-    e2e_fi=$(e2e_bin $target_flag -p longshore --features "sim,fault-injection" --test e2e)
+    e2e_fi=$(e2e_bin $target_flag -p longshore --features "sim,fault-injection" --test e2e) || return 1
     # shellcheck disable=SC2086
-    e2e_notls=$(e2e_bin $target_flag -p longshore --no-default-features --features sim --test e2e)
-    [ -n "$e2e_fi" ] && [ -x "$e2e_fi" ]
-    [ -n "$e2e_notls" ] && [ -x "$e2e_notls" ]
-    rm -rf "$2"
-    mkdir -p "$2"
-    for p in $PROGRAMS $FAULT_PROGRAMS; do cp "$out/$p" "$2/"; done
-    cp "$e2e_fi" "$2/e2e_sim_fi"
-    cp "$e2e_notls" "$2/e2e_notls_sim"
-    cp scripts/linux-checks.sh "$2/"
+    e2e_notls=$(e2e_bin $target_flag -p longshore --no-default-features --features sim --test e2e) || return 1
+    [ -n "$e2e_fi" ] || return 1
+    [ -x "$e2e_fi" ] || return 1
+    [ -n "$e2e_notls" ] || return 1
+    [ -x "$e2e_notls" ] || return 1
+    rm -rf "$staged" || return 1
+    mkdir -p "$staged" || return 1
+    for p in $PROGRAMS $FAULT_PROGRAMS; do cp "$out/$p" "$staged/" || return 1; done
+    cp "$e2e_fi" "$staged/e2e_sim_fi" || return 1
+    cp "$e2e_notls" "$staged/e2e_notls_sim" || return 1
+    cp scripts/linux-checks.sh "$staged/" || return 1
 }
 
 # The checks on this machine, which runs Linux.
 run_here() {
     echo "== $(uname -m), Linux $(uname -r), on this machine"
-    staged="${CARGO_TARGET_DIR:-target}/linux-checks"
-    stage "" "$staged"
+    stage "" linux-checks
     sh "$staged/linux-checks.sh" "$staged" "$PWD"
     echo "== on this machine: ok"
 }
 
 # The checks in a Linux container: this script again, where it is `run_here`.
 run_in_container() {
+    runtime=""
+    for candidate in docker podman; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            runtime="$candidate"
+            break
+        fi
+    done
     if [ -z "$runtime" ]; then
-        for candidate in docker podman; do
-            if command -v "$candidate" >/dev/null 2>&1; then
-                runtime="$candidate"
-                break
-            fi
-        done
-    fi
-    if [ -z "$runtime" ] || ! command -v "$runtime" >/dev/null 2>&1; then
-        echo "ERROR: this is not Linux and no container runtime (${runtime:-docker, podman}) was found; io_uring was not exercised." >&2
-        echo "ERROR: install Docker or OrbStack, or name a runtime with --runtime." >&2
+        echo "ERROR: this is not Linux and no container runtime (docker, podman) was found; io_uring was not exercised." >&2
+        echo "ERROR: install Docker, OrbStack or Podman." >&2
         exit 1
     fi
     echo "== in a container ($runtime, $IMAGE)"
@@ -115,37 +126,37 @@ run_in_container() {
 }
 
 # The checks on the machine $2, built for the Rust target $1, over SSH.
+# A step that fails fails the machine: nothing is run from an earlier build.
 run_on_host() {
     id="gate-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)-$$"
     # -n: ssh must not read the host list that the caller's loop is reading.
     ssh_n="ssh -n -o BatchMode=yes -o ConnectTimeout=10"
     ssh_raw="ssh -o BatchMode=yes -o ConnectTimeout=10"
     echo "== $1 on $2"
-    staged="${CARGO_TARGET_DIR:-target}/$1/linux-checks"
-    stage "$1" "$staged"
-    $ssh_n "$2" "mkdir -p longshore-bench/$id/repo"
-    scp -q -o BatchMode=yes "$staged"/* "$2:longshore-bench/$id/" </dev/null
-    COPYFILE_DISABLE=1 tar -cf - --exclude=target --exclude=.git . | $ssh_raw "$2" "tar -xf - -C longshore-bench/$id/repo"
+    stage "$1" "$1/linux-checks" || return 1
     status=0
-    $ssh_n "$2" "cd longshore-bench/$id && sh linux-checks.sh . repo" || status=$?
-    $ssh_n "$2" "rm -rf longshore-bench/$id" || true
-    if [ "$status" -ne 0 ]; then
-        echo "== $1 on $2: FAILED" >&2
-        return 1
+    $ssh_n "$2" "mkdir -p longshore-bench/$id/repo" || return 1
+    scp -q -o BatchMode=yes "$staged"/* "$2:longshore-bench/$id/" </dev/null || status=$?
+    if [ "$status" -eq 0 ]; then
+        packed=$(mktemp) || return 1
+        COPYFILE_DISABLE=1 tar -cf "$packed" --exclude=target --exclude=.git . || status=$?
+        if [ "$status" -eq 0 ]; then
+            $ssh_raw "$2" "tar -xf - -C longshore-bench/$id/repo" <"$packed" || status=$?
+        fi
+        rm -f "$packed"
     fi
+    if [ "$status" -eq 0 ]; then
+        $ssh_n "$2" "cd longshore-bench/$id && sh linux-checks.sh . repo" || status=$?
+    fi
+    $ssh_n "$2" "rm -rf longshore-bench/$id" || true
+    [ "$status" -eq 0 ] || return 1
     echo "== $1 on $2: ok"
 }
 
-runtime=""
 only_here=0
 hosts=$(grep -v '^[[:space:]]*\(#\|$\)' scripts/test-hosts || true)
 while [ $# -gt 0 ]; do
     case "$1" in
-        --runtime)
-            [ $# -ge 2 ] || { echo "ERROR: --runtime needs a program" >&2; exit 2; }
-            runtime="$2"
-            shift 2
-            ;;
         # What the container is started with: this machine and no other.
         --here)
             only_here=1
@@ -183,7 +194,10 @@ failed=0
 if [ -n "$hosts" ]; then
     # Read the host list on descriptor 3 so nothing in the loop can consume it.
     while read -r target dest <&3; do
-        run_on_host "$target" "$dest" || failed=$((failed + 1))
+        if ! run_on_host "$target" "$dest"; then
+            echo "== $target on $dest: FAILED" >&2
+            failed=$((failed + 1))
+        fi
     done 3<<HOSTS
 $hosts
 HOSTS

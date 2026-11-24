@@ -12,7 +12,7 @@
 //! header that arrives in pieces.
 
 use super::frames::{Frame, Mem};
-use super::state::{best_effort, St, EV_READABLE, NONE, W_READ};
+use super::state::{best_effort, St, EV_CLOSED, EV_DOWN, EV_READABLE, NONE, W_READ};
 use super::Net;
 use crate::config::Rx;
 use crate::event::{NetError, Why};
@@ -245,13 +245,41 @@ impl<T: Transport> Net<T> {
     }
 
     /// No frame memory: stop reading, and try again on the next `poll`.
+    /// A connection that has ended keeps its end back until then, so that
+    /// what it received is not lost with it.
     fn out_of_memory(&mut self, d: &mut T::Driver, slot: u32) -> Cut {
-        if self.conns[slot as usize].st == St::Up {
-            self.pause(d, slot);
-            self.conns[slot as usize].paused = false;
-            self.add_work(slot, W_READ);
+        match self.conns[slot as usize].st {
+            St::Up => {
+                self.pause(d, slot);
+                self.conns[slot as usize].paused = false;
+                self.add_work(slot, W_READ);
+            }
+            St::Dying if self.has_input(slot) => self.hold_end(slot),
+            St::Free
+            | St::Connecting
+            | St::Securing
+            | St::Refused
+            | St::Dying
+            | St::Closing
+            | St::Backoff => {}
         }
         Cut::Stop
+    }
+
+    /// Take back the end owed for the ended `slot` until the next `poll`
+    /// offers its input again. The idle timeout, counted from the first
+    /// time, bounds the wait for frame memory.
+    fn hold_end(&mut self, slot: u32) {
+        let c = &mut self.conns[slot as usize];
+        c.ev &= !(EV_CLOSED | EV_DOWN);
+        if !c.starved {
+            c.starved = true;
+            let idle = c.opts.idle_timeout_ns;
+            if idle > 0 {
+                self.deadlines.set(slot, self.now.saturating_add(idle));
+            }
+        }
+        self.add_work(slot, W_READ);
     }
 
     /// Forget what `slot` received and did not deliver: its framing broke.

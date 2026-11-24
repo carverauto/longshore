@@ -41,12 +41,16 @@ const DST_PIECE: u32 = RING_DST_MIN + 1000;
 /// What is left of a destination that is nearly full: no record fits.
 const TIGHT: u32 = 64;
 
+/// Buffers just large enough for TLS: the receive buffer ends soon behind
+/// what a handshake's own receive leaves in it.
+const SMALL: u32 = 48_000;
+
 #[cfg(test)]
-fn limits(ring_buffer_size: u32) -> Limits {
+fn limits(ring_buffer_size: u32, buffer_size: u32) -> Limits {
     Limits::BASE
         .with_sockets_max(3)
         .with_buffers(6)
-        .with_buffer_size(BUF)
+        .with_buffer_size(buffer_size)
         .with_ring_buffers(4)
         .with_ring_buffer_size(ring_buffer_size)
         .with_ops_max(8)
@@ -60,9 +64,10 @@ struct Pair {
 }
 
 #[cfg(test)]
-/// A connected pair; with `tls`, past the handshake.
-fn pair(seed: u64, faults: Faults, ring_buffer_size: u32, tls: bool) -> Pair {
-    let mut io = SimIo::new(limits(ring_buffer_size), seed, faults);
+/// A backend with `CLIENT` and `SERVER` connected, and buffers of
+/// `buffer_size`.
+fn connected(seed: u64, faults: Faults, ring_buffer_size: u32, buffer_size: u32) -> SimIo {
+    let mut io = SimIo::new(limits(ring_buffer_size, buffer_size), seed, faults);
     let _: SocketAddr = io.listen(LISTENER, ADDR).unwrap();
     let accept = Op::Accept {
         listener: LISTENER,
@@ -83,32 +88,94 @@ fn pair(seed: u64, faults: Faults, ring_buffer_size: u32, tls: bool) -> Pair {
             up += 1;
         }
     }
-    let mut client = Stream::new(CLIENT, C_SEND, C_RECV);
-    let mut server = Stream::new(SERVER, S_SEND, S_RECV);
-    if tls {
-        let k = rcgen::generate_simple_self_signed(vec![NAME.to_string()]).unwrap();
-        let (cert, key) = (k.cert.der().to_vec(), k.signing_key.serialize_der());
-        let cs = ClientSetup::with_roots(&[&cert]).unwrap();
-        let ss = ServerSetup::new(&[&cert], &key).unwrap();
-        client = client.with_tls_buffers(C_TLS_TX, C_TLS_RX, BUF, BUF, 4096);
-        server = server.with_tls_buffers(S_TLS_TX, S_TLS_RX, BUF, BUF, 4096);
-        let mut c = client.start_handshake(&mut io, Handshake::client(&cs, NAME).unwrap());
-        let mut s = server.start_handshake(&mut io, Handshake::server(&ss).unwrap());
-        while matches!(c, Step::Pending) || matches!(s, Step::Pending) {
-            io.tick(true, &mut out).unwrap();
-            while let Some(done) = out.pop() {
-                match done.token() {
-                    C_SEND => c = client.on_handshake(&mut io, true, done.result()),
-                    C_RECV => c = client.on_handshake(&mut io, false, done.result()),
-                    S_SEND => s = server.on_handshake(&mut io, true, done.result()),
-                    S_RECV => s = server.on_handshake(&mut io, false, done.result()),
-                    other => panic!("unexpected token {other:?}"),
-                }
+    io
+}
+
+#[cfg(test)]
+/// Streams with TLS buffers of `cap` on the connected `io`, and the first
+/// step of each one's handshake.
+fn start_tls(mut io: SimIo, cap: u32) -> (Pair, Step, Step) {
+    let k = rcgen::generate_simple_self_signed(vec![NAME.to_string()]).unwrap();
+    let (cert, key) = (k.cert.der().to_vec(), k.signing_key.serialize_der());
+    let cs = ClientSetup::with_roots(&[&cert]).unwrap();
+    let ss = ServerSetup::new(&[&cert], &key).unwrap();
+    let mut client =
+        Stream::new(CLIENT, C_SEND, C_RECV).with_tls_buffers(C_TLS_TX, C_TLS_RX, cap, cap, 4096);
+    let mut server =
+        Stream::new(SERVER, S_SEND, S_RECV).with_tls_buffers(S_TLS_TX, S_TLS_RX, cap, cap, 4096);
+    let c = client.start_handshake(&mut io, Handshake::client(&cs, NAME).unwrap());
+    let s = server.start_handshake(&mut io, Handshake::server(&ss).unwrap());
+    (Pair { io, client, server }, c, s)
+}
+
+#[cfg(test)]
+/// A connected pair; with `tls`, past the handshake.
+fn pair(seed: u64, faults: Faults, ring_buffer_size: u32, tls: bool) -> Pair {
+    let io = connected(seed, faults, ring_buffer_size, BUF);
+    if !tls {
+        return Pair {
+            io,
+            client: Stream::new(CLIENT, C_SEND, C_RECV),
+            server: Stream::new(SERVER, S_SEND, S_RECV),
+        };
+    }
+    let (mut p, mut c, mut s) = start_tls(io, BUF);
+    let mut out = Completions::new(8);
+    while matches!(c, Step::Pending) || matches!(s, Step::Pending) {
+        p.io.tick(true, &mut out).unwrap();
+        while let Some(done) = out.pop() {
+            let result = done.result();
+            match done.token() {
+                C_SEND => c = p.client.on_handshake(&mut p.io, true, result),
+                C_RECV => c = p.client.on_handshake(&mut p.io, false, result),
+                S_SEND => s = p.server.on_handshake(&mut p.io, true, result),
+                S_RECV => s = p.server.on_handshake(&mut p.io, false, result),
+                other => panic!("unexpected token {other:?}"),
             }
         }
-        assert_eq!((c, s), (Step::Done(0), Step::Done(0)));
     }
-    Pair { io, client, server }
+    assert_eq!((c, s), (Step::Done(0), Step::Done(0)));
+    p
+}
+
+#[cfg(test)]
+/// A pair past a handshake whose server took its last step only once the
+/// client, done before it, had sent `data` right behind its own: the
+/// server's handshake receives the start of `data`, cut short anywhere.
+fn pair_with_data_behind_the_handshake(seed: u64, ring_buffer_size: u32, data: &[u8]) -> Pair {
+    let io = connected(seed, Faults::NONE, ring_buffer_size, SMALL);
+    let (mut p, mut c, mut s) = start_tls(io, SMALL);
+    let mut out = Completions::new(8);
+    // The server is not told that its flight is sent until the data is.
+    let (mut flight_sent, mut sending, mut sent) = (None, false, false);
+    while matches!(s, Step::Pending) {
+        p.io.tick(true, &mut out).unwrap();
+        while let Some(done) = out.pop() {
+            let result = done.result();
+            match done.token() {
+                C_SEND if sending => {
+                    sent = matches!(p.client.on_send(&mut p.io, result), Step::Done(_));
+                }
+                C_SEND => c = p.client.on_handshake(&mut p.io, true, result),
+                C_RECV => c = p.client.on_handshake(&mut p.io, false, result),
+                S_SEND => flight_sent = Some(result),
+                S_RECV => s = p.server.on_handshake(&mut p.io, false, result),
+                other => panic!("unexpected token {other:?}"),
+            }
+            if c == Step::Done(0) && !sending {
+                sending = true;
+                p.io.buf(C_TX)[..data.len()].copy_from_slice(data);
+                p.client.send(&mut p.io, C_TX, 0, data.len() as u32, 4096);
+            }
+        }
+        if let Some(result) = flight_sent.filter(|_| sent) {
+            flight_sent = None;
+            p.io.set_faults(Faults::NONE.with_partial_recv(900_000));
+            s = p.server.on_handshake(&mut p.io, true, result);
+        }
+    }
+    assert_eq!((c, s), (Step::Done(0), Step::Done(0)));
+    p
 }
 
 #[cfg(test)]
@@ -177,10 +244,17 @@ fn transfer_into(
     sink.feed(p, S_DST, 0)?;
     p.io.buf(C_TX)[..data.len()].copy_from_slice(data);
     p.client.send(&mut p.io, C_TX, 0, data.len() as u32, 4096);
+    receive(p, sink, data.len(), close_after)
+}
+
+#[cfg(test)]
+/// Receive on the server, through an armed receive, until `sink` has `len`
+/// bytes (and, with `close_after`, the close alert the client then sends).
+fn receive(p: &mut Pair, mut sink: Sink, len: usize, close_after: bool) -> Result<Sink, TlsError> {
     p.io.submit(S_RECV, Op::ArmedRecv { sock: SERVER }).unwrap();
     let mut out = Completions::new(8);
     let mut closing = false;
-    while sink.got.len() < data.len() || (close_after && !sink.closed) {
+    while sink.got.len() < len || (close_after && !sink.closed) {
         p.io.tick(true, &mut out).unwrap();
         while let Some(c) = out.pop() {
             match c.token() {
@@ -284,4 +358,24 @@ fn a_plain_stream_passes_ring_bytes_through() {
     let data = pattern(30_000, 4);
     let sink = transfer(&mut p, &data, false).unwrap();
     assert!(sink.got == data);
+}
+
+#[test]
+fn records_received_by_the_handshake_are_carried_within_the_receive_buffer() {
+    // Two whole records and most of a third, sent right behind the
+    // handshake: where the handshake's receive stops in the third, the
+    // rest of it does not fit behind what is carried.
+    let data = pattern(SMALL as usize, 8);
+    for seed in 0..40 {
+        let mut p = pair_with_data_behind_the_handshake(seed, 16_384, &data);
+        let mut sink = Sink {
+            got: Vec::new(),
+            closed: false,
+            tight: false,
+            kept: 0,
+        };
+        sink.feed(&mut p, S_DST, 0).unwrap();
+        let sink = receive(&mut p, sink, data.len(), false).unwrap();
+        assert!(sink.got == data, "seed {seed}");
+    }
 }

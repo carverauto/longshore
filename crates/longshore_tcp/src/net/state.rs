@@ -128,6 +128,10 @@ pub(super) struct ConnState {
     /// connection stays up, reading no more, until the records received
     /// have been opened: one of them may be the alert.
     pub(super) cut_off: bool,
+    /// Ended, with input that found no frame memory when it was pulled:
+    /// the caller is told of the end once that input has been pulled, or
+    /// at the idle timeout.
+    pub(super) starved: bool,
     pub(super) hdr_have: u32,
     /// A frame being put together in frame memory.
     pub(super) asm: Option<Extent>,
@@ -186,6 +190,7 @@ impl ConnState {
             paused: false,
             unopened: false,
             cut_off: false,
+            starved: false,
             hdr_have: 0,
             asm: None,
             asm_have: 0,

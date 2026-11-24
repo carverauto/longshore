@@ -11,6 +11,7 @@ use longshore_common::io::alloc_guard::sealed;
 use longshore_common::io::{Io, EADDRINUSE};
 use longshore_common::sim::Faults;
 use longshore_tcp::{Conn, Event, ListenConfig, Listener, NetError, Why};
+use std::net::SocketAddr;
 
 /// Turn until the server accepts a connection; the listener and the
 /// connection. Connections coming up and ending on the way are ignored.
@@ -116,6 +117,42 @@ fn a_bind_still_refused_at_its_deadline_is_reported() {
     });
     assert_eq!(failed, Some((waiting, -EADDRINUSE)));
     assert!(w.io.now_ns() - started >= 20 * MS);
+}
+
+#[test]
+fn a_listener_slot_with_a_failed_bind_to_report_is_not_given_out_again() {
+    let mut w = World::new(6, Faults::NONE);
+    let _: Listener = w.listen(ListenConfig::new(prefix()));
+    let waiting = w.listen(ListenConfig::new(prefix()).with_bind_retry_ns(20 * MS));
+    // The retry time runs out while the caller does not look at its events.
+    for _ in 0..400 {
+        w.turn();
+    }
+    // It listens elsewhere first. The slot of the failed bind is not free
+    // before the failure has been reported: its handle is still the
+    // caller's.
+    let other = SocketAddr::new(ADDR.ip(), ADDR.port() + 1);
+    let early = w
+        .server
+        .listen(&mut w.io, other, ListenConfig::new(prefix()));
+    assert_eq!(early, Err(NetError::NoSlots));
+    let failed = Event::ListenFailed {
+        listener: waiting,
+        errno: -EADDRINUSE,
+    };
+    assert_eq!(w.server.next_event(), Some(failed));
+    assert_eq!(w.server.next_event(), None);
+    let next = w
+        .server
+        .listen(&mut w.io, other, ListenConfig::new(prefix()))
+        .unwrap();
+    assert_ne!(next, waiting);
+    assert_eq!(w.server.listener_addr(next), Some(other));
+    // The old handle names nothing, least of all the new listener.
+    assert_eq!(w.server.listener_addr(waiting), None);
+    let stale = w.server.close_listener(&mut w.io, waiting);
+    assert_eq!(stale, Err(NetError::Stale));
+    assert_eq!(w.server.listener_addr(next), Some(other));
 }
 
 #[test]

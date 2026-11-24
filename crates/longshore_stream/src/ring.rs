@@ -165,12 +165,7 @@ impl crate::stream::Tls {
                 if take == 0 {
                     return Ok(step);
                 }
-                self.make_room(io)?;
-                let (src, rx) = io.buf_pair(from.buf, self.rx_buf);
-                let at = (from.off + step.consumed) as usize;
-                let end = self.rx_end as usize;
-                rx[end..end + take].copy_from_slice(&src[at..at + take]);
-                self.rx_end += take as u32;
+                self.carry(io, from.buf, (from.off + step.consumed) as usize, take)?;
                 step.consumed += take as u32;
                 continue;
             }
@@ -216,6 +211,38 @@ impl crate::stream::Tls {
         }
         self.closed = step.closed;
         Ok(step)
+    }
+
+    /// Add `take` bytes of `buf` from `at` to the carried bytes. What
+    /// arrived behind a handshake is carried wherever the handshake left
+    /// it, so it is moved to the front when the bytes do not fit behind
+    /// it. A record that does not fit even then is larger than the buffer.
+    fn carry<IO: Io>(
+        &mut self,
+        io: &mut IO,
+        buf: BufId,
+        at: usize,
+        take: usize,
+    ) -> Result<(), TlsError> {
+        let (start, have) = (
+            self.rx_start as usize,
+            (self.rx_end - self.rx_start) as usize,
+        );
+        let (src, rx) = io.buf_pair(buf, self.rx_buf);
+        let cap = rx.len().min(self.cap as usize);
+        if have + take > cap {
+            return Err(TlsError::BadRecord);
+        }
+        let front = if start + have + take > cap {
+            rx.copy_within(start..start + have, 0);
+            0
+        } else {
+            start
+        };
+        let end = front + have;
+        rx[end..end + take].copy_from_slice(&src[at..at + take]);
+        (self.rx_start, self.rx_end) = (front as u32, (end + take) as u32);
+        Ok(())
     }
 
     /// Bytes still missing from the carried record: the rest of its header,

@@ -91,8 +91,8 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         c.connecting = false;
         if c.st != St::Connecting {
-            // Timed out or closed meanwhile.
-            c.sock_open |= result >= 0;
+            // Timed out or closed meanwhile: the close that ended the
+            // connect took the socket with it, whatever the connect says.
             return self.try_free(slot);
         }
         if result < 0 {
@@ -149,6 +149,12 @@ impl<T: Transport> Net<T> {
             }
             // The handshake of an accepted connection took too long.
             St::Securing => self.end(slot, Why::Timeout),
+            St::Dying if c.starved => {
+                // Its last input found no frame memory for too long.
+                self.conns[slot as usize].why = Why::Timeout;
+                self.drop_input(slot);
+                self.owe_end(slot);
+            }
             St::Free | St::Refused | St::Dying | St::Closing => {}
         }
     }
@@ -168,8 +174,14 @@ impl<T: Transport> Net<T> {
             self.begin_close(slot, false);
             return;
         }
-        let redial = c.opts.reconnect.is_some() && c.peer.is_some();
         c.st = St::Dying;
+        self.owe_end(slot);
+    }
+
+    /// Owe the caller the end of the `Dying` `slot`.
+    pub(super) fn owe_end(&mut self, slot: u32) {
+        let c = &self.conns[slot as usize];
+        let redial = c.opts.reconnect.is_some() && c.peer.is_some();
         self.queue_event(slot, if redial { EV_DOWN } else { EV_CLOSED });
     }
 
@@ -178,6 +190,7 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         c.st = St::Closing;
         c.redial = redial;
+        c.starved = false;
         c.ev = 0;
         self.deadlines.clear(slot);
         self.add_work(slot, W_CLOSE);

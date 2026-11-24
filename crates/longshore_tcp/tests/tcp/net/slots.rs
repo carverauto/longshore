@@ -9,6 +9,7 @@
 //! connection waiting for a segment another one holds.
 
 use super::*;
+use longshore_common::io::Completion;
 use longshore_tcp::Reconnect;
 
 /// A connection is closed under a send in flight while the next peer
@@ -268,4 +269,76 @@ fn a_segment_its_waiter_never_took_goes_to_the_next_one_waiting() {
         | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
     });
     assert!(send(&mut w, c3, &frame), "a segment after Writable");
+}
+
+/// One turn in which a connect the driver reports as ended is reported as
+/// having succeeded instead, as it is when the close that ended it came
+/// just too late for it. Whether there was such a connect.
+fn turn_with_a_late_connect(w: &mut World) -> bool {
+    let now = w.io.now_ns();
+    w.client.poll(&mut w.io, now);
+    w.server.poll(&mut w.io, now);
+    if !w.ticking {
+        w.io.submit(TICK, Op::Timeout { nanos: MS / 4 }).unwrap();
+        w.ticking = true;
+    }
+    w.io.tick(true, &mut w.out).unwrap();
+    let mut late = false;
+    while let Some(c) = w.out.pop() {
+        if c.token() == TICK {
+            w.ticking = false;
+            continue;
+        }
+        // Kind 2 of a connection's tokens is its connect.
+        let ended = c.token().get() % 8 == 2 && c.result() < 0;
+        let c = if ended {
+            Completion::new(c.token(), 0)
+        } else {
+            c
+        };
+        late |= ended;
+        let taken = w.client.on_completion(&mut w.io, c) || w.server.on_completion(&mut w.io, c);
+        assert!(taken, "a completion nobody claimed: {c:?}");
+    }
+    late
+}
+
+#[test]
+fn a_connect_that_succeeded_as_its_close_was_sent_leaves_the_slot_to_dial_again() {
+    let mut w = World::new(2, Faults::NONE);
+    // Something listens on the address and never accepts.
+    let _: SocketAddr = w.io.listen(SPARE, ADDR).unwrap();
+    let opts = prefix()
+        .with_connect_timeout_ns(30 * MS)
+        .with_reconnect(Some(Reconnect::new(MS, 8 * MS, 200)));
+    let c = w.client.connect(&mut w.io, ADDR, opts).unwrap();
+    let timed_out = Event::Down {
+        conn: c,
+        why: Why::Timeout,
+    };
+    w.until(|_, _, e| {
+        assert_eq!(e, timed_out);
+        true
+    });
+    // The close is sent, and the connect it ends says it succeeded.
+    let mut late = false;
+    for _ in 0..200 {
+        late = late || turn_with_a_late_connect(&mut w);
+    }
+    assert!(late, "the close did not end the connect");
+    // The slot was let go of all the same: it dials again, and times out
+    // again.
+    w.until(|_, _, e| {
+        assert_eq!(e, timed_out);
+        true
+    });
+    w.client.close(&mut w.io, c).unwrap();
+    for _ in 0..200 {
+        w.turn();
+        assert_eq!(w.client.next_event(), None);
+    }
+    // Closed, its slot is free: every slot of the set can be used.
+    for _ in 0..4 {
+        let _: Conn = w.client.connect(&mut w.io, ADDR, prefix()).unwrap();
+    }
 }
