@@ -8,18 +8,18 @@
 
 ## 2. Crate and API
 - [x] 2.1 `crates/longshore_tcp` (workspace member, lints, license headers, README); `longshore::tcp`
-- [ ] 2.2 `Config` and its builder (validated: socket-slot, token and buffer ranges; `Config::limits(base)`), `Net<T: Transport>` borrowing `T::Driver` (`on_completion`, `poll`, `next_deadline`), `Conn`/`Listener` handles with generations, `Event`, errors
-- [ ] 2.3 `Transport` trait with an associated `Driver`: slots, lent receive buffers, reserved send space, transport events; no backend types
+- [x] 2.2 `Config::plan(base_limits, Sizes)` (validated; socket-slot, token and buffer positions, resolved against the final `Limits` in `Net::new`), `Net<T: Transport>` borrowing `T::Driver` (`on_completion`, `poll`, `next_deadline`; events and frames pulled with `next_event` and `next_frame`), `Conn`/`Listener` handles with generations, `Event`, errors
+- [x] 2.3 `Transport` trait with an associated `Driver`: slots, lent receive buffers, reserved send space, transport events; no backend types
 - [x] 2.4 Framing: `Bytes` and `Header { .. }`, with the length bounds
-- [ ] 2.5 Frames: `FrameId`, `frame`, `release`, `hold` (ring-lent frames end at the next `poll` unless held), held-bytes budget pausing reads, re-arming after an empty ring
-- [ ] 2.6 Send queues: segments from a shared pool, span queues, `send_lent`, `send_frame`/`send_bytes`, coalescing, zero-copy threshold, `Full` and `Writable`
-- [ ] 2.7 Deadlines: fixed table, `next_deadline`, connect/handshake/idle timeouts, a limit on segments sent per `poll`
-- [ ] 2.8 Connect with reconnect policy (backoff, seeded jitter, `Down`/`Up`); listen with reuse port, bind retry, connection limit and refusal slot, accept backoff, `peer_addr` (single accepts) and `peer(conn)`
-- [ ] 2.9 Close, `shutdown_write`, `drain`; closing reasons
+- [x] 2.5 Frames: `FrameId`, `frame`, `release`, `hold` (ring-lent frames end at the next `poll` unless held), held-bytes budget pausing reads, re-arming after an empty ring
+- [x] 2.6 Send queues: segments from a shared pool, span queues, `send_lent`, `send_frame`/`send_bytes`, coalescing, zero-copy threshold, `Full` and `Writable`
+- [x] 2.7 Deadlines: fixed table, `next_deadline`, connect and idle timeouts (handshake timeouts come with TLS, 3.3)
+- [x] 2.8 Connect with reconnect policy (backoff, seeded jitter, `Down`/`Up`); listen with reuse port, bind retry, connection limit and refusal slot, accept backoff, `peer_addr` (single accepts) and `peer(conn)`
+- [x] 2.9 Close, `shutdown_write`, `drain`; closing reasons
 
 ## 3. Kernel transport
-- [ ] 3.1 `KernelTransport<IO: Io>`: connect, listen, accept (armed), `Rx::Ring` (armed receive, frames lent in place, spanning frames assembled) and `Rx::Direct` (header then body into frame memory)
-- [ ] 3.2 Sends from segments, one in flight per connection; zero-copy above the threshold on TCP without TLS only
+- [x] 3.1 `KernelTransport<IO: Io>`: connect, listen, accept (armed), `Rx::Ring` (armed receive, frames lent in place, spanning frames assembled) and `Rx::Direct` (header then body into frame memory)
+- [x] 3.2 Sends from segments, one in flight per connection; zero-copy above the threshold on TCP without TLS only
 - [ ] 3.3 Unix-domain sockets; TLS through `longshore_stream::Stream` with any provider, in both receive modes
 
 ## 4. Tests

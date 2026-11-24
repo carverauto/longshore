@@ -1,0 +1,248 @@
+// Copyright 2026 Carver Automation Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License").
+// SPDX-License-Identifier: Apache-2.0
+
+//! Sending: each connection has a queue of spans of registered memory.
+//!
+//! A frame the caller builds is written straight into a send segment;
+//! frames queued back to back share a segment and go out in one send. A
+//! frame the caller already holds in frame memory is queued where it lies
+//! (`send_lent`), under one more hold. One send is in flight per
+//! connection; its memory stays until the transport reports the send done.
+
+use super::frames::Frame;
+use super::state::{best_effort, Keep, St, TxSpan, W_FLUSH, W_REFUSE, W_SHUT};
+use super::Net;
+use crate::event::{NetError, SendError, Why};
+use crate::handle::Conn;
+use crate::transport::{Span, Transport};
+use longshore_common::io::BufId;
+
+impl<T: Transport> Net<T> {
+    fn span_at(&self, slot: u32, i: u32) -> usize {
+        let per = self.cfg.sizes.spans;
+        (slot * per + (self.conns[slot as usize].tx_head + i) % per) as usize
+    }
+
+    fn segment_buf(&self, index: u32) -> BufId {
+        BufId::new(self.cfg.segment_first.get() + index)
+    }
+
+    /// The slot of a connection that may be sent on.
+    fn sendable(&self, conn: Conn) -> Result<u32, SendError> {
+        let slot = self.gens.slot_of(conn).ok_or(SendError::Stale)?;
+        let c = &self.conns[slot as usize];
+        if !matches!(c.st, St::Up | St::Refused) || c.shut {
+            return Err(SendError::NotUp);
+        }
+        Ok(slot)
+    }
+
+    /// Queue `len` bytes for `conn`, written by `fill` straight into send
+    /// memory. They leave on the next `poll`, together with whatever else
+    /// is queued behind them.
+    pub fn send_frame(
+        &mut self,
+        d: &mut T::Driver,
+        conn: Conn,
+        len: u32,
+        fill: impl FnOnce(&mut [u8]),
+    ) -> Result<(), SendError> {
+        let slot = self.sendable(conn)?;
+        let size = self.cfg.sizes.segment_size;
+        if len > size {
+            return Err(SendError::TooLarge);
+        }
+        let c = &self.conns[slot as usize];
+        // The last span can grow if it is a segment the transport is not
+        // sending from right now.
+        let last = c.tx_len.checked_sub(1).filter(|i| *i > 0 || !c.sending);
+        let grow = last.map(|i| self.span_at(slot, i)).filter(|at| {
+            let s = &self.spans[*at];
+            matches!(s.keep, Keep::Segment(_)) && s.off + s.len + len <= size
+        });
+        let (buf, at) = if let Some(i) = grow {
+            let s = &mut self.spans[i];
+            s.len += len;
+            (s.buf, s.off + s.len - len)
+        } else {
+            let buf = self.push_segment(slot, len)?;
+            (buf, 0)
+        };
+        fill(&mut self.t.bytes(d, buf)[at as usize..(at + len) as usize]);
+        self.add_work(slot, W_FLUSH);
+        Ok(())
+    }
+
+    /// Queue a copy of `bytes` for `conn`: `send_frame` for a caller whose
+    /// bytes already exist somewhere else.
+    pub fn send_bytes(
+        &mut self,
+        d: &mut T::Driver,
+        conn: Conn,
+        bytes: &[u8],
+    ) -> Result<(), SendError> {
+        let len = u32::try_from(bytes.len()).map_err(|_| SendError::TooLarge)?;
+        self.send_frame(d, conn, len, |to| to.copy_from_slice(bytes))
+    }
+
+    /// A new span on a fresh segment, at the end of `slot`'s queue.
+    fn push_segment(&mut self, slot: u32, len: u32) -> Result<BufId, SendError> {
+        let c = &mut self.conns[slot as usize];
+        let top = self.segs_len.checked_sub(1);
+        let (Some(top), true) = (top, c.tx_len < self.cfg.sizes.spans) else {
+            c.full = true;
+            return Err(SendError::Full);
+        };
+        self.segs_len = top;
+        let index = self.segs[top];
+        let buf = self.segment_buf(index);
+        self.push_span(slot, Span::new(buf, 0, len), Keep::Segment(index));
+        Ok(buf)
+    }
+
+    fn push_span(&mut self, slot: u32, span: Span, keep: Keep) {
+        let at = self.span_at(slot, self.conns[slot as usize].tx_len);
+        self.spans[at] = TxSpan {
+            buf: span.buf(),
+            off: span.off(),
+            len: span.len(),
+            keep,
+        };
+        let c = &mut self.conns[slot as usize];
+        c.tx_len += 1;
+        if c.tx_len == 1 {
+            self.tx_busy += 1;
+        }
+    }
+
+    /// Queue a frame the caller holds in frame memory for `conn`, from
+    /// where it lies: nothing is copied. The `Net` takes a hold of its own
+    /// until the send is done, so the caller may release the frame at once.
+    pub fn send_lent(&mut self, conn: Conn, frame: &Frame) -> Result<(), SendError> {
+        let slot = self.sendable(conn)?;
+        let ext = frame.extent().ok_or(SendError::NotHeld)?;
+        if self.conns[slot as usize].tx_len == self.cfg.sizes.spans {
+            self.conns[slot as usize].full = true;
+            return Err(SendError::Full);
+        }
+        self.extents.hold(ext).map_err(|_| SendError::Stale)?;
+        self.push_span(slot, frame.span(), Keep::Extent(ext));
+        self.add_work(slot, W_FLUSH);
+        Ok(())
+    }
+
+    /// Bytes queued and not yet sent on `conn`.
+    pub fn send_queue(&self, conn: Conn) -> u32 {
+        let Some(slot) = self.gens.slot_of(conn) else {
+            return 0;
+        };
+        let n = self.conns[slot as usize].tx_len;
+        (0..n).map(|i| self.spans[self.span_at(slot, i)].len).sum()
+    }
+
+    /// Send the front of `slot`'s queue, unless a send is in flight.
+    pub(super) fn flush(&mut self, d: &mut T::Driver, slot: u32) {
+        let c = &self.conns[slot as usize];
+        if c.sending || c.tx_len == 0 || !matches!(c.st, St::Up | St::Refused) {
+            return;
+        }
+        let s = self.spans[self.span_at(slot, 0)];
+        let zero_copy = s.len >= self.cfg.sizes.zero_copy_min;
+        if self
+            .t
+            .send(d, slot, Span::new(s.buf, s.off, s.len), zero_copy)
+            .is_ok()
+        {
+            self.conns[slot as usize].sending = true;
+        } else {
+            self.add_work(slot, W_FLUSH);
+        }
+    }
+
+    pub(super) fn on_sent(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        let c = &mut self.conns[slot as usize];
+        c.sending = false;
+        if !matches!(c.st, St::Up | St::Refused) {
+            return self.try_free(slot);
+        }
+        let Ok(n) = u32::try_from(result) else {
+            return self.end(slot, Why::Reset);
+        };
+        c.last_active = self.now;
+        let at = self.span_at(slot, 0);
+        let s = &mut self.spans[at];
+        (s.off, s.len) = (s.off + n, s.len.saturating_sub(n));
+        if s.len == 0 {
+            self.pop_span(slot);
+            if core::mem::take(&mut self.conns[slot as usize].full) {
+                self.mark_writable(slot);
+            }
+        }
+        let after = &self.conns[slot as usize];
+        let (queued, shut, refused) = (after.tx_len > 0, after.shut, after.st == St::Refused);
+        if queued {
+            return self.flush(d, slot);
+        }
+        if shut {
+            self.add_work(slot, W_SHUT);
+        }
+        if refused {
+            self.add_work(slot, W_REFUSE);
+        }
+    }
+
+    /// Remove the front span of `slot`'s queue and let go of its memory.
+    fn pop_span(&mut self, slot: u32) {
+        let s = self.spans[self.span_at(slot, 0)];
+        match s.keep {
+            Keep::Segment(index) => {
+                self.segs[self.segs_len] = index;
+                self.segs_len += 1;
+            }
+            Keep::Extent(ext) => {
+                best_effort(self.extents.release(ext));
+            }
+        }
+        let c = &mut self.conns[slot as usize];
+        c.tx_head = (c.tx_head + 1) % self.cfg.sizes.spans;
+        c.tx_len -= 1;
+        if c.tx_len == 0 {
+            self.tx_busy -= 1;
+        }
+    }
+
+    /// Drop everything queued on `slot`.
+    pub(super) fn drop_tx(&mut self, slot: u32) {
+        while self.conns[slot as usize].tx_len > 0 {
+            self.pop_span(slot);
+        }
+        let c = &mut self.conns[slot as usize];
+        (c.tx_head, c.full, c.shut) = (0, false, false);
+    }
+
+    /// Send what is queued on `conn`, then shut its write side down: the
+    /// peer reads everything and then the end of the stream. Receiving
+    /// goes on.
+    pub fn shutdown_write(&mut self, d: &mut T::Driver, conn: Conn) -> Result<(), NetError> {
+        let slot = self.gens.slot_of(conn).ok_or(NetError::Stale)?;
+        if self.conns[slot as usize].st != St::Up {
+            return Err(NetError::Stale);
+        }
+        self.conns[slot as usize].shut = true;
+        self.shut_if_sent(d, slot);
+        Ok(())
+    }
+
+    /// Shut `slot`'s write side down once its queue is empty.
+    pub(super) fn shut_if_sent(&mut self, d: &mut T::Driver, slot: u32) {
+        let c = &self.conns[slot as usize];
+        if c.st != St::Up || !c.shut || c.tx_len > 0 || c.sending {
+            return;
+        }
+        if self.t.shutdown_write(d, slot).is_err() {
+            self.add_work(slot, W_SHUT);
+        }
+    }
+}

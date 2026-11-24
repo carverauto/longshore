@@ -37,5 +37,9 @@ rcgen.workspace = true
 name = "tcp_units"
 path = "tests/tcp/units.rs"
 
+[[test]]
+name = "tcp_net"
+path = "tests/tcp/net.rs"
+
 [lints]
 workspace = true

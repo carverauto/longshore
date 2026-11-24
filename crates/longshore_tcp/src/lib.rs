@@ -6,16 +6,32 @@
 //! TCP connections over `Io`: a fixed set of connections and listeners,
 //! framing, frames lent in place, and time owned by the caller.
 //!
-//! This crate is being built in stages (OpenSpec change `add-tcp-crate`).
-//! The parts here do no I/O: connection handles, framing, reconnect
-//! backoff and the deadline table.
+//! [`Net`] is the set; [`KernelTransport`] carries it over the kernel's TCP
+//! through the `Io` trait (io_uring, the portable backend, the simulator).
+//! See [`net`] for how one turn of the caller's loop goes.
+
+// TLS connections run through these (task 3.3 of `add-tcp-crate`).
+use longshore_stream as _;
+#[cfg(feature = "tls-core")]
+use longshore_tls as _;
 
 pub mod backoff;
+pub mod config;
 pub mod deadline;
+pub mod event;
 pub mod framing;
 pub mod handle;
+pub mod kernel;
+pub mod net;
+mod sizes;
+pub mod transport;
 
 pub use backoff::Backoff;
+pub use config::{Config, ConfigError, ConnOpts, ListenConfig, Reconnect, Rx, Sizes};
 pub use deadline::Deadlines;
+pub use event::{Event, NetError, SendError, Why};
 pub use framing::{FrameError, Framing, FramingError, HeaderFraming};
 pub use handle::{Conn, Generations, Listener};
+pub use kernel::KernelTransport;
+pub use net::{Frame, Net};
+pub use transport::{Happened, Listening, Refused, Span, Transport};

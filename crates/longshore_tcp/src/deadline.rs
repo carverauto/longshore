@@ -70,6 +70,18 @@ impl Deadlines {
         (self.earliest != NONE).then_some(self.earliest)
     }
 
+    /// A slot whose deadline is at or before `now_ns`, its deadline
+    /// removed; `None` when none is due. Costs nothing in that case.
+    pub fn next_due(&mut self, now_ns: u64) -> Option<u32> {
+        if self.earliest().is_none_or(|e| e > now_ns) {
+            return None;
+        }
+        let slot = self.at.iter().position(|at| *at <= now_ns)?;
+        self.at[slot] = NONE;
+        self.fresh = false;
+        Some(slot as u32)
+    }
+
     /// Hand each slot whose deadline is at or before `now_ns` to `f`, in
     /// slot order, removing its deadline first (`f` may set a new one
     /// through its own means afterwards). Costs nothing when none is due.

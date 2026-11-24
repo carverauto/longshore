@@ -57,9 +57,12 @@ receive buffers, reserved send space and transport events; it names no
 
 ### Net borrows the backend; it never owns it and never waits
 Every existing component borrows the `Io` (`Client::on_completion(io, c)`),
-and so does `Net`: `net.on_completion(&mut io, completion, &mut events)`
-for a completion whose token is in `Net`'s range, `net.poll(&mut io, now,
-&mut events)` for deadlines and queued sends, `net.next_deadline()`. `Net`
+and so does `Net`: `net.on_completion(&mut io, completion)` for a
+completion whose token is in `Net`'s range, `net.poll(&mut io, now)` for
+deadlines and queued sends, `net.next_deadline()`. Completions only mark
+connections: the caller pulls events with `net.next_event()` and frames
+with `net.next_frame(&mut io, conn)`, so no event buffer can overflow and
+not pulling is itself backpressure (smoltcp's shape). `Net`
 never calls `tick` and never blocks. The owner ticks once per turn, routes
 completions by token (`Config::token_base`, as the HTTP client does) and
 chooses where the thread sleeps.
@@ -87,10 +90,14 @@ class, a small class and one buffer ring. `Net` allocates no buffer; its
 buffers for frames (see extents below), a range of buffers for send
 segments (small or large class), a range for TLS record buffers when TLS
 is used, and the shared buffer ring.
-`Config::limits(base)` returns `Limits` with `Net`'s needs added (buffers,
-sockets, and operations: each connection in ring mode holds one operation
-for its armed receive), so an owner that also runs files or the S3 client
-on the same `Io` sizes it once. `Net`'s own tables (connections, queues,
+`Config::plan(base, sizes)` returns the `Limits` with `Net`'s needs added
+(buffers, sockets, operations) and a `Config` holding positions within
+each buffer class, which `Net::new` resolves against the `Limits` the
+backend was finally built with: buffer ids move when something planned
+later adds buffers to an earlier class. Connections come from two pools,
+so that the kernel and `Net` never pick the same slot at once: slots `Net`
+places itself (connects, and single accepts for peer addresses) and the
+accept range the kernel fills for armed accepts. `Net`'s own tables (connections, queues,
 deadlines) are allocated in `Net::new`; nothing allocates after, checked
 under `alloc_guard`. The TLS handshake keeps its sanctioned exception.
 

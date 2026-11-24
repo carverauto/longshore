@@ -1,0 +1,352 @@
+// Copyright 2026 Carver Automation Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License").
+// SPDX-License-Identifier: Apache-2.0
+
+//! What a `Net` is built with: how many connections and listeners, and
+//! which socket slots, tokens and buffers of the shared backend are its own.
+//!
+//! The backend owns one buffer pool, sized by `Limits`. A `Net` allocates no
+//! buffer: [`Config::plan`] adds what it needs to the `Limits` the owner
+//! already has for files and other clients, and records which ranges of the
+//! result belong to the `Net`.
+
+use crate::framing::Framing;
+pub use crate::sizes::Sizes;
+use longshore_common::io::{BufId, Limits};
+
+/// How a connection reads.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rx {
+    /// From the backend's shared buffer ring: a frame lying whole in one
+    /// ring buffer is lent in place until the next `poll`; one that spans
+    /// buffers is assembled in frame memory. For many connections with
+    /// small frames.
+    Ring,
+    /// Each frame straight into frame memory: its header, then its body.
+    /// No frame is copied; two receives per frame. For large frames.
+    Direct,
+}
+
+/// When and how often a lost connection is dialled again.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Reconnect {
+    pub(crate) base_ns: u64,
+    pub(crate) max_ns: u64,
+    pub(crate) jitter_per_mille: u32,
+}
+
+impl Reconnect {
+    /// Wait `base_ns`, doubling per attempt up to `max_ns`, each wait
+    /// shortened by a random share of up to `jitter_per_mille` thousandths.
+    pub const fn new(base_ns: u64, max_ns: u64, jitter_per_mille: u32) -> Reconnect {
+        assert!(base_ns > 0 && max_ns >= base_ns && jitter_per_mille <= 1000);
+        Reconnect {
+            base_ns,
+            max_ns,
+            jitter_per_mille,
+        }
+    }
+}
+
+/// How one connection behaves; given to `connect`, and to `listen` for the
+/// connections it accepts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ConnOpts {
+    pub(crate) framing: Framing,
+    pub(crate) rx: Rx,
+    pub(crate) held_max: u32,
+    pub(crate) connect_timeout_ns: u64,
+    pub(crate) idle_timeout_ns: u64,
+    pub(crate) reconnect: Option<Reconnect>,
+}
+
+impl ConnOpts {
+    /// Frames cut by `framing`, read from the buffer ring, up to 4 MiB of
+    /// frame memory held before reading pauses, a 10 s connect timeout, no
+    /// idle timeout, no reconnecting.
+    pub const fn new(framing: Framing) -> ConnOpts {
+        ConnOpts {
+            framing,
+            rx: Rx::Ring,
+            held_max: 4 << 20,
+            connect_timeout_ns: 10_000_000_000,
+            idle_timeout_ns: 0,
+            reconnect: None,
+        }
+    }
+
+    /// With this way of reading.
+    #[must_use]
+    pub const fn with_rx(mut self, rx: Rx) -> ConnOpts {
+        self.rx = rx;
+        self
+    }
+
+    /// Stop reading while the caller holds this many bytes of the
+    /// connection's frames in frame memory; resume when releases bring it
+    /// under. At least 1.
+    #[must_use]
+    pub const fn with_held_max(mut self, bytes: u32) -> ConnOpts {
+        assert!(bytes > 0);
+        self.held_max = bytes;
+        self
+    }
+
+    /// Give a connect up after this long; 0 for no limit.
+    #[must_use]
+    pub const fn with_connect_timeout_ns(mut self, ns: u64) -> ConnOpts {
+        self.connect_timeout_ns = ns;
+        self
+    }
+
+    /// Close a connection on which nothing was sent or received for this
+    /// long; 0 for no limit.
+    #[must_use]
+    pub const fn with_idle_timeout_ns(mut self, ns: u64) -> ConnOpts {
+        self.idle_timeout_ns = ns;
+        self
+    }
+
+    /// Dial again after the connection is lost or a connect fails, keeping
+    /// the handle. For `connect` only.
+    #[must_use]
+    pub const fn with_reconnect(mut self, reconnect: Option<Reconnect>) -> ConnOpts {
+        self.reconnect = reconnect;
+        self
+    }
+}
+
+/// How a listener listens and what it does with what it accepts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ListenConfig {
+    pub(crate) conn: ConnOpts,
+    pub(crate) reuse_port: bool,
+    pub(crate) backlog: u32,
+    pub(crate) limit: u32,
+    pub(crate) peer_addr: bool,
+    pub(crate) bind_retry_ns: u64,
+}
+
+impl ListenConfig {
+    /// Accepted connections behave as `conn` says; the port to itself, a
+    /// backlog of 128, no connection limit, no peer addresses, no bind retry.
+    pub const fn new(conn: ConnOpts) -> ListenConfig {
+        ListenConfig {
+            conn,
+            reuse_port: false,
+            backlog: 128,
+            limit: u32::MAX,
+            peer_addr: false,
+            bind_retry_ns: 0,
+        }
+    }
+
+    /// Share the port with listeners on other threads (`SO_REUSEPORT`).
+    #[must_use]
+    pub const fn with_reuse_port(mut self, on: bool) -> ListenConfig {
+        self.reuse_port = on;
+        self
+    }
+
+    /// Let this many connections wait to be accepted.
+    #[must_use]
+    pub const fn with_backlog(mut self, backlog: u32) -> ListenConfig {
+        assert!(backlog > 0);
+        self.backlog = backlog;
+        self
+    }
+
+    /// Hold at most this many connections; one more at a time is accepted
+    /// only to be refused, after the caller has had the chance to send it
+    /// one frame.
+    #[must_use]
+    pub const fn with_limit(mut self, connections: u32) -> ListenConfig {
+        self.limit = connections;
+        self
+    }
+
+    /// Report each accepted connection's peer address. Costs one accept
+    /// operation per connection in place of one armed accept for all.
+    #[must_use]
+    pub const fn with_peer_addr(mut self, on: bool) -> ListenConfig {
+        self.peer_addr = on;
+        self
+    }
+
+    /// When the address is in use, keep trying to bind for this long
+    /// (a process killed a moment ago may still hold it).
+    #[must_use]
+    pub const fn with_bind_retry_ns(mut self, ns: u64) -> ListenConfig {
+        self.bind_retry_ns = ns;
+        self
+    }
+}
+
+/// Why [`Config::plan`] refused.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConfigError {
+    /// No connections, or a count or size of zero where one is needed.
+    Zero,
+    /// The backend's `Limits` already reserve an accept range; armed
+    /// accepts need it for this `Net`.
+    AcceptRangeTaken,
+    /// The backend already has block-aligned or small buffers of another
+    /// size, or a buffer ring of another shape: a class has one size.
+    ClassSize,
+    /// `frame_size` is not a multiple of the backend's block size.
+    FrameAlignment,
+    /// A segment is too small for `header_max`, or a count overflows.
+    TooSmall,
+}
+
+/// A `Net`'s share of the backend: built by [`Config::plan`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Config {
+    pub(crate) sizes: Sizes,
+    /// Socket slot of listener 0; connections follow the listeners.
+    pub(crate) sock_base: u32,
+    /// Position of the first frame buffer in the block-aligned class, and
+    /// of the first send segment in the small class; header areas follow
+    /// the segments. Positions, because buffer ids move when something
+    /// planned later adds buffers to an earlier class.
+    pub(crate) aligned_at: u32,
+    pub(crate) small_at: u32,
+    /// Connections whose header areas fit in one small buffer.
+    pub(crate) headers_per_buf: u32,
+    // Buffer ids, set by `resolved` from the backend's final `Limits`.
+    pub(crate) frame_first: BufId,
+    pub(crate) segment_first: BufId,
+    pub(crate) header_first: BufId,
+    pub(crate) ring_first: BufId,
+    pub(crate) ring_count: u32,
+}
+
+impl Config {
+    /// What `plan` refuses, and two numbers it needs: connections in all,
+    /// and header areas per small buffer.
+    fn check(base: &Limits, s: &Sizes) -> Result<(u32, u32), ConfigError> {
+        let conns = s
+            .connects
+            .checked_add(s.accepts)
+            .ok_or(ConfigError::TooSmall)?;
+        if conns == 0 || s.frames == 0 || s.segments == 0 || s.spans == 0 || s.header_max == 0 {
+            return Err(ConfigError::Zero);
+        }
+        if s.accepts > 0 && base.accept_range_len() != 0 {
+            return Err(ConfigError::AcceptRangeTaken);
+        }
+        let block = base.block_size().max(4096);
+        if s.frame_size == 0 || !s.frame_size.is_multiple_of(block) {
+            return Err(ConfigError::FrameAlignment);
+        }
+        let taken = |count: u32, size: u32, want: u32| count != 0 && size != want;
+        if taken(
+            base.aligned_buffers(),
+            base.aligned_buffer_size(),
+            s.frame_size,
+        ) || taken(
+            base.small_buffers(),
+            base.small_buffer_size(),
+            s.segment_size,
+        ) || taken(
+            base.ring_buffers(),
+            base.ring_buffer_size(),
+            s.ring_buffer_size,
+        ) {
+            return Err(ConfigError::ClassSize);
+        }
+        let headers_per_buf = s.segment_size / s.header_max;
+        if headers_per_buf == 0 {
+            return Err(ConfigError::TooSmall);
+        }
+        Ok((conns, headers_per_buf))
+    }
+
+    /// Add what `sizes` asks for to `base` and say which part is the
+    /// `Net`'s. Build the backend from the returned `Limits`, or from
+    /// `Limits` planned further on top of them, and give those to
+    /// `Net::new`.
+    pub fn plan(base: Limits, sizes: Sizes) -> Result<(Limits, Config), ConfigError> {
+        let s = sizes;
+        let (conns, headers_per_buf) = Config::check(&base, &s)?;
+        let header_bufs = conns.div_ceil(headers_per_buf);
+        let small = s
+            .segments
+            .checked_add(header_bufs)
+            .ok_or(ConfigError::TooSmall)?;
+        let sock_base = base.sockets_max();
+        let socks = conns
+            .checked_add(s.listeners)
+            .ok_or(ConfigError::TooSmall)?;
+        // Per connection: a receive, a send, and a connect, close, shutdown
+        // or cancel; per listener: an accept and a close.
+        let ops = conns
+            .saturating_mul(3)
+            .saturating_add(s.listeners.saturating_mul(2));
+        let mut limits = base
+            .with_sockets_max(sock_base + socks)
+            .with_block_size(base.block_size().max(4096))
+            .with_aligned_buffers(base.aligned_buffers() + s.frames)
+            .with_aligned_buffer_size(s.frame_size)
+            .with_small_buffers(base.small_buffers() + small)
+            .with_small_buffer_size(s.segment_size)
+            .with_ring_buffers(base.ring_buffers().max(s.ring_buffers))
+            .with_ring_buffer_size(s.ring_buffer_size)
+            .with_ops_max(base.ops_max().saturating_add(ops));
+        if s.accepts > 0 {
+            limits = limits
+                .with_accept_range_start(sock_base + s.listeners + s.connects)
+                .with_accept_range_len(s.accepts);
+        }
+        let config = Config {
+            sizes,
+            sock_base,
+            aligned_at: base.aligned_buffers(),
+            small_at: base.small_buffers(),
+            headers_per_buf,
+            frame_first: BufId::new(0),
+            segment_first: BufId::new(0),
+            header_first: BufId::new(0),
+            ring_first: BufId::new(0),
+            ring_count: 0,
+        }
+        .resolved(&limits);
+        Ok((limits, config))
+    }
+
+    /// Connections in all: those the `Net` opens and those it accepts.
+    pub const fn conns(&self) -> u32 {
+        self.sizes.connects + self.sizes.accepts
+    }
+
+    /// Tokens the `Net` uses, from `Sizes::with_token_base` up: route a
+    /// completion with a token in that range to `Net::on_completion`.
+    pub const fn tokens(&self) -> u64 {
+        (self.conns() as u64 + self.sizes.listeners as u64) * 8
+    }
+
+    /// The first token.
+    pub const fn token_base(&self) -> u64 {
+        self.sizes.token_base
+    }
+
+    /// This configuration with its buffer ids taken from `limits`: the
+    /// `Limits` the backend was finally built with, which may have grown
+    /// since `plan` (another `plan` on top, more buffers for files).
+    #[must_use]
+    pub fn resolved(mut self, limits: &Limits) -> Config {
+        self.frame_first = limits.aligned(self.aligned_at);
+        self.segment_first = limits.small(self.small_at);
+        self.header_first = limits.small(self.small_at + self.sizes.segments);
+        self.ring_first = BufId::new(limits.ring_base());
+        self.ring_count = limits.ring_buffers();
+        self
+    }
+
+    /// The first buffer of frame memory, in the `Limits` this was last
+    /// resolved against; `Sizes::with_frames` gave their count and size.
+    pub const fn frame_first(&self) -> BufId {
+        self.frame_first
+    }
+}

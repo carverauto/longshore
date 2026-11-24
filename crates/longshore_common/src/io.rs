@@ -311,6 +311,7 @@ pub const ECONNREFUSED: i32 = 111;
 pub const EPIPE: i32 = 32;
 pub const ETIME: i32 = 62;
 pub const ECANCELED: i32 = 125;
+pub const EADDRINUSE: i32 = 98;
 pub const ENOENT: i32 = 2;
 pub const EBADF: i32 = 9;
 pub const EAGAIN: i32 = 11;
