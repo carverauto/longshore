@@ -215,6 +215,12 @@ impl<T: Transport> Net<T> {
             return self.try_free(slot);
         }
         match result {
+            0 if c.secure => {
+                // No close alert so far: broken, unless one is still to be
+                // opened among what was received.
+                c.cut_off = true;
+                self.end(slot, Why::Reset);
+            }
             0 => self.peer_finished(slot),
             // The ring was empty, or we stopped the receive ourselves:
             // armed again on the next `poll` unless reading is paused.
@@ -264,7 +270,7 @@ impl<T: Transport> Net<T> {
         ];
         (c.hdr_have, c.asm_have, c.asm_len) = (0, 0, 0);
         (c.backlog_off, c.backlog_len, c.paused) = (0, 0, false);
-        c.unopened = false;
+        (c.unopened, c.cut_off) = (false, false);
         for ext in held.into_iter().flatten() {
             // Net's own hold; frames the caller pulled keep theirs.
             best_effort(self.extents.release(ext));

@@ -122,6 +122,9 @@ pub(super) struct ConnState {
     pub(super) paused: bool,
     /// Protected: the transport keeps a whole record that found no room.
     pub(super) unopened: bool,
+    /// Protected: the stream ended before a close alert was opened. The
+    /// records not yet opened are still opened, and may hold one.
+    pub(super) cut_off: bool,
     pub(super) hdr_have: u32,
     /// A frame being put together in frame memory.
     pub(super) asm: Option<Extent>,
@@ -179,6 +182,7 @@ impl ConnState {
             recv_busy: false,
             paused: false,
             unopened: false,
+            cut_off: false,
             hdr_have: 0,
             asm: None,
             asm_have: 0,

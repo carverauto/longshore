@@ -197,7 +197,9 @@ pub enum Happened {
     },
     /// An armed receive ended without bytes: 0 at end of stream, a negated
     /// error otherwise (`-ENOBUFS` when the ring is empty, `-ECANCELED`
-    /// when it was cancelled).
+    /// when it was cancelled). On a protected slot the end of stream is
+    /// the bytes' own: whether the peer ended in order is what
+    /// [`Transport::open`] says of the records before it.
     RecvEnded { slot: u32, result: i32 },
     /// A receive into frame memory ended.
     Received { slot: u32, result: i32 },

@@ -59,10 +59,6 @@ impl Secure {
 
     pub(super) const fn closed(&mut self, _slot: u32) {}
 
-    pub(super) const fn end_of_stream(&self, _slot: u32, result: i32) -> i32 {
-        result
-    }
-
     pub(super) const fn on_io<IO: Io>(
         &mut self,
         _: &mut IO,

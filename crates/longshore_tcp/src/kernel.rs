@@ -110,10 +110,7 @@ impl<IO: Io> KernelTransport<IO> {
                         len: result.unsigned_abs(),
                         armed: c.more(),
                     },
-                    None if was_armed => Happened::RecvEnded {
-                        slot,
-                        result: self.secure.end_of_stream(slot, result),
-                    },
+                    None if was_armed => Happened::RecvEnded { slot, result },
                     None if self.secure.is_on(slot) => self.on_stream(d, slot, false, result),
                     None => Happened::Received { slot, result },
                 }
