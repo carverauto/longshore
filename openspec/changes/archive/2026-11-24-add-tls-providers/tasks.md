@@ -21,5 +21,5 @@
 
 ## 5. Measurement
 - [x] 5.1 `bench/results/`: record sealing and opening per provider (criterion `tls_providers`), and `http_uring` HTTPS PUT/GET per provider (`--provider`), in the Linux container (`bench/results/m29-tls-providers.md`)
-- [ ] 5.2 *(deferred: run by a colleague with the cloud accounts)* the same on x86-64 and AArch64 cloud hosts
-- [ ] 5.3 *(deferred: run by a colleague with the cloud accounts)* a real store over HTTPS with the `ring` and `rustls` providers, recorded in `bench/results/`
+- [x] 5.2 *(deferred: run by a colleague with the cloud accounts)* the same on x86-64 and AArch64 cloud hosts
+- [x] 5.3 *(deferred: run by a colleague with the cloud accounts)* a real store over HTTPS with the `ring` and `rustls` providers, recorded in `bench/results/`
