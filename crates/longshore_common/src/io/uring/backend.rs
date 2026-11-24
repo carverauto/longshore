@@ -338,6 +338,14 @@ impl UringIo {
                     return Err(-ENOBUFS);
                 }
             }
+            Op::Shutdown { sock, .. } => {
+                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+                // The same answer as the other backends for a slot that
+                // holds no connected stream; the kernel would say EBADF.
+                if !self.sock_stream[sock.0 as usize] {
+                    return Err(-crate::io::ENOTCONN);
+                }
+            }
             Op::ConnectUnix {
                 sock,
                 path_buf,

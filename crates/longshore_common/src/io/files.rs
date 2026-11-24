@@ -201,6 +201,7 @@ impl FileTable {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -296,6 +297,7 @@ impl FileTable {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -342,6 +344,7 @@ impl FileTable {
                 | Op::Send { .. }
                 | Op::Recv { .. }
                 | Op::RecvNow { .. }
+                | Op::Shutdown { .. }
                 | Op::Close { .. }
                 | Op::AwaitWake
                 | Op::ReadFile { .. }

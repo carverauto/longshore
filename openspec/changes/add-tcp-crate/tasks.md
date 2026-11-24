@@ -1,5 +1,5 @@
 ## 1. Io additions (longshore_common)
-- [ ] 1.1 `Op::Shutdown { sock, how }` on `UringIo` (`IORING_OP_SHUTDOWN`), `PosixIo` and `SimIo`, with contract tests
+- [x] 1.1 `Op::Shutdown { sock, how }` on `UringIo` (`IORING_OP_SHUTDOWN`), `PosixIo` and `SimIo`, with contract tests
 - [ ] 1.2 `Op::Accept` records the peer address; `Io::peer_addr(sock)` on all three backends
 - [ ] 1.3 Keepalive idle, interval and count; `SO_REUSEPORT` and backlog on listen
 - [ ] 1.4 `longshore_stream`: `Stream::on_ring_recv` for plain and TLS (records opened into the destination, a record continuing across ring buffers), with simulator tests

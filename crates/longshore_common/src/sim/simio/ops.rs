@@ -97,6 +97,7 @@ impl Virtual {
                     self.sim_recv(sock, pool, limits, span, no_wait)
                 }
             }
+            Op::Shutdown { sock, how } => self.sim_shutdown(sock, how),
             Op::Close { sock } => self.sim_close(sock),
             Op::FileOpen { .. }
             | Op::FileClose { .. }

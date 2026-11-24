@@ -236,6 +236,7 @@ impl World for Posix {
                 s.fd < 0 || s.read_ready
             }
             Op::ConnectUdp { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::ReadFile { .. }
             | Op::Timeout { .. }
@@ -306,6 +307,7 @@ impl World for Posix {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -379,6 +381,7 @@ impl World for Posix {
             }
             Op::ConnectUdp { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }

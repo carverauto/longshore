@@ -171,6 +171,21 @@ impl UringIo {
         s
     }
 
+    /// A shutdown of one or both directions; the slot stays open.
+    #[inline]
+    pub(super) fn prep_shutdown(
+        &mut self,
+        i: u32,
+        sock: Sock,
+        how: crate::io::Shut,
+    ) -> io_uring_sqe {
+        self.slots[i as usize].op_sock = Some(sock);
+        let mut s = self.fixed(sock);
+        s.opcode = IORING_OP_SHUTDOWN;
+        s.len = how.raw();
+        s
+    }
+
     /// A close: cancels the slot's other operations, shuts a stream down,
     /// then closes the fixed file.
     pub(super) fn prep_close(&mut self, i: u32, sock: Sock) -> io_uring_sqe {

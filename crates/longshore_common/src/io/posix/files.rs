@@ -124,6 +124,7 @@ impl Posix {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -183,6 +184,7 @@ impl Posix {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }

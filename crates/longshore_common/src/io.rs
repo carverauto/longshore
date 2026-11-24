@@ -46,6 +46,28 @@ pub mod sys;
 #[cfg(target_os = "linux")]
 pub mod uring;
 
+/// Which direction of a connection [`Op::Shutdown`] ends.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Shut {
+    /// No more receives: later receives complete with 0.
+    Read,
+    /// No more sends: the peer reads end of stream after the data sent.
+    Write,
+    /// Both directions.
+    Both,
+}
+
+impl Shut {
+    /// The `how` argument of `shutdown(2)`: the same on Linux and macOS.
+    pub(crate) const fn raw(self) -> u32 {
+        match self {
+            Shut::Read => 0,
+            Shut::Write => 1,
+            Shut::Both => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Op {
     /// Open a TCP socket in slot `sock` and connect it. A connect that fails
@@ -104,6 +126,12 @@ pub enum Op {
         off: u32,
         len: u32,
     },
+    /// Shut down one or both directions of connected stream socket `sock`,
+    /// leaving its slot open. After the write side is shut down the peer
+    /// reads end of stream once it has read everything sent; after the read
+    /// side is shut down, receives on `sock` complete with 0. Completes with
+    /// 0, or a negated errno (`-ENOTCONN` on a socket that is not connected).
+    Shutdown { sock: Sock, how: Shut },
     /// Close socket slot `sock`. Gives every other operation in flight on
     /// `sock` (including an [`Op::Accept`] waiting on a closed listener) its
     /// final completion without waiting for the peer, in no fixed order
@@ -236,6 +264,7 @@ pub const ENFILE: i32 = 23;
 pub const EMFILE: i32 = 24;
 pub const ENAMETOOLONG: i32 = 36;
 pub const ENOBUFS: i32 = 105;
+pub const ENOTCONN: i32 = 107;
 pub const EOVERFLOW: i32 = 75;
 
 /// A byte count or slot index as a completion result. Linux never moves more

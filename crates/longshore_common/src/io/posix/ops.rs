@@ -18,6 +18,34 @@ use core::mem::size_of;
 use std::net::SocketAddr;
 
 impl Posix {
+    /// Shuts one or both directions of a connected stream down.
+    fn attempt_shutdown(&self, sock: Sock, how: crate::io::Shut) -> i32 {
+        let s = &self.socks[sock.0 as usize];
+        if s.fd < 0 || s.kind != SockKind::Open {
+            return -crate::io::ENOTCONN;
+        }
+        let r = unsafe { shutdown(s.fd, how.raw().cast_signed()) };
+        if r == 0 {
+            0
+        } else {
+            -to_linux_errno(os_errno())
+        }
+    }
+
+    /// Closes a socket slot, shutting a connected stream down first.
+    fn attempt_close(&mut self, sock: Sock) -> i32 {
+        let s = &mut self.socks[sock.0 as usize];
+        if s.fd >= 0 {
+            if s.kind == SockKind::Open {
+                let _: i32 = unsafe { shutdown(s.fd, SHUT_RDWR) };
+            }
+            self.poller.before_close(s);
+            let _: i32 = unsafe { close(s.fd) };
+            s.reset();
+        }
+        0
+    }
+
     pub(super) fn attempt_op(&mut self, op: &Op, pool: &mut [u8], limits: &Limits) -> Option<i32> {
         match *op {
             Op::Timeout { .. } | Op::AwaitWake | Op::Cancel { .. } => {
@@ -45,18 +73,8 @@ impl Posix {
                 off,
                 len,
             } => self.attempt_recv(sock, pool, limits.range(buf, off, len), true),
-            Op::Close { sock } => {
-                let s = &mut self.socks[sock.0 as usize];
-                if s.fd >= 0 {
-                    if s.kind == SockKind::Open {
-                        let _: i32 = unsafe { shutdown(s.fd, SHUT_RDWR) };
-                    }
-                    self.poller.before_close(s);
-                    let _: i32 = unsafe { close(s.fd) };
-                    s.reset();
-                }
-                Some(0)
-            }
+            Op::Shutdown { sock, how } => Some(self.attempt_shutdown(sock, how)),
+            Op::Close { sock } => Some(self.attempt_close(sock)),
             Op::ReadFile {
                 file,
                 buf,

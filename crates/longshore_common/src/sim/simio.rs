@@ -64,6 +64,12 @@ pub(super) struct SimSock {
     pub(super) rx_head: usize,
     pub(super) rx_len: usize,
     pub(super) peer_closed: bool,
+    /// The peer shut down its write side: receives end once drained.
+    pub(super) peer_wr_shut: bool,
+    /// This side shut down its write side: sends fail.
+    pub(super) wr_shut: bool,
+    /// This side shut down its read side: receives end, arrivals are dropped.
+    pub(super) rd_shut: bool,
     pub(super) reset: bool,
     /// For UDP: whether `peer` is valid.
     pub(super) has_peer: bool,
@@ -135,6 +141,9 @@ impl Virtual {
             rx_head: 0,
             rx_len: 0,
             peer_closed: false,
+            peer_wr_shut: false,
+            wr_shut: false,
+            rd_shut: false,
             reset: false,
             has_peer: false,
             segment: 0,
@@ -172,6 +181,7 @@ impl Virtual {
             s.rx_head = 0;
             s.rx_len = 0;
             s.peer_closed = false;
+            (s.peer_wr_shut, s.wr_shut, s.rd_shut) = (false, false, false);
             s.reset = false;
             s.has_peer = false;
             s.segment = 0;
