@@ -46,6 +46,10 @@ pub struct KernelTransport<IO: Io> {
     armed: Box<[bool]>,
     /// Per connection slot: the listener whose single accept will fill it.
     accepting: Box<[u32]>,
+    /// Per connection slot, then per listener: the kinds of operation
+    /// the transport has in flight, a bit each. Kept to assert that `Net`
+    /// never starts a second of a kind.
+    flight: Box<[u8]>,
     /// TLS, where it is compiled in and set up.
     secure: Secure,
     io: PhantomData<fn(&mut IO)>,
@@ -63,6 +67,7 @@ impl<IO: Io> KernelTransport<IO> {
             sock_base: config.sock_base,
             armed: vec![false; conns as usize].into_boxed_slice(),
             accepting: vec![0; conns as usize].into_boxed_slice(),
+            flight: vec![0; (conns + config.sizes.listeners) as usize].into_boxed_slice(),
             secure: Secure::new(conns),
             io: PhantomData,
         }
@@ -89,12 +94,19 @@ impl<IO: Io> KernelTransport<IO> {
         Token::new(self.token_base + u64::from(slot) * 8 + kind)
     }
 
-    fn listener_token(&self, listener: u32, kind: u64) -> Token {
-        Token::new(self.token_base + u64::from(self.conns + listener) * 8 + kind)
-    }
-
-    fn submit(d: &mut IO, token: Token, op: Op) -> Result<(), Refused> {
-        d.submit(token, op).map_err(|_| Refused::Busy)
+    /// Submit `op` as the operation of `kind` for `index`: a connection
+    /// slot, or the number of connections plus a listener.
+    fn start(&mut self, d: &mut IO, index: u32, kind: u64, op: Op) -> Result<(), Refused> {
+        let token = Token::new(self.token_base + u64::from(index) * 8 + kind);
+        let bit = 1u8 << kind;
+        // A cancel names another operation and may be asked for again.
+        debug_assert!(
+            kind == CANCEL || self.flight[index as usize] & bit == 0,
+            "a second operation of kind {kind} for {index} while one is in flight"
+        );
+        d.submit(token, op).map_err(|_| Refused::Busy)?;
+        self.flight[index as usize] |= bit;
+        Ok(())
     }
 
     /// A completion on a connection slot.
@@ -239,7 +251,7 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         let op = Op::ArmedAccept {
             listener: self.listener_sock(listener),
         };
-        Self::submit(d, self.listener_token(listener, ACCEPT), op)
+        self.start(d, self.conns + listener, ACCEPT, op)
     }
 
     fn accept_into(&mut self, d: &mut IO, listener: u32, slot: u32) -> Result<(), Refused> {
@@ -247,7 +259,7 @@ impl<IO: Io> Transport for KernelTransport<IO> {
             listener: self.listener_sock(listener),
             sock: self.conn_sock(slot),
         };
-        Self::submit(d, self.conn_token(slot, ACCEPT), op)?;
+        self.start(d, slot, ACCEPT, op)?;
         self.accepting[slot as usize] = listener;
         Ok(())
     }
@@ -278,7 +290,7 @@ impl<IO: Io> Transport for KernelTransport<IO> {
                 }
             }
         };
-        Self::submit(d, self.conn_token(slot, CONNECT), op)
+        self.start(d, slot, CONNECT, op)
     }
 
     fn can_secure(&self, client: bool) -> bool {
@@ -295,7 +307,7 @@ impl<IO: Io> Transport for KernelTransport<IO> {
 
     fn recv_armed(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let sock = self.conn_sock(slot);
-        Self::submit(d, self.conn_token(slot, RECV), Op::ArmedRecv { sock })?;
+        self.start(d, slot, RECV, Op::ArmedRecv { sock })?;
         self.armed[slot as usize] = true;
         Ok(())
     }
@@ -310,12 +322,12 @@ impl<IO: Io> Transport for KernelTransport<IO> {
             off: into.off(),
             len: into.len(),
         };
-        Self::submit(d, self.conn_token(slot, RECV), op).map(|()| None)
+        self.start(d, slot, RECV, op).map(|()| None)
     }
 
     fn cancel_recv(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let target = self.conn_token(slot, RECV);
-        Self::submit(d, self.conn_token(slot, CANCEL), Op::Cancel { target })
+        self.start(d, slot, CANCEL, Op::Cancel { target })
     }
 
     fn give_back(&mut self, d: &mut IO, buf: BufId) {
@@ -335,7 +347,7 @@ impl<IO: Io> Transport for KernelTransport<IO> {
             len: from.len(),
             zero_copy,
         };
-        Self::submit(d, self.conn_token(slot, SEND), op)
+        self.start(d, slot, SEND, op)
     }
 
     fn shutdown_write(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
@@ -348,19 +360,19 @@ impl<IO: Io> Transport for KernelTransport<IO> {
             sock: self.conn_sock(slot),
             how: Shut::Write,
         };
-        Self::submit(d, self.conn_token(slot, SHUTDOWN), op)
+        self.start(d, slot, SHUTDOWN, op)
     }
 
     fn close(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let sock = self.conn_sock(slot);
-        Self::submit(d, self.conn_token(slot, CLOSE), Op::Close { sock })?;
+        self.start(d, slot, CLOSE, Op::Close { sock })?;
         self.secure.closing(slot);
         Ok(())
     }
 
     fn close_listener(&mut self, d: &mut IO, listener: u32) -> Result<(), Refused> {
         let sock = self.listener_sock(listener);
-        Self::submit(d, self.listener_token(listener, CLOSE), Op::Close { sock })
+        self.start(d, self.conns + listener, CLOSE, Op::Close { sock })
     }
 
     fn peer_addr(&self, d: &IO, slot: u32) -> Option<SocketAddr> {
@@ -370,6 +382,11 @@ impl<IO: Io> Transport for KernelTransport<IO> {
     fn translate(&mut self, d: &mut IO, completion: Completion) -> Option<Happened> {
         let rel = completion.token().get().checked_sub(self.token_base)?;
         let (index, kind) = (u32::try_from(rel / 8).ok()?, rel % 8);
+        if !completion.more() {
+            if let Some(flight) = self.flight.get_mut(index as usize) {
+                *flight &= !(1u8 << kind);
+            }
+        }
         if index < self.conns {
             Some(self.conn_happened(d, index, kind, completion))
         } else if index - self.conns < self.listeners {
