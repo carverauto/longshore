@@ -12,7 +12,7 @@
 //! header that arrives in pieces.
 
 use super::frames::{Frame, Mem};
-use super::state::{best_effort, St, EV_READABLE, NONE, W_READ};
+use super::state::{best_effort, St, NONE, W_READ};
 use super::Net;
 use crate::config::Rx;
 use crate::event::{NetError, Why};
@@ -27,7 +27,7 @@ pub(super) struct Source {
     pub(super) buf: BufId,
     pub(super) off: u32,
     pub(super) avail: u32,
-    backlog: bool,
+    pub(super) backlog: bool,
 }
 
 impl<T: Transport> Net<T> {
@@ -129,7 +129,7 @@ impl<T: Transport> Net<T> {
         }
     }
 
-    fn source(&self, slot: u32) -> Option<Source> {
+    pub(super) fn source(&self, slot: u32) -> Option<Source> {
         let c = &self.conns[slot as usize];
         if let Some(ext) = c.backlog.filter(|_| c.backlog_len > c.backlog_off) {
             return Some(Source {
@@ -246,7 +246,11 @@ impl<T: Transport> Net<T> {
         if frame_len as u32 <= src.avail {
             return Cut::Frame(frame_len as u32);
         }
-        // It continues in the next chunk: start putting it together.
+        // It continues in the next chunk: start putting it together, in
+        // the backlog's own buffer where that is free to be used.
+        if src.backlog && self.assemble_in_backlog(d, slot, src, frame_len as u32) {
+            return Cut::Taken(0);
+        }
         let Some(ext) = self.extents.take() else {
             return self.out_of_memory(d, slot);
         };
@@ -284,75 +288,6 @@ impl<T: Transport> Net<T> {
     pub(super) fn drop_input(&mut self, slot: u32) {
         self.drop_chunks(slot);
         self.drop_rx(slot);
-    }
-
-    /// Before ring buffers go back: move what the caller left unpulled out
-    /// of them, into frame memory, so that one connection's unread input
-    /// cannot keep the shared ring from refilling.
-    pub(super) fn spill_unpulled(&mut self, d: &mut T::Driver) {
-        let pending = core::mem::take(&mut self.ring_pending_len);
-        for i in 0..pending {
-            let slot = self.ring_pending[i];
-            self.conns[slot as usize].ring_listed = false;
-            while let Some(src) = self.front_chunk(slot) {
-                let moved = if self.conns[slot as usize].secure {
-                    let had = self.source(slot).is_some();
-                    if self.open_ring(d, slot) && !had {
-                        self.queue_event(slot, EV_READABLE);
-                    }
-                    self.front_chunk(slot).is_none()
-                } else {
-                    self.spill_chunk(d, slot, src)
-                };
-                if !moved {
-                    // No room for more: it keeps these buffers and reads
-                    // no further until it is pulled.
-                    self.pause(d, slot);
-                    self.conns[slot as usize].ring_listed = true;
-                    self.ring_pending[self.ring_pending_len] = slot;
-                    self.ring_pending_len += 1;
-                    break;
-                }
-            }
-            let c = &mut self.conns[slot as usize];
-            if !c.ring_listed && c.paused && c.held < c.opts.held_max {
-                // It keeps no ring buffer any more: read on.
-                c.paused = false;
-                self.add_work(slot, W_READ);
-            }
-        }
-    }
-
-    /// Move the front chunk of `slot` to its backlog; `false` when the
-    /// backlog cannot take all of it.
-    fn spill_chunk(&mut self, d: &mut T::Driver, slot: u32, src: Source) -> bool {
-        let size = self.cfg.sizes.frame_size;
-        let c = &mut self.conns[slot as usize];
-        // A backlog being read from the front is not appended to: the
-        // caller may hold frames lent from it.
-        let ext = match c.backlog {
-            Some(ext) if c.backlog_off == 0 => ext,
-            Some(_) => return false,
-            None => {
-                let Some(ext) = self.extents.take() else {
-                    return false;
-                };
-                (c.backlog, c.backlog_off, c.backlog_len) = (Some(ext), 0, 0);
-                ext
-            }
-        };
-        let have = self.conns[slot as usize].backlog_len;
-        if src.avail > size - have {
-            return false;
-        }
-        let (from, to) = self.t.bytes_pair(d, src.buf, ext.buf());
-        let (at, n) = (src.off as usize, src.avail as usize);
-        to[have as usize..have as usize + n].copy_from_slice(&from[at..at + n]);
-        self.conns[slot as usize].backlog_len += src.avail;
-        // The chunk is the front of the chunk list, whatever `source` says
-        // now that there is a backlog.
-        self.advance(slot, src, src.avail);
-        true
     }
 }
 
