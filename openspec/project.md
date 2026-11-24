@@ -4,8 +4,9 @@
 longshore is an object storage client in Rust built around Linux `io_uring`,
 with a portable POSIX readiness backend (`kqueue` on macOS, `epoll` on Linux
 hosts without `io_uring`). It moves large amounts of data with little CPU. It
-talks to Amazon S3, S3-compatible stores and Google Cloud Storage. It is eight
-small crates, and a ninth, `longshore`, that gathers them under one name.
+talks to Amazon S3, S3-compatible stores and Google Cloud Storage, and carries
+protocols that run straight over TCP. It is nine small crates, and a tenth,
+`longshore`, that gathers them under one name.
 
 ## Tech Stack
 - Rust, stable toolchain, edition 2021
@@ -62,11 +63,12 @@ either redesigned or left out.
 - Every source file carries the Apache 2.0 header (`scripts/license-headers.py`)
 
 ### Architecture Patterns
-- Nine workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
+- Ten workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
   (`checksum`), `longshore_dns` (`dns`), `longshore_stream` (`stream`),
   `longshore_http_client` (`http`), `longshore_tls` (`tls`, behind the
   default-on `tls` Cargo feature), `longshore_mailbox` (`mailbox`),
-  `longshore_s3` (`store`, `crypto`, `client`), and the `longshore` facade
+  `longshore_s3` (`store`, `crypto`, `client`), `longshore_tcp` (`tcp`:
+  `Net`, `KernelTransport`, the shared `check` suites), and the `longshore` facade
   crate that re-exports them (plus `longshore-bench` for benchmarks and
   real-kernel checks)
 - `Engine<W: World>` shares one `Io` contract state machine across
@@ -96,7 +98,7 @@ either redesigned or left out.
   zero-allocation WAL recovery under `alloc_guard`)
 - Shared generic `IO: Io` contract, file, chain, and server-networking tests
   across `SimIo`, `PosixIo` (`kqueue`/`epoll`), and `UringIo` (`contract_uring`,
-  `file_uring`, `server_uring`), plus `fault-injection` stale-readiness and
+  `file_uring`, `server_uring`, `tcp_uring`), plus `fault-injection` stale-readiness and
   ring-failure checks (`client_faults`, `uring_faults`)
 - Concurrency model checks via `scripts/test-model.sh` (`--cfg longshore_model`
   with `loom` for `longshore_mailbox` `mailbox_model` and `longshore_s3`

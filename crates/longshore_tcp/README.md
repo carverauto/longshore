@@ -14,7 +14,9 @@ servers.
   it was received.
 - The caller owns time: `Net` reports its next deadline and is told the
   current time.
-- Nothing allocates after `Net` is built.
+- Unix-domain stream sockets, and TLS 1.3 with any of longshore's
+  providers (`aws-lc`, `ring`, `rustls`), in both receive modes.
+- Nothing allocates after `Net` is built, except the TLS handshake.
 
 ## Part of longshore
 

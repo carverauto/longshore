@@ -31,5 +31,5 @@
 - [x] 4.6 The same exchange on `UringIo`, `PosixIo` and `SimIo` gives the same frames
 
 ## 5. Documentation
-- [ ] 5.1 `docs/tcp.md` (the API, the two receive modes, sizing), README section, crate docs with an example
-- [ ] 5.2 `openspec/project.md`: ten crates, `longshore_tcp`
+- [x] 5.1 `docs/tcp.md` (the API, the two receive modes, sizing), README section, crate docs with an example
+- [x] 5.2 `openspec/project.md`: ten crates, `longshore_tcp`
