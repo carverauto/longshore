@@ -19,54 +19,49 @@ struct Seen {
     frames: Vec<Vec<u8>>,
 }
 
-/// Turn until `done`; events of `server` go to the first `Seen`, of
-/// `client` to the second, and frames are pulled at each `Readable`.
+/// Turn until `done`; events of the server go to the first `Seen`, of
+/// the client to the second, and frames are pulled at each `Readable`.
 fn watch<IO: Io>(
     w: &mut World<IO>,
     (c, s): (Conn, Conn),
     seen: &mut (Seen, Seen),
     done: impl Fn(&(Seen, Seen)) -> bool,
 ) {
-    for _ in 0..40_000 {
-        if done(seen) {
-            return;
-        }
-        for at_server in [true, false] {
-            let (net, io) = if at_server { w.server() } else { w.client() };
-            let (side, conn) = if at_server {
-                (&mut seen.0, s)
-            } else {
-                (&mut seen.1, c)
-            };
-            while let Some(e) = net.next_event() {
-                match e {
-                    Event::Readable(got) if got == conn => {
-                        while let Some(f) = must(net.next_frame(io, conn), "next_frame") {
-                            match net.bytes(io, &f) {
-                                Some(bytes) => side.frames.push(bytes.to_vec()),
-                                None => fail(format_args!("a frame just pulled has no bytes")),
-                            }
-                            net.release(f);
-                        }
+    if done(seen) {
+        return;
+    }
+    w.until(|w, at_server, e| {
+        let (net, io) = if at_server { w.server() } else { w.client() };
+        let (side, conn) = if at_server {
+            (&mut seen.0, s)
+        } else {
+            (&mut seen.1, c)
+        };
+        match e {
+            Event::Readable(got) if got == conn => {
+                while let Some(f) = must(net.next_frame(io, conn), "next_frame") {
+                    match net.bytes(io, &f) {
+                        Some(bytes) => side.frames.push(bytes.to_vec()),
+                        None => fail(format_args!("a frame just pulled has no bytes")),
                     }
-                    Event::Finished(got) if got == conn => side.finished = true,
-                    Event::Closed { conn: got, why } if got == conn => side.ended = Some(why),
-                    Event::Writable(_) => {}
-                    Event::Up(_)
-                    | Event::Accepted { .. }
-                    | Event::Refused { .. }
-                    | Event::Readable(_)
-                    | Event::Finished(_)
-                    | Event::Down { .. }
-                    | Event::Closed { .. }
-                    | Event::ListenFailed { .. }
-                    | Event::Drained => fail(format_args!("unexpected {e:?}")),
+                    net.release(f);
                 }
             }
+            Event::Finished(got) if got == conn => side.finished = true,
+            Event::Closed { conn: got, why } if got == conn => side.ended = Some(why),
+            Event::Writable(_) => {}
+            Event::Up(_)
+            | Event::Accepted { .. }
+            | Event::Refused { .. }
+            | Event::Readable(_)
+            | Event::Finished(_)
+            | Event::Down { .. }
+            | Event::Closed { .. }
+            | Event::ListenFailed { .. }
+            | Event::Drained => fail(format_args!("unexpected {e:?}")),
         }
-        w.turn();
-    }
-    fail(format_args!("the half-close exchange did not finish"));
+        done(seen)
+    });
 }
 
 /// The peer sends a request and shuts its write side down; the server,
