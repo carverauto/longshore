@@ -10,6 +10,7 @@ members = [
     "crates/longshore_mailbox",
     "crates/longshore_s3",
     "crates/longshore_stream",
+    "crates/longshore_tcp",
     "crates/longshore_tls",
     "crates/longshore-bench",
 ]
@@ -29,6 +30,7 @@ longshore_http_client = { path = "crates/longshore_http_client", version = "=0.2
 longshore_mailbox = { path = "crates/longshore_mailbox", version = "=0.2.0", default-features = false }
 longshore_s3 = { path = "crates/longshore_s3", version = "=0.2.0", default-features = false }
 longshore_stream = { path = "crates/longshore_stream", version = "=0.2.0", default-features = false }
+longshore_tcp = { path = "crates/longshore_tcp", version = "=0.2.0", default-features = false }
 longshore_tls = { path = "crates/longshore_tls", version = "=0.2.0", default-features = false }
 
 # External Dependencies
@@ -57,8 +59,7 @@ bare_trait_objects = "forbid"
 deprecated_safe = { level = "warn", priority = -1 }
 unused_must_use = "deny"
 unused_results = "deny"
-# 622 public items have no documentation yet; that is a separate piece of work.
-# missing_docs = "deny"
+missing_docs = "deny"
 
 [workspace.lints.clippy]
 # The workspace's lint table: every crate takes it with `[lints] workspace = true`.

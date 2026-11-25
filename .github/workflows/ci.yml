@@ -24,7 +24,7 @@ env:
   # own. Raise it deliberately, with the lint fixes it asks for.
   RUST_VERSION: "1.100.0"
   # The crates whose code depends on the TLS provider.
-  TLS_CRATES: -p longshore_tls -p longshore_stream -p longshore_http_client -p longshore_s3 -p longshore
+  TLS_CRATES: -p longshore_tls -p longshore_stream -p longshore_tcp -p longshore_http_client -p longshore_s3 -p longshore
 
 jobs:
   check:
@@ -94,12 +94,19 @@ jobs:
           cargo test -p longshore --lib --no-default-features
           cargo test -p longshore --doc --no-default-features
           for provider in ring rustls; do
-            cargo test -p longshore_tls -p longshore_stream -p longshore_http_client -p longshore_s3 --no-default-features --features "$provider"
+            cargo test -p longshore_tls -p longshore_stream -p longshore_tcp -p longshore_http_client -p longshore_s3 --no-default-features --features "$provider"
             cargo test -p longshore --lib --no-default-features --features "$provider"
           done
           cargo test -p longshore_common --features fault-injection
       - name: Model-checked client hand-offs
         run: ./scripts/test-model.sh
+      - name: A thousand seeds of TCP fault campaigns
+        # The model test of `longshore_tcp` under every fault campaign,
+        # under the allocation guard. A failure names its campaign and
+        # seed; `cargo run -p longshore_tcp --example tcp_model -- --seed N
+        # --campaign NAME` replays it. An allocation aborts the run with
+        # no name: the last "tcp_model: ..." line says which 250 seeds.
+        run: cargo test -p longshore_tcp --test tcp_model -- --ignored a_thousand
 
   macos:
     name: Portable backend on macOS

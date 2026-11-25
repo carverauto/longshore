@@ -39,6 +39,7 @@ impl<const N: usize> Fixed<N> {
         })
     }
 
+    /// The bytes held.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len as usize]
     }

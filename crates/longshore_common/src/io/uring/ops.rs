@@ -41,6 +41,7 @@ impl UringIo {
                 off,
                 len,
             } => self.prep_recv(i, sock, (buf, off, len), MSG_DONTWAIT),
+            Op::Shutdown { sock, how } => self.prep_shutdown(i, sock, how),
             Op::Close { sock } => self.prep_close(i, sock),
             Op::Cancel { target } => self.prep_cancel(i, target),
             Op::ReadFile {

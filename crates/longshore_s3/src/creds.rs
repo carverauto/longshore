@@ -6,12 +6,15 @@
 //! Credentials in fixed storage, and a parser for the shared credentials
 //! file format (`aws_access_key_id = ...` under `[default]`).
 
+/// Longest access key or secret key.
 pub const FIELD_MAX: usize = 128;
 /// Longest bearer token. Google's access tokens are documented as up to 2048 bytes.
 pub const TOKEN_MAX: usize = 2048;
 /// Longest session token that accompanies temporary keys.
 pub const SESSION_MAX: usize = 4096;
 
+/// What a store's requests are signed with: an access key and its secret, with
+/// the session token of temporary keys, or a bearer token.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Credentials {
     access: [u8; FIELD_MAX],
@@ -115,6 +118,7 @@ impl Credentials {
         crate::text::written(&self.access[..self.access_len])
     }
 
+    /// The secret key, or the bearer token.
     pub fn secret_key(&self) -> &str {
         crate::text::written(&self.secret[..self.secret_len])
     }

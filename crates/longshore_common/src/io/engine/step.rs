@@ -6,6 +6,7 @@
 //! Scheduling pass (`step`) and engine-resolved ops (`Timeout`, `AwaitWake`, `Cancel`).
 
 use super::*;
+use crate::io::trace::fold;
 
 impl<W: World> Engine<W> {
     pub(super) fn record_trace(&mut self, c: Completion) {
@@ -15,14 +16,26 @@ impl<W: World> Engine<W> {
             reason = "the trace hashes the bits of `result`, negated errnos included"
         )]
         let result_bits = c.result as u32;
-        for v in [c.token.0, u64::from(result_bits), now] {
-            self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
-        }
+        fold(&mut self.trace, &[c.token.0, u64::from(result_bits), now]);
         if c.more || c.buf.is_some() {
             let buf = c.buf.map_or(u64::MAX, |b| u64::from(b.0));
-            for v in [u64::from(c.more), buf] {
-                self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+            fold(&mut self.trace, &[u64::from(c.more), buf]);
+        }
+    }
+
+    /// Marks the pending operation `target` names as cancelled: 0, or
+    /// `-ENOENT` when it is no longer pending.
+    fn resolve_cancel(&mut self, target: Option<u64>) -> i32 {
+        match self.pending.iter_mut().find(|q| target == Some(q.id)) {
+            Some(q) => {
+                if !q.cancelled {
+                    q.cancelled = true;
+                    let op = q.op;
+                    self.world.on_cancel(&op);
+                }
+                0
             }
+            None => -ENOENT,
         }
     }
 
@@ -36,20 +49,7 @@ impl<W: World> Engine<W> {
                 .swap(false, Ordering::AcqRel)
                 .then_some(0)
                 .map(Attempt::single),
-            Op::Cancel { .. } => {
-                let target = p.cancel_target;
-                match self.pending.iter_mut().find(|q| target == Some(q.id)) {
-                    Some(q) => {
-                        if !q.cancelled {
-                            q.cancelled = true;
-                            let op = q.op;
-                            self.world.on_cancel(&op);
-                        }
-                        Some(Attempt::single(0))
-                    }
-                    None => Some(Attempt::single(-ENOENT)),
-                }
-            }
+            Op::Cancel { .. } => Some(Attempt::single(self.resolve_cancel(p.cancel_target))),
             Op::FileRead { slot, .. }
             | Op::FileWrite { slot, .. }
             | Op::FileSync { slot, .. }
@@ -84,6 +84,7 @@ impl<W: World> Engine<W> {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::ReadFile { .. }
             | Op::FileOpen { .. }
@@ -127,6 +128,10 @@ impl<W: World> Engine<W> {
                 i = idx + 1;
                 continue;
             }
+            if self.reordered(&p) {
+                i = idx + 1;
+                continue;
+            }
             let ready = if p.cancelled || p.chain_aborted {
                 if p.attached {
                     self.world.release(&p.op);
@@ -152,6 +157,25 @@ impl<W: World> Engine<W> {
             }
             // Otherwise `swap_remove` moved another entry into `idx`; visit it next.
         }
+    }
+
+    /// Whether the report of pending `idx` is put off to a later step, for
+    /// a world that reorders: the end of a socket operation its close
+    /// cancelled, or a close, which then ends its socket's operations now
+    /// and completes later.
+    fn reordered(&mut self, p: &Pending) -> bool {
+        if p.chain_id != 0 {
+            return false;
+        }
+        if let Op::Close { sock } = p.op {
+            let late = !p.cancelled && self.world.late();
+            if late {
+                self.cancel_pending_on(sock);
+            }
+            return late;
+        }
+        // An operation cancelled by name reports as promptly as ever.
+        p.closed_under && self.world.late()
     }
 
     /// Delivers the outcome of visiting pending `idx`. Returns whether the
@@ -205,6 +229,7 @@ impl<W: World> Engine<W> {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -228,6 +253,12 @@ impl<W: World> Engine<W> {
     /// A completed close cancels every operation still pending on its socket.
     fn cancel_ops_on(&mut self, sock: Sock) {
         self.world.closed(sock);
+        self.cancel_pending_on(sock);
+    }
+
+    /// Cancel every operation pending on `sock`. (A close is not one of
+    /// them: it names its socket, it does not run on it.)
+    fn cancel_pending_on(&mut self, sock: Sock) {
         for q in self.pending.iter_mut() {
             if op_socket(&q.op) != Some(sock) {
                 continue;
@@ -237,7 +268,7 @@ impl<W: World> Engine<W> {
                 q.attached = false;
             }
             if !q.cancelled {
-                q.cancelled = true;
+                (q.cancelled, q.closed_under) = (true, true);
                 let op = q.op;
                 self.world.on_cancel(&op);
             }
@@ -274,6 +305,7 @@ fn op_socket(op: &Op) -> Option<Sock> {
         | Op::Send { sock: s, .. }
         | Op::Recv { sock: s, .. }
         | Op::RecvNow { sock: s, .. }
+        | Op::Shutdown { sock: s, .. }
         | Op::ArmedRecv { sock: s } => Some(s),
         Op::Close { .. }
         | Op::AwaitWake
@@ -309,6 +341,7 @@ fn is_short_rw(op: &Op, result: i32) -> bool {
         | Op::Send { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
+        | Op::Shutdown { .. }
         | Op::Close { .. }
         | Op::AwaitWake
         | Op::ReadFile { .. }

@@ -26,6 +26,8 @@ use longshore_common::io::{BufId, Completion, Io, Op, Token};
 use longshore_http_client::client::{self, Client, Error, Handled, Request};
 use std::net::SocketAddr;
 
+/// A store: its configuration, its connections, and the operations in progress
+/// on it.
 pub struct S3 {
     /// What every request path starts with: empty, or `/bucket` when the
     /// bucket is addressed in the path.
@@ -83,6 +85,9 @@ use slot::Slot;
 use state::State;
 
 impl S3 {
+    /// A store as `cfg` describes it. Allocates everything the store will use.
+    /// Panics if `cfg` allows no attempts or no requests, its region is longer
+    /// than 64 bytes, or its bucket in the path is not a bucket name.
     pub fn new(cfg: Config) -> S3 {
         assert!(cfg.attempts_max >= 1 && cfg.requests_max >= 1);
         // The signature's fixed buffers hold a region of this length with room to spare.

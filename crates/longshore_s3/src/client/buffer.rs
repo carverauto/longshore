@@ -48,6 +48,7 @@ impl Buffer {
         }
     }
 
+    /// The buffer's bytes; none if it is void.
     pub fn as_slice(&self) -> &[u8] {
         if self.is_void() {
             return &[];
@@ -73,6 +74,7 @@ impl Buffer {
         self.index == NO_INDEX || self.lane.is_void()
     }
 
+    /// Whether the buffer has no bytes: it is void.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

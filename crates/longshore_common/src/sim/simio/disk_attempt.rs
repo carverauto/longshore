@@ -77,6 +77,7 @@ impl SimDisk {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -168,6 +169,7 @@ impl SimDisk {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }

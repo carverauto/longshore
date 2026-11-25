@@ -9,6 +9,7 @@
 
 use super::ClientConfigBuilder;
 
+/// How a client is laid out and how it behaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClientConfig {
     pub(super) connections_max: u32,

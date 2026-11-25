@@ -8,6 +8,7 @@
 use crate::multipart::UPLOAD_ID_MAX;
 use crate::report::VERSION_ID_MAX;
 
+/// Longest key once percent-encoded, with the slash before it.
 pub const KEY_ENCODED_MAX: usize = 512;
 /// A bucket name's longest length.
 pub const BUCKET_MAX: usize = 63;

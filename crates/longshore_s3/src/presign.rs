@@ -25,6 +25,7 @@ pub enum Access {
     Store,
 }
 
+/// Why a URL was not signed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresignError {
     /// The key is empty.

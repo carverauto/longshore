@@ -10,8 +10,10 @@
 //! wall-clock time, no OS randomness, no hash maps. A client and its test
 //! server run on the same `SimIo`.
 
+pub mod packet;
 pub mod prng;
 pub mod scenario;
 mod simio;
 
+pub use packet::{End, PacketCounts, PacketError, PacketFaults, PacketLink, PacketSizes};
 pub use simio::{DiskConfig, DiskFaultCounters, DiskFaults, Faults, PlacedFault, SimIo, Virtual};

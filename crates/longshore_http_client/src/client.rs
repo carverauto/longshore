@@ -25,6 +25,7 @@ use longshore_stream::{IdleCheck, Step, Stream};
 use longshore_tls::handshake::{ClientSetup, Handshake};
 use std::net::SocketAddr;
 
+/// An HTTP/1.1 client with a fixed pool of connections.
 pub struct Client {
     cfg: ClientConfig,
     conns: Box<[Conn]>,

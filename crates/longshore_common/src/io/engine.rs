@@ -54,12 +54,31 @@ pub trait World {
     fn register_file(&mut self, path: &str) -> io::Result<FileId>;
     /// Bind and listen on `sock` at `addr`, returning the bound address.
     fn listen(&mut self, sock: Sock, addr: SocketAddr) -> io::Result<SocketAddr>;
+    /// As [`World::listen`], with options; refuses those it cannot honour.
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: crate::io::ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        if opts == crate::io::ListenOpts::DEFAULT {
+            self.listen(sock, addr)
+        } else {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+    }
     /// Bind and listen on a Unix-domain stream socket at `path` in `sock`.
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
     /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected from now on.
     fn no_delay(&mut self, _on: bool) {}
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected from now on.
     fn keep_alive(&mut self, _on: bool) {}
+    /// The probe timing that goes with `keep_alive`.
+    fn keep_alive_timing(&mut self, _timing: Option<crate::io::KeepAlive>) {}
+    /// The peer's address of the connection in `sock`, if known.
+    fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
+        None
+    }
     /// Return a buffer-ring buffer back to the world's ring.
     fn give_back(&mut self, _id: BufId) {}
     /// Ask to measure TCP segment sizes on future connects, if supported.
@@ -89,6 +108,12 @@ pub trait World {
     /// Wait when `tick(true, ...)` has no completions yet.
     fn wait(&mut self, deadline: Option<u64>, only_timers: bool, idle: u32) -> io::Result<()>;
 
+    /// Whether a report that is due now comes in a later step instead: the
+    /// end of an operation its socket's close cancelled, or a close before
+    /// the operations it ends. A real kernel fixes no order among them.
+    fn late(&mut self) -> bool {
+        false
+    }
     /// Optional notification when a pending operation is marked cancelled.
     fn on_cancel(&mut self, _op: &Op) {}
     /// Optional notification before `wait` to clear tracked wait interest.
@@ -134,6 +159,8 @@ pub(crate) struct Pending {
     pub(crate) op: Op,
     pub(crate) deadline: u64,
     pub(crate) cancelled: bool,
+    /// Cancelled because its socket was closed, not by an `Op::Cancel`.
+    pub(crate) closed_under: bool,
     pub(crate) id: u64,
     pub(crate) cancel_target: Option<u64>,
     pub(crate) attached: bool,
@@ -181,7 +208,7 @@ impl<W: World> Engine<W> {
             next_op_id: 0,
             next_chain_id: 0,
             step_seq: 0,
-            trace: 0xcbf2_9ce4_8422_2325,
+            trace: super::trace::START,
             woken: Arc::new(AtomicBool::new(false)),
         }
     }

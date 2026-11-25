@@ -25,6 +25,10 @@ longshore_common = { path = ".", features = ["sim"] }
 hegeltest.workspace = true
 
 [[test]]
+name = "io_extents_turn"
+path = "tests/io/extents_turn.rs"
+
+[[test]]
 name = "io_props"
 path = "tests/io/props.rs"
 
@@ -99,6 +103,14 @@ path = "tests/sim/disk.rs"
 [[test]]
 name = "sim_storage"
 path = "tests/sim/storage.rs"
+
+[[test]]
+name = "sim_reorder"
+path = "tests/sim/reorder.rs"
+
+[[test]]
+name = "sim_packet"
+path = "tests/sim/packet.rs"
 
 [[test]]
 name = "sim_wal"

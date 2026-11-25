@@ -21,6 +21,8 @@ mod adversarial;
 mod adversarial_faults;
 #[path = "disk/dirs.rs"]
 mod dirs;
+#[path = "disk/dsync.rs"]
+mod dsync;
 #[path = "disk/faults.rs"]
 mod faults;
 #[path = "disk/faults_placed.rs"]

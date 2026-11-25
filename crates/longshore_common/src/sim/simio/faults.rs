@@ -17,7 +17,31 @@ impl Faults {
         bit_flip: 0,
         delay: 0,
         udp_drop: 0,
+        reorder: 0,
     };
+
+    /// The reports of a closed socket's operations come in another order.
+    ///
+    /// A close ends every operation in flight on its socket, and a real
+    /// kernel reports those ends and the close's own in no fixed order,
+    /// some of them long after. Without this the simulator reports the
+    /// close first and the others within a step or two. With it, per
+    /// step: an operation that a close ended keeps its report for a later
+    /// step, and a close that is about to complete ends its socket's
+    /// operations first and completes in a later step itself. An
+    /// operation cancelled by name (`Op::Cancel`) is not affected. Taken
+    /// to be at most 900,000, so that every report does come.
+    #[inline]
+    pub const fn reorder(self) -> u32 {
+        self.reorder
+    }
+
+    /// This value with [`Faults::reorder`] set to `reorder`.
+    #[inline]
+    pub const fn with_reorder(mut self, reorder: u32) -> Self {
+        self.reorder = reorder;
+        self
+    }
 
     /// A connect is refused.
     #[inline]

@@ -37,6 +37,9 @@ fn open_flags(f: OpenFlags) -> c_int {
     if f.directory {
         out |= O_DIRECTORY;
     }
+    if f.dsync {
+        out |= O_DSYNC;
+    }
     out | O_CLOEXEC
 }
 
@@ -61,6 +64,9 @@ fn open_flags(f: OpenFlags) -> c_int {
     }
     if f.directory {
         out |= O_DIRECTORY;
+    }
+    if f.dsync {
+        out |= O_DSYNC;
     }
     out | O_CLOEXEC
 }
@@ -124,6 +130,7 @@ impl Posix {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -183,6 +190,7 @@ impl Posix {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }

@@ -112,6 +112,7 @@ impl Default for SlotWaiter {
 }
 
 impl SlotWaiter {
+    /// A waiter that is not waiting yet.
     pub fn new() -> Self {
         Self {
             id: waiter_id(),

@@ -230,18 +230,18 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.9"
+version = "4.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "844c5c0b65be192cb68d570cca1b21a6444431d24e39c084dc0336177015337c"
+checksum = "50066ca966813ca8957ee15361752f19424a8ff620dbe9c8993d9f99d99b04b3"
 dependencies = [
  "clap_builder",
 ]
 
 [[package]]
 name = "clap_builder"
-version = "4.6.7"
+version = "4.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
+checksum = "a0ed97c96ef4efb3cc84e09fa388df4463e7cc3224ec38d7b1d9e45749333590"
 dependencies = [
  "anstyle",
  "clap_lex",
@@ -580,9 +580,9 @@ checksum = "735eaa21a6a5ffb2e84362faaeb90c05ba8e19797ca30428478cb6ea3a4921bc"
 
 [[package]]
 name = "hegeltest"
-version = "0.54.1"
+version = "0.54.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b51bc1d7cb7864bf784bb94718f7127a56acddf7d231c21dbf51468e54189fc1"
+checksum = "acee0de6dcbbd721a0b4a351370aa9d16b2bfadd2b3423b6a839d3c7af5a9cde"
 dependencies = [
  "hegeltest-c",
  "hegeltest-macros",
@@ -591,9 +591,9 @@ dependencies = [
 
 [[package]]
 name = "hegeltest-c"
-version = "0.53.1"
+version = "0.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72ba221d8f81fd1585c4650e19583c7387224acc5d6e19aa567d93dea12f3b0b"
+checksum = "c2507f682e2d497b9d9a375374ee6f541cb8178a45e39c38b3f991bfd4dcbcd3"
 dependencies = [
  "dashu-int",
  "hashbrown",
@@ -609,9 +609,9 @@ dependencies = [
 
 [[package]]
 name = "hegeltest-macros"
-version = "0.54.1"
+version = "0.54.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c976993a9dcd79d584eb16276272ee6a79235bea5548466d9ad0bc3445e475b9"
+checksum = "2da53a47c5682be01710f27e1e1fdc3fe0cc12ea3711bffb8fc763c7245f8e45"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -712,6 +712,7 @@ dependencies = [
  "longshore_mailbox",
  "longshore_s3",
  "longshore_stream",
+ "longshore_tcp",
  "longshore_tls",
  "rcgen",
 ]
@@ -800,6 +801,17 @@ name = "longshore_stream"
 version = "0.2.0"
 dependencies = [
  "longshore_common",
+ "longshore_tls",
+ "rcgen",
+]
+
+[[package]]
+name = "longshore_tcp"
+version = "0.2.0"
+dependencies = [
+ "hegeltest",
+ "longshore_common",
+ "longshore_stream",
  "longshore_tls",
  "rcgen",
 ]
@@ -1407,9 +1419,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.2.2+spec-1.1.0"
+version = "1.2.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5426cb1b964690d913f6c5c1a1ae0b42f428ec506bb4d452876d7a209c9bca3b"
+checksum = "26b1f26e9485c1fa43ee89fe76e9f3fb9e2e52bb227f8594b4d687496b83d073"
 dependencies = [
  "serde_spanned",
  "toml_datetime",
@@ -1428,9 +1440,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.6+spec-1.1.0"
+version = "1.1.7+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6769c452d71ba30696c6b37770c439a9cc9110f47f7d5cdbeda79840ef5ea31"
+checksum = "0bb28d6e049a9766c3bd91a8326e6179f5b132dec87906bb97018ef7a2f3431a"
 dependencies = [
  "winnow",
 ]
@@ -1769,18 +1781,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.64"
+version = "0.8.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed43f3060383c64b000f3c630550aebdfa9d3b76d48de32390483dd2cc7e0865"
+checksum = "32bc8a75f879cd6fe53a6bedf3c28f0e1b914c77424fc2be9e2ec85d7d25aff5"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.64"
+version = "0.8.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5cbd820fe3e35fb38c83b6dc7e6b1618bc46e0cd10073ae94e8d52dc468d8b9"
+checksum = "b8bfd2644ea1681f60cf95029ff18aa8ad1cc3f7b8fe37286f8e473bb29f816b"
 dependencies = [
  "proc-macro2",
  "quote",

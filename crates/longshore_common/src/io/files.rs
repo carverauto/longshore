@@ -39,6 +39,7 @@ pub struct OpenFlags {
     pub(crate) empty: bool,
     pub(crate) direct: bool,
     pub(crate) directory: bool,
+    pub(crate) dsync: bool,
 }
 
 /// Byte size of a Linux `struct statx` buffer.
@@ -201,6 +202,7 @@ impl FileTable {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -296,6 +298,7 @@ impl FileTable {
             | Op::Send { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
+            | Op::Shutdown { .. }
             | Op::Close { .. }
             | Op::AwaitWake
             | Op::ReadFile { .. }
@@ -342,6 +345,7 @@ impl FileTable {
                 | Op::Send { .. }
                 | Op::Recv { .. }
                 | Op::RecvNow { .. }
+                | Op::Shutdown { .. }
                 | Op::Close { .. }
                 | Op::AwaitWake
                 | Op::ReadFile { .. }

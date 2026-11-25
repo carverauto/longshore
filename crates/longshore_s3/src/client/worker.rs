@@ -28,6 +28,8 @@ pub struct Layout {
     pub(crate) heartbeat_ns: u64,
 }
 
+/// One I/O thread's side of a client: the store, and the lane its requests
+/// arrive on.
 pub struct Worker {
     s3: S3,
     lane: Arc<Lane>,

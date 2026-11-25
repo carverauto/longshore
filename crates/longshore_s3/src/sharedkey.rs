@@ -20,20 +20,25 @@ use longshore_crc::base64;
 
 /// `x-ms-` headers one request may carry.
 pub const HEADERS_MAX: usize = 8;
+/// Query parameters one request may carry.
 pub const QUERY_MAX: usize = 8;
 /// Longest string to sign.
 pub const STRING_MAX: usize = 2048;
 /// An account key is 64 bytes, 88 characters of base64.
 pub const KEY_MAX: usize = 64;
 
+/// Why a request was not signed.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SignError {
+    /// More than [`HEADERS_MAX`] `x-ms-` headers.
     TooManyHeaders,
+    /// More than [`QUERY_MAX`] query parameters.
     TooManyQueryParameters,
     /// The string to sign or the Authorization value does not fit.
     TooLong,
 }
 
+/// The parts of a request that the signature covers.
 pub struct Request<'a> {
     pub(crate) method: &'a str,
     pub(crate) content_length: u64,

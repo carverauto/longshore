@@ -206,6 +206,7 @@ impl UringIo {
             ring_in_ring,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
             sock_stream: vec![false; limits.sockets_max as usize].into_boxed_slice(),
+            sock_peer: vec![None; limits.sockets_max as usize].into_boxed_slice(),
             in_flight: 0,
             quiet_ts: Box::new(timespec {
                 sec: 0,
@@ -217,10 +218,13 @@ impl UringIo {
             files: Vec::new(),
             wake_fd: -1,
             measure_segments: false,
+            keep_timing: None,
             no_delay: false,
             keep_alive: false,
             last_listen_opts: None,
             last_connect_opts: None,
+            last_listen_timing: None,
+            last_connect_timing: None,
             #[cfg(feature = "fault-injection")]
             fail_tick: false,
         })

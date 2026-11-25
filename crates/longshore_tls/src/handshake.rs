@@ -25,6 +25,7 @@ pub use setup::{ClientSetup, ServerSetup};
 
 mod setup;
 
+/// Why TLS failed.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TlsError {
     /// The peer's certificate chain or name did not validate.
@@ -43,6 +44,7 @@ pub enum TlsError {
     /// The peer sent an alert other than an orderly close, after the
     /// handshake. The value is the alert's description code.
     Alert(u8),
+    /// The record layer refused a record.
     Record(RecordError),
 }
 
@@ -103,6 +105,7 @@ impl Handshake {
         })
     }
 
+    /// Begin a server handshake, presenting the certificate in `setup`.
     pub fn server(setup: &ServerSetup) -> Result<Handshake, TlsError> {
         allow_alloc(|| {
             ServerConnection::new(setup.config())

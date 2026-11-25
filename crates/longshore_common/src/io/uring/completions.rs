@@ -45,9 +45,12 @@ impl UringIo {
             return None;
         }
         if opts {
-            if let Err(errno) =
-                super::backend::apply_tcp_options(fd, self.no_delay, self.keep_alive)
-            {
+            if let Err(errno) = super::backend::apply_tcp_options(
+                fd,
+                self.no_delay,
+                self.keep_alive,
+                self.keep_timing,
+            ) {
                 let _: i32 = unsafe { close(fd) };
                 self.slots[i as usize].state = State::Free;
                 self.ready.push(i, Completion::new(token, -errno));
@@ -81,6 +84,7 @@ impl UringIo {
         let mut measured = result;
         if result == 0 {
             self.last_connect_opts = Some(super::backend::read_tcp_options(fd));
+            self.last_connect_timing = Some(super::backend::read_keep_timing(fd));
             if self.measure_segments {
                 let option = |level, name| {
                     let mut value: i32 = 0;
@@ -229,6 +233,7 @@ impl UringIo {
         } else {
             if let Ok(slot) = u32::try_from(c.res) {
                 if slot < self.limits.sockets_max {
+                    self.sock_peer[slot as usize] = None;
                     self.sock_stream[slot as usize] = true;
                 }
             }
@@ -271,6 +276,7 @@ impl UringIo {
             let s = self.slots[i as usize];
             if c.res >= 0 {
                 self.sock_stream[s.sock as usize] = true;
+                self.sock_peer[s.sock as usize] = s.addr.to_socket_addr();
             }
         }
         if state == State::FileSlotOpen {

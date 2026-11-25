@@ -37,6 +37,7 @@ impl Virtual {
                 s.rx_head = 0;
                 s.rx_len = 0;
                 s.peer_closed = false;
+                (s.peer_wr_shut, s.wr_shut, s.rd_shut) = (false, false, false);
                 s.reset = false;
             }
             Some(Attempt {
@@ -69,9 +70,12 @@ impl Virtual {
         if self.socks[s].state != SockState::Open {
             return Some(Attempt::single(-EPIPE));
         }
+        if self.socks[s].rd_shut {
+            return Some(Attempt::single(0));
+        }
         let avail = self.socks[s].rx_len;
         if avail == 0 {
-            if self.socks[s].peer_closed {
+            if self.socks[s].peer_closed || self.socks[s].peer_wr_shut {
                 return Some(Attempt::single(0));
             }
             return None;

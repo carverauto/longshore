@@ -6,7 +6,7 @@
 
 """Summarise repeated benchmark runs.
 
-Reads the JSON lines that http_uring and s3_uring print, one per run, from
+Reads the JSON lines that http_uring, s3_uring and tcp_uring print, one per run, from
 the files given (or standard input), groups runs of the same configuration,
 and prints a Markdown table with the median, the lowest and the highest
 value of each cell. One run tells you little; five and a median is the
@@ -20,12 +20,21 @@ import statistics
 import sys
 
 # What makes two runs the same configuration, and what to report about them.
-KEY = ["cmd", "tls", "crc", "links", "conns", "threads", "size", "batch", "arch", "build"]
+KEY = [
+    "cmd", "backend", "rx", "wait", "sync", "tls", "crc", "links", "conns", "threads", "size",
+    "frame", "ring", "zc_min", "segment", "batch", "arch", "build",
+]
 # Runs recorded before a field existed group with runs that use its default.
 KEY_DEFAULTS = {"threads": 1}
 METRICS = [
     ("gb_per_s", "GB/s", "{:.2f}"),
     ("requests_per_s", "req/s", "{:.0f}"),
+    ("per_s", "per s", "{:.0f}"),
+    ("p50_us", "p50 µs", "{:.1f}"),
+    ("p99_us", "p99 µs", "{:.1f}"),
+    ("p999_us", "p999 µs", "{:.1f}"),
+    ("cpu_s_per_gb", "CPU-s per GB", "{:.3f}"),
+    ("peer_cpu_s_per_gb", "peer CPU-s per GB", "{:.3f}"),
     ("thread_cpu", "thread", "{:.2f}"),
     ("gb_per_cpu_s", "GB per CPU-s", "{:.1f}"),
     ("cpu_us_per_request", "CPU µs/req", "{:.0f}"),

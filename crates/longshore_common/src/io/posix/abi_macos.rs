@@ -24,6 +24,11 @@ pub const SO_ERROR: c_int = 0x1007;
 pub const SO_NOSIGPIPE: c_int = 0x1022;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 0x01;
+pub const SO_REUSEPORT: c_int = 0x0200;
+/// macOS names the idle time `TCP_KEEPALIVE`.
+pub const TCP_KEEPIDLE: c_int = 0x10;
+pub const TCP_KEEPINTVL: c_int = 0x101;
+pub const TCP_KEEPCNT: c_int = 0x102;
 
 pub const MSG_PEEK: c_int = 0x2;
 pub const MSG_DONTWAIT: c_int = 0x80;
@@ -38,6 +43,9 @@ pub const O_CREAT: c_int = 0x0200;
 pub const O_TRUNC: c_int = 0x0400;
 pub const O_EXCL: c_int = 0x0800;
 pub const O_DIRECTORY: c_int = 0x0010_0000;
+/// Hands each write to the drive before it returns; the drive's own cache
+/// is not flushed (only `F_FULLFSYNC` does that).
+pub const O_DSYNC: c_int = 0x0040_0000;
 pub const O_CLOEXEC: c_int = 0x0100_0000;
 
 pub const F_SETFD: c_int = 2;

@@ -34,6 +34,7 @@ pub struct Faults {
     pub(crate) bit_flip: u32,
     pub(crate) delay: u32,
     pub(crate) udp_drop: u32,
+    pub(crate) reorder: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -63,7 +64,18 @@ pub(super) struct SimSock {
     pub(super) rx: Box<[u8]>,
     pub(super) rx_head: usize,
     pub(super) rx_len: usize,
+    /// For a socket accepted from an IP listener: the address the simulator
+    /// gives its peer, the listener's and a port derived from the peer's slot.
+    pub(super) accepted_from: Option<SocketAddr>,
+    /// A listener that shares its address with others (`SO_REUSEPORT`).
+    pub(super) reuse_port: bool,
     pub(super) peer_closed: bool,
+    /// The peer shut down its write side: receives end once drained.
+    pub(super) peer_wr_shut: bool,
+    /// This side shut down its write side: sends fail.
+    pub(super) wr_shut: bool,
+    /// This side shut down its read side: receives end, arrivals are dropped.
+    pub(super) rd_shut: bool,
     pub(super) reset: bool,
     /// For UDP: whether `peer` is valid.
     pub(super) has_peer: bool,
@@ -121,11 +133,15 @@ pub struct Virtual {
     pub(super) ring_in_free: Box<[bool]>,
     pub(super) accept_start: u32,
     pub(super) accept_len: u32,
+    pub(super) keep_timing: Option<crate::io::KeepAlive>,
     pub(super) no_delay: bool,
     pub(super) keep_alive: bool,
 }
 
 impl Virtual {
+    /// A world with the slots `limits` asks for, all free, and no disk. `seed`
+    /// decides every random choice; `faults` says how often the network
+    /// misbehaves.
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> Self {
         let sock = || SimSock {
             state: SockState::Free,
@@ -134,7 +150,12 @@ impl Virtual {
             rx: vec![0u8; SOCK_BUF].into_boxed_slice(),
             rx_head: 0,
             rx_len: 0,
+            accepted_from: None,
+            reuse_port: false,
             peer_closed: false,
+            peer_wr_shut: false,
+            wr_shut: false,
+            rd_shut: false,
             reset: false,
             has_peer: false,
             segment: 0,
@@ -159,6 +180,7 @@ impl Virtual {
             ring_in_free: vec![true; ring_count].into_boxed_slice(),
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
+            keep_timing: None,
             no_delay: false,
             keep_alive: false,
         }
@@ -172,6 +194,7 @@ impl Virtual {
             s.rx_head = 0;
             s.rx_len = 0;
             s.peer_closed = false;
+            (s.peer_wr_shut, s.wr_shut, s.rd_shut) = (false, false, false);
             s.reset = false;
             s.has_peer = false;
             s.segment = 0;
@@ -192,6 +215,9 @@ impl Virtual {
 pub type SimIo = Engine<Virtual>;
 
 impl SimIo {
+    /// A simulator with the slots `limits` asks for and no disk. `seed` decides
+    /// every random choice, so a run with the same seed repeats exactly;
+    /// `faults` says how often the network misbehaves.
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
         Engine::with_world(limits, Virtual::new(limits, seed, faults))
     }
@@ -200,6 +226,12 @@ impl SimIo {
     pub fn setup_disk(&mut self, cfg: DiskConfig) {
         let files_max = self.limits.files_max;
         self.world_mut().disk = Some(disk::SimDisk::new(cfg, files_max));
+    }
+
+    /// Replace the network fault rates given at construction, from now on:
+    /// for a test that wants a clean set-up and faults after it.
+    pub fn set_faults(&mut self, faults: Faults) {
+        self.world_mut().faults = faults;
     }
 
     /// Set probabilistic disk fault rates in parts per million.

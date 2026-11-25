@@ -25,6 +25,10 @@ pub const SO_KEEPALIVE: c_int = 9;
 pub const SO_LINGER: c_int = 13;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 1;
+pub const SO_REUSEPORT: c_int = 15;
+pub const TCP_KEEPIDLE: c_int = 4;
+pub const TCP_KEEPINTVL: c_int = 5;
+pub const TCP_KEEPCNT: c_int = 6;
 
 pub const MSG_PEEK: c_int = 0x2;
 pub const MSG_DONTWAIT: c_int = 0x40;
@@ -47,6 +51,8 @@ pub const O_DIRECTORY: c_int = 0o0200000;
 pub const O_DIRECTORY: c_int = 0o0040000;
 #[cfg(target_arch = "aarch64")]
 pub const O_DIRECT: c_int = 0o0200000;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub const O_DSYNC: c_int = 0o10000;
 
 pub const AT_FDCWD: c_int = -100;
 pub const FALLOC_FL_KEEP_SIZE: c_int = 0x01;

@@ -14,6 +14,7 @@ pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root_dir: &st
     open_close_empty_excl(make, root_dir);
     offset_rw_hole_short_eof(make, root_dir);
     direct_io_aligned(make, root_dir);
+    dsync_write_reads_back(make, root_dir);
     sync_reserve_punch(make, root_dir);
 }
 
@@ -163,6 +164,43 @@ fn direct_io_aligned<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     let (wb, rb) = io.buf_pair(w, r);
     assert_eq!(&rb[..4096], &wb[..4096]);
     assert_eq!(close_file(&mut io, &mut out, 4, FileSlot(0)), 0);
+}
+
+/// A file opened with `dsync` takes writes and reads them back, here and
+/// through a second, plain open of the same path, with no sync between.
+fn dsync_write_reads_back<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
+    let mut io = make(base_limits());
+    let mut out = Completions::new(8);
+    let path = format!("{root}dsync.dat");
+    let flags = rw_create().with_dsync(true);
+    assert!(flags.dsync() && !rw_create().dsync());
+    assert_eq!(
+        open_file(&mut io, &mut out, 1, FileSlot(0), BufId(0), &path, flags),
+        0
+    );
+    io.buf(BufId(1))[..12].copy_from_slice(b"durable-now!");
+    let first = write_op(FileSlot(0), BufId(1), 8, 0);
+    assert_eq!(drive_one(&mut io, &mut out, Token(2), first), 8);
+    let second = write_op(FileSlot(0), BufId(1), 12, 4096);
+    assert_eq!(drive_one(&mut io, &mut out, Token(3), second), 12);
+    io.buf(BufId(1))[..12].fill(0);
+    let back = read_op(FileSlot(0), BufId(1), 12, 4096);
+    assert_eq!(drive_one(&mut io, &mut out, Token(4), back), 12);
+    assert_eq!(&io.buf(BufId(1))[..12], b"durable-now!");
+    let ro = OpenFlags::NONE.with_read(true);
+    assert_eq!(
+        open_file(&mut io, &mut out, 5, FileSlot(1), BufId(0), &path, ro),
+        0
+    );
+    let head = read_op(FileSlot(1), BufId(1), 16, 0);
+    assert_eq!(drive_one(&mut io, &mut out, Token(6), head), 16);
+    assert_eq!(&io.buf(BufId(1))[..16], b"durable-\0\0\0\0\0\0\0\0");
+    assert_eq!(close_file(&mut io, &mut out, 7, FileSlot(1)), 0);
+    assert_eq!(close_file(&mut io, &mut out, 8, FileSlot(0)), 0);
+    assert_eq!(
+        stat_file(&mut io, &mut out, 9, BufId(0), BufId(1), &path),
+        Ok(4108)
+    );
 }
 
 fn sync_reserve_punch<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {

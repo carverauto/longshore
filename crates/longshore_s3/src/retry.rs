@@ -8,8 +8,10 @@
 use longshore_http_client::client::{Error, Response};
 use longshore_stream::TlsError;
 
+/// What to do after an attempt.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Class {
+    /// The store did what was asked.
     Success,
     /// Try again now, on another connection.
     Retry,
@@ -22,6 +24,7 @@ pub enum Class {
 /// What a conditional store's precondition failure means to the caller.
 pub const STATUS_PRECONDITION_FAILED: u16 = 412;
 
+/// What to do after an attempt that ended with `result`.
 pub fn classify(result: &Result<Response, Error>) -> Class {
     match result {
         Ok(r) => classify_status(r.status()),

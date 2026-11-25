@@ -28,6 +28,7 @@ pub enum Step {
     /// The operation the owner asked for finished with this result: bytes of
     /// plaintext sent or received, 0 for end of stream, or a negated errno.
     Done(i32),
+    /// TLS failed. The connection is of no further use.
     Tls(TlsError),
 }
 
@@ -62,6 +63,9 @@ pub(super) struct Tls {
     /// Content opened in place that did not fit the destination.
     pub(super) spill_at: u32,
     pub(super) spill_len: u32,
+    /// A receive into `rx_buf` behind the carried bytes is in flight
+    /// ([`Stream::recv_carried`]): they must stay where they are.
+    pub(super) carrying: bool,
     pub(super) dst: BufId,
     pub(super) dst_off: u32,
     pub(super) dst_max: u32,
@@ -134,6 +138,7 @@ impl Stream {
             rx_end: 0,
             spill_at: 0,
             spill_len: 0,
+            carrying: false,
             dst: BufId::new(0),
             dst_off: 0,
             dst_max: 0,
@@ -148,6 +153,19 @@ impl Stream {
         #[cfg(feature = "tls-core")]
         {
             self.tls.as_ref().is_some_and(|t| t.active)
+        }
+        #[cfg(not(feature = "tls-core"))]
+        {
+            false
+        }
+    }
+
+    /// The peer ended the stream in order, with a TLS close alert. An end
+    /// of stream without one was cut short. Always false without TLS.
+    pub fn peer_closed(&self) -> bool {
+        #[cfg(feature = "tls-core")]
+        {
+            self.tls.as_ref().is_some_and(|t| t.active && t.closed)
         }
         #[cfg(not(feature = "tls-core"))]
         {
@@ -204,6 +222,7 @@ impl Stream {
                 t.closed,
                 t.active,
             ) = (0, 0, 0, 0, 0, false, false);
+            t.carrying = false;
         }
     }
 

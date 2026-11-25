@@ -118,6 +118,18 @@ ring, lock-free mailboxes between cores, and a simulated disk with power
 loss and fault injection.
 [The I/O layer][io] describes each part.
 
+## TCP connections
+
+`longshore::tcp` is for protocols that run straight over TCP or Unix-domain
+sockets: replication, messaging, a database's own wire protocol. A fixed set
+of connections and listeners is driven from the caller's loop on the same
+backend and thread as file I/O and the object storage client. Frames arrive
+whole and are lent where they were received; a frame can be written to a
+direct-I/O log and sent on to other peers from that same memory, so its
+bytes are moved once. TLS works with every provider, and nothing allocates
+after the set is built.
+[TCP connections][tcp] describes the API, the receive modes and sizing.
+
 ## TLS and crypto providers
 
 HTTPS is TLS 1.3 with AES-GCM. The handshake always runs in rustls; the
@@ -232,6 +244,7 @@ the node. See [Running in containers][containers].
 | [Status][status] | What works, and against which stores |
 | [How it works][design] | The design, and the crates in this repository |
 | [The I/O layer][io] | File operations, serving, the buffer ring, mailboxes, the simulated disk |
+| [TCP connections][tcp] | `longshore::tcp`: connections, framing, frame memory, TLS, sizing |
 | [The shareable client][client] | The handle other threads use: operations, settings, failure behaviour |
 | [Building, testing and running against a store][testing] | The test scripts, and `s3_uring` against a real bucket |
 | [Running in containers][containers] | The seccomp profile and the locked-memory limit |
@@ -249,6 +262,7 @@ Apache License 2.0. See `LICENSE`.
 [containers]: https://github.com/carverauto/longshore/blob/main/docs/containers.md
 [design]: https://github.com/carverauto/longshore/blob/main/docs/design.md
 [io]: https://github.com/carverauto/longshore/blob/main/docs/io.md
+[tcp]: https://github.com/carverauto/longshore/blob/main/docs/tcp.md
 [limits]: https://github.com/carverauto/longshore/blob/main/docs/limits.md
 [results]: https://github.com/carverauto/longshore/tree/main/bench/results
 [status]: https://github.com/carverauto/longshore/blob/main/docs/status.md

@@ -261,6 +261,8 @@
 //!   between I/O cores and caller waiter slots.
 //! - [`dns`], [`stream`], [`http`]: the protocols, from `longshore_dns`,
 //!   `longshore_stream` and `longshore_http_client`.
+//! - [`tcp`], from `longshore_tcp`: connections for protocols that run
+//!   straight over TCP.
 //! - `tls` (with a TLS provider feature), from `longshore_tls`: TLS 1.3
 //!   handshake and record layer.
 //! - [`checksum`], from `longshore_crc`.
@@ -282,5 +284,6 @@ pub use longshore_mailbox as mailbox;
 pub use longshore_s3 as store;
 pub use longshore_s3::{client, crypto};
 pub use longshore_stream as stream;
+pub use longshore_tcp as tcp;
 #[cfg(feature = "tls-core")]
 pub use longshore_tls as tls;
