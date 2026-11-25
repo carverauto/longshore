@@ -212,3 +212,34 @@ fn the_same_seed_gives_the_same_packets_at_the_same_times() {
     traces.dedup();
     assert_eq!(traces.len(), 20, "two seeds gave one trace");
 }
+
+#[test]
+fn the_trace_tells_which_packet_was_lost() {
+    // Two packets of one length in one turn: a run that loses the first
+    // and one that loses the second must not share a trace.
+    let mut traces = Vec::new();
+    for seed in 0..400 {
+        let faults = PacketFaults::NONE.with_loss(500_000);
+        let mut link = PacketLink::new(seed, faults, PacketSizes::new(4, MAX as u32));
+        let mut into = [0; MAX];
+        sealed(|| {
+            assert_eq!(link.send(End::A, &[1; 40]), Ok(()));
+            assert_eq!(link.send(End::A, &[2; 40]), Ok(()));
+            link.turn(0);
+            link.turn(LATENCY);
+        });
+        let mut got = [0u8; 2];
+        while let Some(len) = sealed(|| link.recv(End::B, &mut into)) {
+            assert_eq!(len, 40);
+            got[usize::from(into[0] - 1)] = 1;
+        }
+        traces.push((got, link.trace_hash()));
+    }
+    let of = |which: [u8; 2]| {
+        let found = traces.iter().find(|(got, _)| *got == which);
+        found.map(|(_, trace)| *trace)
+    };
+    let (first, second) = (of([1, 0]), of([0, 1]));
+    assert!(first.is_some() && second.is_some(), "neither case came up");
+    assert_ne!(first, second);
+}

@@ -52,6 +52,9 @@ struct Packet {
     len: u32,
     /// The end it is for.
     to: End,
+    /// Which packet of the link it is, by the order `send` took them; a
+    /// duplicate has its original's.
+    number: u64,
     /// When it is due, and its place among those due at the same time.
     due: u64,
     order: u64,
@@ -73,6 +76,7 @@ pub struct PacketLink {
     flight: Box<[u32]>,
     flight_len: usize,
     next_order: u64,
+    next_number: u64,
     counts: PacketCounts,
     trace: u64,
 }
@@ -85,6 +89,7 @@ impl PacketLink {
         let idle = Packet {
             len: 0,
             to: End::A,
+            number: 0,
             due: 0,
             order: 0,
         };
@@ -101,6 +106,7 @@ impl PacketLink {
             flight: vec![0; slots as usize].into_boxed_slice(),
             flight_len: 0,
             next_order: 0,
+            next_number: 0,
             counts: PacketCounts::default(),
             trace: trace::START,
         }
@@ -127,7 +133,7 @@ impl PacketLink {
     /// Fold an event into the trace.
     fn note(&mut self, what: u64, slot: u32, at: u64) {
         let p = self.packets[slot as usize];
-        let parts = [what, p.order, u64::from(p.len), p.to.index() as u64, at];
+        let parts = [what, p.number, u64::from(p.len), p.to.index() as u64, at];
         trace::fold(&mut self.trace, &parts);
     }
 
@@ -143,6 +149,8 @@ impl PacketLink {
         self.memory(slot)[..bytes.len()].copy_from_slice(bytes);
         let packet = &mut self.packets[slot as usize];
         (packet.len, packet.to) = (bytes.len() as u32, from.other());
+        packet.number = self.next_number;
+        self.next_number += 1;
         self.tx[from.index()].push(slot);
         self.counts.sent += 1;
         Ok(())
