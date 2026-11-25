@@ -492,7 +492,7 @@ A slot of the device's packet memory is in exactly one place.
 | `send(from, bytes)` | the bytes are copied to a slot: → Queued | `Full`, nothing changes; `TooLong` for a packet longer than the device carries |
 | `turn(now)` | every Queued packet of both ends, in the order sent: lost (→ Dropped), or → In flight due at `now` + the latency + its delay, and with it a duplicate if one is drawn and a slot is free. Then every In flight packet that is due, in the order of due time and then of sending: → Delivered, or → Dropped when the receive queue is full | a duplicate that finds no slot is not made (counted as none) |
 | `recv(at, into)` | the oldest Delivered packet of that end is copied out: → Free | `None` |
-| `next_due()` | the earliest time a `turn` would do something: now if anything is Queued, else the earliest due time In flight | `None` |
+| `next_due(now)` | the earliest time a `turn` would do something: `now` if anything is Queued, else the earliest due time In flight | `None` |
 
 Reordering is a delay: a packet drawn to be reordered is due later by a
 fixed time longer than the latency, so that packets sent after it arrive

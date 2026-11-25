@@ -30,7 +30,7 @@ Each group ends with a review of its own diff (no-mistakes or
 
 ## 3. Packet device
 - [x] 3.1 Its state table and invariants in `design.md` first: where a packet is (free, queued, in flight, delivered; dropped is counted and free at once), what each call does, invariants P1 to P9, and its exhaustion table
-- [ ] 3.2 Packet device in `longshore_common::sim` with seeded loss, reordering, duplication and delay, and its own tests
+- [x] 3.2 `longshore_common::sim::PacketLink`: a link between two ends with seeded loss, duplication, delay and reordering, built once and allocating nothing afterwards, the time given by the caller. Its own test binary `sim_packet` under `alloc_guard`: once and in order without faults, each fault alone at its rate, slots and queues running out, the same packets at the same times for the same seed, and 300 seeds of random calls with the invariants held after each. Four faults put into the link on purpose are each caught
 - [ ] 3.3 Review of group 3
 
 ## 4. Properties and fuzzing
