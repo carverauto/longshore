@@ -16,5 +16,6 @@
 mod book;
 pub(crate) mod drive;
 mod events;
+mod life;
 pub(crate) mod steps;
 mod world;
