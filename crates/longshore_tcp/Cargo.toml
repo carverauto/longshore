@@ -38,6 +38,10 @@ name = "tcp_units"
 path = "tests/tcp/units.rs"
 
 [[test]]
+name = "tcp_props"
+path = "tests/tcp/props.rs"
+
+[[test]]
 name = "tcp_net"
 path = "tests/tcp/net.rs"
 
