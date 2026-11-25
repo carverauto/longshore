@@ -28,7 +28,9 @@ impl Faults {
     /// close first and the others within a step or two. With it, per
     /// step: an operation that a close ended keeps its report for a later
     /// step, and a close that is about to complete ends its socket's
-    /// operations first and completes in a later step itself.
+    /// operations first and completes in a later step itself. An
+    /// operation cancelled by name (`Op::Cancel`) is not affected. Taken
+    /// to be at most 900,000, so that every report does come.
     #[inline]
     pub const fn reorder(self) -> u32 {
         self.reorder

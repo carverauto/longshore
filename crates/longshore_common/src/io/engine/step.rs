@@ -177,7 +177,8 @@ impl<W: World> Engine<W> {
             }
             return late;
         }
-        p.cancelled && op_socket(&p.op).is_some() && self.world.late()
+        // An operation cancelled by name reports as promptly as ever.
+        p.closed_under && self.world.late()
     }
 
     /// Delivers the outcome of visiting pending `idx`. Returns whether the
@@ -270,7 +271,7 @@ impl<W: World> Engine<W> {
                 q.attached = false;
             }
             if !q.cancelled {
-                q.cancelled = true;
+                (q.cancelled, q.closed_under) = (true, true);
                 let op = q.op;
                 self.world.on_cancel(&op);
             }

@@ -159,6 +159,8 @@ pub(crate) struct Pending {
     pub(crate) op: Op,
     pub(crate) deadline: u64,
     pub(crate) cancelled: bool,
+    /// Cancelled because its socket was closed, not by an `Op::Cancel`.
+    pub(crate) closed_under: bool,
     pub(crate) id: u64,
     pub(crate) cancel_target: Option<u64>,
     pub(crate) attached: bool,

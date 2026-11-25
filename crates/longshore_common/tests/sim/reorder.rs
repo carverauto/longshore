@@ -31,10 +31,10 @@ fn limits() -> Limits {
 }
 
 /// A connected pair with a receive waiting on the server's end, which is
-/// then closed: the order its two reports come in, and how much virtual
-/// time lay between them.
+/// then closed, or with `by_name` cancelled by its token: the order the
+/// two reports come in, and how much virtual time lay between them.
 #[cfg(test)]
-fn close_under_a_receive(seed: u64, faults: Faults) -> (Vec<Token>, u64) {
+fn end_a_receive(seed: u64, faults: Faults, by_name: bool) -> (Vec<Token>, u64) {
     let addr: SocketAddr = "192.0.2.9:9000".parse().unwrap();
     let mut io = SimIo::new(limits(), seed, faults);
     let _: SocketAddr = io.listen(LISTENER, addr).unwrap();
@@ -64,7 +64,12 @@ fn close_under_a_receive(seed: u64, faults: Faults) -> (Vec<Token>, u64) {
     // The receive is waiting when the close comes.
     io.tick(false, &mut out).unwrap();
     assert!(out.pop().is_none());
-    io.submit(CLOSE, Op::Close { sock: SERVER }).unwrap();
+    let ending = if by_name {
+        Op::Cancel { target: RECV }
+    } else {
+        Op::Close { sock: SERVER }
+    };
+    io.submit(CLOSE, ending).unwrap();
     let (mut order, mut first_at) = (Vec::new(), None);
     while order.len() < 2 {
         io.tick(true, &mut out).unwrap();
@@ -84,7 +89,7 @@ fn close_under_a_receive(seed: u64, faults: Faults) -> (Vec<Token>, u64) {
 #[test]
 fn without_reorder_the_close_reports_first() {
     for seed in 0..200 {
-        let (order, apart) = close_under_a_receive(seed, Faults::NONE);
+        let (order, apart) = end_a_receive(seed, Faults::NONE, false);
         assert_eq!(order, [CLOSE, RECV], "seed {seed}");
         assert!(apart <= STEP_NS, "seed {seed}: {apart} ns apart");
     }
@@ -95,7 +100,7 @@ fn with_reorder_both_orders_come_and_reports_come_late() {
     let faults = Faults::NONE.with_reorder(500_000);
     let (mut close_first, mut recv_first, mut longest) = (0, 0, 0);
     for seed in 0..200 {
-        let (order, apart) = close_under_a_receive(seed, faults);
+        let (order, apart) = end_a_receive(seed, faults, false);
         match order[..] {
             [CLOSE, RECV] => close_first += 1,
             [RECV, CLOSE] => recv_first += 1,
@@ -115,9 +120,27 @@ fn the_same_seed_gives_the_same_order() {
     let faults = Faults::NONE.with_reorder(500_000);
     for seed in 0..50 {
         assert_eq!(
-            close_under_a_receive(seed, faults),
-            close_under_a_receive(seed, faults),
+            end_a_receive(seed, faults, false),
+            end_a_receive(seed, faults, false),
             "seed {seed}"
         );
+    }
+}
+
+#[test]
+fn an_operation_cancelled_by_name_reports_as_promptly_as_ever() {
+    let faults = Faults::NONE.with_reorder(900_000);
+    for seed in 0..200 {
+        let (_, apart) = end_a_receive(seed, faults, true);
+        assert!(apart <= STEP_NS, "seed {seed}: {apart} ns apart");
+    }
+}
+
+#[test]
+fn every_report_comes_even_when_reordering_is_set_to_always() {
+    let faults = Faults::NONE.with_reorder(1_000_000);
+    for seed in 0..50 {
+        let (order, _) = end_a_receive(seed, faults, false);
+        assert_eq!(order.len(), 2, "seed {seed}");
     }
 }

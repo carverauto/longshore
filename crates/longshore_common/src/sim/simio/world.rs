@@ -7,6 +7,9 @@
 
 use super::*;
 
+/// The most `Faults::reorder` is taken to be, in parts per million.
+const REORDER_MOST: u32 = 900_000;
+
 impl World for Virtual {
     fn now_ns(&self) -> u64 {
         self.now
@@ -117,7 +120,8 @@ impl World for Virtual {
 
     fn late(&mut self) -> bool {
         // Nothing is drawn when it is off: existing traces stay as they are.
-        self.rng.chance(self.faults.reorder)
+        // Never certain, or a close would be put off for ever.
+        self.rng.chance(self.faults.reorder.min(REORDER_MOST))
     }
 
     fn on_submit(&mut self, op: &Op) -> u64 {
