@@ -12,7 +12,7 @@ use super::path::{LOG, REPLICA};
 use super::{queued, thread_cpu, unexpected, Kind, Opts, Peer, Side, HEADER};
 use crate::die::OrDie;
 use longshore::io::Io;
-use longshore::tcp::{Conn, Event};
+use longshore::tcp::{Conn, Event, SendError};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -49,13 +49,21 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool) -> Peer {
                     continue;
                 }
                 // Into frame memory if it is not there, and back from it.
-                match side.net.hold(&mut side.io, frame) {
-                    Ok(held) => {
-                        let _sent: bool = queued(side.net.send_lent(conn, &held), conn);
-                        side.net.release(held);
+                // An answer that cannot be sent would be a request never
+                // answered and never counted: that ends the run. A
+                // connection the load has closed at its end is passed over.
+                let held = side
+                    .net
+                    .hold(&mut side.io, frame)
+                    .ok()
+                    .or_die("frame memory");
+                match side.net.send_lent(conn, &held) {
+                    Ok(()) | Err(SendError::NotUp | SendError::Stale) => {}
+                    Err(fault @ (SendError::Full | SendError::TooLarge | SendError::NotHeld)) => {
+                        crate::die::die(format_args!("answering on {conn:?}: {fault:?}"))
                     }
-                    Err(_) => side.net.release(frame),
                 }
+                side.net.release(held);
             }
         }
     }
@@ -69,6 +77,10 @@ pub(super) struct Done {
     count: u64,
     /// Answer times in nanoseconds, by power of two and sixteenth.
     times: Box<[u64]>,
+    /// How long was measured, from every connection up to the last turn,
+    /// and the CPU time of the thread in it.
+    secs: f64,
+    cpu: f64,
 }
 
 impl Done {
@@ -132,8 +144,9 @@ fn send<IO: Io>(side: &mut Side<IO>, o: &Opts, line: &mut Line) -> bool {
     !line.waits
 }
 
-/// Open the connections, run the load for the time asked, close them.
-pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> Done {
+/// Open the connections of the run and wait until every one is up; a
+/// replica says what it is as soon as it is.
+fn open_lines<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> Vec<Line> {
     // The replicas of a log node first, so that they are there when the
     // first block is durable.
     let replicas = o.lines() - o.conns;
@@ -149,17 +162,73 @@ pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> 
             replica: at < replicas,
         })
         .collect();
+    let (mut up, patience) = (0, Instant::now());
+    while up < lines.len() {
+        if patience.elapsed() > Duration::from_secs(30) {
+            crate::die::die(format_args!("{up} of {} connections came up", lines.len()));
+        }
+        side.turn();
+        while let Some(e) = side.net.next_event() {
+            let Event::Up(conn) = e else { unexpected(e) };
+            up += 1;
+            let line = lines.get_mut(conn.slot() as usize).filter(|l| l.replica);
+            if let Some(replica) = line {
+                let _said: bool = send(side, o, replica);
+            }
+        }
+    }
+    lines
+}
+
+/// Something came for `line`, or it can send again: take the answers,
+/// and send what the run sends next.
+fn serve_line<IO: Io>(side: &mut Side<IO>, o: &Opts, line: &mut Line, done: &mut Done) {
+    let mut answered = false;
+    while let Ok(Some(frame)) = side.net.next_frame(&mut side.io, line.conn) {
+        side.net.release(frame);
+        if let Some(at) = line.sent.take() {
+            done.record(at.elapsed().as_nanos() as u64);
+            answered = true;
+        }
+    }
+    if line.replica {
+        // It only receives, once it has said what it is.
+        if line.waits {
+            let _said: bool = send(side, o, line);
+        }
+    } else if o.kind == Kind::Bulk {
+        // As many as are taken: the next Writable brings more.
+        while send(side, o, line) {
+            done.count += 1;
+        }
+    } else if answered || line.waits {
+        let _queued: bool = send(side, o, line);
+    }
+}
+
+/// Open the connections, run the load for the time asked, close them.
+/// The time measured is from every connection up to the last turn.
+pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> Done {
+    let mut lines = open_lines(side, o, addr);
     let mut done = Done {
         count: 0,
         times: vec![0; 64 * 16].into_boxed_slice(),
+        secs: 0.0,
+        cpu: 0.0,
     };
-    let until = Instant::now() + Duration::from_secs(o.secs);
-    while Instant::now() < until {
+    let (started, cpu0) = (Instant::now(), thread_cpu());
+    for line in lines.iter_mut().filter(|l| !l.replica) {
+        while send(side, o, line) && o.kind == Kind::Bulk {
+            done.count += 1;
+        }
+    }
+    while started.elapsed() < Duration::from_secs(o.secs) {
         side.turn();
         while let Some(e) = side.net.next_event() {
             let conn = match e {
-                Event::Up(conn) | Event::Writable(conn) | Event::Readable(conn) => conn,
-                Event::Accepted { .. }
+                Event::Writable(conn) | Event::Readable(conn) => conn,
+                Event::Up(_)
+                | Event::Accepted { .. }
                 | Event::Refused { .. }
                 | Event::Finished(_)
                 | Event::Down { .. }
@@ -169,35 +238,13 @@ pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> 
             };
             // By its slot: the load's own bookkeeping must not grow with
             // the number of connections it measures.
-            let Some(line) = lines
-                .get_mut(conn.slot() as usize)
-                .filter(|l| l.conn == conn)
-            else {
-                continue;
-            };
-            let mut answered = false;
-            while let Ok(Some(frame)) = side.net.next_frame(&mut side.io, conn) {
-                side.net.release(frame);
-                if let Some(at) = line.sent.take() {
-                    done.record(at.elapsed().as_nanos() as u64);
-                    answered = true;
-                }
-            }
-            if line.replica {
-                // It only receives, once it has said what it is.
-                if matches!(e, Event::Up(_)) || line.waits {
-                    let _said: bool = send(side, o, line);
-                }
-            } else if o.kind == Kind::Bulk {
-                // As many as are taken: the next Writable brings more.
-                while send(side, o, line) {
-                    done.count += 1;
-                }
-            } else if matches!(e, Event::Up(_)) || answered || line.waits {
-                let _queued: bool = send(side, o, line);
+            let line = lines.get_mut(conn.slot() as usize);
+            if let Some(known) = line.filter(|l| l.conn == conn) {
+                serve_line(side, o, known, &mut done);
             }
         }
     }
+    (done.secs, done.cpu) = (started.elapsed().as_secs_f64(), thread_cpu() - cpu0);
     for line in &lines {
         let _closing = side.net.close(&mut side.io, line.conn);
     }
@@ -206,7 +253,8 @@ pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> 
 }
 
 /// One JSON line for the run.
-pub(super) fn report(o: &Opts, done: &Done, peer: &Peer, secs: f64, cpu: f64) {
+pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
+    let (secs, cpu) = (done.secs, done.cpu);
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
     let gb = peer.bytes as f64 / 1e9;
     let per_gb = |spent: f64| if gb > 0.0 { spent / gb } else { 0.0 };

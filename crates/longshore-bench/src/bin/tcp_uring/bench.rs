@@ -26,6 +26,13 @@
 //!   --dir PATH              path: where the log goes (a file system with
 //!                           direct I/O; the temporary directory)
 //!
+//! `--wait` is for both threads. The time measured starts when every
+//! connection is up, and ends before any is closed. The CPU figures are of
+//! the two threads themselves: what the ring hands to its kernel workers
+//! (a sync, a write that cannot complete at once) is not in them, while
+//! the portable backend does the same work on the thread, so the CPU
+//! columns of `path` do not compare across backends.
+//!
 //! One JSON line a run. GB is 10^9 bytes; times are of the request and its
 //! answer, in microseconds.
 
@@ -39,7 +46,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 mod load;
 mod path;
@@ -131,6 +138,11 @@ impl Opts {
                 "--dir" => o.dir.clone_from(&value),
                 other => die(format_args!("unknown flag {other}")),
             }
+        }
+        if o.kind == Kind::Path && o.conns > 500 {
+            // A replica is sent every source's block; its queue of sends
+            // holds two for each, up to the thousand a connection can.
+            die("path takes up to 500 connections");
         }
         o
     }
@@ -291,9 +303,15 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
         } else {
             0
         };
-        let mut side = Side::new(peer_make, at_peer.sizes(0, at_peer.lines()), false, files);
+        let mut side = Side::new(
+            peer_make,
+            at_peer.sizes(0, at_peer.lines()),
+            at_peer.spin,
+            files,
+        );
         let any = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        let how = ListenConfig::new(at_peer.peer_opts());
+        // Every connection of the run is opened at once.
+        let how = ListenConfig::new(at_peer.peer_opts()).with_backlog(at_peer.lines().max(128));
         let listener = side
             .net
             .listen(&mut side.io, any, how)
@@ -315,13 +333,10 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
         .ok()
         .or_die("the peer");
     let mut side = Side::new(make(), o.sizes(o.lines(), 0), o.spin, 0);
-    let cpu0 = thread_cpu();
-    let started = Instant::now();
     let done = load::drive(&mut side, o, addr);
-    let (secs, cpu) = (started.elapsed().as_secs_f64(), thread_cpu() - cpu0);
     stop.store(true, Ordering::Release);
     let seen = peer.join().ok().or_die("the peer thread");
-    load::report(o, &done, &seen, secs, cpu);
+    load::report(o, &done, &seen);
 }
 
 /// The end of a send that could not be queued: full, or a fault.

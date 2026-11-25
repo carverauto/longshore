@@ -59,6 +59,7 @@ if [ "$(uname -s)" != Linux ] && [ "$here" = 0 ]; then
     exec "$runtime" run --rm \
         --security-opt seccomp=unconfined \
         --ulimit memlock=-1:-1 \
+        --ulimit nofile=65536:65536 \
         -v "$PWD":/src:ro \
         -v longshore-cargo:/usr/local/cargo/registry \
         -v longshore-target:/target \
@@ -66,6 +67,12 @@ if [ "$(uname -s)" != Linux ] && [ "$here" = 0 ]; then
         -w /src \
         "$IMAGE" sh scripts/bench-tcp.sh --here --secs "$secs" --runs "$runs"
 fi
+
+# 4,096 connections are twice as many sockets in one process, and rings
+# lock their memory: both limits are raised where they can be, and said
+# where they cannot.
+ulimit -n 65536 2>/dev/null || echo "bench-tcp: cannot raise the limit of open files ($(ulimit -n)): runs of many connections will fail" >&2
+ulimit -l unlimited 2>/dev/null || echo "bench-tcp: cannot raise the limit of locked memory ($(ulimit -l) KiB): runs of many connections may fail" >&2
 
 cargo build --quiet --release -p longshore-bench --bin tcp_uring >&2
 bin=$(cargo metadata --format-version 1 --no-deps | python3 -c '
@@ -99,7 +106,7 @@ for backend in uring epoll; do
 done
 # The receive mode and the size of a ring buffer.
 for rx in ring direct; do
-    for ring in 1024 4096 16384; do
+    for ring in 1024 4096 16384 65536; do
         run rr --rx "$rx" --ring "$ring" --conns 16 --body 64
         run rr --rx "$rx" --ring "$ring" --conns 16 --body 4096
     done
