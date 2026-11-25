@@ -24,6 +24,9 @@ mod secure;
 mod secure;
 
 use secure::Secure;
+
+mod cover;
+pub use cover::PhaseCoverage;
 #[cfg(feature = "tls-core")]
 pub use secure::Tls;
 

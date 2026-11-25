@@ -10,7 +10,7 @@
 #[path = "model/mod.rs"]
 mod model;
 
-use longshore_tcp::Coverage;
+use longshore_tcp::{Coverage, PhaseCoverage};
 
 /// What the set and the simulator do after they are built runs under
 /// this: an allocation there aborts the run.
@@ -46,6 +46,64 @@ const EXPECTED: [&str; 10] = [
     "....R.RRRRRRUUR", // Closing
     "RRRRUUUUUUUURUU", // Backoff
 ];
+
+/// The same for the listener state table: `listen()`, `close_listener()`,
+/// accept ok, accept failed, Closed, deadline. No run binds with a retry,
+/// so none is ever `Binding`.
+#[cfg(test)]
+const LISTENERS: [&str; 4] = [
+    "RUUUUU", // Free
+    "U.UUU.", // Binding
+    "URRRUR", // Listening
+    "UU.RRU", // Closing
+];
+
+/// And for the TLS phase table of the kernel transport, where TLS is
+/// compiled in: `secure`, a send or receive completion, `shutdown_write`,
+/// close submitted, Closed.
+#[cfg(test)]
+const PHASES: [&str; 6] = [
+    "R..RR", // Plain
+    "URURU", // Handshake
+    "URU.R", // Aborted
+    "URRRR", // Secure
+    "URU.U", // Alerting
+    "U.U..", // AlertAborted
+];
+
+/// Hold `hits` of the cell `name` against what the table wants of it.
+#[cfg(test)]
+fn judge(wrong: &mut Vec<String>, name: core::fmt::Arguments<'_>, hits: u32, want: u8) {
+    println!("{name} | {hits:>8} | {}", want as char);
+    match want {
+        b'R' if hits == 0 => wrong.push(format!("{name}: never reached")),
+        b'U' if hits > 0 => wrong.push(format!("{name}: reached {hits} times")),
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+fn report_others(cover: &Coverage, phases: &PhaseCoverage) -> Vec<String> {
+    let mut wrong = Vec::new();
+    for (row, state) in Coverage::LISTENER_STATES.iter().enumerate() {
+        for (col, event) in Coverage::LISTENER_EVENTS.iter().enumerate() {
+            let name = format_args!("listener {state:>9} | {event:<26}");
+            let want = LISTENERS[row].as_bytes()[col];
+            judge(&mut wrong, name, cover.listener_hits(row, col), want);
+        }
+    }
+    if !cfg!(feature = "tls-core") {
+        return wrong;
+    }
+    for (row, phase) in PhaseCoverage::PHASES.iter().enumerate() {
+        for (col, event) in PhaseCoverage::EVENTS.iter().enumerate() {
+            let name = format_args!("phase {phase:>12} | {event:<28}");
+            let want = PHASES[row].as_bytes()[col];
+            judge(&mut wrong, name, phases.hits(row, col), want);
+        }
+    }
+    wrong
+}
 
 #[cfg(test)]
 fn report(cover: &Coverage) -> Vec<String> {
@@ -98,6 +156,7 @@ fn random_operations_keep_what_a_caller_relies_on() {
         total.full += stats.full;
         total.stale_calls += stats.stale_calls;
         total.cover.add(&stats.cover);
+        total.phases.add(&stats.phases);
     }
     // The runs did what they are for.
     assert!(total.accepted > 100 && total.frames > 1000, "{total:?}");
@@ -112,6 +171,7 @@ fn random_operations_keep_what_a_caller_relies_on() {
     // And were where the state table says a connection can be, and
     // nowhere it says one cannot.
     // (The cells are counted in debug builds only.)
-    let wrong = report(&total.cover);
+    let mut wrong = report(&total.cover);
+    wrong.extend(report_others(&total.cover, &total.phases));
     assert!(!cfg!(debug_assertions) || wrong.is_empty(), "{wrong:#?}");
 }

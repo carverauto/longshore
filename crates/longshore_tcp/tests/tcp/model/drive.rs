@@ -13,7 +13,7 @@ use longshore_common::sim::{Faults, SimIo};
 use longshore_tcp::check::World;
 use longshore_tcp::{
     Addr, ConnOpts, Coverage, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, NetError,
-    Reconnect, Rx, SendError,
+    PhaseCoverage, Reconnect, Rx, SendError,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -56,6 +56,8 @@ pub struct Stats {
     pub stale_calls: u32,
     /// The cells of the state table both sets were in.
     pub cover: Coverage,
+    /// And those of the TLS phase table of their transports.
+    pub phases: PhaseCoverage,
 }
 
 pub(crate) struct Run {
@@ -133,8 +135,9 @@ pub fn run_traced(seed: u64, steps: &[Step], trace: bool) -> Result<Stats, Failu
     run.finish().map_err(|why| Failure { step, why })?;
     for server in [false, true] {
         let (net, _) = run.net(server);
-        let cover = net.coverage();
+        let (cover, phases) = (net.coverage(), net.transport().phase_coverage());
         run.stats.cover.add(&cover);
+        run.stats.phases.add(&phases);
     }
     Ok(run.stats)
 }

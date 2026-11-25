@@ -85,8 +85,8 @@ pub use deadline::Deadlines;
 pub use event::{Event, NetError, SendError, Why};
 pub use framing::{FrameError, Framing, FramingError, HeaderFraming};
 pub use handle::{Conn, Generations, Listener};
-pub use kernel::KernelTransport;
 #[cfg(feature = "tls-core")]
 pub use kernel::Tls;
+pub use kernel::{KernelTransport, PhaseCoverage};
 pub use net::{Coverage, Frame, Net, Usage};
 pub use transport::{Happened, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED};

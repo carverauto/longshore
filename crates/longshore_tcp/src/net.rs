@@ -172,6 +172,11 @@ impl<T: Transport> Net<T> {
     }
 
     /// The share of the backend this `Net` was built with.
+    pub const fn transport(&self) -> &T {
+        &self.t
+    }
+
+    /// The configuration it was built with.
     pub const fn config(&self) -> &Config {
         &self.cfg
     }

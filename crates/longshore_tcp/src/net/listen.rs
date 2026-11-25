@@ -7,7 +7,7 @@
 //! with peer addresses), the connection limit, and backing off after an
 //! accept fails.
 
-use super::cover::Col;
+use super::cover::{Col, LCol};
 use super::state::{LSt, ListenerState, Socket, St, EV_ACCEPTED, EV_REFUSED, NONE};
 use super::Net;
 use crate::addr::Addr;
@@ -46,6 +46,7 @@ impl<T: Transport> Net<T> {
         let unused = |l: &ListenerState| l.st == LSt::Free && l.failed.is_none();
         let free = self.listeners.iter().position(unused);
         let l = free.ok_or(NetError::NoSlots)? as u32;
+        self.cover_listener(l, LCol::Listen);
         let state = &mut self.listeners[l as usize];
         state.cfg = cfg;
         state.addr = addr;
@@ -106,6 +107,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn stop_listener(&mut self, d: &mut T::Driver, l: u32) {
+        self.cover_listener(l, LCol::Close);
         let state = &mut self.listeners[l as usize];
         self.deadlines.clear(self.cfg.conns() + l);
         // Its handle is stale: there is nobody to report a failed bind to.
@@ -129,6 +131,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_listener_closed(&mut self, l: u32) {
+        self.cover_listener(l, LCol::Closed);
         self.listeners[l as usize].close_done = true;
         self.free_listener(l);
     }
@@ -175,6 +178,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_accepted(&mut self, d: &mut T::Driver, l: u32, slot: u32, armed: bool) {
+        self.cover_listener(l, LCol::Accepted);
         self.cover(slot, Col::Accepted);
         let state = &mut self.listeners[l as usize];
         if state.cfg.peer_addr {
@@ -278,6 +282,7 @@ impl<T: Transport> Net<T> {
         }
     }
     pub(super) fn on_accept_failed(&mut self, l: u32, slot: Option<u32>, result: i32) {
+        self.cover_listener(l, LCol::AcceptFailed);
         let state = &mut self.listeners[l as usize];
         match slot {
             Some(slot) => {
@@ -301,6 +306,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_listener_deadline(&mut self, d: &mut T::Driver, l: u32) {
+        self.cover_listener(l, LCol::Deadline);
         let state = &mut self.listeners[l as usize];
         match state.st {
             LSt::Listening => {

@@ -59,6 +59,10 @@ impl Secure {
 
     pub(super) const fn say_goodbye<IO: Io>(&mut self, _: &mut IO, _slot: u32) {}
 
+    pub(super) const fn coverage(&self) -> super::cover::PhaseCoverage {
+        super::cover::PhaseCoverage::NONE
+    }
+
     pub(super) const fn closing(&mut self, _slot: u32) {}
 
     pub(super) const fn closed(&mut self, _slot: u32) {}

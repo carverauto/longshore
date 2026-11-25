@@ -4,10 +4,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Which cells of the connection state table a `Net` has been in: how
-//! often each kind of event reached a connection in each state. Counted
+//! often each kind of event reached a connection in each state. The same
+//! for its listeners and the listener state table. Counted
 //! in debug builds only, for the model test's report of what it reached.
 
-use super::state::St;
+use super::state::{LSt, St};
 use super::Net;
 use crate::handle::Conn;
 use crate::transport::Transport;
@@ -45,10 +46,23 @@ impl Col {
     }
 }
 
-/// How often each event reached a connection in each state.
+/// What can reach a listener: the columns of the listener state table.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum LCol {
+    Listen,
+    Close,
+    Accepted,
+    AcceptFailed,
+    Closed,
+    Deadline,
+}
+
+/// How often each event reached a connection, and a listener, in each
+/// state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Coverage {
     hits: [[u32; Coverage::EVENTS.len()]; Coverage::STATES.len()],
+    listeners: [[u32; Coverage::LISTENER_EVENTS.len()]; Coverage::LISTENER_STATES.len()],
 }
 
 impl Coverage {
@@ -85,10 +99,31 @@ impl Coverage {
         "accepted into the slot",
     ];
 
+    /// The listener states, in the order of their table's rows.
+    pub const LISTENER_STATES: [&'static str; 4] = ["Free", "Binding", "Listening", "Closing"];
+
+    /// The events of a listener, in the order of their table's columns.
+    pub const LISTENER_EVENTS: [&'static str; 6] = [
+        "listen()",
+        "close_listener(), drain()",
+        "accept ok",
+        "accept failed",
+        "Closed",
+        "deadline",
+    ];
+
     /// Nothing counted.
     pub const NONE: Coverage = Coverage {
         hits: [[0; Coverage::EVENTS.len()]; Coverage::STATES.len()],
+        listeners: [[0; Coverage::LISTENER_EVENTS.len()]; Coverage::LISTENER_STATES.len()],
     };
+
+    /// How often event `event` reached a listener in state `state`, by
+    /// their places in [`Coverage::LISTENER_STATES`] and
+    /// [`Coverage::LISTENER_EVENTS`].
+    pub const fn listener_hits(&self, state: usize, event: usize) -> u32 {
+        self.listeners[state][event]
+    }
 
     /// How often event `event` reached a connection in state `state`, by
     /// their places in [`Coverage::STATES`] and [`Coverage::EVENTS`].
@@ -99,6 +134,11 @@ impl Coverage {
     /// Add what `other` counted.
     pub fn add(&mut self, other: &Coverage) {
         for (row, more) in self.hits.iter_mut().zip(other.hits.iter()) {
+            for (cell, n) in row.iter_mut().zip(more.iter()) {
+                *cell = cell.saturating_add(*n);
+            }
+        }
+        for (row, more) in self.listeners.iter_mut().zip(other.listeners.iter()) {
             for (cell, n) in row.iter_mut().zip(more.iter()) {
                 *cell = cell.saturating_add(*n);
             }
@@ -134,6 +174,21 @@ impl<T: Transport> Net<T> {
         if cfg!(debug_assertions) {
             let st = self.conns[slot as usize].st;
             let cell = &mut self.coverage.hits[row(st)][col as usize];
+            *cell = cell.saturating_add(1);
+        }
+    }
+
+    /// Count `col` reaching listener `l` in the state it is in.
+    #[inline]
+    pub(super) fn cover_listener(&mut self, l: u32, col: LCol) {
+        if cfg!(debug_assertions) {
+            let row = match self.listeners[l as usize].st {
+                LSt::Free => 0,
+                LSt::Binding => 1,
+                LSt::Listening => 2,
+                LSt::Closing => 3,
+            };
+            let cell = &mut self.coverage.listeners[row][col as usize];
             *cell = cell.saturating_add(1);
         }
     }
