@@ -115,7 +115,9 @@ pub enum NetError {
     /// Every slot of the kind needed is in use.
     NoSlots,
     /// The framing's header or longest frame does not fit the sizes the
-    /// `Net` was built with.
+    /// `Net` was built with. Also TLS in ring mode on frame memory that
+    /// cannot serve it: buffers smaller than a record, or fewer than two
+    /// of them (`Sizes::with_frames`).
     Framing,
     /// Listening failed with this negated error number.
     Listen(i32),

@@ -22,6 +22,10 @@ impl<T: Transport> Net<T> {
     /// Open a connection to `addr` protected with TLS; the peer's
     /// certificate must match `server_name`. [`crate::Event::Up`] follows
     /// when the handshake is done; the connect timeout covers both.
+    ///
+    /// In ring mode the frame memory must hold a record
+    /// (`longshore_stream::RING_DST_MIN` bytes a buffer) and have two
+    /// buffers at least: [`NetError::Framing`] otherwise.
     pub fn connect_tls(
         &mut self,
         d: &mut T::Driver,

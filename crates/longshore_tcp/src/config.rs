@@ -169,7 +169,9 @@ impl ListenConfig {
 
     /// Protect accepted connections with TLS: each is announced once its
     /// handshake is done. Needs `Sizes::with_tls` and a transport with a
-    /// server setup.
+    /// server setup; in ring mode also frame memory of two buffers at
+    /// least, each holding a record. `listen` answers
+    /// `NetError::NoTls` or `NetError::Framing` otherwise.
     #[must_use]
     pub const fn with_tls(mut self, on: bool) -> ListenConfig {
         self.tls = on;
