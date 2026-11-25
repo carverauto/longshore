@@ -7,6 +7,7 @@
 
 use super::book::{fill, Handle, Sender, Side, BODY_MIN};
 use super::steps::{Kind, Step};
+use longshore_common::io::alloc_guard::sealed;
 use longshore_common::io::Limits;
 use longshore_common::sim::{Faults, SimIo};
 use longshore_tcp::check::World;
@@ -165,7 +166,7 @@ impl Run {
         let server = step.server;
         match step.kind {
             Kind::Turn => {
-                self.w.turn();
+                sealed(|| self.w.turn());
                 Ok(())
             }
             Kind::PullEvents => self.pull_events(server, 1 + step.a % 4),
@@ -207,7 +208,7 @@ impl Run {
         let reconnect = bits & 0x1c0 == 0x1c0;
         let (opts, half_close) = opts_with(bits, reconnect)?;
         let (net, io) = self.net(false);
-        match net.connect(io, ADDR, opts) {
+        match sealed(|| net.connect(io, ADDR, opts)) {
             Ok(conn) => {
                 self.stats.connects += 1;
                 let mut handle = Handle::new(conn, half_close, false, false);
@@ -226,7 +227,7 @@ impl Run {
             .with_reuse_port(true)
             .with_limit(limit);
         let (net, io) = self.net(true);
-        match net.listen(io, Addr::Ip(ADDR), cfg) {
+        match sealed(|| net.listen(io, Addr::Ip(ADDR), cfg)) {
             Ok(l) => {
                 let listeners = &mut self.sides[1].listeners;
                 if listeners.iter().any(|(known, _, _)| *known == l) {
@@ -249,7 +250,7 @@ impl Run {
         let at = pick as usize % count;
         let (l, open, _) = self.sides[1].listeners[at];
         let (net, io) = self.net(true);
-        let got = net.close_listener(io, l);
+        let got = sealed(|| net.close_listener(io, l));
         self.sides[1].listeners[at].1 = false;
         match (open, got) {
             (true, Ok(())) | (false, Err(NetError::Stale)) => Ok(()),
@@ -268,7 +269,7 @@ impl Run {
     pub(crate) fn close_at(&mut self, server: bool, at: usize) -> Result<(), String> {
         let h = self.sides[usize::from(server)].handles[at];
         let (net, io) = self.net(server);
-        let got = net.close(io, h.conn);
+        let got = sealed(|| net.close(io, h.conn));
         self.note(format_args!(
             "   close {:?} uid {} -> {got:?}",
             h.conn, h.uid
@@ -292,7 +293,7 @@ impl Run {
         };
         let h = self.sides[usize::from(server)].handles[at];
         let (net, io) = self.net(server);
-        let got = net.shutdown_write(io, h.conn);
+        let got = sealed(|| net.shutdown_write(io, h.conn));
         self.note(format_args!(
             "   shutdown {:?} uid {} -> {got:?}",
             h.conn, h.uid
@@ -319,8 +320,9 @@ impl Run {
         let sender = self.senders[h.uid as usize];
         let total = 4 + LENGTHS[len as usize % LENGTHS.len()];
         let (net, io) = self.net(server);
-        let open = net.can_send(h.conn);
-        let got = net.send_frame(io, h.conn, total as u32, |to| fill(to, h.uid, sender.own));
+        let open = sealed(|| net.can_send(h.conn));
+        let got =
+            sealed(|| net.send_frame(io, h.conn, total as u32, |to| fill(to, h.uid, sender.own)));
         self.note(format_args!(
             "   send {:?} uid {} frame {} of {total} bytes -> {got:?}",
             h.conn, h.uid, sender.own
@@ -371,7 +373,7 @@ impl Run {
     pub(crate) fn release_one(&mut self, server: bool) {
         if let Some(frame) = self.sides[usize::from(server)].held.pop() {
             let (net, _) = self.net(server);
-            net.release(frame);
+            sealed(|| net.release(frame));
         }
     }
 

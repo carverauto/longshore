@@ -19,6 +19,11 @@ use model::drive::{run, run_traced, Failure};
 use model::steps::{generate, Step};
 use std::sync::Mutex;
 
+/// What the set and the simulator do after they are built runs under
+/// this: an allocation there aborts the run.
+#[global_allocator]
+static ALLOC: longshore_common::io::alloc_guard::Guard = longshore_common::io::alloc_guard::Guard;
+
 /// What the last panic said, kept by the hook `main` installs: the many
 /// runs of a shrink would otherwise each print theirs.
 static LAST_PANIC: Mutex<String> = Mutex::new(String::new());

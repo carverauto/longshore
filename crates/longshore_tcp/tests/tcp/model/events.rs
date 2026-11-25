@@ -8,13 +8,14 @@
 
 use super::book::{read, Ended, Handle, Sender};
 use super::drive::Run;
+use longshore_common::io::alloc_guard::sealed;
 use longshore_tcp::{Conn, Event, Frame, Listener, NetError, SendError, Why};
 
 impl Run {
     pub(crate) fn pull_events(&mut self, server: bool, most: u32) -> Result<(), String> {
         for _ in 0..most {
             let (net, _) = self.net(server);
-            let Some(e) = net.next_event() else {
+            let Some(e) = sealed(|| net.next_event()) else {
                 return Ok(());
             };
             self.note(format_args!("   told (server={server}) {e:?}"));
@@ -69,7 +70,7 @@ impl Run {
                 self.stats.finished += 1;
                 self.ended_in_order(server, at)?;
                 let (net, io) = self.net(server);
-                match net.next_frame(io, conn) {
+                match sealed(|| net.next_frame(io, conn)) {
                     Ok(None) => {}
                     got => return Err(format!("input left behind the end: {got:?}")),
                 }
@@ -207,7 +208,7 @@ impl Run {
         while most == 0 || pulled < most {
             let h = self.sides[usize::from(server)].handles[at];
             let (net, io) = self.net(server);
-            let frame = match (h.alive, net.next_frame(io, h.conn)) {
+            let frame = match (h.alive, sealed(|| net.next_frame(io, h.conn))) {
                 (true, Ok(Some(frame))) => frame,
                 (true, Ok(None)) | (false, Err(NetError::Stale)) => return Ok(()),
                 (true, Err(NetError::Stale)) if h.refused => return Ok(()),
@@ -260,8 +261,8 @@ impl Run {
         let choice = (uid + seq) % 4;
         let (set, backend) = self.net(server);
         if choice == 0 || !own {
-            set.release(frame);
-        } else if let Ok(held) = set.hold(backend, frame) {
+            sealed(|| set.release(frame));
+        } else if let Ok(held) = sealed(|| set.hold(backend, frame)) {
             if choice == 1 && self.held_room(server) {
                 self.sides[side].held.push(held);
             } else {
@@ -277,8 +278,8 @@ impl Run {
         if let Some(to) = self.pick(server, pick) {
             let target = self.sides[usize::from(server)].handles[to];
             let (net, _) = self.net(server);
-            let open = net.can_send(target.conn);
-            let got = net.send_lent(target.conn, &frame);
+            let open = sealed(|| net.can_send(target.conn));
+            let got = sealed(|| net.send_lent(target.conn, &frame));
             if got == Ok(()) && open {
                 self.senders[target.uid as usize].sent += 1;
                 self.stats.relayed += 1;
@@ -288,7 +289,7 @@ impl Run {
             }
         }
         let (net, _) = self.net(server);
-        net.release(frame);
+        sealed(|| net.release(frame));
     }
 
     /// Bring the run to an end: everything is pulled and released, every
@@ -315,7 +316,7 @@ impl Run {
             if alive == 0 {
                 return self.at_rest();
             }
-            self.w.turn();
+            sealed(|| self.w.turn());
         }
         let stuck: Vec<_> = self
             .sides
@@ -353,7 +354,7 @@ impl Run {
             if waiting == 0 {
                 return Ok(());
             }
-            self.w.turn();
+            sealed(|| self.w.turn());
         }
         let stuck: Vec<_> = self
             .sides
@@ -382,7 +383,7 @@ impl Run {
             return Ok(0);
         }
         let (net, io) = self.net(server);
-        match net.shutdown_write(io, h.conn) {
+        match sealed(|| net.shutdown_write(io, h.conn)) {
             Ok(()) => self.senders[h.uid as usize].shut = true,
             Err(NetError::NotUp) => {}
             Err(e) => return Err(format!("shutdown of {:?} at the end: {e:?}", h.conn)),
@@ -395,14 +396,14 @@ impl Run {
     fn at_rest(&mut self) -> Result<(), String> {
         self.judge_ends()?;
         for _ in 0..400 {
-            self.w.turn();
+            sealed(|| self.w.turn());
         }
         for server in [false, true] {
             let (net, _) = self.net(server);
-            if let Some(e) = net.next_event() {
+            if let Some(e) = sealed(|| net.next_event()) {
                 return Err(format!("told {e:?} after everything had ended"));
             }
-            let usage = net.usage();
+            let usage = sealed(|| net.usage());
             if !usage.is_idle() {
                 return Err(format!("not idle at the end (server: {server}): {usage:?}"));
             }

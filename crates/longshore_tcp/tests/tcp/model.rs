@@ -11,6 +11,11 @@
 mod model;
 
 use longshore_tcp::Coverage;
+
+/// What the set and the simulator do after they are built runs under
+/// this: an allocation there aborts the run.
+#[global_allocator]
+static ALLOC: longshore_common::io::alloc_guard::Guard = longshore_common::io::alloc_guard::Guard;
 use model::drive::{run, Stats};
 use model::steps::generate;
 
