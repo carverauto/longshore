@@ -15,6 +15,7 @@ use crate::config::{ConnOpts, Rx};
 use crate::event::{NetError, Why};
 use crate::handle::Conn;
 use crate::transport::{Refused, Role, Span, Transport};
+use longshore_common::io::extents::Extent;
 use longshore_stream::RING_DST_MIN;
 
 impl<T: Transport> Net<T> {
@@ -116,29 +117,20 @@ impl<T: Transport> Net<T> {
             let ext = match c.backlog {
                 Some(ext) => ext,
                 None => {
-                    // A protected connection can need two buffers: the
-                    // frame it is putting together, and the records that
-                    // hold the rest of it. The last free one is kept for
-                    // a connection that holds one already, or those that
-                    // do could all wait for a second for ever.
-                    let first = c.asm.is_none() && c.ready.is_none();
-                    let spare = usize::from(first);
-                    let taken = (self.extents.free_count() > spare)
-                        .then(|| self.extents.take())
-                        .flatten();
-                    let Some(ext) = taken else {
+                    let Some(ext) = self.take_for_records(slot) else {
                         if kept {
                             // Asked for again when frame memory is free.
-                            c.unopened = true;
+                            self.conns[slot as usize].unopened = true;
                             self.add_work(slot, W_READ);
                         }
                         break;
                     };
-                    (c.backlog, c.backlog_off, c.backlog_len) = (Some(ext), 0, 0);
+                    let fresh = &mut self.conns[slot as usize];
+                    (fresh.backlog, fresh.backlog_off, fresh.backlog_len) = (Some(ext), 0, 0);
                     ext
                 }
             };
-            let have = c.backlog_len;
+            let have = self.conns[slot as usize].backlog_len;
             let into = Span::new(ext.buf(), have, size - have);
             let Some(opened) = self.t.open(d, slot, from, into) else {
                 self.drop_chunks(slot);
@@ -214,6 +206,34 @@ impl<T: Transport> Net<T> {
         }
         // Back to the ring, or here again while it stays empty.
         self.add_work(slot, W_READ);
+    }
+
+    /// A frame buffer for the records of `slot`, which has no backlog.
+    ///
+    /// A protected connection can need two buffers: the frame it is
+    /// putting together, and the records that hold the rest of it. The
+    /// last free one is kept for a connection that holds one already, if
+    /// there is one, or those that do could all wait for a second for
+    /// ever.
+    fn take_for_records(&mut self, slot: u32) -> Option<Extent> {
+        let c = &self.conns[slot as usize];
+        let first = c.asm.is_none() && c.ready.is_none();
+        if first && self.extents.free_count() == 1 && self.another_holds(slot) {
+            return None;
+        }
+        self.extents.take()
+    }
+
+    /// Whether a protected ring connection other than `slot` holds frame
+    /// memory for input it has not delivered: one that may come to need a
+    /// second buffer. Asked only when one buffer is left.
+    fn another_holds(&self, slot: u32) -> bool {
+        self.conns.iter().enumerate().any(|(at, c)| {
+            at != slot as usize
+                && c.secure
+                && c.opts.rx == Rx::Ring
+                && (c.asm.is_some() || c.ready.is_some() || c.backlog.is_some())
+        })
     }
 
     /// The stream of `slot` ended without a close alert: it is a broken

@@ -86,3 +86,41 @@ fn more_protected_connections_than_frame_buffers_all_deliver() {
         assert_eq!(three, [3, 3, 3, 3], "seed {seed}, three buffers");
     }
 }
+
+#[test]
+fn the_last_free_buffer_is_not_kept_from_the_only_connection_that_wants_it() {
+    let certs = certs(NAME);
+    for seed in 0..10 {
+        let mut w = World::new_tls(
+            &mut |l| sim(l, seed, faults(seed)),
+            Limits::BASE,
+            secure::sizes(1, 0, 0),
+            secure::sizes(0, 1, 1).with_frames(2, 32 << 10),
+            &certs,
+        );
+        let (c, s) = w.pair(Addr::Ip(sim_addr()), check::prefix());
+        // The caller keeps the first frame: one of the two buffers.
+        assert!(w.send(c, &check::prefixed(100, 0)));
+        let mut kept = Vec::new();
+        while kept.is_empty() {
+            w.turn();
+            while w.server().0.next_event().is_some() {}
+            kept = w.pull_all(s);
+        }
+        // The other buffer is free, and nobody else could want it.
+        let mut got = 0;
+        for i in 1..4u8 {
+            assert!(w.send(c, &check::prefixed(100, i)));
+            for _ in 0..400 {
+                w.turn();
+                while w.server().0.next_event().is_some() {}
+                for (f, bytes) in w.pull_all(s) {
+                    assert!(bytes == check::prefixed(100, got + 1), "seed {seed}");
+                    got += 1;
+                    w.server().0.release(f);
+                }
+            }
+            assert_eq!(got, i, "seed {seed}: frame {i} never came");
+        }
+    }
+}
