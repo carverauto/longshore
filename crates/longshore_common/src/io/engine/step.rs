@@ -131,7 +131,7 @@ impl<W: World> Engine<W> {
                 i = idx + 1;
                 continue;
             }
-            if self.reordered(idx, &p) {
+            if self.reordered(&p) {
                 i = idx + 1;
                 continue;
             }
@@ -166,14 +166,14 @@ impl<W: World> Engine<W> {
     /// a world that reorders: the end of a socket operation its close
     /// cancelled, or a close, which then ends its socket's operations now
     /// and completes later.
-    fn reordered(&mut self, idx: usize, p: &Pending) -> bool {
+    fn reordered(&mut self, p: &Pending) -> bool {
         if p.chain_id != 0 {
             return false;
         }
         if let Op::Close { sock } = p.op {
             let late = !p.cancelled && self.world.late();
             if late {
-                self.cancel_pending_on(sock, idx);
+                self.cancel_pending_on(sock);
             }
             return late;
         }
@@ -255,13 +255,14 @@ impl<W: World> Engine<W> {
     /// A completed close cancels every operation still pending on its socket.
     fn cancel_ops_on(&mut self, sock: Sock) {
         self.world.closed(sock);
-        self.cancel_pending_on(sock, usize::MAX);
+        self.cancel_pending_on(sock);
     }
 
-    /// Cancel every operation pending on `sock`, the one at `except` aside.
-    fn cancel_pending_on(&mut self, sock: Sock, except: usize) {
-        for (at, q) in self.pending.iter_mut().enumerate() {
-            if at == except || op_socket(&q.op) != Some(sock) {
+    /// Cancel every operation pending on `sock`. (A close is not one of
+    /// them: it names its socket, it does not run on it.)
+    fn cancel_pending_on(&mut self, sock: Sock) {
+        for q in self.pending.iter_mut() {
+            if op_socket(&q.op) != Some(sock) {
                 continue;
             }
             if q.attached {
