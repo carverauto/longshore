@@ -17,6 +17,10 @@
 //! - an operation the transport refuses for want of room in its driver
 //!   has changed nothing: nothing is reported for it, nothing was sent,
 //!   and the same operation works when there is room again;
+//! - when an armed receive has ended, a single receive on the slot works
+//!   and is reported once; on a protected slot so does a receive into the
+//!   transport's own memory, also when a close ends it (what `Net` falls
+//!   back to when the buffer ring has nothing for a connection);
 //! - a TLS handshake that was started is reported once, as ended, also
 //!   when its connection is closed under it (on a rig that has TLS).
 //!
@@ -24,6 +28,7 @@
 //! the driver. [`run_all`] is the kernel transport's own.
 
 mod kernel;
+mod receive;
 mod refusal;
 mod secured;
 
@@ -278,6 +283,8 @@ pub fn check<R: Rig>(rig: &mut impl FnMut() -> R) {
     closes_of_empty_and_connecting_slots(&mut rig());
     sends_go_on_after_the_peers_end(&mut rig());
     refusal::a_refused_operation_changes_nothing(&mut rig());
+    receive::a_single_receive_follows_an_armed_one(&mut rig());
+    receive::a_kept_receive_is_reported_once(&mut rig());
     secured::a_handshake_is_reported_once(&mut rig());
     secured::a_close_under_a_handshake_ends_it(&mut rig());
 }
