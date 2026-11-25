@@ -57,5 +57,9 @@ path = "tests/tcp/tls.rs"
 name = "tcp_model"
 path = "tests/tcp/model.rs"
 
+[[test]]
+name = "tcp_conformance"
+path = "tests/tcp/conformance.rs"
+
 [lints]
 workspace = true

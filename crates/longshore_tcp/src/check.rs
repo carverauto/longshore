@@ -21,6 +21,7 @@ use longshore_common::io::turn::{Class, Turn};
 use longshore_common::io::{Completion, Completions, Io, Limits, Op, Token};
 use std::collections::VecDeque;
 
+pub mod conformance;
 mod ending;
 mod exchange;
 pub mod storage;

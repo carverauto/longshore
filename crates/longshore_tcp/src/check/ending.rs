@@ -104,6 +104,24 @@ pub(super) fn answered_after_shutdown<IO: Io>(
     vec![request, answer]
 }
 
+/// Turn until the client set has a connection slot free: the slot of a
+/// closed connection comes back when its close and its receive have
+/// ended, not at once.
+fn await_client_slot<IO: Io>(w: &mut World<IO>, round: u8) {
+    for _ in 0..4000 {
+        let (client, _) = w.client();
+        if client.usage().connections() < 4 {
+            return;
+        }
+        w.turn();
+    }
+    let (client, _) = w.client();
+    let held = client.usage();
+    fail(format_args!(
+        "round {round}: no connection slot came back: {held:?}"
+    ));
+}
+
 /// A listener is closed and another opened, over and over, in a set with
 /// two listener slots: every slot comes back, which needs each backend to
 /// report the end of the closed listener's accept.
@@ -132,6 +150,7 @@ pub(super) fn listener_slots_come_back<IO: Io>(
             fail(format_args!("round {round}: no listener slot came back"));
         };
         let to = w.dial_addr(l, addr);
+        await_client_slot(&mut w, round);
         let (c, s) = w.connect(to, prefix());
         let got = w.exchange(c, s, &[prefixed(64, round)]);
         if got != [prefixed(64, round)] {

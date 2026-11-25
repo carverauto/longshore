@@ -358,26 +358,30 @@ One test binary, `tcp_model`, on the simulator.
   `cargo test`; one hundred thousand seeds in the nightly workflow.
 
 ## The transport conformance suite
-What `Net` relies on from any transport, as a suite a transport runs
-against itself (`longshore_tcp::check::conformance`), so that change 3's
-transport is held to it from its first commit:
+What `Net` relies on from any transport, as a suite a transport runs on
+itself with no `Net` above it (`longshore_tcp::check::conformance`), so
+that change 3's transport is held to it from its first commit. A
+transport brings a rig: itself, its driver, and a way to turn the driver.
 
-- For a slot, `Closed` is reported exactly once per close asked for, and
-  every operation in flight on the slot is reported (as ended) at some
-  point, before or after it. Nothing is reported for a slot after both.
-- A transport that fills slots itself (the accept range) never reports a
-  connection in a slot for which it still owes a report.
-- A send is reported once, with the bytes taken; the transport no longer
-  reads its buffer after the report.
+- Every operation that was started is reported once, as ended.
+- A close is reported once. The operations it ends are reported too,
+  before or after it, and then nothing more for the slot. (A transport
+  may put a new connection into the slot before the last of those reports
+  has come: `Net` parks it. What `Net` needs is only that each operation
+  reports once.)
+- A close of a slot that holds no socket is reported like any other
+  (assumption A2).
+- A connect whose slot is closed before it ends leaves no socket behind:
+  the slot can connect again (assumption A1).
 - A receive that ended at once is not also reported.
-- `Secured` is reported once per `secure`, also when the slot is closed
-  under it.
-- A refusal as busy changes nothing.
-- After the end of a stream is reported for a slot, sends on it still
-  work and are reported, until the write side is shut down (half-close).
-- A1: a connect that would have succeeded after a close of its slot was
-  submitted leaves no socket behind.
-- A2: a close of a slot that holds no socket is reported like any other.
+- After the end of the peer's stream is reported for a slot, sends on it
+  still work and are reported, until the write side is shut down
+  (half-close).
+
+Not in the suite yet: that a refusal as busy changes nothing (the
+scenario of a driver with too few operation slots covers it for the
+kernel transport), and `Secured` reported once per `secure`, also when
+the slot is closed under it.
 
 ## Decisions
 - **The tables describe `Net` as it is to be.** Every cell that exists in

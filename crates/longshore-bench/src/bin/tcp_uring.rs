@@ -86,6 +86,24 @@ fn log_and_replicate_tls(
     let _: Option<()> = std::fs::remove_file(path).ok();
 }
 
+/// What `Net` relies on from the transport, checked on the transport
+/// itself, on the ring and on the portable backend.
+#[cfg(target_os = "linux")]
+fn conforms(addr: std::net::SocketAddr) {
+    use die::OrDie;
+    use longshore::io::posix::PosixIo;
+    use longshore::io::uring::UringIo;
+    use longshore::tcp::check::conformance::run_all;
+    run_all(
+        &mut |limits| UringIo::new(limits).or_die("UringIo::new"),
+        addr,
+    );
+    run_all(
+        &mut |limits| PosixIo::new(limits).or_die("PosixIo::new"),
+        addr,
+    );
+}
+
 /// Every check and the log over TLS on the ring, with `provider` sealing
 /// and opening the records: the frames `plain` carried.
 #[cfg(target_os = "linux")]
@@ -157,6 +175,7 @@ fn main() {
     if ring.is_empty() || ring != portable {
         die::die("the ring and the portable backend carried different frames");
     }
+    conforms(addr);
     let log = |tag: &str| {
         let name = format!("longshore-tcp-{tag}-{}.dat", std::process::id());
         dir.join(name).to_string_lossy().into_owned()

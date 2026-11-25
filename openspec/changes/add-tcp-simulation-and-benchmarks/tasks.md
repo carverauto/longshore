@@ -16,7 +16,7 @@ Each group ends with a review of its own diff (no-mistakes or
 - [x] 1.3 `Net::coverage` counts, in debug builds, which event reached a connection in which state; the model test holds the sum over its seeds against the connection state table: every cell the table allows and the model can reach is reached, none the table excludes is. Not reached: the rows and column of TLS and of reconnecting. The listener table and the TLS phase table are not counted yet
 - [x] 1.4 A scenario for every row of the exhaustion table: six existed, three are new, and `net/exhaustion.rs` names them all
 - [x] 1.5 Flags to states where they exclude each other: the socket of a slot is one state; the reading flags and the redial flag stay, for the reasons in `design.md`; the model test unchanged and green
-- [ ] 1.6 `longshore_tcp::check::conformance` for transports, run against `KernelTransport` on `SimIo`, `PosixIo` and (in `tcp_uring`) `UringIo`
+- [x] 1.6 `longshore_tcp::check::conformance`: a transport brings a rig, the suite checks what `Net` relies on. Run against `KernelTransport` on `SimIo` (200 seeds of reordered reports), `PosixIo`, and in `tcp_uring` on `UringIo` and `epoll`. Not in it yet: the busy refusal, and `Secured`
 - [ ] 1.7 Review of group 1
 
 ## 2. Fault campaigns
