@@ -5,6 +5,8 @@
 
 //! A successful response. Only the client makes one.
 
+/// A response received whole. Its body is in the buffer the request gave for
+/// one; without a buffer it was discarded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Response {
     status: u16,

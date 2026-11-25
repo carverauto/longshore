@@ -62,6 +62,7 @@ real kernel path. It is not published.
 `deploy/seccomp/` has a seccomp profile that allows `io_uring` in a
 container.
 
-`fuzz/` has fuzz targets for the parsers. `bench/results/` has every
+`fuzz/` has fuzz targets for the parsers and for the TCP connection
+set (its framing, and its model test driven by the fuzzer). `bench/results/` has every
 measurement with the conditions it was taken under, and `bench/README.md`
 explains how to run the benchmarks and summarise repeated runs.

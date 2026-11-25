@@ -85,6 +85,16 @@ name = "tls_providers"
 harness = false
 test = true
 
+[[bench]]
+name = "tcp_framing"
+harness = false
+test = true
+
+[[bench]]
+name = "tcp_coalescing"
+harness = false
+test = true
+
 # Feasibility probe for splitting TLS: handshake by rustls, records by longshore::tls.
 [[example]]
 name = "tls_probe"

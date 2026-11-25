@@ -15,28 +15,49 @@ pub enum ServerConfigError {
     NoConnections,
     /// `head_max` is below the room the server's own response heads need,
     /// or above the longest head the parser reads.
-    HeadMaxOutOfRange { head_max: u32, min: u32, max: u32 },
+    HeadMaxOutOfRange {
+        /// The `head_max` asked for.
+        head_max: u32,
+        /// The least it may be.
+        min: u32,
+        /// The most it may be.
+        max: u32,
+    },
     /// `head_max` is larger than the buffers the head is read into.
-    HeadMaxAboveBufferSize { head_max: u32, buffer_size: u32 },
+    HeadMaxAboveBufferSize {
+        /// The `head_max` asked for.
+        head_max: u32,
+        /// The size of the buffers.
+        buffer_size: u32,
+    },
     /// `first_sock + connections_max` does not fit a socket slot number.
     SocketsOverflow {
+        /// The first slot connections are accepted into.
         first_sock: u32,
+        /// How many connections were asked for.
         connections_max: u32,
     },
     /// The listener is one of the slots connections are accepted into.
     ListenerInConnectionSockets {
+        /// The listener's slot.
         listener: Sock,
+        /// The first slot connections are accepted into.
         first_sock: u32,
+        /// How many connections were asked for.
         connections_max: u32,
     },
     /// `first_buf + 2 * connections_max` does not fit a buffer id.
     BuffersOverflow {
+        /// The server's first buffer.
         first_buf: u32,
+        /// How many connections were asked for.
         connections_max: u32,
     },
     /// `token_base + connections_max * 8 + 1` does not fit a token.
     TokensOverflow {
+        /// The server's first token.
         token_base: u64,
+        /// How many connections were asked for.
         connections_max: u32,
     },
 }

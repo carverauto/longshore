@@ -3,7 +3,8 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 # SPDX-License-Identifier: Apache-2.0
 
-# Coverage-guided fuzzing of the parsers (fuzz/, scripts/fuzz.sh).
+# Coverage-guided fuzzing of the parsers and of the TCP connection set
+# (fuzz/, scripts/fuzz.sh).
 # A pull request fuzzes each target for a minute, a push to main and the
 # nightly run for ten. The corpus of each target is kept in the Actions
 # cache between runs, so later runs start from what earlier ones found.
@@ -42,7 +43,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [dns_response, http_head, list_response, multipart_response, tls_record]
+        target:
+          - dns_response
+          - http_head
+          - list_response
+          - multipart_response
+          - tls_record
+          - tcp_framing
+          - tcp_model_steps
     steps:
       - uses: actions/checkout@v4
 
@@ -68,11 +76,13 @@ jobs:
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Fuzz
+        # The script takes parameters only. The run time is typed into a
+        # form on a manual run, so it reaches the shell as a variable of
+        # this step and not as text pasted into the command; the script
+        # refuses anything but a whole number.
         env:
-          FUZZ_TOOLCHAIN: ${{ env.NIGHTLY }}
-          FUZZ_TARGETS: ${{ matrix.target }}
-          FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '600' }}
-        run: scripts/fuzz.sh
+          SECONDS_ASKED: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '600' }}
+        run: scripts/fuzz.sh --toolchain "${{ env.NIGHTLY }}" --seconds "${SECONDS_ASKED}" "${{ matrix.target }}"
 
       - name: Keep the crashing input
         if: failure()

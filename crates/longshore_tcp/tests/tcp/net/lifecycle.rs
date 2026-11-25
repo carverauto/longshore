@@ -85,6 +85,7 @@ fn a_full_queue_refuses_without_losing_anything_and_says_when_there_is_room() {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         writable && got == 4
@@ -118,6 +119,7 @@ fn an_orderly_end_comes_after_every_frame_and_a_reset_is_told_apart() {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         ended.is_some()
@@ -153,6 +155,7 @@ fn an_orderly_end_comes_after_every_frame_and_a_reset_is_told_apart() {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         client_end.is_some() && server_end.is_some()
@@ -208,6 +211,7 @@ fn a_reconnecting_connection_keeps_its_handle_through_a_restart_of_its_peer() {
             | Event::Writable(_)
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         again.is_some() && up
@@ -237,6 +241,7 @@ fn a_connect_that_is_never_answered_times_out() {
             | Event::Writable(_)
             | Event::Down { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         true
@@ -284,6 +289,7 @@ fn a_listener_at_its_limit_refuses_with_one_frame_and_then_closes() {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         refused && told && closed
@@ -338,6 +344,7 @@ fn draining_stops_accepting_and_reports_when_queued_sends_have_gone() {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
         drained && got == 3

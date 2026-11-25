@@ -39,6 +39,7 @@ pub struct OpenFlags {
     pub(crate) empty: bool,
     pub(crate) direct: bool,
     pub(crate) directory: bool,
+    pub(crate) dsync: bool,
 }
 
 /// Byte size of a Linux `struct statx` buffer.

@@ -34,6 +34,7 @@ pub struct Faults {
     pub(crate) bit_flip: u32,
     pub(crate) delay: u32,
     pub(crate) udp_drop: u32,
+    pub(crate) reorder: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -138,6 +139,9 @@ pub struct Virtual {
 }
 
 impl Virtual {
+    /// A world with the slots `limits` asks for, all free, and no disk. `seed`
+    /// decides every random choice; `faults` says how often the network
+    /// misbehaves.
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> Self {
         let sock = || SimSock {
             state: SockState::Free,
@@ -211,6 +215,9 @@ impl Virtual {
 pub type SimIo = Engine<Virtual>;
 
 impl SimIo {
+    /// A simulator with the slots `limits` asks for and no disk. `seed` decides
+    /// every random choice, so a run with the same seed repeats exactly;
+    /// `faults` says how often the network misbehaves.
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
         Engine::with_world(limits, Virtual::new(limits, seed, faults))
     }

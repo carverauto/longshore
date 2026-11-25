@@ -34,7 +34,7 @@ impl Sizes {
     /// with peer addresses accepts), `accepts` connections its other
     /// listeners accept, `listeners` listeners. Defaults for the rest: 64
     /// frames of 1 MiB, 64 send segments of 64 KiB, 64 ring buffers of
-    /// 64 KiB, headers up to 256 bytes, 16 queued sends per connection,
+    /// 16 KiB, headers up to 256 bytes, 16 queued sends per connection,
     /// zero-copy sends from 16 KiB, tokens from 0.
     pub const fn new(connects: u32, accepts: u32, listeners: u32) -> Sizes {
         Sizes {
@@ -46,7 +46,7 @@ impl Sizes {
             segments: 64,
             segment_size: 64 << 10,
             ring_buffers: 64,
-            ring_buffer_size: 64 << 10,
+            ring_buffer_size: 16 << 10,
             header_max: 256,
             spans: 16,
             zero_copy_min: 16 << 10,

@@ -108,6 +108,12 @@ pub trait World {
     /// Wait when `tick(true, ...)` has no completions yet.
     fn wait(&mut self, deadline: Option<u64>, only_timers: bool, idle: u32) -> io::Result<()>;
 
+    /// Whether a report that is due now comes in a later step instead: the
+    /// end of an operation its socket's close cancelled, or a close before
+    /// the operations it ends. A real kernel fixes no order among them.
+    fn late(&mut self) -> bool {
+        false
+    }
     /// Optional notification when a pending operation is marked cancelled.
     fn on_cancel(&mut self, _op: &Op) {}
     /// Optional notification before `wait` to clear tracked wait interest.
@@ -153,6 +159,8 @@ pub(crate) struct Pending {
     pub(crate) op: Op,
     pub(crate) deadline: u64,
     pub(crate) cancelled: bool,
+    /// Cancelled because its socket was closed, not by an `Op::Cancel`.
+    pub(crate) closed_under: bool,
     pub(crate) id: u64,
     pub(crate) cancel_target: Option<u64>,
     pub(crate) attached: bool,
@@ -200,7 +208,7 @@ impl<W: World> Engine<W> {
             next_op_id: 0,
             next_chain_id: 0,
             step_seq: 0,
-            trace: 0xcbf2_9ce4_8422_2325,
+            trace: super::trace::START,
             woken: Arc::new(AtomicBool::new(false)),
         }
     }

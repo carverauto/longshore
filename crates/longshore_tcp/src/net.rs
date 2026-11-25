@@ -29,18 +29,24 @@ use crate::handle::Generations;
 use crate::transport::{Happened, Transport};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::{BufId, Limits};
-use state::{Chunk, ConnState, Keep, ListenerState, St, TxSpan, EV_CLOSED, EV_DOWN, NONE};
+use state::{Chunk, ConnState, Keep, ListenerState, Socket, St, TxSpan, NONE};
 
 mod conn;
+mod cover;
+mod ending;
 mod frames;
 mod listen;
 mod pull;
 mod rx;
 mod secure;
+mod spill;
 mod state;
 mod tx;
+mod usage;
 
+pub use cover::Coverage;
 pub use frames::Frame;
+pub use usage::Usage;
 
 /// Connections and listeners over a transport `T`.
 pub struct Net<T: Transport> {
@@ -93,6 +99,8 @@ pub struct Net<T: Transport> {
     tx_busy: u32,
     /// With TLS: the server name of each connection the caller opened.
     names: Box<[ServerName]>,
+    /// Which cells of the state table were reached, in debug builds.
+    coverage: Coverage,
 }
 
 impl<T: Transport> Net<T> {
@@ -159,7 +167,14 @@ impl<T: Transport> Net<T> {
             drain_reported: false,
             tx_busy: 0,
             names: vec![ServerName::NONE; names].into_boxed_slice(),
+            coverage: Coverage::NONE,
         }
+    }
+
+    /// The transport it runs on, to read: what a transport counts or
+    /// reports of itself, such as `KernelTransport::phase_coverage`.
+    pub const fn transport(&self) -> &T {
+        &self.t
     }
 
     /// The share of the backend this `Net` was built with.
@@ -202,12 +217,10 @@ impl<T: Transport> Net<T> {
             Happened::RecvEnded { slot, result } => self.on_recv_ended(slot, result),
             Happened::Received { slot, result } => self.on_received(d, slot, result),
             Happened::Sent { slot, result } => self.on_sent(d, slot, result),
-            Happened::ShutDown { slot, .. } => {
-                self.conns[slot as usize].shutting = false;
-                self.try_free(slot);
-            }
+            Happened::ShutDown { slot, result } => self.on_shut_down(slot, result),
             Happened::Closed { slot } => {
-                self.conns[slot as usize].closed = true;
+                self.cover(slot, cover::Col::Closed);
+                self.conns[slot as usize].sock = Socket::Closed;
                 self.try_free(slot);
             }
             Happened::ListenerClosed { listener } => self.on_listener_closed(listener),
@@ -289,7 +302,11 @@ impl<T: Transport> Net<T> {
     /// owed any: none that is closing, waiting to dial again, or free.
     fn queue_event(&mut self, slot: u32, bit: u8) {
         let c = &mut self.conns[slot as usize];
-        if !matches!(c.st, St::Up | St::Refused | St::Dying) {
+        let owed = matches!(
+            c.st,
+            St::Up | St::Refused | St::Finishing | St::HalfClosed | St::Dying
+        );
+        if !owed {
             return;
         }
         c.ev |= bit;
@@ -314,8 +331,8 @@ impl<T: Transport> Net<T> {
 
     /// Stop every `Up` connection from being told of an end twice.
     fn is_ending(&self, slot: u32) -> bool {
-        let c = &self.conns[slot as usize];
-        c.ev & (EV_CLOSED | EV_DOWN) != 0
-            || matches!(c.st, St::Dying | St::Closing | St::Free | St::Backoff)
+        // An end is owed only in `Dying`.
+        let st = self.conns[slot as usize].st;
+        matches!(st, St::Dying | St::Closing | St::Free | St::Backoff)
     }
 }

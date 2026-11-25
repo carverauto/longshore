@@ -48,6 +48,7 @@ impl Drop for Map {
     }
 }
 
+/// An io_uring instance and its mapped queues.
 pub struct Ring {
     fd: c_int,
     params: io_uring_params,

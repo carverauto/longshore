@@ -51,9 +51,17 @@ impl Secure {
         None
     }
 
+    pub(super) const fn recv_kept<IO: Io>(&mut self, _: &mut IO, _slot: u32) -> bool {
+        false
+    }
+
     pub(super) const fn send<IO: Io>(&mut self, _: &mut IO, _slot: u32, _: Span) {}
 
     pub(super) const fn say_goodbye<IO: Io>(&mut self, _: &mut IO, _slot: u32) {}
+
+    pub(super) const fn coverage(&self) -> super::cover::PhaseCoverage {
+        super::cover::PhaseCoverage::NONE
+    }
 
     pub(super) const fn closing(&mut self, _slot: u32) {}
 

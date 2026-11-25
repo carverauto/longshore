@@ -7,7 +7,8 @@
 //! with peer addresses), the connection limit, and backing off after an
 //! accept fails.
 
-use super::state::{LSt, ListenerState, St, EV_ACCEPTED, EV_REFUSED, NONE};
+use super::cover::{Col, LCol};
+use super::state::{LSt, ListenerState, Socket, St, EV_ACCEPTED, EV_REFUSED, NONE};
 use super::Net;
 use crate::addr::Addr;
 use crate::config::ListenConfig;
@@ -45,11 +46,13 @@ impl<T: Transport> Net<T> {
         let unused = |l: &ListenerState| l.st == LSt::Free && l.failed.is_none();
         let free = self.listeners.iter().position(unused);
         let l = free.ok_or(NetError::NoSlots)? as u32;
+        self.cover_listener(l, LCol::Listen);
         let state = &mut self.listeners[l as usize];
         state.cfg = cfg;
         state.addr = addr;
         (state.bound, state.count, state.armed, state.single) = (None, 0, false, None);
-        (state.backoff_ns, state.waiting, state.close_sent) = (0, false, false);
+        (state.backoff_ns, state.waiting) = (0, false);
+        (state.close_sent, state.close_done) = (false, false);
         match self.bind(d, l) {
             Ok(()) => {}
             Err(e) if e == -EADDRINUSE && cfg.bind_retry_ns > 0 => {
@@ -104,6 +107,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn stop_listener(&mut self, d: &mut T::Driver, l: u32) {
+        self.cover_listener(l, LCol::Close);
         let state = &mut self.listeners[l as usize];
         self.deadlines.clear(self.cfg.conns() + l);
         // Its handle is stale: there is nobody to report a failed bind to.
@@ -127,9 +131,21 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_listener_closed(&mut self, l: u32) {
+        self.cover_listener(l, LCol::Closed);
+        self.listeners[l as usize].close_done = true;
+        self.free_listener(l);
+    }
+
+    /// Free the closing listener `l` once its close has completed and its
+    /// accept has made its last report: until then a report for the slot
+    /// is this listener's, and must not find another one there.
+    fn free_listener(&mut self, l: u32) {
         let state = &mut self.listeners[l as usize];
-        state.st = LSt::Free;
-        (state.armed, state.close_sent) = (false, false);
+        let quiet = state.close_done && !state.armed && state.single.is_none();
+        if state.st == LSt::Closing && quiet {
+            state.st = LSt::Free;
+            (state.close_sent, state.close_done) = (false, false);
+        }
     }
 
     /// Keep an accept running on listener `l`, if it should have one.
@@ -162,6 +178,8 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_accepted(&mut self, d: &mut T::Driver, l: u32, slot: u32, armed: bool) {
+        self.cover_listener(l, LCol::Accepted);
+        self.cover(slot, Col::Accepted);
         let state = &mut self.listeners[l as usize];
         if state.cfg.peer_addr {
             state.single = None;
@@ -169,14 +187,19 @@ impl<T: Transport> Net<T> {
             state.armed = armed;
         }
         state.backoff_ns = 0;
+        // A listener that is closing has had its handle retired: the
+        // handle of the slot is already the next listener's, which must
+        // not be given this connection.
+        let by = (state.st == LSt::Listening).then(|| self.lgens.listener(l));
         let c = &mut self.conns[slot as usize];
         if c.st == St::Free {
-            self.occupy(d, slot, l);
+            self.occupy(d, slot, l, true);
         } else {
             // Every completion of the slot is its last connection's until
             // that one is freed: nothing is started for the new one before.
-            c.parked = l;
+            (c.parked, c.parked_by) = (l, by);
         }
+        self.free_listener(l);
         self.start_accept(d, l);
     }
 
@@ -185,22 +208,27 @@ impl<T: Transport> Net<T> {
     pub(super) fn admit_parked(&mut self, d: &mut T::Driver, slot: u32) {
         let c = &mut self.conns[slot as usize];
         let l = core::mem::replace(&mut c.parked, NONE);
+        let by = c.parked_by.take();
         if l != NONE && c.st == St::Free {
-            self.occupy(d, slot, l);
+            // Its listener may have gone, and another taken its slot; or
+            // it was closing already when the connection came.
+            let live = by.is_some_and(|h| self.lgens.slot_of_listener(h) == Some(l));
+            self.occupy(d, slot, l, live);
         }
     }
 
     /// Make `slot`, free until now, the connection listener `l` accepted.
-    fn occupy(&mut self, d: &mut T::Driver, slot: u32, l: u32) {
+    fn occupy(&mut self, d: &mut T::Driver, slot: u32, l: u32, live: bool) {
         let state = &self.listeners[l as usize];
-        let (cfg, listening) = (state.cfg, state.st == LSt::Listening);
+        let (cfg, listening) = (state.cfg, live && state.st == LSt::Listening);
+        let by = self.lgens.listener(l);
         let unix = matches!(state.addr, Addr::Unix(_));
         let seed = self.cfg.sizes.seed ^ u64::from(slot);
         let c = &mut self.conns[slot as usize];
         c.renew(cfg.conn, seed);
-        c.listener = l;
+        c.accepted_by = if live { by } else { Listener::NONE };
         c.unix = unix;
-        c.sock_open = true;
+        c.sock = Socket::Open;
         c.last_active = self.now;
         if !listening {
             // Accepted while the listener was closing: not a connection.
@@ -225,17 +253,22 @@ impl<T: Transport> Net<T> {
     /// Announce the accepted connection in `slot`: as a connection, or at
     /// the listener's limit as one to refuse.
     pub(super) fn admit(&mut self, d: &mut T::Driver, slot: u32) {
-        let l = self.conns[slot as usize].listener;
-        let state = &self.listeners[l as usize];
-        let (listening, over) = (state.st == LSt::Listening, state.count >= state.cfg.limit);
+        // The listener that accepted it, not a later one in its slot.
+        let by = self.conns[slot as usize].accepted_by;
+        let listening = self
+            .lgens
+            .slot_of_listener(by)
+            .filter(|l| self.listeners[*l as usize].st == LSt::Listening);
         self.deadlines.clear(slot);
         let c = &mut self.conns[slot as usize];
-        if !listening {
+        let Some(l) = listening else {
             // The listener closed during the handshake: not a connection.
             c.st = St::Refused;
             self.gens.retire(slot);
-            self.begin_close(slot, false);
-        } else if over {
+            return self.begin_close(slot, false);
+        };
+        let state = &self.listeners[l as usize];
+        if state.count >= state.cfg.limit {
             c.st = St::Refused;
             self.queue_event(slot, EV_REFUSED);
         } else {
@@ -248,8 +281,8 @@ impl<T: Transport> Net<T> {
             self.start_reading(d, slot);
         }
     }
-
     pub(super) fn on_accept_failed(&mut self, l: u32, slot: Option<u32>, result: i32) {
+        self.cover_listener(l, LCol::AcceptFailed);
         let state = &mut self.listeners[l as usize];
         match slot {
             Some(slot) => {
@@ -258,6 +291,9 @@ impl<T: Transport> Net<T> {
                 self.free_len += 1;
             }
             None => state.armed = false,
+        }
+        if state.st == LSt::Closing {
+            return self.free_listener(l);
         }
         if state.st != LSt::Listening || result == -ECANCELED {
             return;
@@ -270,6 +306,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_listener_deadline(&mut self, d: &mut T::Driver, l: u32) {
+        self.cover_listener(l, LCol::Deadline);
         let state = &mut self.listeners[l as usize];
         match state.st {
             LSt::Listening => {

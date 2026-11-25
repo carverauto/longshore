@@ -8,6 +8,7 @@
 /// How to treat the next request. Queued with [`super::Server::script`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Behavior {
+    /// Treat the request as the server ordinarily would.
     Normal,
     /// Respond with this status and an empty body.
     Status(u16),

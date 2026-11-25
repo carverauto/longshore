@@ -26,6 +26,7 @@ pub use config::{Config, ConfigError};
 pub use family::Family;
 use family::{set_of, Host, Set};
 
+/// Servers a resolver may be given.
 pub const SERVERS_MAX: usize = 2;
 
 /// Operations the resolver keeps in flight at most: one receive per server,
@@ -56,6 +57,7 @@ const K_RECV: u64 = 8; // + server index
 const K_SEND: u64 = 16;
 const K_TICK: u64 = 17;
 
+/// Resolves a fixed set of hostnames and keeps their addresses fresh.
 pub struct Resolver {
     cfg: Config,
     hosts: Vec<Host>,

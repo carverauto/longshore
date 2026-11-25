@@ -30,8 +30,11 @@ pub use files::{file_size, FileSlot, OpenFlags};
 pub use ids::{BufId, FileId, Sock, Token};
 pub mod limits;
 mod must;
+mod op;
+pub(crate) mod trace;
 pub mod turn;
 pub use limits::Limits;
+pub use op::Op;
 #[cfg(unix)]
 pub mod posix;
 pub mod scenario;
@@ -124,172 +127,6 @@ impl Shut {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Op {
-    /// Open a TCP socket in slot `sock` and connect it. A connect that fails
-    /// leaves the slot free; the caller need not close it. A connect that
-    /// succeeds completes with 0, or with what [`Segment::decode`] reads
-    /// when the backend was asked to measure segment sizes.
-    Connect { sock: Sock, addr: SocketAddr },
-    /// Open a Unix-domain stream socket in slot `sock` and connect it to the
-    /// NUL-terminated path in `path_buf[path_off..path_off + path_len]`, copied
-    /// at submission time. A connect that fails leaves the slot free.
-    ConnectUnix {
-        sock: Sock,
-        path_buf: BufId,
-        path_off: u32,
-        path_len: u32,
-    },
-    /// Open a UDP socket in slot `sock` connected to `addr`. `Send` and `Recv`
-    /// then carry whole datagrams.
-    ConnectUdp { sock: Sock, addr: SocketAddr },
-    /// Accept one connection from `listener` into slot `sock`.
-    Accept { listener: Sock, sock: Sock },
-    /// Accept connections on `listener`, placing each into a free slot of
-    /// `Limits::accept_range_start..accept_range_start + accept_range_len` and
-    /// reporting the slot index as `result` with `more: true`. Ends with
-    /// `-ENFILE` or `-EMFILE` (`more: false`) when the range is full. Counts
-    /// toward `Limits::ops_max` until its final completion.
-    ArmedAccept { listener: Sock },
-    /// Receive bytes on `sock`, taking a buffer from the registered buffer
-    /// ring only when bytes arrive. Each completion with bytes carries
-    /// `buf: Some(id)` and `result > 0` and remains owned by the caller until
-    /// [`Io::give_back`]. Ends with `-ENOBUFS` when the ring is empty or `0`
-    /// (`buf: None`) on peer EOF. Counts toward `Limits::ops_max` until its
-    /// final completion.
-    ArmedRecv { sock: Sock },
-    /// Send `len` bytes of buffer `buf` starting at `off`. May complete short.
-    Send {
-        sock: Sock,
-        buf: BufId,
-        off: u32,
-        len: u32,
-        zero_copy: bool,
-    },
-    /// Receive up to `len` bytes into buffer `buf` at `off`. 0 means end of stream.
-    Recv {
-        sock: Sock,
-        buf: BufId,
-        off: u32,
-        len: u32,
-    },
-    /// Like `Recv`, but never waits: completes with the bytes already
-    /// received, 0 if the peer has closed, or `-EAGAIN` if nothing has
-    /// arrived. Used to check an idle connection before it is reused.
-    RecvNow {
-        sock: Sock,
-        buf: BufId,
-        off: u32,
-        len: u32,
-    },
-    /// Shut down one or both directions of connected stream socket `sock`,
-    /// leaving its slot open. After the write side is shut down the peer
-    /// reads end of stream once it has read everything sent; after the read
-    /// side is shut down, receives on `sock` complete with 0. Completes with
-    /// 0, or a negated errno (`-ENOTCONN` on a socket that is not connected).
-    Shutdown { sock: Sock, how: Shut },
-    /// Close socket slot `sock`. Gives every other operation in flight on
-    /// `sock` (including an [`Op::Accept`] waiting on a closed listener) its
-    /// final completion without waiting for the peer, in no fixed order
-    /// relative to the close's own completion. Closing a slot that holds no
-    /// socket still completes once.
-    Close { sock: Sock },
-    /// Wait until the backend's waker has been signalled from any thread.
-    /// Completes with 0. Signals that arrive while no `AwaitWake` is in
-    /// flight are kept, so the next one completes at once. Requires
-    /// [`Io::waker`] to have been called.
-    AwaitWake,
-    /// Read a registered file from its start into buffer `buf` at `off`, up
-    /// to `len` bytes. Completes with the number of bytes read; the file is
-    /// opened and closed around the read, so a replaced file is seen.
-    ReadFile {
-        file: FileId,
-        buf: BufId,
-        off: u32,
-        len: u32,
-    },
-    /// Completes with 0 after `nanos`.
-    Timeout { nanos: u64 },
-    /// Ask for the in-flight operation submitted with `target` at the moment
-    /// this cancel is submitted to stop. An operation submitted later under
-    /// the same token or already finished is not matched. The target then
-    /// completes once, normally with `-ECANCELED`, or with its real result if
-    /// it finished first. The cancel itself completes with 0 if found, or a
-    /// negative errno if no such operation was in flight.
-    Cancel { target: Token },
-    /// Open the NUL-terminated path in `path_buf[path_off..path_off + path_len]`
-    /// into fixed file slot `slot`. Completes with 0 or a negative errno.
-    FileOpen {
-        slot: FileSlot,
-        path_buf: BufId,
-        path_off: u32,
-        path_len: u32,
-        flags: OpenFlags,
-    },
-    /// Close the file in `slot`, freeing the slot on completion.
-    FileClose { slot: FileSlot },
-    /// Read up to `len` bytes at `file_off` from `slot` into `buf[off..off + len]`.
-    FileRead {
-        slot: FileSlot,
-        buf: BufId,
-        off: u32,
-        len: u32,
-        file_off: u64,
-    },
-    /// Write up to `len` bytes from `buf[off..off + len]` to `slot` at `file_off`.
-    FileWrite {
-        slot: FileSlot,
-        buf: BufId,
-        off: u32,
-        len: u32,
-        file_off: u64,
-    },
-    /// Flush dirty data (and metadata unless `datasync`) for `slot`.
-    FileSync { slot: FileSlot, datasync: bool },
-    /// Reserve space for `[file_off, file_off + len)` on `slot`.
-    FileReserve {
-        slot: FileSlot,
-        file_off: u64,
-        len: u64,
-        keep_size: bool,
-    },
-    /// Deallocate `[file_off, file_off + len)` on `slot`, leaving file size unchanged.
-    FilePunch {
-        slot: FileSlot,
-        file_off: u64,
-        len: u64,
-    },
-    /// Read file status by path into `out_buf[out_off..]` in 256-byte Linux `statx` layout.
-    FileStatus {
-        path_buf: BufId,
-        path_off: u32,
-        path_len: u32,
-        out_buf: BufId,
-        out_off: u32,
-    },
-    /// Rename a path (overwriting an existing non-directory target).
-    FileRename {
-        old_buf: BufId,
-        old_off: u32,
-        old_len: u32,
-        new_buf: BufId,
-        new_off: u32,
-        new_len: u32,
-    },
-    /// Unlink a non-directory path.
-    FileUnlink {
-        path_buf: BufId,
-        path_off: u32,
-        path_len: u32,
-    },
-    /// Create a directory at the given path.
-    FileMkdir {
-        path_buf: BufId,
-        path_off: u32,
-        path_len: u32,
-    },
-}
-
 /// A `clock_gettime` reading in nanoseconds. A reading before the clock's
 /// epoch, which only `CLOCK_REALTIME` can give, counts as zero.
 #[cfg(unix)]
@@ -306,22 +143,39 @@ pub(crate) fn clock_secs(sec: i64) -> u64 {
     u64::try_from(sec).unwrap_or(0)
 }
 
+/// Connection reset by peer (Linux errno, as are the others here).
 pub const ECONNRESET: i32 = 104;
+/// Connection refused.
 pub const ECONNREFUSED: i32 = 111;
+/// The write side of the connection is closed.
 pub const EPIPE: i32 = 32;
+/// A timer expired.
 pub const ETIME: i32 = 62;
+/// The operation was cancelled.
 pub const ECANCELED: i32 = 125;
+/// The address is in use.
 pub const EADDRINUSE: i32 = 98;
+/// No such file or directory, or nothing by that name in flight.
 pub const ENOENT: i32 = 2;
+/// The slot holds no open socket or file.
 pub const EBADF: i32 = 9;
+/// Nothing is available right now.
 pub const EAGAIN: i32 = 11;
+/// The resource is in use.
 pub const EBUSY: i32 = 16;
+/// An argument is invalid.
 pub const EINVAL: i32 = 22;
+/// No free slot in the file table.
 pub const ENFILE: i32 = 23;
+/// Too many open files.
 pub const EMFILE: i32 = 24;
+/// The path is too long.
 pub const ENAMETOOLONG: i32 = 36;
+/// No buffer is available.
 pub const ENOBUFS: i32 = 105;
+/// The socket is not connected.
 pub const ENOTCONN: i32 = 107;
+/// The value is too large for its type.
 pub const EOVERFLOW: i32 = 75;
 
 /// A byte count or slot index as a completion result. Linux never moves more
@@ -346,6 +200,11 @@ pub trait Wake: Send + Sync {
 )]
 pub struct Busy;
 
+/// What every module above this one runs on: a pool of buffers, slots for
+/// sockets and files, and operations submitted under a [`Token`] and collected
+/// as completions by [`Io::tick`].
+///
+/// One thread owns an `Io` and drives it.
 pub trait Io {
     /// Monotonic nanoseconds. Virtual in the simulator.
     fn now_ns(&self) -> u64;

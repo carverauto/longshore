@@ -3,6 +3,9 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
+//! The simulator: the echo scenario with and without faults, timers, cancels,
+//! file reads and the operation limit.
+
 use longshore_common::io::alloc_guard::{sealed, Guard};
 use longshore_common::io::{Completions, Limits};
 use longshore_common::sim::scenario::{echo, EchoError, EchoStats};

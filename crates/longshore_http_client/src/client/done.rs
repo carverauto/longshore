@@ -7,6 +7,7 @@
 
 use super::{Error, Response};
 
+/// A request that ended, and how.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Done {
     token: u64,

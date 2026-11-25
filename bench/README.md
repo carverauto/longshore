@@ -5,8 +5,11 @@ Two kinds, by what is being measured.
 ## Microbenchmarks (criterion)
 
 In-process, CPU-bound code: parsers (`dns_codec`, `http_head`), checksums
-(`checksums`) and AEAD (`aead`, and `aead_memory` for the cipher with
-the memory pattern of an upload). Substitute the bench name below.
+(`checksums`), AEAD (`aead`, and `aead_memory` for the cipher with
+the memory pattern of an upload) and TCP connections (`tcp_framing` for
+reading a frame's length from its header, `tcp_coalescing` for frames
+queued in one turn against one per turn, on the simulator). Substitute the
+bench name below.
 
 ```sh
 cargo bench -p longshore-bench --bench dns_codec

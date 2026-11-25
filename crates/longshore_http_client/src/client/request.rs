@@ -10,6 +10,7 @@
 use longshore_common::io::BufId;
 use std::net::SocketAddr;
 
+/// A request for the client to send.
 #[derive(Clone, Copy, Debug)]
 #[must_use]
 pub struct Request<'a> {

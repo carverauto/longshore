@@ -38,6 +38,10 @@ name = "tcp_units"
 path = "tests/tcp/units.rs"
 
 [[test]]
+name = "tcp_props"
+path = "tests/tcp/props.rs"
+
+[[test]]
 name = "tcp_net"
 path = "tests/tcp/net.rs"
 
@@ -52,6 +56,14 @@ path = "tests/tcp/storage.rs"
 [[test]]
 name = "tcp_tls"
 path = "tests/tcp/tls.rs"
+
+[[test]]
+name = "tcp_model"
+path = "tests/tcp/model.rs"
+
+[[test]]
+name = "tcp_conformance"
+path = "tests/tcp/conformance.rs"
 
 [lints]
 workspace = true

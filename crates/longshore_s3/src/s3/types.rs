@@ -104,6 +104,7 @@ pub struct KeyPrefix {
 }
 
 impl KeyPrefix {
+    /// Longest prefix, in bytes.
     pub const MAX: usize = 256;
     /// No prefix: the whole bucket.
     pub const EMPTY: KeyPrefix = KeyPrefix {
@@ -121,55 +122,70 @@ impl KeyPrefix {
         Some(p)
     }
 
+    /// The prefix.
     pub fn as_str(&self) -> &str {
         crate::text::written(&self.bytes[..self.len as usize])
     }
 }
 
+/// Where a store is.
 #[expect(
     clippy::large_enum_variant,
     reason = "one per store, built once and never moved while it runs, so the size difference between the variants costs nothing"
 )]
 pub enum Endpoint {
+    /// At this address, always.
     Fixed(SocketAddr),
+    /// At the addresses this resolver finds for its first hostname.
     Resolved(Resolver),
 }
 
+/// How an operation ended.
 #[expect(
     clippy::large_enum_variant,
     reason = "held in slots that exist whether or not they are used, and passed by value: boxing the large variant would allocate on every operation"
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Outcome {
+    /// The object is stored.
     Stored,
     /// `store_no_clobber` found an object at the key. If `after_retry`, an
     /// earlier attempt of this same operation may be what created it.
     AlreadyExists {
+        /// Whether an earlier attempt of this operation may have created it.
         after_retry: bool,
     },
     /// `verified` is true when the store returned a checksum and the bytes
     /// received match it. Ranged fetches and stores that return no checksum
     /// are not verified.
     Fetched {
+        /// Bytes received into the caller's buffer.
         len: u32,
+        /// Whether they were checked against the store's checksum.
         verified: bool,
     },
     /// The listing document is in the caller's buffer; parse it with
     /// [`crate::list::Listing`].
     Listed {
+        /// Length of the listing document in bytes.
         len: u32,
     },
+    /// No object is at the key.
     NotFound,
+    /// No object is at the key any longer.
     Erased,
     /// A multipart upload has begun. Keep the id: every later call needs it.
     Begun {
+        /// The upload's id.
         upload: UploadId,
     },
     /// A part is stored. Keep the tag and checksum: completion sends them
     /// back. `checksum` is the CRC-64/NVME the part was sent with on S3;
     /// `None` without one, and always on Google Cloud Storage.
     PartStored {
+        /// The part's tag.
         tag: PartTag,
+        /// The CRC-64/NVME the part was sent with.
         checksum: Option<u64>,
     },
     /// The upload is gone, by this call or already.
@@ -182,17 +198,21 @@ pub enum Outcome {
     /// caller's buffer: read the keys it could not erase with
     /// [`crate::erase::Failures`].
     ErasedMany {
+        /// Length of the store's report in bytes.
         len: u32,
     },
     /// How a `put`, `head` or `get` ended. They end no other way.
     Report(Report),
+    /// The operation failed, and the client will not retry it further.
     Fatal(Fatal),
 }
 
+/// Why an operation failed for good.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Fatal {
     /// The store answered with a status that will not improve on retry.
     Status(u16),
+    /// The exchange failed in a way that will not improve on retry.
     Transport(Error),
     /// Every attempt failed retryably.
     RetriesExhausted,
@@ -212,6 +232,7 @@ pub enum Fatal {
     ErrorDocument,
 }
 
+/// An operation that ended, and how.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Done {
     pub(crate) token: u64,
@@ -219,6 +240,7 @@ pub struct Done {
     pub(crate) attempts: u32,
 }
 
+/// Why an operation was not started. Nothing was sent.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SubmitError {
     /// All operation slots are in use.

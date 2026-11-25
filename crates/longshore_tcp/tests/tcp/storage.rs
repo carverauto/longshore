@@ -18,6 +18,13 @@ use longshore_tcp::Addr;
 static ALLOC: Guard = Guard;
 
 #[cfg(test)]
+#[path = "storage/disk.rs"]
+mod disk;
+#[cfg(test)]
+#[path = "storage/durable.rs"]
+mod durable;
+
+#[cfg(test)]
 fn sim(limits: Limits, seed: u64, faults: Faults) -> SimIo {
     let mut io = SimIo::new(limits, seed, faults);
     io.setup_disk(

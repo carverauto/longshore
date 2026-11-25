@@ -5,7 +5,8 @@
 
 //! Preallocated unsynced write log, writeback eviction, and sync fold for [`SimDisk`].
 
-use super::SimDisk;
+use super::{DiskFaultCtx, SimDisk};
+use crate::io::posix::errno::linux::EIO;
 
 #[derive(Clone, Copy)]
 pub(super) enum LogKind {
@@ -259,6 +260,25 @@ impl SimDisk {
 
     pub(super) fn sync_file(&mut self, ii: usize) {
         self.flush_clean_entries_for_inode(ii);
+    }
+
+    /// Ends a write that reported `res` bytes to a file opened with `dsync`:
+    /// what the file has buffered is made durable before the completion, as
+    /// a data sync after the write would. The sync half can fail like any
+    /// other sync ([`super::DiskFaults::sync_fail`]).
+    pub(super) fn settle_dsync_write(
+        &mut self,
+        ii: usize,
+        res: i32,
+        ctx: &mut DiskFaultCtx<'_>,
+    ) -> i32 {
+        if ctx.rng.chance(ctx.faults.sync_fail) {
+            self.poison_file(ii);
+            ctx.counters.sync_fail += 1;
+            return -EIO;
+        }
+        self.sync_file(ii);
+        res
     }
 
     pub(super) fn poison_file(&mut self, ii: usize) {

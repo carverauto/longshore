@@ -75,18 +75,23 @@ pub struct Completions {
 }
 
 impl Completions {
+    /// An empty buffer for `capacity` completions. Allocates it, here and never
+    /// again.
     pub fn new(capacity: usize) -> Completions {
         Completions {
             items: vec![Completion::new(Token(0), 0); capacity].into_boxed_slice(),
             len: 0,
         }
     }
+    /// Whether no more completions fit.
     pub fn is_full(&self) -> bool {
         self.len == self.items.len()
     }
+    /// Whether it holds no completions.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+    /// How many completions it holds.
     pub fn len(&self) -> usize {
         self.len
     }
@@ -118,6 +123,7 @@ impl Completions {
         }
         self.len = kept;
     }
+    /// Take the completion that arrived first.
     pub fn pop(&mut self) -> Option<Completion> {
         if self.len == 0 {
             return None;

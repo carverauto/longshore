@@ -24,6 +24,12 @@ use std::net::SocketAddr;
 #[cfg(test)]
 #[path = "tls/ending.rs"]
 mod ending;
+#[cfg(test)]
+#[path = "tls/faults.rs"]
+mod faults;
+#[cfg(test)]
+#[path = "tls/memory.rs"]
+mod memory;
 
 #[global_allocator]
 static ALLOC: Guard = Guard;
@@ -98,6 +104,7 @@ fn client_closed(w: &mut World<SimIo>, conn: Conn) -> Why {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         ended.is_some()
@@ -222,6 +229,7 @@ fn an_end_without_a_close_alert_is_a_broken_connection() {
                 | Event::Down { .. }
                 | Event::Closed { .. }
                 | Event::ListenFailed { .. }
+                | Event::Finished(_)
                 | Event::Drained => panic!("{rx:?}: unexpected {e:?}"),
             }
             ended.is_some()

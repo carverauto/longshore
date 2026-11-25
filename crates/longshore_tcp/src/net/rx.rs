@@ -6,11 +6,14 @@
 //! Receiving: what the transport delivers, kept until the caller pulls it.
 //!
 //! Ring mode: each ring buffer the armed receive delivers is queued on its
-//! connection as a chunk. Direct mode: a frame's header is received into
+//! connection as a chunk; when the armed receive has ended and a frame is
+//! being put together, the rest of that frame is received straight into
+//! its memory. Direct mode: a frame's header is received into
 //! the connection's header area, then the whole frame into frame memory.
 //! Cutting chunks into frames happens when the caller pulls
 //! (`pull.rs`).
 
+use super::cover::Col;
 use super::state::{best_effort, Chunk, St, EV_READABLE, NONE, W_READ};
 use super::Net;
 use crate::config::Rx;
@@ -35,11 +38,28 @@ impl<T: Transport> Net<T> {
         }
         match c.opts.rx {
             Rx::Ring => {
-                if c.armed {
+                if c.armed || c.recv_busy {
                     return;
                 }
+                if c.asm.is_some() && c.backlog.is_none() && c.chunk_head == NONE && !c.secure {
+                    // The frame it is putting together has memory of its
+                    // own: the rest is received straight into it. It
+                    // must not wait for the ring, which the unpulled
+                    // input of connections that wait for frame memory may
+                    // hold to the last buffer.
+                    return self.read_direct(d, slot);
+                }
+                if c.secure && c.dry && c.chunk_head == NONE {
+                    // Nor does a protected one: its stream has memory
+                    // for the records it carries.
+                    return self.read_kept(d, slot);
+                }
                 if self.t.recv_armed(d, slot).is_ok() {
-                    self.conns[slot as usize].armed = true;
+                    // Armed again: what the ring was short of then says
+                    // nothing of how this receive will end.
+                    let reading = &mut self.conns[slot as usize];
+                    (reading.armed, reading.dry) = (true, false);
+                    reading.cancelling = false;
                 } else {
                     self.add_work(slot, W_READ);
                 }
@@ -134,18 +154,18 @@ impl<T: Transport> Net<T> {
             // lack of frame memory: say so again.
             self.queue_event(slot, EV_READABLE);
         }
-        if self.conns[slot as usize].starved {
-            // The end that was held back for it, behind that input.
-            self.owe_end(slot);
-        }
         self.start_reading(d, slot);
     }
 
     pub(super) fn on_received(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        self.cover(slot, Col::of_receive(result));
         let c = &mut self.conns[slot as usize];
         c.recv_busy = false;
         if c.st != St::Up {
             return self.try_free(slot);
+        }
+        if c.secure && c.opts.rx == Rx::Ring {
+            return self.on_kept(d, slot, result);
         }
         let Ok(n) = u32::try_from(result) else {
             return self.end(slot, Why::of(result));
@@ -163,7 +183,12 @@ impl<T: Transport> Net<T> {
                 c.asm_have += n;
                 if c.asm_have == c.asm_len {
                     (c.asm, c.ready) = (None, Some((ext, c.asm_len)));
+                    let ring = c.opts.rx == Rx::Ring;
                     self.queue_event(slot, EV_READABLE);
+                    if ring {
+                        // Back to the ring for what follows the frame.
+                        self.add_work(slot, W_READ);
+                    }
                 } else {
                     self.read_direct(d, slot);
                 }
@@ -183,6 +208,7 @@ impl<T: Transport> Net<T> {
         len: u32,
         armed: bool,
     ) {
+        self.cover(slot, Col::Data);
         let c = &mut self.conns[slot as usize];
         c.armed = armed;
         if c.st != St::Up {
@@ -217,6 +243,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_recv_ended(&mut self, slot: u32, result: i32) {
+        self.cover(slot, Col::of_receive(result.min(0)));
         let c = &mut self.conns[slot as usize];
         c.armed = false;
         if c.st != St::Up {
@@ -232,7 +259,10 @@ impl<T: Transport> Net<T> {
             0 => self.peer_finished(slot),
             // The ring was empty, or we stopped the receive ourselves:
             // armed again on the next `poll` unless reading is paused.
-            r if r == -ENOBUFS || r == -ECANCELED => self.add_work(slot, W_READ),
+            r if r == -ENOBUFS || r == -ECANCELED => {
+                c.dry = r == -ENOBUFS;
+                self.add_work(slot, W_READ);
+            }
             _ => self.end(slot, Why::of(result)),
         }
     }
@@ -250,10 +280,13 @@ impl<T: Transport> Net<T> {
             return;
         }
         c.paused = true;
-        if c.armed {
-            // If the driver has no room, the receive simply runs on until
-            // the ring is empty; nothing is lost.
-            best_effort(self.t.cancel_recv(d, slot));
+        if c.armed && !c.cancelling {
+            // Once for an armed receive: a caller that pulls again and
+            // again before the next turn stops reading each time. If the
+            // driver has no room, the receive simply runs on until the
+            // ring is empty; nothing is lost.
+            let sent = self.t.cancel_recv(d, slot).is_ok();
+            self.conns[slot as usize].cancelling = sent;
         }
     }
 
@@ -278,7 +311,8 @@ impl<T: Transport> Net<T> {
         ];
         (c.hdr_have, c.asm_have, c.asm_len) = (0, 0, 0);
         (c.backlog_off, c.backlog_len, c.paused) = (0, 0, false);
-        (c.unopened, c.cut_off) = (false, false);
+        (c.unopened, c.cut_off, c.dry) = (false, false, false);
+        c.cancelling = false;
         for ext in held.into_iter().flatten() {
             // Net's own hold; frames the caller pulled keep theirs.
             best_effort(self.extents.release(ext));

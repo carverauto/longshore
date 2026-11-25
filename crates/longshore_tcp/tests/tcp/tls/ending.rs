@@ -49,6 +49,7 @@ fn pulled_after_the_end(seed: u64) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Why) {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         ended.is_some()
@@ -67,14 +68,14 @@ fn records_received_before_the_end_are_delivered_and_a_close_alert_ends_in_order
 
 /// What the server's caller has pulled from a connection and heard of
 /// its end.
-struct Heard {
-    got: Vec<Vec<u8>>,
-    ended: Option<Why>,
+pub(super) struct Heard {
+    pub(super) got: Vec<Vec<u8>>,
+    pub(super) ended: Option<Why>,
 }
 
 /// One turn, and then the server's events for `s`: every frame of a
 /// `Readable` is pulled and released, and the end is noted.
-fn turn_and_hear(w: &mut World<SimIo>, s: Conn, heard: &mut Heard) {
+pub(super) fn turn_and_hear(w: &mut World<SimIo>, s: Conn, heard: &mut Heard) {
     w.turn();
     while w.client().0.next_event().is_some() {}
     while let Some(e) = w.server().0.next_event() {
@@ -94,6 +95,7 @@ fn turn_and_hear(w: &mut World<SimIo>, s: Conn, heard: &mut Heard) {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?}"),
         }
     }

@@ -7,19 +7,25 @@
 //! runs and how long it may take, and where the plaintext of an armed
 //! receive goes. The records themselves are the transport's business.
 
+use super::cover::Col;
 use super::state::{best_effort, St, EV_READABLE, W_READ};
 use super::Net;
 use crate::addr::{Addr, ServerName};
 use crate::config::{ConnOpts, Rx};
 use crate::event::{NetError, Why};
 use crate::handle::Conn;
-use crate::transport::{Role, Span, Transport};
+use crate::transport::{Refused, Role, Span, Transport};
+use longshore_common::io::extents::Extent;
 use longshore_stream::RING_DST_MIN;
 
 impl<T: Transport> Net<T> {
     /// Open a connection to `addr` protected with TLS; the peer's
     /// certificate must match `server_name`. [`crate::Event::Up`] follows
     /// when the handshake is done; the connect timeout covers both.
+    ///
+    /// In ring mode the frame memory must hold a record
+    /// (`longshore_stream::RING_DST_MIN` bytes a buffer) and have two
+    /// buffers at least: [`NetError::Framing`] otherwise.
     pub fn connect_tls(
         &mut self,
         d: &mut T::Driver,
@@ -38,8 +44,10 @@ impl<T: Transport> Net<T> {
         if !self.cfg.sizes.tls || !self.t.can_secure(client) {
             return Err(NetError::NoTls);
         }
-        // A record is opened whole, into frame memory.
-        if opts.rx == Rx::Ring && self.cfg.sizes.frame_size < RING_DST_MIN {
+        // A record is opened whole, into frame memory, and a frame that
+        // spans records needs a second buffer while it is put together.
+        let sizes = &self.cfg.sizes;
+        if opts.rx == Rx::Ring && (sizes.frame_size < RING_DST_MIN || sizes.frames < 2) {
             return Err(NetError::Framing);
         }
         Ok(())
@@ -62,6 +70,7 @@ impl<T: Transport> Net<T> {
 
     /// The handshake of `slot` ended.
     pub(super) fn on_secured(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        self.cover(slot, Col::Secured);
         let c = &mut self.conns[slot as usize];
         c.securing = false;
         match c.st {
@@ -69,7 +78,14 @@ impl<T: Transport> Net<T> {
             St::Securing if result >= 0 => self.admit(d, slot),
             St::Connecting | St::Securing => return self.end(slot, Why::of(result)),
             // Timed out or closed meanwhile.
-            St::Free | St::Up | St::Refused | St::Dying | St::Closing | St::Backoff => {
+            St::Free
+            | St::Up
+            | St::Refused
+            | St::Finishing
+            | St::HalfClosed
+            | St::Dying
+            | St::Closing
+            | St::Backoff => {
                 return self.try_free(slot);
             }
         }
@@ -105,19 +121,20 @@ impl<T: Transport> Net<T> {
             let ext = match c.backlog {
                 Some(ext) => ext,
                 None => {
-                    let Some(ext) = self.extents.take() else {
+                    let Some(ext) = self.take_for_records(slot) else {
                         if kept {
                             // Asked for again when frame memory is free.
-                            c.unopened = true;
+                            self.conns[slot as usize].unopened = true;
                             self.add_work(slot, W_READ);
                         }
                         break;
                     };
-                    (c.backlog, c.backlog_off, c.backlog_len) = (Some(ext), 0, 0);
+                    let fresh = &mut self.conns[slot as usize];
+                    (fresh.backlog, fresh.backlog_off, fresh.backlog_len) = (Some(ext), 0, 0);
                     ext
                 }
             };
-            let have = c.backlog_len;
+            let have = self.conns[slot as usize].backlog_len;
             let into = Span::new(ext.buf(), have, size - have);
             let Some(opened) = self.t.open(d, slot, from, into) else {
                 self.drop_chunks(slot);
@@ -141,7 +158,86 @@ impl<T: Transport> Net<T> {
             }
         }
         self.end_if_opened(slot);
+        let c = &self.conns[slot as usize];
+        if c.st == St::Up && c.dry && !c.unopened && !c.armed && !c.recv_busy {
+            // Nothing is left with the stream, and the ring had no buffer
+            // for this connection: it reads on from `poll`.
+            self.add_work(slot, W_READ);
+        }
         self.trim_backlog(slot)
+    }
+
+    /// The ring had no buffer for the protected `slot`: receive into its
+    /// stream's own memory instead, once.
+    pub(super) fn read_kept(&mut self, d: &mut T::Driver, slot: u32) {
+        if self.conns[slot as usize].unopened {
+            // What the stream holds is opened first: a receive would be
+            // written behind it, and it could not be opened meanwhile.
+            // `poll` asks again while it waits for frame memory.
+            return;
+        }
+        match self.t.recv_kept(d, slot) {
+            Ok(true) => {
+                let c = &mut self.conns[slot as usize];
+                (c.recv_busy, c.dry) = (true, false);
+            }
+            // A whole record waits there for frame memory.
+            Ok(false) => self.conns[slot as usize].unopened = true,
+            Err(Refused::Busy) => self.add_work(slot, W_READ),
+            Err(Refused::Unsupported) => {
+                // A transport without memory of its own for this: back
+                // to the ring, and to waiting for a buffer of it.
+                self.conns[slot as usize].dry = false;
+                self.add_work(slot, W_READ);
+            }
+        }
+    }
+
+    /// The receive [`Net::read_kept`] started ended.
+    pub(super) fn on_kept(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        let Ok(n) = u32::try_from(result) else {
+            return self.end(slot, Why::of(result));
+        };
+        let c = &mut self.conns[slot as usize];
+        if n == 0 {
+            // As when an armed receive finds the end of the stream.
+            c.cut_off = true;
+            return self.end_if_opened(slot);
+        }
+        (c.last_active, c.unopened) = (self.now, true);
+        if self.open_ring(d, slot) {
+            self.queue_event(slot, EV_READABLE);
+        }
+        // Back to the ring, or here again while it stays empty.
+        self.add_work(slot, W_READ);
+    }
+
+    /// A frame buffer for the records of `slot`, which has no backlog.
+    ///
+    /// A protected connection can need two buffers: the frame it is
+    /// putting together, and the records that hold the rest of it. The
+    /// last free one is kept for a connection that holds one already, if
+    /// there is one, or those that do could all wait for a second for
+    /// ever.
+    fn take_for_records(&mut self, slot: u32) -> Option<Extent> {
+        let c = &self.conns[slot as usize];
+        let first = c.asm.is_none() && c.ready.is_none();
+        if first && self.extents.free_count() == 1 && self.another_holds(slot) {
+            return None;
+        }
+        self.extents.take()
+    }
+
+    /// Whether a protected ring connection other than `slot` holds frame
+    /// memory for input it has not delivered: one that may come to need a
+    /// second buffer. Asked only when one buffer is left.
+    fn another_holds(&self, slot: u32) -> bool {
+        self.conns.iter().enumerate().any(|(at, c)| {
+            at != slot as usize
+                && c.secure
+                && c.opts.rx == Rx::Ring
+                && (c.asm.is_some() || c.ready.is_some() || c.backlog.is_some())
+        })
     }
 
     /// The stream of `slot` ended without a close alert: it is a broken

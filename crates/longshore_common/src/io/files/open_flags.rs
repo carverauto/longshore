@@ -17,6 +17,7 @@ impl OpenFlags {
         empty: false,
         direct: false,
         directory: false,
+        dsync: false,
     };
 
     /// Open for reading.
@@ -107,6 +108,34 @@ impl OpenFlags {
     #[inline]
     pub const fn with_directory(mut self, directory: bool) -> Self {
         self.directory = directory;
+        self
+    }
+
+    /// Every write completes only when its data, and the metadata needed to
+    /// read it back, is on stable storage (`O_DSYNC`), with no `FileSync`.
+    ///
+    /// The file's own name is not covered: a newly created file's directory
+    /// entry is durable only once its directory is synced. On macOS the
+    /// kernel hands each write to the drive but does not flush the drive's
+    /// own cache, as `F_FULLFSYNC` does for `FileSync`; a power loss there
+    /// can still lose a completed write.
+    ///
+    /// The simulator's disk is stronger than a kernel here, in two ways. A
+    /// durable write also makes durable whatever else of the same file was
+    /// written and not yet synced, where a kernel syncs the range written.
+    /// And after a power loss a durable write is whole or absent, never
+    /// torn, where real media can hold part of one. A recovery that leans
+    /// on either has to be checked on a file not opened so, where the
+    /// simulator does lose and tear.
+    #[inline]
+    pub const fn dsync(self) -> bool {
+        self.dsync
+    }
+
+    /// This value with [`OpenFlags::dsync`] set to `dsync`.
+    #[inline]
+    pub const fn with_dsync(mut self, dsync: bool) -> Self {
+        self.dsync = dsync;
         self
     }
 }

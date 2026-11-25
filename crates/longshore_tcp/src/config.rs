@@ -60,6 +60,7 @@ pub struct ConnOpts {
     pub(crate) handshake_timeout_ns: u64,
     pub(crate) idle_timeout_ns: u64,
     pub(crate) reconnect: Option<Reconnect>,
+    pub(crate) half_close: bool,
 }
 
 impl ConnOpts {
@@ -75,6 +76,7 @@ impl ConnOpts {
             handshake_timeout_ns: 10_000_000_000,
             idle_timeout_ns: 0,
             reconnect: None,
+            half_close: false,
         }
     }
 
@@ -119,6 +121,16 @@ impl ConnOpts {
         self
     }
 
+    /// Keep the connection open for sending after its peer has finished
+    /// its stream in order: `Event::Finished` says so, and the connection
+    /// ends when the caller shuts its own side down or closes it. Without
+    /// this the end of the peer's stream ends the connection.
+    #[must_use]
+    pub const fn with_half_close(mut self, on: bool) -> ConnOpts {
+        self.half_close = on;
+        self
+    }
+
     /// Dial again after the connection is lost or a connect fails, keeping
     /// the handle. For `connect` only.
     #[must_use]
@@ -157,7 +169,9 @@ impl ListenConfig {
 
     /// Protect accepted connections with TLS: each is announced once its
     /// handshake is done. Needs `Sizes::with_tls` and a transport with a
-    /// server setup.
+    /// server setup; in ring mode also frame memory of two buffers at
+    /// least, each holding a record. `listen` answers
+    /// `NetError::NoTls` or `NetError::Framing` otherwise.
     #[must_use]
     pub const fn with_tls(mut self, on: bool) -> ListenConfig {
         self.tls = on;

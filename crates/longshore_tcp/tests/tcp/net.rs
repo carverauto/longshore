@@ -18,8 +18,17 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[path = "net/accepting.rs"]
 mod accepting;
 #[cfg(test)]
+#[path = "net/ending.rs"]
+mod ending;
+#[cfg(test)]
+#[path = "net/exhaustion.rs"]
+mod exhaustion;
+#[cfg(test)]
 #[path = "net/frames.rs"]
 mod frames;
+#[cfg(test)]
+#[path = "net/half_close.rs"]
+mod half_close;
 #[cfg(test)]
 #[path = "net/input.rs"]
 mod input;
@@ -154,6 +163,7 @@ impl World {
                 | Event::Down { .. }
                 | Event::Closed { .. }
                 | Event::ListenFailed { .. }
+                | Event::Finished(_)
                 | Event::Drained => panic!("unexpected {e:?}"),
             }
             up && accepted.is_some()

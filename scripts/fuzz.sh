@@ -4,19 +4,20 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 # SPDX-License-Identifier: Apache-2.0
 
-# Coverage-guided fuzzing of the parsers with cargo-fuzz (libFuzzer).
+# Coverage-guided fuzzing with cargo-fuzz (libFuzzer): the parsers, and
+# the TCP connection set's framing and model.
 #
-#   scripts/fuzz.sh                       # every target for 60 s each
-#   FUZZ_SECONDS=600 scripts/fuzz.sh      # longer runs
-#   FUZZ_TARGETS="http_head dns_response" scripts/fuzz.sh
-#   FUZZ_SECONDS=0 scripts/fuzz.sh        # build the targets only
-#   make fuzz                             # the same, from the Makefile
+#   scripts/fuzz.sh                             # every target for 60 s each
+#   scripts/fuzz.sh --seconds 600               # longer runs
+#   scripts/fuzz.sh http_head dns_response      # these targets only
+#   scripts/fuzz.sh --seconds 0                 # build the targets only
+#   make fuzz                                   # the first of these
 #
-# Settings come from the environment, because the Makefile sources this
-# script:
-#   FUZZ_SECONDS    run time per target (default 60; 0 builds only)
-#   FUZZ_TARGETS    space-separated targets (default: every target in fuzz/)
-#   FUZZ_TOOLCHAIN  nightly toolchain for cargo-fuzz (default: nightly)
+# Everything is a parameter; the script reads nothing from the
+# environment:
+#   --seconds N        run time per target (default 60; 0 builds only)
+#   --toolchain NAME   nightly toolchain for cargo-fuzz (default: nightly)
+#   TARGET ...         the targets to run (default: every target in fuzz/)
 #
 # Needs a nightly toolchain and cargo-fuzz:
 #   rustup toolchain install nightly
@@ -34,8 +35,35 @@ set -o pipefail
 fuzz_main() {
     local root seconds toolchain targets sanitizer target
     root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-    seconds=${FUZZ_SECONDS:-60}
-    toolchain=${FUZZ_TOOLCHAIN:-nightly}
+    seconds=60
+    toolchain=nightly
+    targets=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --seconds | --toolchain)
+                if [ $# -lt 2 ]; then
+                    echo "fuzz: $1 needs a value" >&2
+                    return 2
+                fi
+                if [ "$1" = --seconds ]; then seconds=$2; else toolchain=$2; fi
+                shift 2
+                ;;
+            -*)
+                echo "fuzz: unknown option $1" >&2
+                return 2
+                ;;
+            *)
+                targets="$targets $1"
+                shift
+                ;;
+        esac
+    done
+    case "$seconds" in
+        '' | *[!0-9]*)
+            echo "fuzz: --seconds takes a whole number, not '$seconds'" >&2
+            return 2
+            ;;
+    esac
 
     if ! command -v cargo-fuzz >/dev/null 2>&1; then
         echo "fuzz: cargo-fuzz is not installed: cargo install --locked cargo-fuzz" >&2
@@ -47,15 +75,18 @@ fuzz_main() {
     fi
 
     # The nightly AddressSanitizer runtime hangs at startup on macOS. The
-    # parsers contain no unsafe code, so bounds errors still surface as
-    # panics without it (see fuzz/Cargo.toml).
+    # parsers and longshore_tcp contain no unsafe code, so bounds errors
+    # still surface as panics without it; what does (the simulator's
+    # crate) is fuzzed with it on Linux (see fuzz/Cargo.toml).
     sanitizer=()
     if [ "$(uname -s)" = Darwin ]; then
         sanitizer=(-s none)
     fi
 
     cd "$root/fuzz"
-    targets=${FUZZ_TARGETS:-$(cargo "+$toolchain" fuzz list)}
+    if [ -z "$targets" ]; then
+        targets=$(cargo "+$toolchain" fuzz list)
+    fi
 
     if [ "$seconds" = 0 ]; then
         echo "== building the fuzz targets"
@@ -72,5 +103,4 @@ fuzz_main() {
     echo "== fuzzing passed: $(echo "$targets" | wc -w | tr -d ' ') targets, ${seconds}s each"
 }
 
-# Sourced by the Makefile; run in a subshell so `cd` and errexit stay here.
-(fuzz_main)
+fuzz_main "$@"

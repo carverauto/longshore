@@ -11,6 +11,7 @@
 //! receive delivered are opened from the ring buffer into the memory `Net`
 //! names. The handshake is rustls's, and is the one place that allocates.
 
+use super::cover::PhaseCoverage;
 use crate::config::Config;
 use crate::transport::{Happened, Opened, Refused, Role, Span, TLS_FAILED};
 use longshore_common::io::{BufId, Io, Op, Sock, Token, EBUSY, ECANCELED, ECONNRESET};
@@ -77,6 +78,7 @@ pub(super) struct Secure {
     /// One per slot once attached; empty without `Sizes::with_tls`.
     streams: Box<[Stream]>,
     phase: Box<[Phase]>,
+    cover: PhaseCoverage,
     /// The first of the slots' buffers, and what a stream is told of each.
     first: BufId,
     cap: u32,
@@ -88,6 +90,7 @@ impl Secure {
             tls: Tls::new(),
             streams: Box::default(),
             phase: vec![Phase::Plain; conns as usize].into_boxed_slice(),
+            cover: PhaseCoverage::NONE,
             first: BufId::new(0),
             cap: 0,
         }
@@ -125,6 +128,23 @@ impl Secure {
         side && !self.streams.is_empty()
     }
 
+    pub(super) const fn coverage(&self) -> PhaseCoverage {
+        self.cover
+    }
+
+    /// Count the event in column `event` of the phase table for `slot`.
+    fn count(&mut self, slot: u32, event: usize) {
+        let phase = match self.phase[slot as usize] {
+            Phase::Plain => 0,
+            Phase::Handshake => 1,
+            Phase::Aborted => 2,
+            Phase::Secure => 3,
+            Phase::Alerting => 4,
+            Phase::AlertAborted => 5,
+        };
+        self.cover.count(phase, event);
+    }
+
     /// Whether `slot`'s sends and receives go through its stream.
     pub(super) fn is_on(&self, slot: u32) -> bool {
         self.phase[slot as usize] != Phase::Plain
@@ -136,6 +156,7 @@ impl Secure {
         slot: u32,
         role: Role<'_>,
     ) -> Result<(), Refused> {
+        self.count(slot, 0);
         let handshake = match (role, &self.tls.client, &self.tls.server) {
             (Role::Client { server_name }, Some(setup), _) => Handshake::client(setup, server_name),
             (Role::Server, _, Some(setup)) => Handshake::server(setup),
@@ -178,12 +199,18 @@ impl Secure {
         }
     }
 
+    /// A receive into the stream's own buffer; `false` when it is full.
+    pub(super) fn recv_kept<IO: Io>(&mut self, d: &mut IO, slot: u32) -> bool {
+        self.streams[slot as usize].recv_carried(d)
+    }
+
     pub(super) fn send<IO: Io>(&mut self, d: &mut IO, slot: u32, from: Span) {
         self.streams[slot as usize].send(d, from.buf(), from.off(), from.len(), u32::MAX);
     }
 
     /// Send the close alert; the shutdown follows when it has gone.
     pub(super) fn say_goodbye<IO: Io>(&mut self, d: &mut IO, slot: u32) {
+        self.count(slot, 2);
         let rx = BufId::new(self.first.get() + 2 * slot + 1);
         // Level 1 (warning), description 0 (close_notify).
         self.streams[slot as usize].send_alert(d, rx, self.cap, 1, 0);
@@ -192,6 +219,7 @@ impl Secure {
 
     /// `slot` is being closed.
     pub(super) fn closing(&mut self, slot: u32) {
+        self.count(slot, 3);
         let phase = &mut self.phase[slot as usize];
         *phase = match *phase {
             Phase::Handshake => Phase::Aborted,
@@ -202,6 +230,7 @@ impl Secure {
 
     /// `slot` is closed: what is still in flight ends as on a plain slot.
     pub(super) fn closed(&mut self, slot: u32) {
+        self.count(slot, 4);
         if self.phase[slot as usize] == Phase::Secure {
             self.phase[slot as usize] = Phase::Plain;
             self.streams[slot as usize].reset();
@@ -229,23 +258,18 @@ impl Secure {
         shutdown: (Token, Op),
     ) -> Happened {
         let i = slot as usize;
+        self.count(slot, 1);
+        // A receive for the stream to keep; a stream that was reset under
+        // it keeps nothing, and the receive ends as on a plain slot.
+        let kept = !sent && self.streams.get(i).is_some_and(Stream::is_carrying);
+        if kept && matches!(self.phase[i], Phase::Secure | Phase::Alerting) {
+            let result = self.streams[i].on_carried(result);
+            return Happened::Received { slot, result };
+        }
         match (self.phase[i], sent) {
             (Phase::Plain, true) => Happened::Sent { slot, result },
             (Phase::Plain | Phase::AlertAborted, false) => Happened::Received { slot, result },
-            (Phase::Handshake, _) => {
-                let result = match self.streams[i].on_handshake(d, sent, result) {
-                    Step::Pending => return Happened::Nothing,
-                    Step::Done(r) => r,
-                    Step::Tls(_) => TLS_FAILED,
-                };
-                self.phase[i] = if result == 0 {
-                    Phase::Secure
-                } else {
-                    self.streams[i].reset();
-                    Phase::Plain
-                };
-                Happened::Secured { slot, result }
-            }
+            (Phase::Handshake, _) => self.on_handshake_io(d, slot, sent, result),
             (Phase::Aborted, _) => {
                 self.streams[i].reset();
                 self.phase[i] = Phase::Plain;
@@ -295,5 +319,28 @@ impl Secure {
                 }
             }
         }
+    }
+
+    /// A completion of the handshake of `slot`.
+    fn on_handshake_io<IO: Io>(
+        &mut self,
+        d: &mut IO,
+        slot: u32,
+        sent: bool,
+        result: i32,
+    ) -> Happened {
+        let i = slot as usize;
+        let result = match self.streams[i].on_handshake(d, sent, result) {
+            Step::Pending => return Happened::Nothing,
+            Step::Done(r) => r,
+            Step::Tls(_) => TLS_FAILED,
+        };
+        self.phase[i] = if result == 0 {
+            Phase::Secure
+        } else {
+            self.streams[i].reset();
+            Phase::Plain
+        };
+        Happened::Secured { slot, result }
     }
 }

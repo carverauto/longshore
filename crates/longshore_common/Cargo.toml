@@ -105,6 +105,14 @@ name = "sim_storage"
 path = "tests/sim/storage.rs"
 
 [[test]]
+name = "sim_reorder"
+path = "tests/sim/reorder.rs"
+
+[[test]]
+name = "sim_packet"
+path = "tests/sim/packet.rs"
+
+[[test]]
 name = "sim_wal"
 path = "tests/sim/wal.rs"
 

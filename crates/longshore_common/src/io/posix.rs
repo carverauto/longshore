@@ -99,6 +99,8 @@ pub struct Posix {
 }
 
 impl Posix {
+    /// A world with the slots `limits` asks for, all free. Allocates them, and
+    /// opens the poller.
     pub fn new(limits: Limits) -> io::Result<Self> {
         let ring_count = limits.ring_buffers as usize;
         Ok(Self {

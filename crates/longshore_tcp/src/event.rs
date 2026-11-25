@@ -41,23 +41,52 @@ pub enum Event {
     /// A connection the caller opened is up, or up again.
     Up(Conn),
     /// A listener accepted a connection.
-    Accepted { listener: Listener, conn: Conn },
+    Accepted {
+        /// The listener that accepted.
+        listener: Listener,
+        /// The connection accepted.
+        conn: Conn,
+    },
     /// A listener at its limit accepted a connection only to refuse it:
     /// the caller may send it one frame, and it is closed after that.
-    Refused { listener: Listener, conn: Conn },
+    Refused {
+        /// The listener at its limit.
+        listener: Listener,
+        /// The connection refused.
+        conn: Conn,
+    },
     /// Frames are waiting: pull them with `Net::next_frame` until it
     /// returns `None`.
     Readable(Conn),
     /// A send queue that was full has room again.
     Writable(Conn),
+    /// With half-close: the peer has finished its stream in order and
+    /// everything it sent has been pulled. The connection can still be
+    /// sent on; it ends after `Net::shutdown_write`, or with `Net::close`.
+    Finished(Conn),
     /// A reconnecting connection went down; its handle stays, and
     /// [`Event::Up`] follows when it is back. What was queued to send is
     /// dropped.
-    Down { conn: Conn, why: Why },
+    Down {
+        /// The connection that went down.
+        conn: Conn,
+        /// Why it went down.
+        why: Why,
+    },
     /// A connection ended. Its handle is stale from here on.
-    Closed { conn: Conn, why: Why },
+    Closed {
+        /// The connection that ended.
+        conn: Conn,
+        /// How it ended.
+        why: Why,
+    },
     /// A listener that was retrying its bind gave up; `errno` is negated.
-    ListenFailed { listener: Listener, errno: i32 },
+    ListenFailed {
+        /// The listener that gave up.
+        listener: Listener,
+        /// The negated error.
+        errno: i32,
+    },
     /// Draining is over: queued sends have gone, or the deadline passed.
     Drained,
 }
@@ -86,12 +115,17 @@ pub enum NetError {
     /// Every slot of the kind needed is in use.
     NoSlots,
     /// The framing's header or longest frame does not fit the sizes the
-    /// `Net` was built with.
+    /// `Net` was built with. Also TLS in ring mode on frame memory that
+    /// cannot serve it: buffers smaller than a record, or fewer than two
+    /// of them (`Sizes::with_frames`).
     Framing,
     /// Listening failed with this negated error number.
     Listen(i32),
     /// No frame memory is free.
     NoMemory,
+    /// The connection is not open for what was asked: not up yet, ended,
+    /// or refused.
+    NotUp,
     /// TLS was asked for and cannot be had: the `Net` was sized without
     /// `Sizes::with_tls`, the transport has no setup for this side, or the
     /// server name is empty or too long.

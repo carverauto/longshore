@@ -39,16 +39,19 @@ pub struct UnsafeCell<T>(std::cell::UnsafeCell<T>);
 
 #[cfg(not(longshore_model))]
 impl<T> UnsafeCell<T> {
+    /// A cell holding `data`.
     #[inline]
     pub fn new(data: T) -> Self {
         Self(std::cell::UnsafeCell::new(data))
     }
 
+    /// Call `f` with a pointer to read the contents through.
     #[inline]
     pub fn with<R>(&self, f: impl FnOnce(*const T) -> R) -> R {
         f(self.0.get())
     }
 
+    /// Call `f` with a pointer to write the contents through.
     #[inline]
     pub fn with_mut<R>(&self, f: impl FnOnce(*mut T) -> R) -> R {
         f(self.0.get())

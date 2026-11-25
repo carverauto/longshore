@@ -36,6 +36,11 @@ Completions only mark connections. The caller pulls events and frames, so
 no event buffer can overflow, and not pulling is the backpressure: a
 connection whose frames are not taken stops reading.
 
+Events and frames can be pulled in any order. In particular the end of a
+connection is never reported while frames received on it are still to be
+pulled: `Readable` comes first, and `Closed` (or `Finished`, or `Down`)
+only after the last frame has been taken.
+
 `Turn` (in `longshore::io::turn`) hands a batch of completions out by token
 range, storage first, then network. With a log on the same backend that
 makes the turn the group commit: syncs are seen before the frames that
@@ -59,15 +64,37 @@ deadline is due.
   as in use (`with_bind_retry_ns`), report peer addresses
   (`with_peer_addr`, at the cost of one accept operation per connection),
   and hold a limit (`with_limit`): one connection over the limit is
-  accepted as `Event::Refused`, may be sent one frame, and is closed.
+  accepted as `Event::Refused`, may be sent one frame (queued in the turn
+  the event is pulled), and is closed without a further event.
+- `close_listener` stops a listener. Its slot can hold a new listener
+  once its close and its last accept have ended, a turn or two later;
+  until then `listen` may answer `NoSlots`. A connection it accepted is
+  announced with its handle even when the listener has been closed since.
 - A handle carries a generation. Once its connection has ended it is stale
   and reaches nothing, whoever has the slot next.
 - `Event::Closed { conn, why }` says how a connection ended: `Orderly`
-  (everything the peer sent was delivered first), `Reset`, `Timeout`,
-  `Protocol` (a frame the framing does not allow) or `Tls`.
-- `shutdown_write` finishes after what is queued; `close` ends at once;
-  `drain` stops accepting and reports `Event::Drained` when queued sends
-  have gone or its deadline passes.
+  (the peer's stream ended between frames, and nothing failed), `Reset`
+  (a broken connection, or a stream that ended inside a frame), `Timeout`,
+  `Protocol` (a frame the framing does not allow) or `Tls`. It comes when
+  everything received has been pulled. A connection whose stream has ended
+  and whose frames are never pulled waits for its caller like any other;
+  the idle timeout, if one is set, or `close` ends the wait.
+- By default the end of the peer's stream ends the connection: what is
+  still queued for it is dropped. With `ConnOpts::with_half_close(true)`
+  a peer that finishes in order (sends its request, shuts its write side
+  down, and waits) can still be answered: `Event::Finished(conn)` says the
+  peer has finished, sends go on, and the connection ends as `Orderly`
+  after `shutdown_write`, or with `close`. A listener sets it for the
+  connections it accepts.
+- `shutdown_write` finishes after what is queued, and receiving goes on;
+  `close` ends at once, with no event; `drain` stops accepting and reports
+  `Event::Drained` when queued sends have gone or its deadline passes.
+- `is_up` says a connection has both directions open; `can_send` says a
+  send would be accepted, which is also true of a half-closed connection.
+- A call on a connection that is not open for it fails with `NotUp`: a
+  send or a shutdown before it is up or after its end, and a send after
+  `shutdown_write`. A second `shutdown_write` does nothing. `Stale` is
+  for a handle that names no connection any more.
 
 ## Framing
 
@@ -116,7 +143,9 @@ sends. `send_bytes` copies a slice in. `send_lent(conn, &frame)` queues a
 held frame from where it lies. A full queue returns `SendError::Full`, and
 `Event::Writable` follows when there is room. So does an empty segment
 pool: each segment that returns is announced to the connection that has
-waited for one longest. Sends above
+waited for one longest. A connection that sends again without waiting,
+and is not refused, has seen the room for itself and is not told. Sends
+above
 `Sizes::with_zero_copy_min` are zero-copy on TCP without TLS.
 
 ## TLS
@@ -149,7 +178,7 @@ from the `Config`. Plan several components one on top of the other.
 | `new(connects, accepts, listeners)` | Connections the caller opens, connections accepted, listeners | none |
 | `with_frames(count, size)` | Frame memory; `size` is a multiple of the block size and at least the longest frame | 64 of 1 MiB |
 | `with_segments(count, size)` | Send segments; a frame sent with `send_frame` fits one | 64 of 64 KiB |
-| `with_ring(count, size)` | The shared receive ring | 64 of 64 KiB |
+| `with_ring(count, size)` | The shared receive ring | 64 of 16 KiB |
 | `with_header_max(bytes)` | The longest header | 256 |
 | `with_spans(n)` | Queued sends per connection | 16 |
 | `with_zero_copy_min(bytes)` | Sends at least this long are zero-copy | 16 KiB |
@@ -162,7 +191,95 @@ it, and the set waits (5 ms, doubling to 1 s) before accepting again. The
 limit refuses in order.
 
 With TLS in ring mode, frame memory holds at least one record
-(16,401 bytes).
+(16,401 bytes), and there are at least two frame buffers: a frame that
+spans records needs a second while it is put together.
+
+## States and invariants
+
+A connection is in one of ten states, and every call and every report of
+the transport does a set thing in each. The full tables, with the listener's
+and the TLS phases of the kernel transport, are in
+`openspec/changes/add-tcp-simulation-and-benchmarks/design.md` until that
+change is archived; the model test holds the code to them cell by cell.
+
+| State | What it is |
+|---|---|
+| `Free` | No connection in the slot. |
+| `Connecting` | The caller's connect is on its way; with TLS, its handshake too. |
+| `Securing` | Accepted, and its TLS handshake is running. It has no handle yet. |
+| `Up` | Open both ways. |
+| `Refused` | Accepted over its listener's limit: it is told so in one frame and closed. |
+| `Finishing` | Its stream has ended, and input received before the end is still to be pulled. |
+| `HalfClosed` | The peer has finished in order; the caller may still send (with `with_half_close`). |
+| `Dying` | It has ended, and the caller has not pulled the event that says so. |
+| `Closing` | Its close is with the transport, or operations it ended have yet to report. |
+| `Backoff` | A reconnecting connection waits to dial again. |
+
+What holds in every state, whatever the order of calls and reports:
+
+Checked after every step of the model test, and by debug assertions where
+that is cheap.
+
+- **I1 Slot ownership.** A connection slot is owned by at most one
+  connection; it is freed only when its close has completed and nothing is
+  in flight for it.
+- **I2 One in flight.** Per connection at most one send, one receive (or
+  one armed receive), and one of connect, handshake, shutdown and close.
+  Per listener at most one accept and one close.
+- **I3 Quiet when free.** Nothing is in flight, queued or held for a slot
+  that is `Free` or `Backoff`.
+- **I4 Handles.** A retired handle reaches nothing. A handle the caller
+  still holds never comes to name another connection or listener.
+- **I5 Events.** No event for a retired handle. `Closed` is the last event
+  of a connection. `Up` and `Down` alternate. `Accepted` or `Refused`
+  comes at most once. `Finished` comes at most once per time the
+  connection is up, only with half-close on, and before `Closed` or
+  `Down`.
+- **I6 Delivery.** Bytes are delivered exactly once, in order. No end
+  event (`Finished`, `Closed`, `Down`) is owed while anything received is
+  left to pull, in whatever order the caller pulls events and frames and
+  whatever the pools hold at that moment. Only `close()` and the idle
+  timeout drop input.
+- **I7 The end.** `Orderly` only if the stream ended between frames (with
+  TLS: after a close alert) and no send failed. Otherwise `Reset`, `Tls`,
+  `Protocol` or `Timeout`. `Finished` only for an end that is in order.
+- **I7a Half-close.** After `Finished` the connection can be sent on
+  until the caller shuts it down or closes it; with the option off the
+  peer's end is the connection's end.
+- **I8 Memory.** Every extent, segment and ring buffer has exactly one of:
+  free, or held with a count that equals its holders. Counts never go
+  below zero or wrap. With no connection open and no frame held, every
+  pool is full.
+- **I9 Deadlines.** A slot has a deadline only in a state whose row has
+  one, and `next_deadline` is the earliest of them.
+- **I10 Wakes.** Whoever was refused for lack of room (`Full`, a paused
+  read, an accept that waits) is told, or resumed, once there is room,
+  without any further call of the caller's being needed.
+- **I11 Progress.** If the caller pulls every event and frame and releases
+  what it holds, and the peer is not silent, the run does not stall.
+- **I12 Allocation.** Nothing allocates after build, the TLS handshake
+  aside.
+
+## Defaults and what they are from
+
+The defaults of `Sizes` and `ConnOpts` are provisional: they are from runs
+over loopback in a Linux container
+(`bench/results/m21-tcp-loopback-container-aarch64.md`), which can say which
+setting is better than which on that machine and nothing of a network card.
+Runs on hosts with 200 and 300 Gb/s cards are to settle them.
+
+- **Receive mode: ring.** Ahead for frames smaller than a ring buffer.
+  Choose `Rx::Direct` for frames of many ring buffers: it was level from
+  4 KiB and well ahead at 1 MiB.
+- **Ring buffers: 16 KiB.** Carried most in bulk and cost small requests
+  little.
+- **Send segments: 64 KiB.** Larger ones gained nothing.
+- **Zero-copy from 16 KiB.** Unchanged: loopback cannot tell.
+- **How a log is made durable, and whether a thread waits or spins:** no
+  default. On the container's virtual disk the two ways of syncing could
+  not be told apart. A single connection was answered in 24 µs with both
+  threads waiting, in 8 µs with the one under test spinning, and in 3 µs
+  in one short run with both spinning, a core each.
 
 ## How it is checked
 
@@ -178,6 +295,8 @@ allocation guard and once per TLS provider. See
 
 ## Not there yet
 
-- Throughput and latency figures: the benchmarks are the next change.
-- A simulated packet network (loss, reordering) and the AF_XDP transport.
+- Figures from a network card: `tcp_uring rr`, `bulk` and `path` measure,
+  and what there is so far is loopback in a container.
+- The AF_XDP transport. The simulated packet link it is to be tested on
+  is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.

@@ -54,8 +54,14 @@
 //! ```
 //!
 //! A loop with timeouts also sleeps no longer than [`Net::next_deadline`]
-//! allows. `docs/tcp.md` in the repository describes the receive modes,
-//! frame memory, TLS and sizing.
+//! allows.
+//!
+//! The end of a connection is reported only when everything received on
+//! it has been pulled, whatever the caller pulls first. By default the end
+//! of the peer's stream ends the connection; with
+//! [`ConnOpts::with_half_close`] a peer that has finished can still be
+//! answered ([`Event::Finished`]). `docs/tcp.md` in the repository
+//! describes this, the receive modes, frame memory, TLS and sizing.
 
 pub mod addr;
 pub mod backoff;
@@ -65,6 +71,7 @@ pub mod deadline;
 pub mod event;
 pub mod framing;
 pub mod handle;
+mod hits;
 pub mod kernel;
 pub mod net;
 mod sizes;
@@ -79,8 +86,8 @@ pub use deadline::Deadlines;
 pub use event::{Event, NetError, SendError, Why};
 pub use framing::{FrameError, Framing, FramingError, HeaderFraming};
 pub use handle::{Conn, Generations, Listener};
-pub use kernel::KernelTransport;
 #[cfg(feature = "tls-core")]
 pub use kernel::Tls;
-pub use net::{Frame, Net};
+pub use kernel::{KernelTransport, PhaseCoverage};
+pub use net::{Coverage, Frame, Net, Usage};
 pub use transport::{Happened, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED};

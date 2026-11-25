@@ -1,0 +1,56 @@
+# Copyright 2026 Carver Automation Corporation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License").
+# SPDX-License-Identifier: Apache-2.0
+
+# The model test of `longshore_tcp` over a hundred thousand seeds, every
+# night: random calls on two connection sets in the simulator under each
+# fault campaign, with and without TLS, under the allocation guard. A pull
+# request runs a thousand of them in ci.yml.
+#
+# A failure names its campaign and seed. Replay it with
+#   cargo run -p longshore_tcp --example tcp_model -- --seed N --campaign NAME --shrink
+# An allocation under the guard aborts the run without a name: the last
+# "tcp_model: ..." line of each core says which 250 seeds it was in.
+
+name: TCP model
+
+on:
+  schedule:
+    - cron: "47 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcp-model-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The same compiler as ci.yml; raise them together.
+  RUST_VERSION: "1.100.0"
+
+jobs:
+  model:
+    name: A hundred thousand seeds
+    runs-on: arc-runner-set
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+          rustc --version
+      - name: A hundred thousand seeds of TCP fault campaigns
+        # A debug build: much of what fails a run is a debug assertion.
+        run: cargo test -p longshore_tcp --test tcp_model -- --ignored a_hundred_thousand

@@ -16,6 +16,8 @@ impl Resolver {
         self.hosts.iter().all(|h| h.sets[h.current()].len > 0)
     }
 
+    /// The index of the host named `name`, which the other lookups take. Letter
+    /// case and a trailing dot make no difference.
     pub fn host_index(&self, name: &str) -> Option<usize> {
         fn bare(n: &str) -> &[u8] {
             n.strip_suffix('.').unwrap_or(n).as_bytes()

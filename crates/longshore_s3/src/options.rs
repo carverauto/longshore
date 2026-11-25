@@ -65,6 +65,7 @@ struct Entry {
     value: (u16, u16),
 }
 
+/// Optional request headers, held without allocation.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Options {
     bytes: [u8; OPTIONS_BYTES],
@@ -80,6 +81,7 @@ impl Default for Options {
 }
 
 impl Options {
+    /// No options.
     pub const fn new() -> Options {
         let none = Entry {
             naming: Naming::Plain,
@@ -94,6 +96,7 @@ impl Options {
         }
     }
 
+    /// Whether there are no options.
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }

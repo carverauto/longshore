@@ -194,6 +194,7 @@ impl<IO: Io> Replicated<IO> {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => fail(format_args!("round {i}, at the log: {e:?}")),
         }
         let (server, io) = self.w.server();
@@ -290,6 +291,7 @@ impl<IO: Io> Replicated<IO> {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => fail(format_args!("round {i}, at a peer: {e:?}")),
         };
         let (client, io) = self.w.client();

@@ -14,21 +14,27 @@ use crate::crypto::{hex, hmac_sha256, Sha256};
 
 mod parts;
 
+/// Headers one request may sign.
 pub const HEADERS_MAX: usize = 16;
+/// Query parameters one request may sign.
 pub const QUERY_MAX: usize = 16;
 /// Value of `x-amz-content-sha256` when the body is not signed.
 pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 /// Hex SHA-256 of the empty string.
 pub const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
+/// Why a request was not signed.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SignError {
+    /// More than [`HEADERS_MAX`] headers.
     TooManyHeaders,
+    /// More than [`QUERY_MAX`] query parameters.
     TooManyQueryParameters,
     /// The output buffer is too small for the Authorization value.
     OutputTooSmall,
 }
 
+/// The parts of a request that the signature covers.
 pub struct Request<'a> {
     pub(crate) method: &'a str,
     pub(crate) canonical_uri: &'a str,
@@ -37,6 +43,7 @@ pub struct Request<'a> {
     pub(crate) payload_hash: &'a str,
 }
 
+/// Who signs, where, for which service and when.
 pub struct Scope<'a> {
     pub(crate) access_key: &'a str,
     pub(crate) secret_key: &'a str,

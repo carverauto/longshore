@@ -8,40 +8,69 @@
 use core::ffi::{c_int, c_void};
 use core::mem::{offset_of, size_of};
 
+/// Wait until the whole length is there.
 pub const MSG_WAITALL: u32 = 0x100;
+/// No `SIGPIPE` when the peer has closed.
 pub const MSG_NOSIGNAL: u32 = 0x4000;
+/// Never wait.
 pub const MSG_DONTWAIT: u32 = 0x40;
+/// Shut down both directions.
 pub const SHUT_RDWR: u32 = 2;
 
+/// Unix-domain addresses.
 pub const AF_UNIX: u16 = 1;
+/// IPv4 addresses.
 pub const AF_INET: u16 = 2;
+/// IPv6 addresses.
 pub const AF_INET6: u16 = 10;
+/// A byte stream, such as TCP.
 pub const SOCK_STREAM: u64 = 1;
+/// Datagrams, such as UDP.
 pub const SOCK_DGRAM: u64 = 2;
+/// Close the descriptor on `exec`.
 pub const SOCK_CLOEXEC: u64 = 0o2000000;
 
+/// Option level of the socket itself.
 pub const SOL_SOCKET: c_int = 1;
+/// Probe an idle connection.
 pub const SO_KEEPALIVE: c_int = 9;
+/// Bind an address that old connections still hold.
 pub const SO_REUSEADDR: c_int = 2;
+/// Let several sockets bind one address.
 pub const SO_REUSEPORT: c_int = 15;
+/// Seconds of silence before the first keepalive probe.
 pub const TCP_KEEPIDLE: c_int = 4;
+/// Seconds between keepalive probes.
 pub const TCP_KEEPINTVL: c_int = 5;
+/// Unanswered keepalive probes before the connection is given up.
 pub const TCP_KEEPCNT: c_int = 6;
+/// Option level of TCP.
 pub const IPPROTO_TCP: c_int = 6;
+/// Send small segments at once.
 pub const TCP_NODELAY: c_int = 1;
+/// The maximum segment size.
 pub const TCP_MAXSEG: c_int = 2;
+/// Option level of IPv4.
 pub const IPPROTO_IP: c_int = 0;
+/// The path's MTU, over IPv4.
 pub const IP_MTU: c_int = 14;
+/// Option level of IPv6.
 pub const IPPROTO_IPV6: c_int = 41;
+/// The path's MTU, over IPv6.
 pub const IPV6_MTU: c_int = 24;
 
+/// Size of a `sockaddr_in`.
 pub const SOCKADDR_IN_LEN: u32 = 16;
+/// Size of a `sockaddr_in6`.
 pub const SOCKADDR_IN6_LEN: u32 = 28;
 
+/// A Unix-domain address: `struct sockaddr_un`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct sockaddr_un {
+    /// [`AF_UNIX`].
     pub sun_family: u16,
+    /// The path, NUL-terminated.
     pub sun_path: [u8; 108],
 }
 
@@ -50,7 +79,9 @@ pub struct sockaddr_un {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct sockaddr_any {
+    /// The address family, such as [`AF_INET`].
     pub family: u16,
+    /// What follows the family, laid out as the family has it.
     pub rest: [u8; 126],
 }
 
@@ -131,10 +162,15 @@ const _: () = {
 };
 
 extern "C" {
+    /// `socket(2)`: open a socket.
     pub fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
+    /// `bind(2)`: give a socket its address.
     pub fn bind(fd: c_int, addr: *const c_void, len: u32) -> c_int;
+    /// `listen(2)`: have a socket take connections.
     pub fn listen(fd: c_int, backlog: c_int) -> c_int;
+    /// `getsockname(2)`: read the address a socket is bound to.
     pub fn getsockname(fd: c_int, addr: *mut c_void, len: *mut u32) -> c_int;
+    /// `setsockopt(2)`: set a socket option.
     pub fn setsockopt(
         fd: c_int,
         level: c_int,
@@ -142,6 +178,7 @@ extern "C" {
         value: *const c_void,
         len: u32,
     ) -> c_int;
+    /// `getsockopt(2)`: read a socket option.
     pub fn getsockopt(
         fd: c_int,
         level: c_int,

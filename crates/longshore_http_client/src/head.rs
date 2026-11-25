@@ -10,15 +10,21 @@
 //! the bytes were split across reads. Headers are recorded as offsets into
 //! the caller's buffer; nothing is copied.
 
+/// Header fields a head may hold.
 pub const HEADERS_MAX: usize = 32;
 
+/// Why a head was not accepted, or could not be written.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum HttpError {
     /// No end of head within the limit.
     HeadTooLarge,
+    /// More than [`HEADERS_MAX`] header fields.
     TooManyHeaders,
+    /// The request line or status line is malformed.
     BadStartLine,
+    /// A header field is malformed.
     BadHeader,
+    /// A `Content-Length` is malformed, or two of them differ.
     BadContentLength,
     /// Both Content-Length and Transfer-Encoding, or an encoding other than chunked.
     BadFraming,
@@ -104,6 +110,7 @@ impl Fields {
     }
 }
 
+/// A response's status and header fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResponseHead {
     pub(crate) status: u16,
@@ -124,6 +131,7 @@ impl ResponseHead {
     }
 }
 
+/// A request's method, target and header fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RequestHead {
     method: Span,
@@ -139,9 +147,12 @@ impl RequestHead {
         &self.fields
     }
 
+    /// The request method, such as `GET`. `buf` is the buffer the head was
+    /// parsed from.
     pub fn method<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
         self.method.get(buf)
     }
+    /// The request target. `buf` is the buffer the head was parsed from.
     pub fn target<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
         self.target.get(buf)
     }

@@ -18,6 +18,7 @@ use std::task::{Context, Poll};
 /// What an operation gives its caller: a result, or a result and the buffer
 /// the operation borrowed.
 pub trait Output: Sized {
+    /// What the operation gives when it succeeds.
     type Value;
     #[doc(hidden)]
     fn build(result: Result<Self::Value, Error>, buffer: Option<Buffer>) -> Self;

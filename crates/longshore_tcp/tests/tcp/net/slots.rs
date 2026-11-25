@@ -44,6 +44,7 @@ fn next_peer_after_a_close_under_a_send(seed: u64) -> bool {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         up && accepted.is_some()
@@ -77,6 +78,7 @@ fn next_peer_after_a_close_under_a_send(seed: u64) -> bool {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         asked && answered
@@ -159,6 +161,7 @@ fn ended_in_order(w: &mut World, conn: Conn) {
         | Event::Down { .. }
         | Event::Closed { .. }
         | Event::ListenFailed { .. }
+        | Event::Finished(_)
         | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
     });
 }
@@ -185,6 +188,7 @@ fn a_connection_that_came_up_again_can_shut_its_write_side_down_again() {
             | Event::Down { .. }
             | Event::Closed { .. }
             | Event::ListenFailed { .. }
+            | Event::Finished(_)
             | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
         }
         up && second.is_some()
@@ -224,6 +228,7 @@ fn a_connection_refused_for_want_of_a_segment_is_told_when_one_returns() {
         | Event::Down { .. }
         | Event::Closed { .. }
         | Event::ListenFailed { .. }
+        | Event::Finished(_)
         | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
     });
     assert!(send(&mut w, c3, &frame), "a segment after Writable");
@@ -266,6 +271,7 @@ fn a_segment_its_waiter_never_took_goes_to_the_next_one_waiting() {
         | Event::Down { .. }
         | Event::Closed { .. }
         | Event::ListenFailed { .. }
+        | Event::Finished(_)
         | Event::Drained => panic!("unexpected {e:?} (server: {server})"),
     });
     assert!(send(&mut w, c3, &frame), "a segment after Writable");

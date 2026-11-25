@@ -7,6 +7,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+/// Addresses kept from one answer. Any beyond them are left out.
 pub const ADDRS_MAX: usize = 8;
 /// Largest message we send or accept over UDP without EDNS.
 pub const MESSAGE_MAX: usize = 512;
@@ -34,13 +35,16 @@ impl Record {
     }
 }
 
+/// Why a query could not be encoded or a response was not accepted.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum DnsError {
     /// The hostname is not a valid DNS name, or does not fit the buffer.
     BadName,
     /// The message ends before a field it declares.
     Truncated,
+    /// The message is a query, not a response.
     NotAResponse,
+    /// The response's id is not the query's.
     IdMismatch,
     /// The server set the truncation bit; the answer did not fit in UDP.
     TruncatedByServer,
@@ -50,9 +54,11 @@ pub enum DnsError {
     QuestionMismatch,
     /// A compression pointer loop or forward pointer.
     BadCompression,
+    /// The answer holds no address of the kind asked for.
     NoAddresses,
 }
 
+/// The addresses one answer held, at most [`ADDRS_MAX`].
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Answers {
     pub(crate) addrs: [IpAddr; ADDRS_MAX],
