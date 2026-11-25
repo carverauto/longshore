@@ -257,3 +257,23 @@ fn what_is_due_next_is_never_in_the_past() {
         assert_eq!(link.next_due(late), Some(late));
     });
 }
+
+#[test]
+fn a_packet_too_long_for_the_buffer_stays_until_one_holds_it() {
+    let mut link = PacketLink::new(9, PacketFaults::NONE, PacketSizes::new(4, MAX as u32));
+    let (mut packet, mut into) = ([0; MAX], [0; MAX]);
+    sealed(|| {
+        let len = fill(&mut packet, End::A, 30);
+        assert_eq!(link.send(End::A, &packet[..len]), Ok(()));
+        link.turn(0);
+        assert_eq!(link.next_len(End::B), None);
+        link.turn(LATENCY);
+        assert_eq!(link.next_len(End::B), Some(len));
+        // One byte short: nothing is taken, nothing is lost.
+        assert_eq!(link.recv(End::B, &mut into[..len - 1]), None);
+        assert_eq!(link.counts().places(), [3, 0, 0, 1]);
+        assert_eq!(link.recv(End::B, &mut into[..len]), Some(len));
+        assert_eq!(number(&into[..len], End::B), 30);
+        assert_eq!(link.counts().places(), [4, 0, 0, 0]);
+    });
+}

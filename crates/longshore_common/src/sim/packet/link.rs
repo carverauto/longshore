@@ -35,6 +35,10 @@ impl Ring {
         self.len += 1;
     }
 
+    fn front(&self) -> Option<u32> {
+        (self.len > 0).then(|| self.slots[self.head])
+    }
+
     fn pop(&mut self) -> Option<u32> {
         if self.len == 0 {
             return None;
@@ -236,14 +240,21 @@ impl PacketLink {
         }
     }
 
+    /// The length of the oldest packet delivered to `at`, which the next
+    /// [`PacketLink::recv`] there hands out.
+    pub fn next_len(&self, at: End) -> Option<usize> {
+        let slot = self.rx[at.index()].front()?;
+        Some(self.packets[slot as usize].len as usize)
+    }
+
     /// The oldest packet delivered to `at`, copied into `into`: its
-    /// length. A packet longer than `into` is cut to it, and its whole
-    /// length returned.
+    /// length. `None` when there is none, and when `into` is shorter than
+    /// the packet: it stays then, whole, and [`PacketLink::next_len`]
+    /// tells how long it is.
     pub fn recv(&mut self, at: End, into: &mut [u8]) -> Option<usize> {
+        let len = self.next_len(at).filter(|len| *len <= into.len())?;
         let slot = self.rx[at.index()].pop()?;
-        let len = self.packets[slot as usize].len as usize;
-        let fits = len.min(into.len());
-        into[..fits].copy_from_slice(&self.memory(slot)[..fits]);
+        into[..len].copy_from_slice(&self.memory(slot)[..len]);
         self.free_slot(slot);
         self.counts.received += 1;
         Some(len)
