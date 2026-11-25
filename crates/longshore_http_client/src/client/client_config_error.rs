@@ -7,6 +7,7 @@
 
 use core::fmt;
 
+/// Why a client configuration was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClientConfigError {
     /// `connections_max` is zero, or so large that the operations the

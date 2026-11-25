@@ -77,17 +77,24 @@ impl<M: fmt::Debug> std::error::Error for TrySendError<M> {}
 /// An item delivered by the queue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Recv<M> {
+    /// A message.
     Message(M),
+    /// The queue was stopped, and every message sent before that was delivered.
     Stop,
+    /// The queue is closed. Nothing more will be delivered.
     Closed,
 }
 
 /// Non-blocking receive outcome from [`QueueReceiver::try_recv`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TryRecv<M> {
+    /// A message.
     Message(M),
+    /// The queue was stopped, and every message sent before that was delivered.
     Stop,
+    /// Nothing is waiting right now.
     Empty,
+    /// The queue is closed. Nothing more will be delivered.
     Closed,
 }
 

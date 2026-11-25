@@ -28,6 +28,7 @@ pub enum Step {
     /// The operation the owner asked for finished with this result: bytes of
     /// plaintext sent or received, 0 for end of stream, or a negated errno.
     Done(i32),
+    /// TLS failed. The connection is of no further use.
     Tls(TlsError),
 }
 

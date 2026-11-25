@@ -98,6 +98,7 @@ pub struct Report {
     pub(crate) unanswered: u32,
 }
 
+/// Whether the store answered, and if not, why.
 #[expect(
     clippy::large_enum_variant,
     reason = "a report is held in a slot that exists whether or not it is used, so boxing the large variant would only add an allocation"

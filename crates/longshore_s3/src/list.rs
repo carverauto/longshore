@@ -10,6 +10,7 @@
 //! elements with `Key` and `Size`, and the top-level `IsTruncated`) and
 //! skips everything else, so extra fields from different stores are harmless.
 
+/// Why a listing could not be read.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ListError {
     /// The document is not a `ListBucketResult`.
@@ -18,12 +19,14 @@ pub enum ListError {
     Malformed,
 }
 
+/// An object in a listing.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Entry<'a> {
     pub(crate) key_raw: &'a [u8],
     pub(crate) size: u64,
 }
 
+/// A listing document, read as it is asked about.
 #[derive(Debug, Clone, Copy)]
 pub struct Listing<'a> {
     body: &'a [u8],
@@ -55,6 +58,8 @@ fn element<'a>(xml: &'a [u8], name: &str) -> Result<Option<(&'a [u8], usize)>, L
 }
 
 impl<'a> Listing<'a> {
+    /// Read the listing document `xml`. The objects in it are read by
+    /// [`Listing::entries`].
     pub fn parse(xml: &'a [u8]) -> Result<Listing<'a>, ListError> {
         // The root element, possibly after an XML declaration, possibly with
         // a namespace attribute.
@@ -110,6 +115,7 @@ impl<'a> Listing<'a> {
         self.next_token_raw
     }
 
+    /// The objects listed, in the order the store gave them.
     pub fn entries(&self) -> Entries<'a> {
         Entries {
             rest: self.body,
@@ -128,6 +134,8 @@ impl<'a> Listing<'a> {
     }
 }
 
+/// The prefixes in a listing: see [`Listing::common_prefixes`]. Ends after the
+/// first error.
 pub struct CommonPrefixes<'a> {
     rest: &'a [u8],
     failed: bool,
@@ -155,6 +163,8 @@ impl<'a> Iterator for CommonPrefixes<'a> {
     }
 }
 
+/// The objects in a listing: see [`Listing::entries`]. Ends after the first
+/// error.
 pub struct Entries<'a> {
     rest: &'a [u8],
     failed: bool,

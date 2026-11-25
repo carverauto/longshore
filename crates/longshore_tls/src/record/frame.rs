@@ -6,7 +6,9 @@
 //! The record format: sizes, limits, suites, errors, and finding where a
 //! record ends.
 
+/// Length of a record's header.
 pub const HEADER_LEN: usize = 5;
+/// Length of a record's authentication tag.
 pub const TAG_LEN: usize = 16;
 /// Largest content in one record.
 pub const FRAGMENT_MAX: usize = 16384;
@@ -21,7 +23,9 @@ pub const RECORD_MAX: usize = FRAGMENT_MAX + OVERHEAD;
 /// 255 bytes of allowance (RFC 8446 5.2).
 const CIPHERTEXT_MAX: usize = FRAGMENT_MAX + 256;
 
+/// Content type of an alert.
 pub const CONTENT_ALERT: u8 = 21;
+/// Content type of a handshake message.
 pub const CONTENT_HANDSHAKE: u8 = 22;
 
 /// The most records one set of traffic keys may protect, in each direction.
@@ -36,15 +40,20 @@ pub const KEY_RECORDS_MAX: u64 = 1 << 24;
 /// further requests. Half the hard limit: about 137 GB of full-size records,
 /// leaving more room than any single request can use.
 pub const KEY_RECORDS_RETIRE: u64 = KEY_RECORDS_MAX / 2;
+/// Content type of application data.
 pub const CONTENT_APPLICATION_DATA: u8 = 23;
 
+/// The cipher suites records can be protected with.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Suite {
+    /// AES-128-GCM.
     Aes128Gcm,
+    /// AES-256-GCM.
     Aes256Gcm,
 }
 
 impl Suite {
+    /// Length of the suite's key in bytes.
     pub fn key_len(self) -> usize {
         match self {
             Suite::Aes128Gcm => 16,
@@ -53,6 +62,7 @@ impl Suite {
     }
 }
 
+/// Why a record could not be sealed or opened.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RecordError {
     /// The header is not a TLS 1.3 protected record.

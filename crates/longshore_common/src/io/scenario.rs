@@ -8,6 +8,7 @@
 use crate::io::{BufId, Completions, Io, Op, Sock, Token};
 use std::net::SocketAddr;
 
+/// Why [`echo`] failed.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EchoError {
     /// An operation failed: (token, negated errno).
@@ -18,6 +19,7 @@ pub enum EchoError {
     Driver,
 }
 
+/// How many sends, receives and ticks [`echo`] took.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct EchoStats {
     pub(crate) sends: u64,

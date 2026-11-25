@@ -41,10 +41,20 @@ pub enum Event {
     /// A connection the caller opened is up, or up again.
     Up(Conn),
     /// A listener accepted a connection.
-    Accepted { listener: Listener, conn: Conn },
+    Accepted {
+        /// The listener that accepted.
+        listener: Listener,
+        /// The connection accepted.
+        conn: Conn,
+    },
     /// A listener at its limit accepted a connection only to refuse it:
     /// the caller may send it one frame, and it is closed after that.
-    Refused { listener: Listener, conn: Conn },
+    Refused {
+        /// The listener at its limit.
+        listener: Listener,
+        /// The connection refused.
+        conn: Conn,
+    },
     /// Frames are waiting: pull them with `Net::next_frame` until it
     /// returns `None`.
     Readable(Conn),
@@ -57,11 +67,26 @@ pub enum Event {
     /// A reconnecting connection went down; its handle stays, and
     /// [`Event::Up`] follows when it is back. What was queued to send is
     /// dropped.
-    Down { conn: Conn, why: Why },
+    Down {
+        /// The connection that went down.
+        conn: Conn,
+        /// Why it went down.
+        why: Why,
+    },
     /// A connection ended. Its handle is stale from here on.
-    Closed { conn: Conn, why: Why },
+    Closed {
+        /// The connection that ended.
+        conn: Conn,
+        /// How it ended.
+        why: Why,
+    },
     /// A listener that was retrying its bind gave up; `errno` is negated.
-    ListenFailed { listener: Listener, errno: i32 },
+    ListenFailed {
+        /// The listener that gave up.
+        listener: Listener,
+        /// The negated error.
+        errno: i32,
+    },
     /// Draining is over: queued sends have gone, or the deadline passed.
     Drained,
 }

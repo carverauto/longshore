@@ -36,12 +36,15 @@ pub fn crc32c(data: &[u8]) -> u32 {
 pub struct Crc64Nvme(u64);
 
 impl Crc64Nvme {
+    /// The checksum of no bytes yet.
     pub fn new() -> Crc64Nvme {
         Crc64Nvme(!0)
     }
+    /// Add `data` to the bytes checksummed.
     pub fn update(&mut self, data: &[u8]) {
         self.0 = kernels::crc64(self.0, data);
     }
+    /// The checksum of the bytes so far. More may still be added.
     pub fn finish(&self) -> u64 {
         !self.0
     }
@@ -57,12 +60,15 @@ impl Default for Crc64Nvme {
 pub struct Crc32c(u32);
 
 impl Crc32c {
+    /// The checksum of no bytes yet.
     pub fn new() -> Crc32c {
         Crc32c(!0)
     }
+    /// Add `data` to the bytes checksummed.
     pub fn update(&mut self, data: &[u8]) {
         self.0 = kernels::crc32c(self.0, data);
     }
+    /// The checksum of the bytes so far. More may still be added.
     pub fn finish(&self) -> u32 {
         !self.0
     }

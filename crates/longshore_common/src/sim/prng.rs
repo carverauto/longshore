@@ -5,12 +5,15 @@
 
 //! xoshiro256**, seeded with splitmix64.
 
+/// The simulator's pseudo-random numbers: the same seed gives the same sequence
+/// on every platform. Not for cryptography.
 #[derive(Clone)]
 pub struct Prng {
     s: [u64; 4],
 }
 
 impl Prng {
+    /// The sequence that `seed` gives.
     pub fn new(seed: u64) -> Prng {
         let mut z = seed;
         let mut next = || {
@@ -25,6 +28,7 @@ impl Prng {
         }
     }
 
+    /// The next 64 bits of the sequence.
     pub fn next_u64(&mut self) -> u64 {
         let r = self.s[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
         let t = self.s[1] << 17;

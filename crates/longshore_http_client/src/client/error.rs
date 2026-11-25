@@ -8,6 +8,7 @@
 use crate::head::HttpError;
 use longshore_stream::TlsError;
 
+/// Why a request failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     /// Every connection is in use.
@@ -21,8 +22,10 @@ pub enum Error {
     /// The peer closed mid-exchange. `reused` is true when the connection had
     /// served earlier requests, the usual sign of a stale keep-alive.
     Closed {
+        /// Whether the connection had served earlier requests.
         reused: bool,
     },
+    /// The request took longer than the client allows.
     Timeout,
     /// The response body does not fit the buffer, or it is too large to
     /// discard when no buffer was given.

@@ -46,6 +46,7 @@ enum State {
     Done,
 }
 
+/// A chunked body being decoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Chunked {
     state: State,
@@ -58,6 +59,7 @@ impl Default for Chunked {
 }
 
 impl Chunked {
+    /// A decoder at the start of a body.
     pub fn new() -> Chunked {
         Chunked {
             state: State::Size {

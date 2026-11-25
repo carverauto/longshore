@@ -41,7 +41,10 @@ pub const TLS_FAILED: i32 = -71;
 pub enum Role<'a> {
     /// The side that connected; the peer's certificate must match
     /// `server_name`.
-    Client { server_name: &'a str },
+    Client {
+        /// The name the peer's certificate must match.
+        server_name: &'a str,
+    },
     /// The side that accepted.
     Server,
 }
@@ -167,32 +170,52 @@ pub enum Happened {
     /// The completion was the transport's own business; nothing for `Net`.
     Nothing,
     /// A connect ended.
-    Connected { slot: u32, result: i32 },
+    Connected {
+        /// The connection slot.
+        slot: u32,
+        /// 0, or a negated error.
+        result: i32,
+    },
     /// A TLS handshake started with [`Transport::secure`] ended: 0, or a
     /// negated error ([`TLS_FAILED`], or `-ECANCELED` when the connection
     /// was closed under it).
-    Secured { slot: u32, result: i32 },
+    Secured {
+        /// The connection slot.
+        slot: u32,
+        /// 0, or a negated error.
+        result: i32,
+    },
     /// A listener accepted a connection into `slot`. `armed` says whether
     /// the listener's armed accept is still running (always false for a
     /// single accept).
     Accepted {
+        /// The listener slot that accepted.
         listener: u32,
+        /// The connection slot the connection took.
         slot: u32,
+        /// Whether the listener's armed accept is still running.
         armed: bool,
     },
     /// An accept ended without a connection. `slot` is the slot a single
     /// accept was to fill.
     AcceptFailed {
+        /// The listener slot.
         listener: u32,
+        /// The slot a single accept was to fill.
         slot: Option<u32>,
+        /// The negated error.
         result: i32,
     },
     /// An armed receive delivered `len` bytes in ring buffer `buf`, which
     /// `Net` gives back when done with it. `armed` says whether more follow.
     RingData {
+        /// The connection slot.
         slot: u32,
+        /// The ring buffer holding the bytes.
         buf: BufId,
+        /// How many bytes.
         len: u32,
+        /// Whether the armed receive is still running.
         armed: bool,
     },
     /// An armed receive ended without bytes: 0 at end of stream, a negated
@@ -200,17 +223,43 @@ pub enum Happened {
     /// when it was cancelled). On a protected slot the end of stream is
     /// the bytes' own: whether the peer ended in order is what
     /// [`Transport::open`] says of the records before it.
-    RecvEnded { slot: u32, result: i32 },
+    RecvEnded {
+        /// The connection slot.
+        slot: u32,
+        /// 0 at end of stream, or a negated error.
+        result: i32,
+    },
     /// A receive into frame memory ended.
-    Received { slot: u32, result: i32 },
+    Received {
+        /// The connection slot.
+        slot: u32,
+        /// Bytes received, 0 at end of stream, or a negated error.
+        result: i32,
+    },
     /// A send ended; the transport no longer uses its buffer.
-    Sent { slot: u32, result: i32 },
+    Sent {
+        /// The connection slot.
+        slot: u32,
+        /// Bytes sent, or a negated error.
+        result: i32,
+    },
     /// A shutdown of the write side ended.
-    ShutDown { slot: u32, result: i32 },
+    ShutDown {
+        /// The connection slot.
+        slot: u32,
+        /// 0, or a negated error.
+        result: i32,
+    },
     /// A connection slot is closed and free.
-    Closed { slot: u32 },
+    Closed {
+        /// The connection slot.
+        slot: u32,
+    },
     /// A listener slot is closed and free.
-    ListenerClosed { listener: u32 },
+    ListenerClosed {
+        /// The listener slot.
+        listener: u32,
+    },
 }
 
 /// Something that moves bytes for `Net`.

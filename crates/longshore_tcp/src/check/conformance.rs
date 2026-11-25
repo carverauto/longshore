@@ -27,6 +27,7 @@ use std::net::SocketAddr;
 /// A transport with one listener slot (0), two connection slots for
 /// connects (0 and 1), and at least two that accepts fill.
 pub trait Rig {
+    /// The transport checked.
     type T: Transport;
     /// The transport and its driver.
     fn parts(&mut self) -> (&mut Self::T, &mut <Self::T as Transport>::Driver);

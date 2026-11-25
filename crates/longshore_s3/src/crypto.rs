@@ -12,19 +12,23 @@
 
 use ring::{digest, hmac};
 
+/// Length of a SHA-256 digest in bytes.
 pub const SHA256_LEN: usize = 32;
 
 /// Incremental SHA-256.
 pub struct Sha256(digest::Context);
 
 impl Sha256 {
+    /// The digest of no bytes yet.
     pub fn new() -> Sha256 {
         Sha256(digest::Context::new(&digest::SHA256))
     }
+    /// Add `data` to the bytes digested.
     pub fn update(&mut self, data: &[u8]) -> &mut Sha256 {
         self.0.update(data);
         self
     }
+    /// The digest of the bytes added.
     pub fn finish(self) -> [u8; SHA256_LEN] {
         let mut out = [0u8; SHA256_LEN];
         out.copy_from_slice(self.0.finish().as_ref());
@@ -38,6 +42,7 @@ impl Default for Sha256 {
     }
 }
 
+/// SHA-256 of `data`.
 pub fn sha256(data: &[u8]) -> [u8; SHA256_LEN] {
     let mut h = Sha256::new();
     let _: &mut Sha256 = h.update(data);

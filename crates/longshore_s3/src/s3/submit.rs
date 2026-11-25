@@ -287,6 +287,8 @@ impl S3 {
         Ok(())
     }
 
+    /// Erase the object at `key`. Ends with [`Outcome::Erased`], also when
+    /// there was no object.
     pub fn erase<IO: Io>(&mut self, io: &mut IO, token: u64, key: &str) -> Result<(), SubmitError> {
         self.submit(io, token, key, Kind::Erase, None, None, Checksum::None, b"")
     }

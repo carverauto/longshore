@@ -7,11 +7,13 @@
 
 use super::Done;
 
+/// What the client made of a completion or a cancel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Handled {
     /// The completion does not belong to this client.
     NotMine,
     /// Consumed; the request is still in progress.
     Pending,
+    /// Consumed; a request ended.
     Done(Done),
 }

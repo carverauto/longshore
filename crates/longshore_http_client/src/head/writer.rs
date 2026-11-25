@@ -80,6 +80,8 @@ impl<'a> HeadWriter<'a> {
         self.put(b": ");
     }
 
+    /// Add a header field. A name or value with bytes a field may not hold
+    /// makes [`HeadWriter::finish`] fail.
     pub fn header(&mut self, name: &str, value: &[u8]) -> &mut Self {
         // CR or LF here would let a value inject headers or a second request.
         self.bad |= value.iter().any(|b| *b < 0x20 && *b != b'\t' || *b == 0x7f);
@@ -89,6 +91,7 @@ impl<'a> HeadWriter<'a> {
         self
     }
 
+    /// Add a header field whose value is a number.
     pub fn header_u64(&mut self, name: &str, value: u64) -> &mut Self {
         self.name(name);
         self.put_u64(value);
