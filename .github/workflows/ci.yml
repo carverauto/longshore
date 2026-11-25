@@ -104,7 +104,8 @@ jobs:
         # The model test of `longshore_tcp` under every fault campaign,
         # under the allocation guard. A failure names its campaign and
         # seed; `cargo run -p longshore_tcp --example tcp_model -- --seed N
-        # --campaign NAME` replays it.
+        # --campaign NAME` replays it. An allocation aborts the run with
+        # no name: the last "tcp_model: ..." line says which 250 seeds.
         run: cargo test -p longshore_tcp --test tcp_model -- --ignored a_thousand
 
   macos:

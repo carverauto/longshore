@@ -12,6 +12,11 @@
 //! default), resets, slow, delays, refusals, and flips where TLS is
 //! compiled in.
 //!
+//! An allocation under the guard is not a failure the tool can catch: it
+//! aborts the process, here as in the test, and `--shrink` cannot cut
+//! such a run down. The guard's own line and the seed given are what
+//! there is.
+//!
 //! Run it as a debug build, as above: a failing run is caught as a panic
 //! that unwinds, and much of what fails a run is a debug assertion. The
 //! release profile aborts on a panic.

@@ -236,6 +236,34 @@ fn the_same_seed_gives_the_same_trace() {
     }
 }
 
+/// The seeds from `first` on, `count` of them, in `named`, in blocks. Each
+/// block is announced on the standard error itself, past the test
+/// harness: an allocation under the guard aborts the process, with
+/// nothing said of the run it was in, and what the harness holds back is
+/// lost with it. The last block announced is then where to look, with
+/// `tcp_model --campaign NAME --seed N` over its seeds.
+#[cfg(test)]
+fn long_run(named: Campaign, first: u64, count: u64) {
+    use std::io::Write;
+    const BLOCK: u64 = 250;
+    let mut at = first;
+    while at < first + count {
+        let end = (at + BLOCK).min(first + count);
+        // Best effort: a line that is lost changes no result.
+        drop(writeln!(
+            std::io::stderr(),
+            "tcp_model: {named:?}, seeds {at}..{end}"
+        ));
+        let total = campaign(named, at..end);
+        let wrong = excluded(&total);
+        assert!(
+            !cfg!(debug_assertions) || wrong.is_empty(),
+            "{named:?}, seeds {at}..{end}: {wrong:#?}"
+        );
+        at = end;
+    }
+}
+
 /// CI's share: `cargo test -p longshore_tcp --test tcp_model -- --ignored
 /// a_thousand`.
 #[test]
@@ -243,12 +271,7 @@ fn the_same_seed_gives_the_same_trace() {
 fn a_thousand_seeds_of_fault_campaigns() {
     let each = 1000 / Campaign::all().len() as u64 + 1;
     for named in Campaign::all() {
-        let total = campaign(*named, 1000..1000 + each);
-        let wrong = excluded(&total);
-        assert!(
-            !cfg!(debug_assertions) || wrong.is_empty(),
-            "{named:?}: {wrong:#?}"
-        );
+        long_run(*named, 1000, each);
     }
 }
 
@@ -262,14 +285,8 @@ fn a_hundred_thousand_seeds_of_fault_campaigns() {
     let workers: Vec<_> = (0..cores)
         .map(|core| {
             std::thread::spawn(move || {
-                let first = 10_000 + core * each;
                 for named in Campaign::all() {
-                    let total = campaign(*named, first..first + each);
-                    let wrong = excluded(&total);
-                    assert!(
-                        !cfg!(debug_assertions) || wrong.is_empty(),
-                        "{named:?}: {wrong:#?}"
-                    );
+                    long_run(*named, 10_000 + core * each, each);
                 }
             })
         })

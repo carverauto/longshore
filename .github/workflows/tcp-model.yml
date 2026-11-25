@@ -10,6 +10,8 @@
 #
 # A failure names its campaign and seed. Replay it with
 #   cargo run -p longshore_tcp --example tcp_model -- --seed N --campaign NAME --shrink
+# An allocation under the guard aborts the run without a name: the last
+# "tcp_model: ..." line of each core says which 250 seeds it was in.
 
 name: TCP model
 
