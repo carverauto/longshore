@@ -129,6 +129,8 @@ name = "longshore-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "longshore_common",
+ "longshore_tcp",
  "longshore_tls",
  "rustls",
 ]
@@ -136,6 +138,21 @@ dependencies = [
 [[package]]
 name = "longshore_common"
 version = "0.2.0"
+
+[[package]]
+name = "longshore_stream"
+version = "0.2.0"
+dependencies = [
+ "longshore_common",
+]
+
+[[package]]
+name = "longshore_tcp"
+version = "0.2.0"
+dependencies = [
+ "longshore_common",
+ "longshore_stream",
+]
 
 [[package]]
 name = "longshore_tls"

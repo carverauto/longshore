@@ -15,6 +15,11 @@ cargo-fuzz = true
 
 [workspace]
 
+[features]
+# Never on here. The model test's source, compiled into `tcp_model_steps`,
+# asks whether TLS is compiled in; this names the feature it asks for.
+tls-core = []
+
 [dependencies]
 libfuzzer-sys = "0.4"
 # The record layer, with all three providers, through its own crate. The
@@ -22,6 +27,11 @@ libfuzzer-sys = "0.4"
 # crate: its checksum dependency has a C-ABI library target that does not
 # link under the fuzzer's instrumentation. longshore_tls does not depend on it.
 longshore_tls = { path = "../crates/longshore_tls", features = ["aws-lc", "ring", "rustls"] }
+# The TCP connection set and the simulator it is modelled on, without TLS:
+# neither depends on the checksum crate. The model test's own source is
+# compiled into `tcp_model_steps`.
+longshore_tcp = { path = "../crates/longshore_tcp", default-features = false }
+longshore_common = { path = "../crates/longshore_common", features = ["sim"] }
 # rustls's key type, to key its record layer from fuzzer-chosen bytes.
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 
@@ -56,6 +66,20 @@ bench = false
 [[bin]]
 name = "multipart_response"
 path = "fuzz_targets/multipart_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tcp_framing"
+path = "fuzz_targets/tcp_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tcp_model_steps"
+path = "fuzz_targets/tcp_model_steps.rs"
 test = false
 doc = false
 bench = false

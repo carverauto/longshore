@@ -56,7 +56,9 @@ fail and tears clients down with work in flight. It is built with the
 `fault-injection` feature, which is off everywhere else.
 
 Property tests use [Hegel](https://hegel.dev). The parsers have fuzz targets
-in `fuzz/`, run with `cargo fuzz` through `scripts/fuzz.sh` (or `make fuzz`):
+in `fuzz/`, and so has the TCP connection set: `tcp_framing`, and
+`tcp_model_steps`, which is its model test with the steps of a run made
+from the fuzzer's bytes. They are run with `cargo fuzz` through `scripts/fuzz.sh` (or `make fuzz`):
 every target for 60 seconds by default, `--seconds N` and target names as
 parameters to change that, `--seconds 0` to only build them. It needs a nightly toolchain
 and `cargo install --locked cargo-fuzz`. The Fuzz workflow runs each target
