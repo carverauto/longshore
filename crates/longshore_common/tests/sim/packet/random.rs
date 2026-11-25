@@ -8,13 +8,16 @@
 //! nothing made or lost unaccounted, nothing changed, nothing early or
 //! too late, and never three of a packet.
 
-use super::{fill, number, LATENCY, MAX};
+use super::{fill, number, MAX};
 use longshore_common::io::alloc_guard::sealed;
 use longshore_common::sim::prng::Prng;
 use longshore_common::sim::{End, PacketFaults, PacketLink, PacketSizes};
 
 const SLOTS: u32 = 12;
 const DELAY: u64 = 250_000;
+/// Not the times a link has unless told: these are set, and held.
+const LATENCY: u64 = 70_000;
+const HOLD: u64 = 900_000;
 
 /// What the test knows of a packet it sent: when the turn after it was,
 /// and how often it has arrived.
@@ -30,6 +33,13 @@ struct Run {
     /// Each end's packets, by number.
     sent: [Vec<Sent>; 2],
     refused: u64,
+    /// Both ends receive all there is after every turn: a packet is then
+    /// received at the time of the turn that delivered it.
+    prompt: bool,
+    /// Neither reordering nor delay: each direction keeps its order.
+    ordered: bool,
+    /// The number each end received last.
+    last: [Option<u64>; 2],
 }
 
 impl Run {
@@ -58,28 +68,44 @@ impl Run {
                 packet.departed = Some(self.now);
             }
         }
+        if self.prompt {
+            while self.recv(End::A) || self.recv(End::B) {}
+        }
     }
 
-    fn recv(&mut self, at: End) {
+    /// Receive at `at`, if there is anything; whether there was.
+    fn recv(&mut self, at: End) -> bool {
         let mut into = [0; MAX];
         let Some(len) = sealed(|| self.link.recv(at, &mut into)) else {
-            return;
+            return false;
         };
         let id = number(&into[..len], at);
         let from = &mut self.sent[usize::from(at == End::A)];
         let packet = &mut from[id as usize];
         packet.arrived += 1;
         assert!(packet.arrived <= 2, "packet {id} three times");
-        // Not before its time. (How late it may be is held where turns
-        // come at a steady pace: here it lies in the receive queue until
-        // the next turn and the next receive, whenever those are.)
         let departed = packet.departed;
         assert!(
             departed.is_some(),
             "packet {id} before the turn that sent it"
         );
+        // Not before its time. Where both ends receive after every turn
+        // this is the time of the turn that delivered it; elsewhere it
+        // has lain in the receive queue since, and the check is weaker.
         let earliest = departed.map_or(u64::MAX, |when| when + LATENCY);
         assert!(self.now >= earliest, "packet {id} early");
+        if self.ordered {
+            // In the order sent, whatever was lost; a duplicate next to
+            // its original.
+            let last = self.last[at.other() as usize];
+            assert!(
+                last.is_none_or(|before| before <= id),
+                "{id} after {last:?}"
+            );
+            assert!(packet.arrived == 1 || last == Some(id), "{id} twice, apart");
+        }
+        self.last[at.other() as usize] = Some(id);
+        true
     }
 
     /// Every slot is in one place, and every packet accounted for.
@@ -96,20 +122,28 @@ impl Run {
     }
 }
 
-/// `calls` random calls with `seed`; what the link counted.
+/// `calls` random calls with `seed`; what the link counted. The seed
+/// also chooses whether both ends receive at once after every turn, and
+/// whether there is reordering and delay.
 fn run(seed: u64, calls: u32) -> (u64, u64, u64, u64) {
-    let faults = PacketFaults::NONE
-        .with_loss(80_000)
-        .with_duplicate(80_000)
-        .with_reorder(80_000)
-        .with_delay(300_000, DELAY);
-    let sizes = PacketSizes::new(SLOTS, MAX as u32).with_queue(5);
+    let (prompt, ordered) = (seed % 2 == 1, seed % 4 < 2);
+    let mut faults = PacketFaults::NONE.with_loss(80_000).with_duplicate(80_000);
+    if !ordered {
+        faults = faults.with_reorder(80_000).with_delay(300_000, DELAY);
+    }
+    let sizes = PacketSizes::new(SLOTS, MAX as u32)
+        .with_queue(5)
+        .with_latency_ns(LATENCY)
+        .with_reorder_ns(HOLD);
     let room = || Vec::with_capacity(calls as usize);
     let mut run = Run {
         link: PacketLink::new(seed, faults, sizes),
         now: 0,
         sent: [room(), room()],
         refused: 0,
+        prompt,
+        ordered,
+        last: [None, None],
     };
     let mut choose = Prng::new(seed ^ 0x5eed);
     for _ in 0..calls {
@@ -120,11 +154,14 @@ fn run(seed: u64, calls: u32) -> (u64, u64, u64, u64) {
                 End::B
             }),
             4..=5 => run.turn(),
-            6..=8 => run.recv(if choose.chance(500_000) {
-                End::A
-            } else {
-                End::B
-            }),
+            6..=8 => {
+                let at = if choose.chance(500_000) {
+                    End::A
+                } else {
+                    End::B
+                };
+                let _received: bool = run.recv(at);
+            }
             _ => run.now += choose.below(400_000),
         }
         run.check();
@@ -133,14 +170,11 @@ fn run(seed: u64, calls: u32) -> (u64, u64, u64, u64) {
     while let Some(due) = run.link.next_due(run.now) {
         run.now = run.now.max(due);
         run.turn();
-        run.recv(End::A);
-        run.recv(End::B);
+        let _both: (bool, bool) = (run.recv(End::A), run.recv(End::B));
         run.check();
     }
     for at in [End::A, End::B] {
-        for _ in 0..SLOTS {
-            run.recv(at);
-        }
+        while run.recv(at) {}
     }
     run.check();
     let counts = run.link.counts();
