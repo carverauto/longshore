@@ -21,6 +21,9 @@ mod accepting;
 #[path = "net/ending.rs"]
 mod ending;
 #[cfg(test)]
+#[path = "net/exhaustion.rs"]
+mod exhaustion;
+#[cfg(test)]
 #[path = "net/frames.rs"]
 mod frames;
 #[cfg(test)]
