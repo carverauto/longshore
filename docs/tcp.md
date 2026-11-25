@@ -178,7 +178,7 @@ from the `Config`. Plan several components one on top of the other.
 | `new(connects, accepts, listeners)` | Connections the caller opens, connections accepted, listeners | none |
 | `with_frames(count, size)` | Frame memory; `size` is a multiple of the block size and at least the longest frame | 64 of 1 MiB |
 | `with_segments(count, size)` | Send segments; a frame sent with `send_frame` fits one | 64 of 64 KiB |
-| `with_ring(count, size)` | The shared receive ring | 64 of 64 KiB |
+| `with_ring(count, size)` | The shared receive ring | 64 of 16 KiB |
 | `with_header_max(bytes)` | The longest header | 256 |
 | `with_spans(n)` | Queued sends per connection | 16 |
 | `with_zero_copy_min(bytes)` | Sends at least this long are zero-copy | 16 KiB |
@@ -194,6 +194,92 @@ With TLS in ring mode, frame memory holds at least one record
 (16,401 bytes), and there are at least two frame buffers: a frame that
 spans records needs a second while it is put together.
 
+## States and invariants
+
+A connection is in one of ten states, and every call and every report of
+the transport does a set thing in each. The full tables, with the listener's
+and the TLS phases of the kernel transport, are in
+`openspec/changes/add-tcp-simulation-and-benchmarks/design.md` until that
+change is archived; the model test holds the code to them cell by cell.
+
+| State | What it is |
+|---|---|
+| `Free` | No connection in the slot. |
+| `Connecting` | The caller's connect is on its way; with TLS, its handshake too. |
+| `Securing` | Accepted, and its TLS handshake is running. It has no handle yet. |
+| `Up` | Open both ways. |
+| `Refused` | Accepted over its listener's limit: it is told so in one frame and closed. |
+| `Finishing` | Its stream has ended, and input received before the end is still to be pulled. |
+| `HalfClosed` | The peer has finished in order; the caller may still send (with `with_half_close`). |
+| `Dying` | It has ended, and the caller has not pulled the event that says so. |
+| `Closing` | Its close is with the transport, or operations it ended have yet to report. |
+| `Backoff` | A reconnecting connection waits to dial again. |
+
+What holds in every state, whatever the order of calls and reports:
+
+Checked after every step of the model test, and by debug assertions where
+that is cheap.
+
+- **I1 Slot ownership.** A connection slot is owned by at most one
+  connection; it is freed only when its close has completed and nothing is
+  in flight for it.
+- **I2 One in flight.** Per connection at most one send, one receive (or
+  one armed receive), and one of connect, handshake, shutdown and close.
+  Per listener at most one accept and one close.
+- **I3 Quiet when free.** Nothing is in flight, queued or held for a slot
+  that is `Free` or `Backoff`.
+- **I4 Handles.** A retired handle reaches nothing. A handle the caller
+  still holds never comes to name another connection or listener.
+- **I5 Events.** No event for a retired handle. `Closed` is the last event
+  of a connection. `Up` and `Down` alternate. `Accepted` or `Refused`
+  comes at most once. `Finished` comes at most once per time the
+  connection is up, only with half-close on, and before `Closed` or
+  `Down`.
+- **I6 Delivery.** Bytes are delivered exactly once, in order. No end
+  event (`Finished`, `Closed`, `Down`) is owed while anything received is
+  left to pull, in whatever order the caller pulls events and frames and
+  whatever the pools hold at that moment. Only `close()` and the idle
+  timeout drop input.
+- **I7 The end.** `Orderly` only if the stream ended between frames (with
+  TLS: after a close alert) and no send failed. Otherwise `Reset`, `Tls`,
+  `Protocol` or `Timeout`. `Finished` only for an end that is in order.
+- **I7a Half-close.** After `Finished` the connection can be sent on
+  until the caller shuts it down or closes it; with the option off the
+  peer's end is the connection's end.
+- **I8 Memory.** Every extent, segment and ring buffer has exactly one of:
+  free, or held with a count that equals its holders. Counts never go
+  below zero or wrap. With no connection open and no frame held, every
+  pool is full.
+- **I9 Deadlines.** A slot has a deadline only in a state whose row has
+  one, and `next_deadline` is the earliest of them.
+- **I10 Wakes.** Whoever was refused for lack of room (`Full`, a paused
+  read, an accept that waits) is told, or resumed, once there is room,
+  without any further call of the caller's being needed.
+- **I11 Progress.** If the caller pulls every event and frame and releases
+  what it holds, and the peer is not silent, the run does not stall.
+- **I12 Allocation.** Nothing allocates after build, the TLS handshake
+  aside.
+
+## Defaults and what they are from
+
+The defaults of `Sizes` and `ConnOpts` are provisional: they are from runs
+over loopback in a Linux container
+(`bench/results/m21-tcp-loopback-container-aarch64.md`), which can say which
+setting is better than which on that machine and nothing of a network card.
+Runs on hosts with 200 and 300 Gb/s cards are to settle them.
+
+- **Receive mode: ring.** Ahead for frames smaller than a ring buffer.
+  Choose `Rx::Direct` for frames of many ring buffers: it was level from
+  4 KiB and well ahead at 1 MiB.
+- **Ring buffers: 16 KiB.** Carried most in bulk and cost small requests
+  little.
+- **Send segments: 64 KiB.** Larger ones gained nothing.
+- **Zero-copy from 16 KiB.** Unchanged: loopback cannot tell.
+- **How a log is made durable, and whether a thread waits or spins:** no
+  default. On the container's virtual disk neither could be told apart; a
+  thread that spins answered a single connection in a third of the time
+  and took a core for it.
+
 ## How it is checked
 
 `longshore::tcp::check` ships in the library, as the `Io` contract checks
@@ -208,6 +294,8 @@ allocation guard and once per TLS provider. See
 
 ## Not there yet
 
-- Throughput and latency figures: the benchmarks are the next change.
-- A simulated packet network (loss, reordering) and the AF_XDP transport.
+- Figures from a network card: `tcp_uring rr`, `bulk` and `path` measure,
+  and what there is so far is loopback in a container.
+- The AF_XDP transport. The simulated packet link it is to be tested on
+  is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.
