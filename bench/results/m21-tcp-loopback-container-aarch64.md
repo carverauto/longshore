@@ -21,15 +21,22 @@ same tool; the defaults taken from this file are provisional until then.
   Bulk at 64 KiB frames: 11.5 against 7.6 GB/s (14.7 with 16 KiB ring
   buffers).
 - **One connection is the exception.** With a single connection and a thread
-  that waits, epoll answers faster here (p50 4 µs against 24 µs). Spinning
-  brings the ring to 8 µs at the cost of a core. Not explained yet.
+  that waits, epoll answers faster here (p50 4 µs against 24 µs). Not
+  explained yet. In the rows marked `spin` only the thread under test
+  spun, the peer still waited: 8 µs. (The tool spins both threads since;
+  one run of a second with both gave 2.9 µs, each taking a core.)
 - **Receive mode.** Ring mode is ahead for frames smaller than a ring buffer
   (0.89 against 0.62 million a second at 324 bytes); direct mode is level or
   slightly ahead from 4 KiB frames, and well ahead for 1 MiB frames in bulk
   (9.9 against 6.2 GB/s).
 - **Ring buffer size.** 16 KiB carries most in bulk (14.7 GB/s, against 11.5
-  at 4 KiB and 10.0 at 64 KiB) and costs small requests little (0.84 against
-  0.89 million a second). **Default set to 16 KiB, from 64 KiB.**
+  at 4 KiB and 10.0 at 64 KiB, the default it replaces). For request and
+  response at 324 bytes the two are level (0.84 against 0.83 million a
+  second, p99 49 against 43 µs); at 4,356 bytes 64 KiB is about a tenth
+  ahead (0.63 against 0.56 million), within the scatter of the smaller.
+  Smaller buffers still have the shortest tail for small requests (p99
+  30 µs at 1 KiB). **Default set to 16 KiB, from 64 KiB**, on the bulk
+  figure; the connection-scale rows all ran at the tool's 4 KiB.
 - **Send segment size.** 64 KiB and 256 KiB are level; 1 MiB segments are
   much slower with 64 KiB frames (6.2 GB/s), because they leave as 1 MiB
   zero-copy sends. Default left at 64 KiB.
@@ -44,12 +51,18 @@ same tool; the defaults taken from this file are provisional until then.
   a block takes one to five milliseconds and the runs scatter by a factor of
   two to four, so neither a sync after each write against a file opened for
   durable writes, nor waiting against spinning, can be told apart. No default
-  is taken from them.
+  is taken from them. Their CPU columns do not compare across backends:
+  the ring hands a sync to kernel workers, whose time is not in a thread's,
+  and the portable backend does it on the thread.
 
-## Every configuration
+## How these rows were measured
 
-Median of the runs, lowest and highest in brackets. GB is 10^9 bytes; times
-are of a request and its answer.
+All but the last twelve (request and response at 64 KiB ring buffers) were
+run before the review of the tool. In them the time measured began when the
+connects were submitted, not when the connections were up, which at 4,096
+connections is three hundredths of the run; the listener's backlog was 128;
+and `--wait spin` spun the thread under test only. The tool has all three
+right since. The rows were not run again.
 
 | cmd | backend | rx | wait | sync | conns | threads | frame | ring | zc_min | segment | arch | runs | GB/s (median, low to high) | per s (median, low to high) | p50 µs (median, low to high) | p99 µs (median, low to high) | p999 µs (median, low to high) | CPU-s per GB (median, low to high) | peer CPU-s per GB (median, low to high) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -106,3 +119,7 @@ are of a request and its answer.
 | path | epoll | Ring | sleep | dsync | 1 | 1 | 4096 | 4096 | 16384 | 65536 | aarch64 | 3 | 0.00 (0.00 to 0.00) | 514 (217 to 828) | 1114.1 (1048.6 to 4063.2) | 6029.3 (6029.3 to 7340.0) | 54526.0 (9437.2 to 79691.8) | 6.854 (3.877 to 22.114) | 91.140 (41.164 to 237.576) |
 | path | epoll | Ring | sleep | dsync | 16 | 1 | 4096 | 4096 | 16384 | 65536 | aarch64 | 3 | 0.00 (0.00 to 0.00) | 862 (859 to 875) | 22020.1 (22020.1 to 23068.7) | 37748.7 (35651.6 to 37748.7) | 41943.0 (41943.0 to 48234.5) | 3.534 (3.421 to 3.649) | 43.003 (41.446 to 43.984) |
 | path | uring | Ring | spin | dsync | 1 | 1 | 4096 | 4096 | 16384 | 65536 | aarch64 | 3 | 0.00 (0.00 to 0.00) | 839 (269 to 901) | 1048.6 (983.0 to 3407.9) | 3801.1 (3407.9 to 9437.2) | 9437.2 (8912.9 to 88080.4) | 290.397 (269.801 to 905.374) | 43.128 (42.284 to 48.011) |
+| rr | uring | Ring | sleep | - | 16 | 1 | 324 | 65536 | 16384 | 65536 | aarch64 | 3 | 0.27 (0.27 to 0.27) | 827182 (826615 to 832428) | 17.4 (17.4 to 17.4) | 43.0 (43.0 to 49.2) | 86.0 (73.7 to 98.3) | 3.673 (3.662 to 3.694) | 3.677 (3.660 to 3.692) |
+| rr | uring | Ring | sleep | - | 16 | 1 | 4356 | 65536 | 16384 | 65536 | aarch64 | 3 | 2.74 (2.71 to 2.77) | 629502 (623074 to 636667) | 22.5 (22.5 to 22.5) | 59.4 (59.4 to 63.5) | 102.4 (98.3 to 106.5) | 0.355 (0.352 to 0.356) | 0.358 (0.354 to 0.360) |
+| rr | uring | Direct | sleep | - | 16 | 1 | 324 | 65536 | 16384 | 65536 | aarch64 | 3 | 0.21 (0.21 to 0.21) | 656019 (646630 to 663886) | 21.5 (21.5 to 23.6) | 53.2 (51.2 to 53.2) | 90.1 (81.9 to 94.2) | 4.644 (4.605 to 4.727) | 4.646 (4.601 to 4.724) |
+| rr | uring | Direct | sleep | - | 16 | 1 | 4356 | 65536 | 16384 | 65536 | aarch64 | 3 | 2.39 (2.19 to 2.45) | 548120 (501525 to 562341) | 26.6 (25.6 to 26.6) | 63.5 (61.4 to 94.2) | 114.7 (106.5 to 655.4) | 0.415 (0.406 to 0.428) | 0.414 (0.405 to 0.427) |

@@ -276,9 +276,10 @@ Runs on hosts with 200 and 300 Gb/s cards are to settle them.
 - **Send segments: 64 KiB.** Larger ones gained nothing.
 - **Zero-copy from 16 KiB.** Unchanged: loopback cannot tell.
 - **How a log is made durable, and whether a thread waits or spins:** no
-  default. On the container's virtual disk neither could be told apart; a
-  thread that spins answered a single connection in a third of the time
-  and took a core for it.
+  default. On the container's virtual disk the two ways of syncing could
+  not be told apart. A single connection was answered in 24 µs with both
+  threads waiting, in 8 µs with the one under test spinning, and in 3 µs
+  in one short run with both spinning, a core each.
 
 ## How it is checked
 
