@@ -24,7 +24,9 @@
 use super::{prefix, prefixed, send, sizes, SimNet, World, ADDR};
 use longshore_common::io::{Completions, Io, Limits};
 use longshore_common::sim::{Faults, SimIo};
-use longshore_tcp::{Config, Conn, Event, KernelTransport, ListenConfig, Listener, Net, NetError};
+use longshore_tcp::{
+    Config, Conn, ConnOpts, Event, Framing, KernelTransport, ListenConfig, Listener, Net, NetError,
+};
 
 #[test]
 fn a_connection_slot_comes_back_when_its_connection_has_ended() {
@@ -180,4 +182,60 @@ fn a_driver_with_too_few_operation_slots_slows_the_set_down_and_loses_nothing() 
     assert_eq!((client.next_event(), server.next_event()), (None, None));
     assert!(client.usage().is_idle(), "{:?}", client.usage());
     assert!(server.usage().is_idle(), "{:?}", server.usage());
+}
+
+#[test]
+fn headers_that_came_in_pieces_need_no_second_frame_buffer_either() {
+    let few =
+        |connects, accepts, listeners| sizes(connects, accepts, listeners).with_frames(3, 8192);
+    let mut w = World::with(54, Faults::NONE, few(3, 0, 0), few(0, 3, 1));
+    let _: Listener = w.listen(ListenConfig::new(prefix()));
+    // The clients send raw bytes, to choose where the frames are cut.
+    let pairs: Vec<(Conn, Conn)> = (0..3)
+        .map(|_| w.connect(ConnOpts::new(Framing::Bytes)))
+        .collect();
+    let frames: Vec<Vec<u8>> = (0..3).map(|i| prefixed(3000, i)).collect();
+    // Half a header each, which the server's caller pulls: nothing yet.
+    for (i, (c, _)) in pairs.iter().enumerate() {
+        w.client.send_bytes(&mut w.io, *c, &frames[i][..2]).unwrap();
+    }
+    for _ in 0..60 {
+        w.turn();
+        while w.client.next_event().is_some() {}
+        while w.server.next_event().is_some() {}
+        for (_, s) in &pairs {
+            assert!(w.pull_all(*s).is_empty());
+        }
+    }
+    // The rest of each frame, which nobody pulls for a while: it is moved
+    // out of the ring, into a frame buffer for each connection.
+    for (i, (c, _)) in pairs.iter().enumerate() {
+        w.client.send_bytes(&mut w.io, *c, &frames[i][2..]).unwrap();
+    }
+    for _ in 0..200 {
+        w.turn();
+        while w.client.next_event().is_some() {}
+        while w.server.next_event().is_some() {}
+    }
+    // Every buffer holds such input now. Each frame must still come.
+    let mut got = [false; 3];
+    for _ in 0..3000 {
+        for (i, (_, s)) in pairs.iter().enumerate() {
+            for (frame, bytes) in w.pull_all(*s) {
+                assert_eq!(bytes, frames[i], "connection {i}");
+                got[i] = true;
+                w.server.release(frame);
+            }
+        }
+        if got == [true; 3] {
+            break;
+        }
+        w.turn();
+        while w.client.next_event().is_some() {}
+        while w.server.next_event().is_some() {}
+    }
+    assert_eq!(
+        got, [true; 3],
+        "connections waited on each other for frame memory"
+    );
 }

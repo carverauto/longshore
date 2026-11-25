@@ -267,7 +267,9 @@ completion order of task 1.1 is what will.
   together in a second buffer, so as many connections as there are
   buffers each held one and waited for another, with the caller holding
   nothing. Fixed in group 1: the frame is put together in the backlog's
-  own buffer. A protected connection in ring mode can still need two (a
+  own buffer, and a header that was collected in pieces goes back in
+  front of what follows it there (the review of group 1 found that
+  second case, which the first fix missed). A protected connection in ring mode can still need two (a
   backlog of opened records and a frame being put together); that is to
   be closed with the TLS part of the model.
 - **C7 The connect timeout marks the socket open whether or not there is

@@ -10,12 +10,19 @@
 //! has received and not delivered: its backlog, or the frame it is
 //! putting together, or a whole frame that waits to be pulled. Were it to
 //! need two at once (a backlog and a second buffer for a frame that
-//! continues past it), as many connections as there are buffers could
-//! each hold one and wait for another for ever.
+//! continues past it, or for one whose header came in pieces), as many
+//! connections as there are buffers could each hold one and wait for
+//! another for ever.
+//!
+//! Two cases still take a second buffer, and both are the caller's or
+//! the configuration's to bound: a backlog from which the caller holds
+//! lent frames cannot be rearranged, and a protected connection in ring
+//! mode opens records into a backlog while a frame is put together.
 
 use super::pull::Source;
 use super::state::{EV_READABLE, W_READ};
 use super::Net;
+use crate::framing::Framing;
 use crate::transport::Transport;
 
 impl<T: Transport> Net<T> {
@@ -137,6 +144,42 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         (c.backlog, c.backlog_off, c.backlog_len) = (None, 0, 0);
         (c.asm, c.asm_have, c.asm_len) = (Some(ext), src.avail, frame_len);
+        true
+    }
+
+    /// A header of `slot` is whole in its header area, collected in
+    /// pieces, and what follows it lies at `src` in the backlog. When
+    /// nothing else holds the backlog's buffer, the header goes back in
+    /// front of what follows it there, and the frame is cut from the
+    /// backlog like any other. `false` when a lent frame holds the
+    /// buffer, or it has no room for the header.
+    pub(super) fn header_into_backlog(
+        &mut self,
+        d: &mut T::Driver,
+        slot: u32,
+        src: Source,
+    ) -> bool {
+        let c = &self.conns[slot as usize];
+        let (Framing::Header(h), Some(ext)) = (c.opts.framing, c.backlog) else {
+            return false;
+        };
+        let (hl, off, len) = (h.header_len() as u32, src.off, c.backlog_len);
+        // Room in front of what follows, or made by moving that back.
+        let shift = hl.saturating_sub(off);
+        if self.extents.holds(ext) != Some(1) || len + shift > self.cfg.sizes.frame_size {
+            return false;
+        }
+        if shift > 0 {
+            let all = self.t.bytes(d, ext.buf());
+            all.copy_within(off as usize..len as usize, (off + shift) as usize);
+        }
+        let at = off + shift - hl;
+        let (hbuf, hoff) = self.header_area(slot);
+        let (from, to) = self.t.bytes_pair(d, hbuf, ext.buf());
+        to[at as usize..(at + hl) as usize]
+            .copy_from_slice(&from[hoff as usize..(hoff + hl) as usize]);
+        let whole = &mut self.conns[slot as usize];
+        (whole.backlog_off, whole.backlog_len, whole.hdr_have) = (at, len + shift, 0);
         true
     }
 }

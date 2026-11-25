@@ -223,7 +223,12 @@ impl<T: Transport> Net<T> {
             return Cut::Taken(take);
         }
         if c.hdr_have == hl {
-            // A whole header waiting for frame memory.
+            // A whole header, collected in pieces. What follows it in the
+            // backlog can take it back in front; otherwise its frame
+            // waits for frame memory of its own.
+            if src.backlog && self.header_into_backlog(d, slot, src) {
+                return Cut::Taken(0);
+            }
             return if self.begin_frame(d, slot) {
                 Cut::Taken(0)
             } else {
