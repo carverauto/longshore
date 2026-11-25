@@ -31,6 +31,7 @@ pub use ids::{BufId, FileId, Sock, Token};
 pub mod limits;
 mod must;
 mod op;
+pub(crate) mod trace;
 pub mod turn;
 pub use limits::Limits;
 pub use op::Op;

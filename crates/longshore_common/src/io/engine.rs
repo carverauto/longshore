@@ -208,7 +208,7 @@ impl<W: World> Engine<W> {
             next_op_id: 0,
             next_chain_id: 0,
             step_seq: 0,
-            trace: 0xcbf2_9ce4_8422_2325,
+            trace: super::trace::START,
             woken: Arc::new(AtomicBool::new(false)),
         }
     }

@@ -6,6 +6,7 @@
 //! The link itself: its slots, its queues, and what each call does.
 
 use super::{End, PacketCounts, PacketError, PacketFaults, PacketSizes};
+use crate::io::trace;
 use crate::sim::prng::Prng;
 
 /// A queue of slots with room for a fixed number of them.
@@ -101,7 +102,7 @@ impl PacketLink {
             flight_len: 0,
             next_order: 0,
             counts: PacketCounts::default(),
-            trace: 0xcbf2_9ce4_8422_2325,
+            trace: trace::START,
         }
     }
 
@@ -126,9 +127,8 @@ impl PacketLink {
     /// Fold an event into the trace.
     fn note(&mut self, what: u64, slot: u32, at: u64) {
         let p = self.packets[slot as usize];
-        for part in [what, p.order, u64::from(p.len), p.to.index() as u64, at] {
-            self.trace = (self.trace ^ part).wrapping_mul(0x0000_0100_0000_01b3);
-        }
+        let parts = [what, p.order, u64::from(p.len), p.to.index() as u64, at];
+        trace::fold(&mut self.trace, &parts);
     }
 
     /// Queue `bytes` as a packet from `from` to the other end.

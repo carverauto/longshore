@@ -6,6 +6,7 @@
 //! Scheduling pass (`step`) and engine-resolved ops (`Timeout`, `AwaitWake`, `Cancel`).
 
 use super::*;
+use crate::io::trace::fold;
 
 impl<W: World> Engine<W> {
     pub(super) fn record_trace(&mut self, c: Completion) {
@@ -15,14 +16,10 @@ impl<W: World> Engine<W> {
             reason = "the trace hashes the bits of `result`, negated errnos included"
         )]
         let result_bits = c.result as u32;
-        for v in [c.token.0, u64::from(result_bits), now] {
-            self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
-        }
+        fold(&mut self.trace, &[c.token.0, u64::from(result_bits), now]);
         if c.more || c.buf.is_some() {
             let buf = c.buf.map_or(u64::MAX, |b| u64::from(b.0));
-            for v in [u64::from(c.more), buf] {
-                self.trace = (self.trace ^ v).wrapping_mul(0x0000_0100_0000_01b3);
-            }
+            fold(&mut self.trace, &[u64::from(c.more), buf]);
         }
     }
 
