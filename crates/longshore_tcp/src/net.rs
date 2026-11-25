@@ -171,12 +171,13 @@ impl<T: Transport> Net<T> {
         }
     }
 
-    /// The share of the backend this `Net` was built with.
+    /// The transport it runs on, to read: what a transport counts or
+    /// reports of itself, such as `KernelTransport::phase_coverage`.
     pub const fn transport(&self) -> &T {
         &self.t
     }
 
-    /// The configuration it was built with.
+    /// The share of the backend this `Net` was built with.
     pub const fn config(&self) -> &Config {
         &self.cfg
     }
