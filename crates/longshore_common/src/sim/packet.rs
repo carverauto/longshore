@@ -64,11 +64,11 @@ pub enum PacketError {
 /// long a delay can be.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PacketFaults {
-    loss: u32,
-    duplicate: u32,
-    reorder: u32,
-    delay: u32,
-    delay_max_ns: u64,
+    pub(super) loss: u32,
+    pub(super) duplicate: u32,
+    pub(super) reorder: u32,
+    pub(super) delay: u32,
+    pub(super) delay_max_ns: u64,
 }
 
 impl PacketFaults {
@@ -110,27 +110,17 @@ impl PacketFaults {
         self.delay_max_ns = max_ns;
         self
     }
-
-    pub(super) const fn rates(self) -> (u32, u32, u32, u32, u64) {
-        (
-            self.loss,
-            self.duplicate,
-            self.reorder,
-            self.delay,
-            self.delay_max_ns,
-        )
-    }
 }
 
 /// What a link is built for: how many packets it holds, how long one can
 /// be, and its times.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PacketSizes {
-    slots: u32,
-    queue: u32,
-    packet_max: u32,
-    latency_ns: u64,
-    reorder_ns: u64,
+    pub(super) slots: u32,
+    pub(super) queue: u32,
+    pub(super) packet_max: u32,
+    pub(super) latency_ns: u64,
+    pub(super) reorder_ns: u64,
 }
 
 impl PacketSizes {
@@ -167,16 +157,6 @@ impl PacketSizes {
     pub const fn with_reorder_ns(mut self, ns: u64) -> PacketSizes {
         self.reorder_ns = ns;
         self
-    }
-
-    pub(super) const fn parts(self) -> (u32, u32, u32, u64, u64) {
-        (
-            self.slots,
-            self.queue,
-            self.packet_max,
-            self.latency_ns,
-            self.reorder_ns,
-        )
     }
 }
 

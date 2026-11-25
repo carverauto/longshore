@@ -80,7 +80,7 @@ impl PacketLink {
     /// A link of `sizes` whose faults come from `seed`. Allocates its
     /// memory once, here.
     pub fn new(seed: u64, faults: PacketFaults, sizes: PacketSizes) -> PacketLink {
-        let (slots, queue, packet_max, _, _) = sizes.parts();
+        let (slots, queue, packet_max) = (sizes.slots, sizes.queue, sizes.packet_max);
         let idle = Packet {
             len: 0,
             to: End::A,
@@ -107,7 +107,7 @@ impl PacketLink {
 
     /// The bytes of `slot`'s memory.
     fn memory(&mut self, slot: u32) -> &mut [u8] {
-        let size = self.sizes.parts().2 as usize;
+        let size = self.sizes.packet_max as usize;
         let at = slot as usize * size;
         &mut self.bytes[at..at + size]
     }
@@ -133,7 +133,7 @@ impl PacketLink {
 
     /// Queue `bytes` as a packet from `from` to the other end.
     pub fn send(&mut self, from: End, bytes: &[u8]) -> Result<(), PacketError> {
-        if bytes.len() > self.sizes.parts().2 as usize {
+        if bytes.len() > self.sizes.packet_max as usize {
             return Err(PacketError::TooLong);
         }
         if self.tx[from.index()].is_full() {
@@ -151,15 +151,14 @@ impl PacketLink {
     /// Put `slot` in flight from a turn at `now`, with its own draws of
     /// delay and reordering.
     fn launch(&mut self, slot: u32, now: u64) {
-        let (_, _, reorder, delay, delay_max) = self.faults.rates();
-        let (_, _, _, latency, reorder_ns) = self.sizes.parts();
-        let mut due = now.saturating_add(latency);
-        if self.rng.chance(delay) {
-            due = due.saturating_add(self.rng.below(delay_max.saturating_add(1)));
+        let mut due = now.saturating_add(self.sizes.latency_ns);
+        if self.rng.chance(self.faults.delay) {
+            let longest = self.faults.delay_max_ns.saturating_add(1);
+            due = due.saturating_add(self.rng.below(longest));
             self.counts.delayed += 1;
         }
-        if self.rng.chance(reorder) {
-            due = due.saturating_add(reorder_ns);
+        if self.rng.chance(self.faults.reorder) {
+            due = due.saturating_add(self.sizes.reorder_ns);
             self.counts.held_back += 1;
         }
         let packet = &mut self.packets[slot as usize];
@@ -172,23 +171,22 @@ impl PacketLink {
     /// Send what `from` has queued: each packet is lost, or in flight,
     /// and then perhaps twice.
     fn depart(&mut self, from: End, now: u64) {
-        let (loss, duplicate, ..) = self.faults.rates();
         while let Some(slot) = self.tx[from.index()].pop() {
-            if self.rng.chance(loss) {
+            if self.rng.chance(self.faults.loss) {
                 self.counts.lost += 1;
                 self.note(1, slot, now);
                 self.free_slot(slot);
                 continue;
             }
             self.launch(slot, now);
-            if !self.rng.chance(duplicate) {
+            if !self.rng.chance(self.faults.duplicate) {
                 continue;
             }
             // A duplicate that finds no slot is not made.
             let Some(twin) = self.take_slot() else {
                 continue;
             };
-            let size = self.sizes.parts().2 as usize;
+            let size = self.sizes.packet_max as usize;
             let (from_at, to_at) = (slot as usize * size, twin as usize * size);
             self.bytes.copy_within(from_at..from_at + size, to_at);
             self.packets[twin as usize] = self.packets[slot as usize];
