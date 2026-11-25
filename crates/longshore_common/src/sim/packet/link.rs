@@ -76,7 +76,7 @@ pub struct PacketLink {
     /// Each end's transmit queue, and its receive queue.
     tx: [Ring; 2],
     rx: [Ring; 2],
-    /// The slots in flight, in no order.
+    /// The slots in flight, as a heap: the one due first is at the front.
     flight: Box<[u32]>,
     flight_len: usize,
     next_order: u64,
@@ -176,8 +176,56 @@ impl PacketLink {
         let packet = &mut self.packets[slot as usize];
         (packet.due, packet.order) = (due, self.next_order);
         self.next_order += 1;
-        self.flight[self.flight_len] = slot;
+        self.flight_push(slot);
+    }
+
+    /// When `slot` is due, and its place among those due at that time.
+    fn key(&self, slot: u32) -> (u64, u64) {
+        let p = &self.packets[slot as usize];
+        (p.due, p.order)
+    }
+
+    /// Add `slot` to those in flight.
+    fn flight_push(&mut self, slot: u32) {
+        let mut at = self.flight_len;
+        self.flight[at] = slot;
         self.flight_len += 1;
+        while at > 0 {
+            let parent = (at - 1) / 2;
+            if self.key(self.flight[parent]) <= self.key(self.flight[at]) {
+                break;
+            }
+            self.flight.swap(parent, at);
+            at = parent;
+        }
+    }
+
+    /// Take the slot due first from those in flight, if it is due at
+    /// `now`.
+    fn flight_pop(&mut self, now: u64) -> Option<u32> {
+        let first = *self.flight[..self.flight_len].first()?;
+        if self.key(first).0 > now {
+            return None;
+        }
+        self.flight_len -= 1;
+        self.flight[0] = self.flight[self.flight_len];
+        let mut at = 0;
+        loop {
+            let (left, right) = (2 * at + 1, 2 * at + 2);
+            let mut least = at;
+            for child in [left, right] {
+                let nearer = child < self.flight_len
+                    && self.key(self.flight[child]) < self.key(self.flight[least]);
+                if nearer {
+                    least = child;
+                }
+            }
+            if least == at {
+                return Some(first);
+            }
+            self.flight.swap(least, at);
+            at = least;
+        }
     }
 
     /// Send what `from` has queued: each packet is lost, or in flight,
@@ -208,26 +256,12 @@ impl PacketLink {
         }
     }
 
-    /// The place in `flight` of the packet due first at `now`, if any is.
-    fn due_first(&self, now: u64) -> Option<usize> {
-        let key = |at: &usize| {
-            let p = self.packets[self.flight[*at] as usize];
-            (p.due, p.order)
-        };
-        (0..self.flight_len)
-            .filter(|at| key(at).0 <= now)
-            .min_by_key(key)
-    }
-
     /// Move packets on at time `now`: what is queued departs, and what is
     /// due arrives in its receiver's queue, or is dropped if that is full.
     pub fn turn(&mut self, now: u64) {
         self.depart(End::A, now);
         self.depart(End::B, now);
-        while let Some(at) = self.due_first(now) {
-            let slot = self.flight[at];
-            self.flight_len -= 1;
-            self.flight[at] = self.flight[self.flight_len];
+        while let Some(slot) = self.flight_pop(now) {
             let to = self.packets[slot as usize].to.index();
             if self.rx[to].is_full() {
                 self.counts.overrun += 1;
@@ -269,9 +303,8 @@ impl PacketLink {
         }
         // Never earlier than `now`: a packet whose time has passed is due
         // at once.
-        (0..self.flight_len)
-            .map(|at| self.packets[self.flight[at] as usize].due.max(now))
-            .min()
+        let first = self.flight[..self.flight_len].first()?;
+        Some(self.key(*first).0.max(now))
     }
 
     /// What the link has done, and where its slots are.
