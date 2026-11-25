@@ -7,12 +7,27 @@
 //! down to the steps it needs.
 //!
 //!   cargo run -p longshore_tcp --example tcp_model -- --seed N [--steps M] [--shrink] [--trace]
+//!
+//! Run it as a debug build, as above: a failing run is caught as a panic
+//! that unwinds, and much of what fails a run is a debug assertion. The
+//! release profile aborts on a panic.
 
 #[path = "../tests/tcp/model/mod.rs"]
 mod model;
 
 use model::drive::{run, run_traced, Failure};
 use model::steps::{generate, Step};
+use std::sync::Mutex;
+
+/// What the last panic said, kept by the hook `main` installs: the many
+/// runs of a shrink would otherwise each print theirs.
+static LAST_PANIC: Mutex<String> = Mutex::new(String::new());
+
+fn last_panic() -> String {
+    LAST_PANIC
+        .lock()
+        .map_or_else(|_| String::new(), |said| said.clone())
+}
 
 /// What `steps` come to with `seed`: where and how they fail, if they do.
 /// A panic inside the set counts as a failure at an unknown step.
@@ -22,7 +37,7 @@ fn outcome(seed: u64, steps: &[Step]) -> Option<Failure> {
         Ok(Err(failure)) => Some(failure),
         Err(_) => Some(Failure {
             step: steps.len(),
-            why: "panicked".to_string(),
+            why: format!("panicked: {}", last_panic()),
         }),
     }
 }
@@ -47,14 +62,21 @@ fn shrink(seed: u64, mut steps: Vec<Step>) -> Vec<Step> {
     steps
 }
 
-fn main() {
+/// The seed, the number of steps, and whether to shrink and to trace.
+fn arguments() -> (u64, usize, bool, bool) {
     let (mut seed, mut count, mut cut, mut trace) = (0u64, 3000usize, false, false);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        let number = |value: Option<String>| value.and_then(|v| v.parse::<u64>().ok());
+        let mut number = || match args.next().map(|v| v.parse::<u64>()) {
+            Some(Ok(n)) => n,
+            _ => {
+                eprintln!("tcp_model: {arg} needs a number");
+                std::process::exit(2);
+            }
+        };
         match arg.as_str() {
-            "--seed" => seed = number(args.next()).unwrap_or(seed),
-            "--steps" => count = number(args.next()).map_or(count, |n| n as usize),
+            "--seed" => seed = number(),
+            "--steps" => count = number() as usize,
             "--shrink" => cut = true,
             "--trace" => trace = true,
             other => {
@@ -63,8 +85,17 @@ fn main() {
             }
         }
     }
-    // The panics of failing runs are reported below, not one by one.
-    std::panic::set_hook(Box::new(|_| {}));
+    (seed, count, cut, trace)
+}
+
+fn main() {
+    let (seed, count, cut, trace) = arguments();
+    // A failing run's panic is kept and shown with its step, once.
+    std::panic::set_hook(Box::new(|info| {
+        if let Ok(mut said) = LAST_PANIC.lock() {
+            *said = info.to_string();
+        }
+    }));
     let steps = generate(seed, count);
     if trace {
         // What each step did, up to where the run fails.
