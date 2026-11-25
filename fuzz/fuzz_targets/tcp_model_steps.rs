@@ -7,7 +7,8 @@
 //! The model test of the TCP connection set, with its steps made from the
 //! fuzzer's bytes where the test makes them from a seed: random calls on
 //! a client set and a server set on the simulator, checked after every
-//! step against what a caller may rely on. A run that fails is a crash.
+//! step against what a caller may rely on, under the allocation guard. A
+//! run that fails, or allocates after its sets are built, is a crash.
 //!
 //! The first eight bytes are the simulator's seed; each nine after them
 //! are a step: what it does, on which side, and its two numbers
@@ -25,6 +26,12 @@ use libfuzzer_sys::fuzz_target;
 mod model;
 
 use model::drive::run_in;
+
+/// Every call the model makes into a set or the simulator is sealed, as
+/// in the test: with this installed, an allocation there aborts the run,
+/// and the fuzzer keeps the input.
+#[global_allocator]
+static ALLOC: longshore_common::io::alloc_guard::Guard = longshore_common::io::alloc_guard::Guard;
 use model::steps::{from_bytes, STEP_BYTES};
 use model::world::Campaign;
 
