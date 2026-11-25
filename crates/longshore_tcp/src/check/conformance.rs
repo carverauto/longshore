@@ -160,6 +160,10 @@ fn every_operation_is_reported_once<R: Rig>(rig: &mut R) {
         fail(format_args!("the bytes did not arrive whole: {seen:?}"));
     }
     // A receive is waiting when the slot is closed under it.
+    let reported = count(
+        &seen,
+        |h| matches!(h, Happened::Received { slot, .. } if *slot == s),
+    );
     let waiting = with(rig, |t, d| {
         let waiting = must(t.recv_into(d, s, into), "recv_into");
         must(t.close(d, s), "close");
@@ -167,7 +171,9 @@ fn every_operation_is_reported_once<R: Rig>(rig: &mut R) {
     });
     let closed = |h: &Happened| matches!(h, Happened::Closed { slot } if *slot == s);
     let ended = |h: &Happened| matches!(h, Happened::Received { slot, .. } if *slot == s);
-    let owed = 1 + usize::from(waiting.is_none());
+    // The receive is owed a report unless it ended at once; the one
+    // before it was reported only if it did not.
+    let owed = reported + usize::from(waiting.is_none());
     until(rig, &mut seen, "the close and what it ended", |all| {
         count(all, closed) == 1 && count(all, ended) == owed
     });
