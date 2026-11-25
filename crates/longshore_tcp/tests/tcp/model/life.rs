@@ -9,14 +9,15 @@ use super::book::Sender;
 use super::drive::Run;
 use longshore_tcp::{Conn, Why};
 
-/// Nothing in a run breaks the framing or a TLS record: the frames are
-/// well formed, the certificate is the one expected, and the faults cut
-/// streams short without changing a byte. An end for either reason is the
-/// set's own doing, but for one: a handshake that the peer cut short ends
-/// a connection that was never up as a TLS failure.
-pub(crate) fn unbroken(why: Why, was_up: bool, tls: bool) -> Result<(), String> {
+/// Nothing in a run breaks the framing: the frames are well formed. Nor
+/// a TLS record, unless bits are flipped (`flips`): the certificate is
+/// the one expected, and the other faults cut streams short without
+/// changing a byte. An end for either reason is otherwise the set's own
+/// doing, but for one: a handshake that the peer cut short ends a
+/// connection that was never up as a TLS failure.
+pub(crate) fn unbroken(why: Why, was_up: bool, tls: bool, flips: bool) -> Result<(), String> {
     match why {
-        Why::Tls if tls && !was_up => Ok(()),
+        Why::Tls if flips || (tls && !was_up) => Ok(()),
         Why::Protocol | Why::Tls => Err(format!("ended with {why:?}, which nothing here causes")),
         Why::Orderly | Why::Reset | Why::Timeout => Ok(()),
     }

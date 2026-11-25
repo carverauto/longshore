@@ -32,10 +32,69 @@ fn sizes(connects: u32, accepts: u32, listeners: u32, tls: bool) -> Sizes {
         .with_tls(tls)
 }
 
-/// Whether the run of `seed` protects its connections: one in three,
-/// where TLS is compiled in.
-pub(crate) const fn protected(seed: u64) -> bool {
-    cfg!(feature = "tls-core") && seed % 3 == 1
+/// The faults a run is under.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Campaign {
+    /// Reports out of order, receives and sends cut short, and resets in
+    /// one run in four.
+    Usual,
+    /// Resets, often enough to fall inside frames.
+    Resets,
+    /// Most receives and sends cut short.
+    Slow,
+    /// Operations that are ready held back, in any order.
+    Delays,
+    /// Connects refused.
+    Refusals,
+    /// Bits flipped in transit, over TLS, which must notice every one.
+    Flips,
+}
+
+impl Campaign {
+    /// Every campaign that can run: `Flips` only where TLS is compiled in.
+    pub fn all() -> &'static [Campaign] {
+        const ALL: [Campaign; 6] = [
+            Campaign::Usual,
+            Campaign::Resets,
+            Campaign::Slow,
+            Campaign::Delays,
+            Campaign::Refusals,
+            Campaign::Flips,
+        ];
+        &ALL[..ALL.len() - usize::from(!cfg!(feature = "tls-core"))]
+    }
+
+    fn faults(self, seed: u64) -> Faults {
+        let usual = Faults::NONE
+            .with_reorder(300_000)
+            .with_partial_recv(200_000)
+            .with_short_send(200_000);
+        match self {
+            Campaign::Usual if seed.is_multiple_of(4) => usual.with_reset(2_000),
+            Campaign::Usual => usual,
+            Campaign::Resets => usual.with_reset(20_000),
+            Campaign::Slow => usual.with_partial_recv(700_000).with_short_send(700_000),
+            Campaign::Delays => usual.with_delay(400_000),
+            Campaign::Refusals => usual.with_connect_refused(300_000),
+            Campaign::Flips => usual.with_bit_flip(3_000),
+        }
+    }
+
+    /// Whether a stream can break at any byte, so that an end in order
+    /// says nothing of how much arrived before it.
+    pub(crate) fn breaks(self, seed: u64) -> bool {
+        match self {
+            Campaign::Usual => seed.is_multiple_of(4),
+            Campaign::Resets | Campaign::Flips => true,
+            Campaign::Slow | Campaign::Delays | Campaign::Refusals => false,
+        }
+    }
+
+    /// Whether the run of `seed` protects its connections: one in three
+    /// where TLS is compiled in, and every run with flipped bits.
+    pub(crate) fn protected(self, seed: u64) -> bool {
+        cfg!(feature = "tls-core") && (self == Campaign::Flips || seed % 3 == 1)
+    }
 }
 
 /// The server's key: an Ed25519 key in PKCS #8, the same in every run.
@@ -74,9 +133,9 @@ fn certs() -> &'static longshore_tcp::check::Certs {
     })
 }
 
-/// The world of the run of `seed`.
-pub(crate) fn world(seed: u64, faults: Faults) -> World<SimIo> {
-    let tls = protected(seed);
+/// The world of the run of `seed` in `campaign`.
+pub(crate) fn world(campaign: Campaign, seed: u64) -> World<SimIo> {
+    let (tls, faults) = (campaign.protected(seed), campaign.faults(seed));
     let (client, server) = (sizes(3, 0, 0, tls), sizes(0, 3, 2, tls));
     let mut make = |limits| SimIo::new(limits, seed, faults);
     #[cfg(feature = "tls-core")]

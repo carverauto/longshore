@@ -10,6 +10,7 @@ use super::book::{read, Ended, Handle};
 use super::drive::Run;
 use super::life::unbroken;
 use longshore_common::io::alloc_guard::sealed;
+use longshore_common::io::Io;
 use longshore_tcp::{Conn, Event, Frame, Listener, NetError, SendError, Why};
 
 impl Run {
@@ -46,7 +47,7 @@ impl Run {
             Event::Up(conn) => self.came_up(server, conn)?,
             Event::Down { conn, why } => {
                 let at = self.named(server, conn)?;
-                unbroken(why, self.sides[side].handles[at].up, self.tls)?;
+                unbroken(why, self.sides[side].handles[at].up, self.tls, self.flips)?;
                 self.went_down(server, conn)?;
             }
             Event::Accepted { listener, conn } => {
@@ -87,7 +88,7 @@ impl Run {
                 if h.refused {
                     return Err("a refused connection was reported closed".to_string());
                 }
-                unbroken(why, h.up, self.tls)?;
+                unbroken(why, h.up, self.tls, self.flips)?;
                 if why == Why::Orderly {
                     self.stats.closed_orderly += 1;
                     self.ended_in_order(server, at)?;
@@ -97,6 +98,9 @@ impl Run {
                     let uid = self.sides[side].handles[at].uid;
                     self.senders[uid as usize].aborted = true;
                 }
+            }
+            Event::Drained if server && self.drained == Some(false) => {
+                self.drained = Some(true);
             }
             Event::ListenFailed { .. } | Event::Drained => {
                 return Err("an event nothing in this run asks for".to_string());
@@ -238,6 +242,10 @@ impl Run {
             let (net, _) = self.net(server);
             let open = sealed(|| net.can_send(target.conn));
             let got = sealed(|| net.send_lent(target.conn, &frame));
+            self.note(format_args!(
+                "   lent to {:?} uid {} (open: {open}) -> {got:?}",
+                target.conn, target.uid
+            ));
             if got == Ok(()) && open {
                 self.senders[target.uid as usize].sent += 1;
                 self.stats.relayed += 1;
@@ -255,6 +263,15 @@ impl Run {
     /// left. A connection that will not end is a stall.
     pub(crate) fn finish(&mut self) -> Result<(), String> {
         self.settle_wakes()?;
+        if self.drained.is_some() {
+            // Every listener stops at once, and `Drained` is owed.
+            let (net, io) = self.net(true);
+            let until = io.now_ns() + 2_000_000;
+            sealed(|| net.drain(io, until));
+            for listener in &mut self.sides[1].listeners {
+                listener.1 = false;
+            }
+        }
         for _ in 0..6000 {
             let mut alive = 0;
             for server in [false, true] {
@@ -353,6 +370,17 @@ impl Run {
     /// hold nothing once what was in flight has landed.
     fn at_rest(&mut self) -> Result<(), String> {
         self.judge_ends()?;
+        // A drain says so once what was queued has gone, or at its time.
+        for _ in 0..400 {
+            if self.drained != Some(false) {
+                break;
+            }
+            sealed(|| self.w.turn());
+            self.pull_events(true, u32::MAX)?;
+        }
+        if self.drained == Some(false) {
+            return Err("the server was drained and never said so".to_string());
+        }
         for _ in 0..400 {
             sealed(|| self.w.turn());
         }

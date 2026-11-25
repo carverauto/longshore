@@ -100,6 +100,12 @@ jobs:
           cargo test -p longshore_common --features fault-injection
       - name: Model-checked client hand-offs
         run: ./scripts/test-model.sh
+      - name: A thousand seeds of TCP fault campaigns
+        # The model test of `longshore_tcp` under every fault campaign,
+        # under the allocation guard. A failure names its campaign and
+        # seed; `cargo run -p longshore_tcp --example tcp_model -- --seed N
+        # --campaign NAME` replays it.
+        run: cargo test -p longshore_tcp --test tcp_model -- --ignored a_thousand
 
   macos:
     name: Portable backend on macOS

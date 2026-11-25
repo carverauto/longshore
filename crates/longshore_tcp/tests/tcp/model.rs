@@ -16,8 +16,9 @@ use longshore_tcp::{Coverage, PhaseCoverage};
 /// this: an allocation there aborts the run.
 #[global_allocator]
 static ALLOC: longshore_common::io::alloc_guard::Guard = longshore_common::io::alloc_guard::Guard;
-use model::drive::{run, Stats};
+use model::drive::{run_in, Stats};
 use model::steps::generate;
+use model::world::Campaign;
 
 /// Steps of one run, and seeds in `cargo test`.
 #[cfg(test)]
@@ -31,7 +32,9 @@ const SEEDS: u64 = 150;
 /// never be reached, `.` one the table allows and these runs need not
 /// reach, `T` one that must be reached where TLS is compiled in and
 /// never where it is not: a handshake's end, and the end of the stream
-/// that follows a close alert already taken for the peer's end.
+/// that follows a close alert already taken for the peer's end. `t` is
+/// one that TLS allows and need not reach, and that is excluded without
+/// it: a reset after that close alert.
 #[cfg(test)]
 const EXPECTED: [&str; 10] = [
     //close shut send next Conn Secd data eos other Sent ShutD Closed dead pulled accept
@@ -41,7 +44,7 @@ const EXPECTED: [&str; 10] = [
     "RRRRUURRRRRURRU", // Up
     "R.RRUUUUUR.UURU", // Refused
     "RRRRUURRRRRU.RU", // Finishing
-    "RRRRUUUTURRU.RU", // HalfClosed
+    "RRRRUUUTtRRU.RU", // HalfClosed
     "RRRR..RRRRRUURU", // Dying
     "....R.RRRRRRUUR", // Closing
     "RRRRUUUUUUUURUU", // Backoff
@@ -49,13 +52,14 @@ const EXPECTED: [&str; 10] = [
 
 /// The same for the listener state table: `listen()`, `close_listener()`,
 /// accept ok, accept failed, Closed, deadline. No run binds with a retry,
-/// so none is ever `Binding`.
+/// so none is ever `Binding`. A drain goes over every slot, free and
+/// closing ones too, and finds nothing to stop there.
 #[cfg(test)]
 const LISTENERS: [&str; 4] = [
-    "RUUUUU", // Free
+    "R.UUUU", // Free
     "U.UUU.", // Binding
     "URRRUR", // Listening
-    "UU.RRU", // Closing
+    "U..RRU", // Closing
 ];
 
 /// And for the TLS phase table of the kernel transport, where TLS is
@@ -119,7 +123,8 @@ fn report(cover: &Coverage) -> Vec<String> {
             let tls = cfg!(feature = "tls-core");
             let wanted = match want[col] {
                 b'T' if tls => b'R',
-                b'T' => b'U',
+                b't' if tls => b'.',
+                b'T' | b't' => b'U',
                 other => other,
             };
             match wanted {
@@ -132,16 +137,21 @@ fn report(cover: &Coverage) -> Vec<String> {
     wrong
 }
 
-#[test]
-fn random_operations_keep_what_a_caller_relies_on() {
+/// The runs of `seeds` in `campaign`, each of `STEPS` steps: what they did
+/// in all. A run that fails names its campaign and seed, to be replayed.
+#[cfg(test)]
+fn campaign(campaign: Campaign, seeds: core::ops::Range<u64>) -> Stats {
     let mut total = Stats::default();
-    for seed in 0..SEEDS {
+    for seed in seeds {
         let steps = generate(seed, STEPS);
-        let outcome = std::panic::catch_unwind(|| run(seed, &steps));
+        let outcome = std::panic::catch_unwind(|| run_in(campaign, seed, &steps, false));
         let stats = match outcome {
             Ok(Ok(stats)) => stats,
-            Ok(Err(f)) => panic!("seed {seed}, step {} of {STEPS}: {}", f.step, f.why),
-            Err(_) => panic!("seed {seed} of {STEPS} steps panicked"),
+            Ok(Err(f)) => panic!(
+                "{campaign:?}, seed {seed}, step {} of {STEPS}: {}",
+                f.step, f.why
+            ),
+            Err(_) => panic!("{campaign:?}, seed {seed} of {STEPS} steps panicked"),
         };
         total.connects += stats.connects;
         total.accepted += stats.accepted;
@@ -158,6 +168,22 @@ fn random_operations_keep_what_a_caller_relies_on() {
         total.cover.add(&stats.cover);
         total.phases.add(&stats.phases);
     }
+    total
+}
+
+/// The cells of the three tables that `total` reached though its table
+/// excludes them.
+#[cfg(test)]
+fn excluded(total: &Stats) -> Vec<String> {
+    let mut wrong = report(&total.cover);
+    wrong.extend(report_others(&total.cover, &total.phases));
+    wrong.retain(|cell| cell.contains(": reached "));
+    wrong
+}
+
+#[test]
+fn random_operations_keep_what_a_caller_relies_on() {
+    let total = campaign(Campaign::Usual, 0..SEEDS);
     // The runs did what they are for.
     assert!(total.accepted > 100 && total.frames > 1000, "{total:?}");
     assert!(
@@ -174,4 +200,81 @@ fn random_operations_keep_what_a_caller_relies_on() {
     let mut wrong = report(&total.cover);
     wrong.extend(report_others(&total.cover, &total.phases));
     assert!(!cfg!(debug_assertions) || wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn every_fault_campaign_keeps_what_a_caller_relies_on() {
+    for named in Campaign::all().iter().filter(|c| **c != Campaign::Usual) {
+        let total = campaign(*named, 0..40);
+        assert!(total.frames > 100, "{named:?}: {total:?}");
+        let wrong = excluded(&total);
+        assert!(
+            !cfg!(debug_assertions) || wrong.is_empty(),
+            "{named:?}: {wrong:#?}"
+        );
+    }
+}
+
+#[test]
+fn the_same_seed_gives_the_same_trace() {
+    for named in Campaign::all() {
+        let mut traces = Vec::new();
+        for seed in 0..8 {
+            let steps = generate(seed, STEPS);
+            let trace = |()| match run_in(*named, seed, &steps, false) {
+                Ok(stats) => stats.trace,
+                Err(f) => panic!("{named:?}, seed {seed}, step {}: {}", f.step, f.why),
+            };
+            let (once, again) = (trace(()), trace(()));
+            assert_eq!(once, again, "{named:?}, seed {seed}");
+            traces.push(once);
+        }
+        // And another seed gives another.
+        traces.sort_unstable();
+        traces.dedup();
+        assert_eq!(traces.len(), 8, "{named:?}");
+    }
+}
+
+/// CI's share: `cargo test -p longshore_tcp --test tcp_model -- --ignored
+/// a_thousand`.
+#[test]
+#[ignore = "a thousand seeds: minutes, for CI"]
+fn a_thousand_seeds_of_fault_campaigns() {
+    let each = 1000 / Campaign::all().len() as u64 + 1;
+    for named in Campaign::all() {
+        let total = campaign(*named, 1000..1000 + each);
+        let wrong = excluded(&total);
+        assert!(
+            !cfg!(debug_assertions) || wrong.is_empty(),
+            "{named:?}: {wrong:#?}"
+        );
+    }
+}
+
+/// The nightly share, on every core: `cargo test -p longshore_tcp --test
+/// tcp_model -- --ignored a_hundred_thousand`.
+#[test]
+#[ignore = "a hundred thousand seeds: the better part of an hour, nightly"]
+fn a_hundred_thousand_seeds_of_fault_campaigns() {
+    let cores = std::thread::available_parallelism().map_or(1, usize::from) as u64;
+    let each = 100_000 / Campaign::all().len() as u64 / cores + 1;
+    let workers: Vec<_> = (0..cores)
+        .map(|core| {
+            std::thread::spawn(move || {
+                let first = 10_000 + core * each;
+                for named in Campaign::all() {
+                    let total = campaign(*named, first..first + each);
+                    let wrong = excluded(&total);
+                    assert!(
+                        !cfg!(debug_assertions) || wrong.is_empty(),
+                        "{named:?}: {wrong:#?}"
+                    );
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        assert!(worker.join().is_ok(), "a run failed: see above");
+    }
 }

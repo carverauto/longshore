@@ -7,9 +7,9 @@
 
 use super::book::{fill, Handle, Sender, Side, BODY_MIN};
 use super::steps::{Kind, Step};
-use super::world::{protected, world, NAME};
+use super::world::{world, Campaign, NAME};
 use longshore_common::io::alloc_guard::sealed;
-use longshore_common::sim::{Faults, SimIo};
+use longshore_common::sim::SimIo;
 use longshore_tcp::check::World;
 use longshore_tcp::{
     Addr, ConnOpts, Coverage, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, NetError,
@@ -54,6 +54,8 @@ pub struct Stats {
     pub went_down: u32,
     pub full: u32,
     pub stale_calls: u32,
+    /// A hash of the run: the same for the same seed, every time.
+    pub trace: u64,
     /// The cells of the state table both sets were in.
     pub cover: Coverage,
     /// And those of the TLS phase table of their transports.
@@ -64,6 +66,10 @@ pub(crate) struct Run {
     pub(crate) w: World<SimIo>,
     /// Its connections are protected with TLS.
     pub(crate) tls: bool,
+    /// Bits are flipped in transit: a connection can end as a TLS failure.
+    pub(crate) flips: bool,
+    /// The run ends with a drain: whether `Drained` has been told.
+    pub(crate) drained: Option<bool>,
     /// The client's side, then the server's.
     pub(crate) sides: [Side; 2],
     pub(crate) senders: Vec<Sender>,
@@ -100,26 +106,25 @@ fn opts_with(bits: u32, reconnect: bool, tls: bool) -> Result<(ConnOpts, bool), 
     Ok((opts, half_close))
 }
 
-/// Run `steps` with `seed`, then bring everything to an end.
-pub fn run(seed: u64, steps: &[Step]) -> Result<Stats, Failure> {
-    run_traced(seed, steps, false)
-}
-
-/// [`run`], printing what each step did when `trace` is set.
-pub fn run_traced(seed: u64, steps: &[Step], trace: bool) -> Result<Stats, Failure> {
-    let resets = seed.is_multiple_of(4);
-    let faults = Faults::NONE
-        .with_reorder(300_000)
-        .with_partial_recv(200_000)
-        .with_short_send(200_000)
-        .with_reset(if resets { 2_000 } else { 0 });
+/// Run `steps` with `seed` under the faults of `campaign`, then bring
+/// everything to an end, printing what each step did
+/// when `trace` is set.
+pub fn run_in(
+    campaign: Campaign,
+    seed: u64,
+    steps: &[Step],
+    trace: bool,
+) -> Result<Stats, Failure> {
     let mut run = Run {
-        w: world(seed, faults),
-        tls: protected(seed),
+        w: world(campaign, seed),
+        tls: campaign.protected(seed),
+        flips: campaign == Campaign::Flips,
+        // Half the runs end with a drain of the server.
+        drained: (seed / 2).is_multiple_of(2).then_some(false),
         sides: [Side::default(), Side::default()],
         senders: Vec::new(),
         stats: Stats::default(),
-        resets,
+        resets: campaign.breaks(seed),
         trace,
         ended: Vec::new(),
     };
@@ -139,6 +144,9 @@ pub fn run_traced(seed: u64, steps: &[Step], trace: bool) -> Result<Stats, Failu
         run.stats.cover.add(&cover);
         run.stats.phases.add(&phases);
     }
+    // Every completion the backend delivered, and what the run counted.
+    let counted = u64::from(run.stats.frames) << 32 | u64::from(run.stats.accepted);
+    run.stats.trace = run.w.io().trace_hash() ^ counted.wrapping_mul(0x9e37_79b9_7f4a_7c15);
     Ok(run.stats)
 }
 
@@ -338,6 +346,9 @@ impl Run {
             Ok(()) if open && !sender.shut => {
                 let s = &mut self.senders[h.uid as usize];
                 (s.sent, s.own) = (s.sent + 1, s.own + 1);
+                // It has seen for itself that there is room: nothing is
+                // owed for a refusal before this.
+                self.sides[usize::from(server)].handles[at].full = false;
                 Ok(())
             }
             Err(SendError::Full) if open => {

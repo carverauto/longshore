@@ -6,7 +6,11 @@
 //! Replays one run of the model test of `Net`, and cuts a failing run
 //! down to the steps it needs.
 //!
-//!   cargo run -p longshore_tcp --example tcp_model -- --seed N [--steps M] [--shrink] [--trace]
+//!   cargo run -p longshore_tcp --example tcp_model -- --seed N [--steps M] [--campaign NAME] [--shrink] [--trace]
+//!
+//! The campaigns are the fault settings a run is under: usual (the
+//! default), resets, slow, delays, refusals, and flips where TLS is
+//! compiled in.
 //!
 //! Run it as a debug build, as above: a failing run is caught as a panic
 //! that unwinds, and much of what fails a run is a debug assertion. The
@@ -15,8 +19,9 @@
 #[path = "../tests/tcp/model/mod.rs"]
 mod model;
 
-use model::drive::{run, run_traced, Failure};
+use model::drive::{run_in, Failure};
 use model::steps::{generate, Step};
+use model::world::Campaign;
 use std::sync::Mutex;
 
 /// What the set and the simulator do after they are built runs under
@@ -36,8 +41,8 @@ fn last_panic() -> String {
 
 /// What `steps` come to with `seed`: where and how they fail, if they do.
 /// A panic inside the set counts as a failure at an unknown step.
-fn outcome(seed: u64, steps: &[Step]) -> Option<Failure> {
-    match std::panic::catch_unwind(|| run(seed, steps)) {
+fn outcome(run: (Campaign, u64), steps: &[Step]) -> Option<Failure> {
+    match std::panic::catch_unwind(|| run_in(run.0, run.1, steps, false)) {
         Ok(Ok(_)) => None,
         Ok(Err(failure)) => Some(failure),
         Err(_) => Some(Failure {
@@ -48,7 +53,7 @@ fn outcome(seed: u64, steps: &[Step]) -> Option<Failure> {
 }
 
 /// Drop steps, in ever smaller runs, while what is left still fails.
-fn shrink(seed: u64, mut steps: Vec<Step>) -> Vec<Step> {
+fn shrink(run: (Campaign, u64), mut steps: Vec<Step>) -> Vec<Step> {
     let mut chunk = steps.len() / 2;
     while chunk > 0 {
         let mut at = 0;
@@ -56,7 +61,7 @@ fn shrink(seed: u64, mut steps: Vec<Step>) -> Vec<Step> {
             let mut fewer = steps.clone();
             let end = (at + chunk).min(fewer.len());
             drop(fewer.drain(at..end));
-            if outcome(seed, &fewer).is_some() {
+            if outcome(run, &fewer).is_some() {
                 steps = fewer;
             } else {
                 at += chunk;
@@ -67,9 +72,18 @@ fn shrink(seed: u64, mut steps: Vec<Step>) -> Vec<Step> {
     steps
 }
 
-/// The seed, the number of steps, and whether to shrink and to trace.
-fn arguments() -> (u64, usize, bool, bool) {
+/// The campaign called `name`, in any case.
+fn named(name: &str) -> Option<Campaign> {
+    let all = Campaign::all().iter().copied();
+    all.into_iter()
+        .find(|c| format!("{c:?}").eq_ignore_ascii_case(name))
+}
+
+/// The campaign and the seed, the number of steps, and whether to shrink
+/// and to trace.
+fn arguments() -> ((Campaign, u64), usize, bool, bool) {
     let (mut seed, mut count, mut cut, mut trace) = (0u64, 3000usize, false, false);
+    let mut campaign = Campaign::Usual;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut number = || match args.next().map(|v| v.parse::<u64>()) {
@@ -82,6 +96,13 @@ fn arguments() -> (u64, usize, bool, bool) {
         match arg.as_str() {
             "--seed" => seed = number(),
             "--steps" => count = number() as usize,
+            "--campaign" => match args.next().and_then(|name| named(&name)) {
+                Some(named) => campaign = named,
+                None => {
+                    eprintln!("tcp_model: --campaign needs one of {:?}", Campaign::all());
+                    std::process::exit(2);
+                }
+            },
             "--shrink" => cut = true,
             "--trace" => trace = true,
             other => {
@@ -90,11 +111,12 @@ fn arguments() -> (u64, usize, bool, bool) {
             }
         }
     }
-    (seed, count, cut, trace)
+    ((campaign, seed), count, cut, trace)
 }
 
 fn main() {
-    let (seed, count, cut, trace) = arguments();
+    let (run, count, cut, trace) = arguments();
+    let (campaign, seed) = run;
     // A failing run's panic is kept and shown with its step, once.
     std::panic::set_hook(Box::new(|info| {
         if let Ok(mut said) = LAST_PANIC.lock() {
@@ -104,9 +126,11 @@ fn main() {
     let steps = generate(seed, count);
     if trace {
         // What each step did, up to where the run fails.
-        drop(std::panic::catch_unwind(|| run_traced(seed, &steps, true)));
+        drop(std::panic::catch_unwind(|| {
+            run_in(campaign, seed, &steps, true)
+        }));
     }
-    let Some(failure) = outcome(seed, &steps) else {
+    let Some(failure) = outcome(run, &steps) else {
         println!("seed {seed}, {count} steps: ok");
         return;
     };
@@ -115,12 +139,12 @@ fn main() {
         failure.step, failure.why
     );
     if cut {
-        let fewer = shrink(seed, steps);
+        let fewer = shrink(run, steps);
         println!("{} steps still fail:", fewer.len());
         for (at, step) in fewer.iter().enumerate() {
             println!("  {at}: {step:?}");
         }
-        if let Some(last) = outcome(seed, &fewer) {
+        if let Some(last) = outcome(run, &fewer) {
             println!("step {}: {}", last.step, last.why);
         }
     }
