@@ -27,3 +27,24 @@ fn the_kernel_transport_conforms_on_real_sockets() {
     let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     run_all(&mut |limits| PosixIo::new(limits).unwrap(), addr);
 }
+
+#[cfg(feature = "tls-core")]
+#[test]
+fn handshakes_are_reported_once_in_every_order_of_reports_and_on_real_sockets() {
+    use longshore_tcp::check::conformance::run_all_secured;
+    use longshore_tcp::check::Certs;
+    use longshore_tls::handshake::{ClientSetup, ServerSetup};
+    let name = "replica.longshore.test";
+    let k = rcgen::generate_simple_self_signed(vec![name.to_string()]).unwrap();
+    let (cert, key) = (k.cert.der().to_vec(), k.signing_key.serialize_der());
+    let client = ClientSetup::with_roots(&[&cert]).unwrap();
+    let server = ServerSetup::new(&[&cert], &key).unwrap();
+    let certs = Certs::new(client, server, name);
+    let addr: SocketAddr = "192.0.2.7:7000".parse().unwrap();
+    for seed in 0..50 {
+        let faults = Faults::NONE.with_reorder(400_000);
+        run_all_secured(&mut |limits| SimIo::new(limits, seed, faults), addr, &certs);
+    }
+    let local: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    run_all_secured(&mut |limits| PosixIo::new(limits).unwrap(), local, &certs);
+}

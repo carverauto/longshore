@@ -16,17 +16,20 @@
 //!   are reported, until the write side is shut down (half-close);
 //! - an operation the transport refuses for want of room in its driver
 //!   has changed nothing: nothing is reported for it, nothing was sent,
-//!   and the same operation works when there is room again.
+//!   and the same operation works when there is room again;
+//! - a TLS handshake that was started is reported once, as ended, also
+//!   when its connection is closed under it (on a rig that has TLS).
 //!
 //! A transport brings a [`Rig`]: itself, its driver, and a way to turn
 //! the driver. [`run_all`] is the kernel transport's own.
 
 mod kernel;
 mod refusal;
+mod secured;
 
 use super::{fail, must};
 use crate::transport::{Happened, Listening, Span, Transport};
-use crate::Addr;
+use crate::{Addr, ServerName};
 use longshore_common::io::{Io, Limits};
 use std::net::SocketAddr;
 
@@ -45,6 +48,9 @@ pub trait Rig {
     fn span(&self, i: u32, len: u32) -> Span;
     /// Where the listener listens.
     fn addr(&self) -> Addr;
+    /// The name the connecting side expects of the accepting side's
+    /// certificate, on a rig whose transport has TLS for both.
+    fn server_name(&self) -> Option<ServerName>;
     /// Take all the room the driver has for operations, so that the
     /// transport must refuse the next one; `false` when this rig cannot.
     fn starve(&mut self) -> bool;
@@ -272,10 +278,23 @@ pub fn check<R: Rig>(rig: &mut impl FnMut() -> R) {
     closes_of_empty_and_connecting_slots(&mut rig());
     sends_go_on_after_the_peers_end(&mut rig());
     refusal::a_refused_operation_changes_nothing(&mut rig());
+    secured::a_handshake_is_reported_once(&mut rig());
+    secured::a_close_under_a_handshake_ends_it(&mut rig());
 }
 
 /// The kernel transport on a backend from `make`, listening at `addr`
 /// (port 0 lets the system choose).
 pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
     check(&mut || KernelRig::new(make, addr));
+}
+
+/// [`run_all`] on a kernel transport that has TLS with `certs`, and with
+/// that the statements about handshakes.
+#[cfg(feature = "tls-core")]
+pub fn run_all_secured<IO: Io>(
+    make: &mut impl FnMut(Limits) -> IO,
+    addr: SocketAddr,
+    certs: &super::Certs,
+) {
+    check(&mut || KernelRig::new_tls(make, addr, certs));
 }

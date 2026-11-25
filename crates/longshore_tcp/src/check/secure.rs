@@ -31,6 +31,18 @@ impl Certs {
             None => fail(format_args!("not a server name: {name:?}")),
         }
     }
+
+    /// Both sides' setups, for a transport that has both ends.
+    pub(crate) fn both(&self) -> Tls {
+        Tls::new()
+            .with_client(self.client.clone())
+            .with_server(self.server.clone())
+    }
+
+    /// The name the client expects.
+    pub(crate) const fn name(&self) -> ServerName {
+        self.name
+    }
 }
 
 /// Sizes with room for TLS: segments that hold two records, frame memory

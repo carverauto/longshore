@@ -128,6 +128,12 @@ fn tls_on_the_ring(
         die::die(format_args!("TLS with {tag} carried different frames"));
     }
     log_and_replicate_tls(addr, log_path, &certs);
+    // And what `Net` relies on from the transport, handshakes included.
+    longshore::tcp::check::conformance::run_all_secured(
+        &mut |limits| UringIo::new(limits).or_die("UringIo::new"),
+        addr,
+        &certs,
+    );
 }
 
 #[cfg(target_os = "linux")]

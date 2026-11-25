@@ -8,7 +8,7 @@
 use super::Rig;
 use crate::check::{fail, must, sizes};
 use crate::transport::{Happened, Span, Transport};
-use crate::{Addr, Config, KernelTransport};
+use crate::{Addr, Config, KernelTransport, ServerName, Sizes};
 use longshore_common::io::{BufId, Completions, Io, Limits, Op, Token};
 use std::net::SocketAddr;
 
@@ -22,6 +22,7 @@ pub struct KernelRig<IO: Io> {
     ticking: bool,
     /// Timers that hold the backend's room for operations.
     fillers: u32,
+    name: Option<ServerName>,
 }
 
 /// The rig's own timer, outside the transport's tokens, and the first of
@@ -32,9 +33,31 @@ const FILL: u64 = 1 << 41;
 impl<IO: Io> KernelRig<IO> {
     /// A rig whose listener listens at `addr`.
     pub fn new(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) -> KernelRig<IO> {
-        let (limits, cfg) = must(Config::plan(Limits::BASE, sizes(2, 2, 1)), "plan");
+        KernelRig::build(make, addr, sizes(2, 2, 1), None, |t| t)
+    }
+
+    /// [`KernelRig::new`], with TLS for both ends from `certs`.
+    #[cfg(feature = "tls-core")]
+    pub fn new_tls(
+        make: &mut impl FnMut(Limits) -> IO,
+        addr: SocketAddr,
+        certs: &crate::check::Certs,
+    ) -> KernelRig<IO> {
+        let sizes = crate::check::secure::sizes(2, 2, 1);
+        let wrap = |t: KernelTransport<IO>| t.with_tls(certs.both());
+        KernelRig::build(make, addr, sizes, Some(certs.name()), wrap)
+    }
+
+    fn build(
+        make: &mut impl FnMut(Limits) -> IO,
+        addr: SocketAddr,
+        sizes: Sizes,
+        name: Option<ServerName>,
+        wrap: impl FnOnce(KernelTransport<IO>) -> KernelTransport<IO>,
+    ) -> KernelRig<IO> {
+        let (limits, cfg) = must(Config::plan(Limits::BASE, sizes), "plan");
         let cfg = cfg.resolved(&limits);
-        let mut t = KernelTransport::new(&cfg);
+        let mut t = wrap(KernelTransport::new(&cfg));
         t.attach(&cfg);
         KernelRig {
             t,
@@ -44,6 +67,7 @@ impl<IO: Io> KernelRig<IO> {
             addr,
             ticking: false,
             fillers: 0,
+            name,
         }
     }
 }
@@ -90,6 +114,10 @@ impl<IO: Io> Rig for KernelRig<IO> {
 
     fn addr(&self) -> Addr {
         Addr::Ip(self.addr)
+    }
+
+    fn server_name(&self) -> Option<ServerName> {
+        self.name
     }
 
     fn starve(&mut self) -> bool {
