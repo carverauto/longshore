@@ -209,18 +209,9 @@ impl<T: Transport> Net<T> {
             return Cut::Frame(src.avail);
         };
         let hl = h.header_len() as u32;
-        if let Some(ext) = c.asm {
+        if c.asm.is_some() {
             // The rest of a frame being put together.
-            let take = (c.asm_len - c.asm_have).min(src.avail);
-            let (from, to) = self.t.bytes_pair(d, src.buf, ext.buf());
-            let (at, have) = (src.off as usize, c.asm_have as usize);
-            to[have..have + take as usize].copy_from_slice(&from[at..at + take as usize]);
-            let filling = &mut self.conns[slot as usize];
-            filling.asm_have += take;
-            if filling.asm_have == filling.asm_len {
-                (filling.asm, filling.ready) = (None, Some((ext, filling.asm_len)));
-            }
-            return Cut::Taken(take);
+            return Cut::Taken(self.fill_assembly(d, slot, src));
         }
         if c.hdr_have == hl {
             // A whole header, collected in pieces. What follows it in the

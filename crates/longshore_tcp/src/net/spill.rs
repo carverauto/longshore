@@ -103,8 +103,25 @@ impl<T: Transport> Net<T> {
     /// as it needs them, and take no further frame memory.
     fn feed_assembly(&mut self, d: &mut T::Driver, slot: u32, src: Source) -> bool {
         let c = &self.conns[slot as usize];
-        let (Some(ext), None) = (c.asm, c.backlog) else {
+        if c.asm.is_none() || c.backlog.is_some() {
             return false;
+        }
+        let take = self.fill_assembly(d, slot, src);
+        if self.conns[slot as usize].ready.is_some() {
+            self.queue_event(slot, EV_READABLE);
+        }
+        self.advance(slot, src, take);
+        // A whole frame waits now: what follows it needs a backlog.
+        take > 0
+    }
+
+    /// Move bytes of `src` into the frame `slot` is putting together, as
+    /// many as it still needs; how many. The frame is ready to be pulled
+    /// when that was the last of it. The caller advances the source.
+    pub(super) fn fill_assembly(&mut self, d: &mut T::Driver, slot: u32, src: Source) -> u32 {
+        let c = &self.conns[slot as usize];
+        let Some(ext) = c.asm else {
+            return 0;
         };
         let take = (c.asm_len - c.asm_have).min(src.avail);
         let (from, to) = self.t.bytes_pair(d, src.buf, ext.buf());
@@ -114,11 +131,8 @@ impl<T: Transport> Net<T> {
         filling.asm_have += take;
         if filling.asm_have == filling.asm_len {
             (filling.asm, filling.ready) = (None, Some((ext, filling.asm_len)));
-            self.queue_event(slot, EV_READABLE);
         }
-        self.advance(slot, src, take);
-        // A whole frame waits now: what follows it needs a backlog.
-        take > 0
+        take
     }
 
     /// The frame at the end of `slot`'s backlog continues beyond it. When
