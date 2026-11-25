@@ -119,6 +119,14 @@ impl OpenFlags {
     /// kernel hands each write to the drive but does not flush the drive's
     /// own cache, as `F_FULLFSYNC` does for `FileSync`; a power loss there
     /// can still lose a completed write.
+    ///
+    /// The simulator's disk is stronger than a kernel here, in two ways. A
+    /// durable write also makes durable whatever else of the same file was
+    /// written and not yet synced, where a kernel syncs the range written.
+    /// And after a power loss a durable write is whole or absent, never
+    /// torn, where real media can hold part of one. A recovery that leans
+    /// on either has to be checked on a file not opened so, where the
+    /// simulator does lose and tear.
     #[inline]
     pub const fn dsync(self) -> bool {
         self.dsync

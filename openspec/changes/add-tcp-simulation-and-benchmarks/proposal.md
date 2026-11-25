@@ -65,6 +65,10 @@ Second of three changes (`add-tcp-crate`, this, `add-tcp-af-xdp-backend`).
 - Affected specs: `tcp-connections` (ADDED: checked invariants, exhaustion,
   the end after everything received, half-close, errors, listener slots,
   transport conformance, simulation, measured defaults)
+- Affected specs, added while it was built: `file-operations` (ADDED:
+  durable writes) and `simulated-disk` (ADDED: files opened for durable
+  writes), for the open flag the whole-path measurement needed
 - Affected code: `longshore_tcp` tests and defaults, `longshore_common::sim`
-  (packet device), `longshore-bench` (`tcp_uring`, benches), `fuzz/`
+  (packet device), `longshore_common::io` (`OpenFlags::with_dsync` on every
+  backend), `longshore-bench` (`tcp_uring`, benches), `fuzz/`
 - Depends on `add-tcp-crate`
