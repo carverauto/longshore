@@ -75,8 +75,9 @@ fuzz_main() {
     fi
 
     # The nightly AddressSanitizer runtime hangs at startup on macOS. The
-    # parsers contain no unsafe code, so bounds errors still surface as
-    # panics without it (see fuzz/Cargo.toml).
+    # parsers and longshore_tcp contain no unsafe code, so bounds errors
+    # still surface as panics without it; what does (the simulator's
+    # crate) is fuzzed with it on Linux (see fuzz/Cargo.toml).
     sanitizer=()
     if [ "$(uname -s)" = Darwin ]; then
         sanitizer=(-s none)

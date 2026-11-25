@@ -2,7 +2,9 @@
 # Not a workspace member, so production crates never see these dependencies.
 #   cargo +nightly fuzz run dns_response -- -max_total_time=60
 # On macOS add `-s none`: the nightly AddressSanitizer runtime hangs at startup there.
-# The parsers contain no unsafe code, so bounds errors still surface as panics.
+# The parsers and `longshore_tcp` contain no unsafe code, so bounds errors
+# still surface as panics; the simulator under `tcp_model_steps` is in
+# `longshore_common`, which does, and is fuzzed with the sanitizer on Linux.
 [package]
 name = "longshore-fuzz"
 version = "0.0.0"
@@ -15,10 +17,11 @@ cargo-fuzz = true
 
 [workspace]
 
-[features]
-# Never on here. The model test's source, compiled into `tcp_model_steps`,
-# asks whether TLS is compiled in; this names the feature it asks for.
-tls-core = []
+# The model test's source, compiled into `tcp_model_steps`, asks whether
+# TLS is compiled in. It is not, here, and cannot be turned on: this only
+# says that the question is expected.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("tls-core"))'] }
 
 [dependencies]
 libfuzzer-sys = "0.4"
