@@ -277,3 +277,53 @@ fn a_packet_too_long_for_the_buffer_stays_until_one_holds_it() {
         assert_eq!(link.counts().places(), [4, 0, 0, 0]);
     });
 }
+
+#[test]
+fn a_duplicate_that_finds_no_slot_is_not_made() {
+    let always = PacketFaults::NONE.with_duplicate(1_000_000);
+    let mut into = [0; MAX];
+    // Two slots, both taken by the originals.
+    let mut link = PacketLink::new(10, always, PacketSizes::new(2, MAX as u32));
+    sealed(|| {
+        assert_eq!(link.send(End::A, &[1; 30]), Ok(()));
+        assert_eq!(link.send(End::A, &[2; 30]), Ok(()));
+        link.turn(0);
+        let counts = link.counts();
+        assert_eq!((counts.duplicated(), counts.places()), (0, [0, 0, 2, 0]));
+        link.turn(LATENCY);
+        assert_eq!(link.recv(End::B, &mut into), Some(30));
+        assert_eq!(link.recv(End::B, &mut into), Some(30));
+        assert_eq!(link.recv(End::B, &mut into), None);
+    });
+    // Four: each has its twin, next to it.
+    let mut wide = PacketLink::new(10, always, PacketSizes::new(4, MAX as u32));
+    sealed(|| {
+        assert_eq!(wide.send(End::A, &[1; 30]), Ok(()));
+        assert_eq!(wide.send(End::A, &[2; 30]), Ok(()));
+        wide.turn(0);
+        assert_eq!(wide.counts().duplicated(), 2);
+        wide.turn(LATENCY);
+        for first in [1, 1, 2, 2] {
+            assert_eq!(wide.recv(End::B, &mut into), Some(30));
+            assert_eq!(into[0], first);
+        }
+    });
+}
+
+#[test]
+fn the_longest_packet_and_an_empty_one_are_carried() {
+    let mut link = PacketLink::new(11, PacketFaults::NONE, PacketSizes::new(4, MAX as u32));
+    let mut into = [0xee; MAX];
+    sealed(|| {
+        assert_eq!(link.send(End::B, &[0x5a; MAX]), Ok(()));
+        assert_eq!(link.send(End::B, &[]), Ok(()));
+        link.turn(0);
+        link.turn(LATENCY);
+        assert_eq!(link.recv(End::A, &mut into), Some(MAX));
+        assert!(into == [0x5a; MAX]);
+        // Nothing is written for an empty packet.
+        assert_eq!(link.next_len(End::A), Some(0));
+        assert_eq!(link.recv(End::A, &mut into[..0]), Some(0));
+        assert_eq!(link.counts().places(), [4, 0, 0, 0]);
+    });
+}
