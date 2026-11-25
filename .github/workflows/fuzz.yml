@@ -68,11 +68,13 @@ jobs:
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Fuzz
+        # The script takes parameters only. The run time is typed into a
+        # form on a manual run, so it reaches the shell as a variable of
+        # this step and not as text pasted into the command; the script
+        # refuses anything but a whole number.
         env:
-          FUZZ_TOOLCHAIN: ${{ env.NIGHTLY }}
-          FUZZ_TARGETS: ${{ matrix.target }}
-          FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '600' }}
-        run: scripts/fuzz.sh
+          SECONDS_ASKED: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '600' }}
+        run: scripts/fuzz.sh --toolchain "${{ env.NIGHTLY }}" --seconds "${SECONDS_ASKED}" "${{ matrix.target }}"
 
       - name: Keep the crashing input
         if: failure()

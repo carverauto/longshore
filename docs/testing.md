@@ -57,8 +57,8 @@ fail and tears clients down with work in flight. It is built with the
 
 Property tests use [Hegel](https://hegel.dev). The parsers have fuzz targets
 in `fuzz/`, run with `cargo fuzz` through `scripts/fuzz.sh` (or `make fuzz`):
-every target for 60 seconds by default, `FUZZ_SECONDS` and `FUZZ_TARGETS` to
-change that, `FUZZ_SECONDS=0` to only build them. It needs a nightly toolchain
+every target for 60 seconds by default, `--seconds N` and target names as
+parameters to change that, `--seconds 0` to only build them. It needs a nightly toolchain
 and `cargo install --locked cargo-fuzz`. The Fuzz workflow runs each target
 for a minute on a pull request and for ten on `main` and every night, keeping
 each target's corpus between runs and the crashing input when one fails.
