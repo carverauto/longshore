@@ -55,7 +55,10 @@ impl<T: Transport> Net<T> {
                     return self.read_kept(d, slot);
                 }
                 if self.t.recv_armed(d, slot).is_ok() {
-                    self.conns[slot as usize].armed = true;
+                    // Armed again: what the ring was short of then says
+                    // nothing of how this receive will end.
+                    let reading = &mut self.conns[slot as usize];
+                    (reading.armed, reading.dry) = (true, false);
                 } else {
                     self.add_work(slot, W_READ);
                 }
