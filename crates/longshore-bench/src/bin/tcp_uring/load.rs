@@ -8,7 +8,8 @@
 //! request in flight on every connection, or sends frames as fast as they
 //! are taken.
 
-use super::{queued, thread_cpu, unexpected, Opts, Peer, Side, HEADER};
+use super::path::{LOG, REPLICA};
+use super::{queued, thread_cpu, unexpected, Kind, Opts, Peer, Side, HEADER};
 use crate::die::OrDie;
 use longshore::io::Io;
 use longshore::tcp::{Conn, Event};
@@ -107,18 +108,25 @@ struct Line {
     conn: Conn,
     sent: Option<Instant>,
     waits: bool,
+    /// One of the three a log node sends every block on to.
+    replica: bool,
 }
 
 /// Send one frame of the run on `line`; whether it was queued.
 fn send<IO: Io>(side: &mut Side<IO>, o: &Opts, line: &mut Line) -> bool {
-    let len = o.frame_len();
-    let asks = u8::from(!o.bulk);
+    // A replica says once what it is, in a frame of eight bytes.
+    let (len, asks) = match o.kind {
+        _ if line.replica => (8, REPLICA),
+        Kind::Rr => (o.frame_len(), 1),
+        Kind::Bulk => (o.frame_len(), 0),
+        Kind::Path => (o.frame_len(), LOG),
+    };
     let sent = side.net.send_frame(&mut side.io, line.conn, len, |to| {
         to[..4].copy_from_slice(&(len - 4).to_be_bytes());
         to[ASKS] = asks;
     });
     line.waits = !queued(sent, line.conn);
-    if !line.waits && !o.bulk {
+    if !line.waits && o.kind != Kind::Bulk && !line.replica {
         line.sent = Some(Instant::now());
     }
     !line.waits
@@ -126,8 +134,11 @@ fn send<IO: Io>(side: &mut Side<IO>, o: &Opts, line: &mut Line) -> bool {
 
 /// Open the connections, run the load for the time asked, close them.
 pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> Done {
-    let mut lines: Vec<Line> = (0..o.conns)
-        .map(|_| Line {
+    // The replicas of a log node first, so that they are there when the
+    // first block is durable.
+    let replicas = o.lines() - o.conns;
+    let mut lines: Vec<Line> = (0..o.lines())
+        .map(|at| Line {
             conn: side
                 .net
                 .connect(&mut side.io, addr, o.conn_opts())
@@ -135,6 +146,7 @@ pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> 
                 .or_die("connect"),
             sent: None,
             waits: false,
+            replica: at < replicas,
         })
         .collect();
     let mut done = Done {
@@ -171,7 +183,12 @@ pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> 
                     answered = true;
                 }
             }
-            if o.bulk {
+            if line.replica {
+                // It only receives, once it has said what it is.
+                if matches!(e, Event::Up(_)) || line.waits {
+                    let _said: bool = send(side, o, line);
+                }
+            } else if o.kind == Kind::Bulk {
                 // As many as are taken: the next Writable brings more.
                 while send(side, o, line) {
                     done.count += 1;
@@ -194,10 +211,19 @@ pub(super) fn report(o: &Opts, done: &Done, peer: &Peer, secs: f64, cpu: f64) {
     let gb = peer.bytes as f64 / 1e9;
     let per_gb = |spent: f64| if gb > 0.0 { spent / gb } else { 0.0 };
     let frame = o.frame_len();
-    let count = if o.bulk { peer.frames } else { done.count };
+    let count = if o.kind == Kind::Bulk {
+        peer.frames
+    } else {
+        done.count
+    };
+    let (cmd, sync) = match o.kind {
+        Kind::Rr => ("rr", "-"),
+        Kind::Bulk => ("bulk", "-"),
+        Kind::Path if o.dsync => ("path", "dsync"),
+        Kind::Path => ("path", "fsync"),
+    };
     println!(
-        "{{\"cmd\":\"{}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"ring\":{},\"zc_min\":{},\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
-        if o.bulk { "bulk" } else { "rr" },
+        "{{\"cmd\":\"{cmd}\",\"sync\":\"{sync}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"ring\":{},\"zc_min\":{},\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
         if o.epoll { "epoll" } else { "uring" },
         o.rx,
         if o.spin { "spin" } else { "sleep" },

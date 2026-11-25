@@ -12,7 +12,7 @@
 //!
 //!   tcp_uring [--v6] [--dir <directory on a file system with O_DIRECT>]
 //!
-//! With `rr` or `bulk` as its first argument it measures instead: see
+//! With `rr`, `bulk` or `path` as its first argument it measures instead: see
 //! `tcp_uring/bench.rs`.
 
 #[cfg(not(target_os = "linux"))]
@@ -154,7 +154,7 @@ fn main() {
     let mut v6 = false;
     let mut dir = std::env::temp_dir();
     let mut args = std::env::args().skip(1).peekable();
-    if let Some(cmd) = args.next_if(|a| a == "rr" || a == "bulk") {
+    if let Some(cmd) = args.next_if(|a| a == "rr" || a == "bulk" || a == "path") {
         return bench::run(&cmd, args);
     }
     while let Some(a) = args.next() {

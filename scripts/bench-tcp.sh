@@ -133,6 +133,20 @@ for segment in 65536 262144 1048576; do
     run bulk --conns 4 --ring 16384 --segment "$segment"
 done
 
+# The whole path: a block received, written to a preallocated file with
+# direct I/O, made durable, sent on to three replicas and answered. A sync
+# after each write against a file opened so that a write is durable when
+# it completes; and waiting against spinning.
+for backend in uring epoll; do
+    for sync in fsync dsync; do
+        run path --backend "$backend" --sync "$sync" --conns 1 --dir "$dir"
+        run path --backend "$backend" --sync "$sync" --conns 16 --dir "$dir"
+    done
+done
+for wait in sleep spin; do
+    run path --wait "$wait" --sync dsync --conns 1 --dir "$dir"
+done
+
 if [ "$failed" -gt 0 ]; then
     echo "bench-tcp: $failed run(s) failed" >&2
     exit 1
