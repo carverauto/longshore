@@ -138,6 +138,10 @@ impl Stream {
     /// is opened by [`Stream::on_ring_recv`] with no bytes. `false` on a
     /// plain stream, and when the buffer is full: a whole record waits
     /// there to be opened.
+    ///
+    /// Until the completion has been fed back, [`Stream::on_ring_recv`]
+    /// must not be called: it moves what the receive is written behind.
+    /// So open what the stream carries first, and ask for more then.
     pub fn recv_carried<IO: Io>(&mut self, io: &mut IO) -> bool {
         #[cfg(feature = "tls-core")]
         {
@@ -153,6 +157,7 @@ impl Stream {
                         len: room,
                     };
                     Self::submit(io, recv_token, op);
+                    t.carrying = true;
                 }
                 return room > 0;
             }
@@ -165,8 +170,11 @@ impl Stream {
     /// `result` itself.
     pub fn on_carried(&mut self, result: i32) -> i32 {
         #[cfg(feature = "tls-core")]
-        if let Some(t) = self.tls.as_mut().filter(|t| t.active && result > 0) {
-            t.rx_end += result.unsigned_abs();
+        if let Some(t) = self.tls.as_mut().filter(|t| t.carrying) {
+            t.carrying = false;
+            if t.active && result > 0 {
+                t.rx_end += result.unsigned_abs();
+            }
         }
         result
     }
@@ -192,6 +200,7 @@ impl crate::stream::Tls {
         dst: RingDst,
     ) -> Result<RingStep, TlsError> {
         debug_assert!(self.spill_len == 0, "recv and on_ring_recv were mixed");
+        debug_assert!(!self.carrying, "on_ring_recv under a recv_carried");
         let mut step = RingStep {
             consumed: 0,
             produced: 0,

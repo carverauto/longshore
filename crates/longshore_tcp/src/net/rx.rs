@@ -304,7 +304,7 @@ impl<T: Transport> Net<T> {
         ];
         (c.hdr_have, c.asm_have, c.asm_len) = (0, 0, 0);
         (c.backlog_off, c.backlog_len, c.paused) = (0, 0, false);
-        (c.unopened, c.cut_off) = (false, false);
+        (c.unopened, c.cut_off, c.dry) = (false, false, false);
         for ext in held.into_iter().flatten() {
             // Net's own hold; frames the caller pulled keep theirs.
             best_effort(self.extents.release(ext));

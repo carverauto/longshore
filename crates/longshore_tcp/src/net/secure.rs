@@ -162,12 +162,24 @@ impl<T: Transport> Net<T> {
             }
         }
         self.end_if_opened(slot);
+        let c = &self.conns[slot as usize];
+        if c.st == St::Up && c.dry && !c.unopened && !c.armed && !c.recv_busy {
+            // Nothing is left with the stream, and the ring had no buffer
+            // for this connection: it reads on from `poll`.
+            self.add_work(slot, W_READ);
+        }
         self.trim_backlog(slot)
     }
 
     /// The ring had no buffer for the protected `slot`: receive into its
     /// stream's own memory instead, once.
     pub(super) fn read_kept(&mut self, d: &mut T::Driver, slot: u32) {
+        if self.conns[slot as usize].unopened {
+            // What the stream holds is opened first: a receive would be
+            // written behind it, and it could not be opened meanwhile.
+            // `poll` asks again while it waits for frame memory.
+            return;
+        }
         match self.t.recv_kept(d, slot) {
             Ok(true) => {
                 let c = &mut self.conns[slot as usize];
