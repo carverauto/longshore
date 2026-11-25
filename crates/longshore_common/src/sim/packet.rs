@@ -95,8 +95,10 @@ impl PacketFaults {
         self
     }
 
-    /// A packet is held back for [`PacketSizes::with_reorder_ns`], so that
-    /// packets sent after it arrive before it.
+    /// A packet is held back for [`PacketSizes::with_reorder_ns`]. Packets
+    /// put in flight within that time arrive before it: it is out of
+    /// order only where its sender sends more often than that. One sent
+    /// alone is merely late.
     #[must_use]
     pub const fn with_reorder(mut self, per_million: u32) -> PacketFaults {
         self.reorder = per_million;
@@ -152,7 +154,8 @@ impl PacketSizes {
         self
     }
 
-    /// How long a reordered packet is held back.
+    /// How long a reordered packet is held back: as long as the sender
+    /// takes to send the packets that are to overtake it, or longer.
     #[must_use]
     pub const fn with_reorder_ns(mut self, ns: u64) -> PacketSizes {
         self.reorder_ns = ns;
@@ -202,7 +205,8 @@ impl PacketCounts {
         self.received
     }
 
-    /// Packets held back to arrive out of order.
+    /// Packets held back. How many of them were overtaken depends on
+    /// what was sent behind them: this counts the holds.
     pub const fn held_back(&self) -> u64 {
         self.held_back
     }
