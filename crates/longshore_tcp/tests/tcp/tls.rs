@@ -25,6 +25,9 @@ use std::net::SocketAddr;
 #[path = "tls/ending.rs"]
 mod ending;
 #[cfg(test)]
+#[path = "tls/faults.rs"]
+mod faults;
+#[cfg(test)]
 #[path = "tls/memory.rs"]
 mod memory;
 
