@@ -11,8 +11,8 @@ Each group ends with a review of its own diff (no-mistakes or
 - [x] 0.7 Review of group 0: ten findings, each closed in a commit of its own. Three were faults (a connection parked under a closing listener reaching the next one, the idle deadline cutting off a half-close answer still being sent, a failed shutdown reported as orderly); only the second could be reproduced by a test
 
 ## 1. The contract, checked
-- [ ] 1.1 Seeded completion order within a tick in `SimIo` (off by default), with its own tests; with it, tests that reproduce what group 0 could only guard: a listener slot taken again before its accept's last report (C6, C8), and a connection parked under a closing listener
-- [ ] 1.2 `tcp_model`: the adversary, the byte-queue reference and invariants I1 to I12 of `design.md` checked after every step; small pools; `--seed`, `--steps`, `--shrink`
+- [x] 1.1 Seeded order for the reports of a closed socket's operations in `SimIo` (`Faults::with_reorder`, off by default), with its own tests. With it the model reproduces what group 0 could only guard: reintroducing the early free of a listener slot, or dropping the parking of an accepted connection, fails
+- [x] 1.2 `tcp_model`: the adversary, the frame-carried reference and the caller-visible invariants checked as the run goes and at its end; small pools; the example `tcp_model` with `--seed`, `--steps`, `--shrink`, `--trace`. Not yet in it: TLS connections, and running under `alloc_guard` (its own bookkeeping allocates)
 - [ ] 1.3 Every cell of the connection and listener state tables is either reached by `tcp_model` (a coverage report by state and event says so) or shown unreachable by a debug assertion
 - [ ] 1.4 Every row of the exhaustion table has a scenario test: the pool empty, the taker refused or paused, then woken without a further call
 - [ ] 1.5 Flags to states: what a closing slot waits for, and why a connection does not read, as enums; no behaviour change, `tcp_model` unchanged and green

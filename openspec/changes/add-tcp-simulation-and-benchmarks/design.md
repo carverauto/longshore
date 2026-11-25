@@ -258,6 +258,14 @@ completion order of task 1.1 is what will.
   its listener was closed named, or was counted against, whatever
   listener had the slot by then. Fixed with C6: a connection keeps the
   handle of the listener that accepted it.
+- **C9 Connections could deadlock on frame memory.** Found by the model
+  test: a frame that continued past a connection's backlog was put
+  together in a second buffer, so as many connections as there are
+  buffers each held one and waited for another, with the caller holding
+  nothing. Fixed in group 1: the frame is put together in the backlog's
+  own buffer. A protected connection in ring mode can still need two (a
+  backlog of opened records and a frame being put together); that is to
+  be closed with the TLS part of the model.
 - **C7 The connect timeout marks the socket open whether or not there is
   one**, and relies on the backend reporting the close of an empty socket
   slot like any other. Kept, as assumption A2 of the conformance suite.
@@ -313,6 +321,7 @@ that is cheap.
 | Connection slots (own) | `connect`, a single accept | `NoSlots`; the accept is not started | a freed slot; `poll` starts accepts |
 | Accept range (kernel's) | an armed accept | the kernel drops the connection, the accept fails, `Net` waits | the wait's deadline |
 | Frame memory (extents) | direct receive, assembling a frame, a spill, TLS opening, `hold` | the read pauses, the input stays where it is, a connection whose stream has ended stays `Finishing`; `hold` returns `NoMemory` | `release`, a send or write that drops its hold; `poll` retries |
+| Frame memory, among connections | each connection's undelivered input | a connection holds at most one buffer for input it has not delivered (its backlog, or the frame it is putting together, or a whole frame waiting), so connections cannot each hold one and wait for a second; found by the model test, where three connections and three buffers stalled for ever | — |
 | Hold count of one extent | a frame lent from a backlog, `send_lent`, a file write | the frame is not lent and stays; `Stale` or `Full` to the caller | a hold released |
 | Send segments | `send_frame`, `send_bytes` | `Full`; the connection joins the fixed waiter list | a segment returned: one waiter is told `Writable`, and a waiter that leaves passes it on |
 | Send queue of a connection | every send | `Full` | its own send completing: `Writable` |
