@@ -79,8 +79,6 @@ pub(super) struct Secure {
     streams: Box<[Stream]>,
     phase: Box<[Phase]>,
     cover: PhaseCoverage,
-    /// The receive in flight brings bytes for the stream to keep.
-    kept: Box<[bool]>,
     /// The first of the slots' buffers, and what a stream is told of each.
     first: BufId,
     cap: u32,
@@ -93,7 +91,6 @@ impl Secure {
             streams: Box::default(),
             phase: vec![Phase::Plain; conns as usize].into_boxed_slice(),
             cover: PhaseCoverage::NONE,
-            kept: vec![false; conns as usize].into_boxed_slice(),
             first: BufId::new(0),
             cap: 0,
         }
@@ -204,9 +201,7 @@ impl Secure {
 
     /// A receive into the stream's own buffer; `false` when it is full.
     pub(super) fn recv_kept<IO: Io>(&mut self, d: &mut IO, slot: u32) -> bool {
-        let started = self.streams[slot as usize].recv_carried(d);
-        self.kept[slot as usize] = started;
-        started
+        self.streams[slot as usize].recv_carried(d)
     }
 
     pub(super) fn send<IO: Io>(&mut self, d: &mut IO, slot: u32, from: Span) {
@@ -264,7 +259,9 @@ impl Secure {
     ) -> Happened {
         let i = slot as usize;
         self.count(slot, 1);
-        let kept = !sent && core::mem::take(&mut self.kept[i]);
+        // A receive for the stream to keep; a stream that was reset under
+        // it keeps nothing, and the receive ends as on a plain slot.
+        let kept = !sent && self.streams.get(i).is_some_and(Stream::is_carrying);
         if kept && matches!(self.phase[i], Phase::Secure | Phase::Alerting) {
             let result = self.streams[i].on_carried(result);
             return Happened::Received { slot, result };

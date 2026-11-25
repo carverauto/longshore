@@ -166,6 +166,16 @@ impl Stream {
         false
     }
 
+    /// Whether the receive [`Stream::recv_carried`] started is in flight:
+    /// its completion is for [`Stream::on_carried`].
+    pub fn is_carrying(&self) -> bool {
+        #[cfg(feature = "tls-core")]
+        if let Some(t) = &self.tls {
+            return t.carrying;
+        }
+        false
+    }
+
     /// The completion of the receive [`Stream::recv_carried`] started:
     /// `result` itself.
     pub fn on_carried(&mut self, result: i32) -> i32 {
