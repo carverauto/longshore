@@ -199,8 +199,8 @@ spans records needs a second while it is put together.
 A connection is in one of ten states, and every call and every report of
 the transport does a set thing in each. The full tables, with the listener's
 and the TLS phases of the kernel transport, are in
-`openspec/changes/add-tcp-simulation-and-benchmarks/design.md` until that
-change is archived; the model test holds the code to them cell by cell.
+`openspec/changes/archive/2026-11-25-add-tcp-simulation-and-benchmarks/design.md`;
+the model test holds the code to them cell by cell.
 
 | State | What it is |
 |---|---|
