@@ -11,6 +11,9 @@
 //! each provider.
 //!
 //!   tcp_uring [--v6] [--dir <directory on a file system with O_DIRECT>]
+//!
+//! With `rr` or `bulk` as its first argument it measures instead: see
+//! `tcp_uring/bench.rs`.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -21,6 +24,10 @@ fn main() {
 #[cfg(target_os = "linux")]
 #[path = "../die.rs"]
 mod die;
+
+#[cfg(target_os = "linux")]
+#[path = "tcp_uring/bench.rs"]
+mod bench;
 
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -146,7 +153,10 @@ fn main() {
 
     let mut v6 = false;
     let mut dir = std::env::temp_dir();
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
+    if let Some(cmd) = args.next_if(|a| a == "rr" || a == "bulk") {
+        return bench::run(&cmd, args);
+    }
     while let Some(a) = args.next() {
         match a.as_str() {
             "--v6" => v6 = true,
