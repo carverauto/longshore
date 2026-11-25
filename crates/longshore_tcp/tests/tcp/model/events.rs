@@ -328,7 +328,7 @@ impl Run {
             return Ok(0);
         }
         if h.refused {
-            self.close(server, at as u32)?;
+            self.close_at(server, at)?;
             return Ok(0);
         }
         self.pull_at(server, at, 0)?;

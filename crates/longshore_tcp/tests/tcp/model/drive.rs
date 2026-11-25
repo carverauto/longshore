@@ -245,10 +245,15 @@ impl Run {
         }
     }
 
-    pub(crate) fn close(&mut self, server: bool, pick: u32) -> Result<(), String> {
-        let Some(at) = self.pick(server, pick) else {
-            return Ok(());
-        };
+    fn close(&mut self, server: bool, pick: u32) -> Result<(), String> {
+        match self.pick(server, pick) {
+            Some(at) => self.close_at(server, at),
+            None => Ok(()),
+        }
+    }
+
+    /// Close the handle at `at` of the side's list.
+    pub(crate) fn close_at(&mut self, server: bool, at: usize) -> Result<(), String> {
         let h = self.sides[usize::from(server)].handles[at];
         let (net, io) = self.net(server);
         let got = net.close(io, h.conn);
