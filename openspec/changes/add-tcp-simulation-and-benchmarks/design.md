@@ -544,7 +544,11 @@ Its own test binary, `sim_packet`, under `alloc_guard`: a scenario for P4,
 for each fault alone with its rate held against the count over many
 packets, for each row of the exhaustion table, and for P7; and a run of
 seeded random calls (send from either end, turn, receive, time passing)
-that checks P1, P2, P3 and P5 after every call and P6 where it applies.
+that checks P1, P2 and P3 after every call. The seed also chooses that
+both ends receive at once after every turn, where P5's lower bound is
+held at the turn that delivered, and that reordering and delay are off,
+where P6 is held. P5's upper bound is held where turns come at a steady
+pace.
 
 ## Decisions
 - **The tables describe `Net` as it is to be.** Every cell that exists in
