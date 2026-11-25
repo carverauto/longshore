@@ -13,16 +13,24 @@
 //! - a connect whose slot is closed before it ends leaves no socket: the
 //!   slot can connect again;
 //! - after the end of the peer's stream is reported, sends still work and
-//!   are reported, until the write side is shut down (half-close).
+//!   are reported, until the write side is shut down (half-close);
+//! - an operation the transport refuses for want of room in its driver
+//!   has changed nothing: nothing is reported for it, nothing was sent,
+//!   and the same operation works when there is room again.
 //!
 //! A transport brings a [`Rig`]: itself, its driver, and a way to turn
 //! the driver. [`run_all`] is the kernel transport's own.
 
-use super::{fail, must, sizes};
+mod kernel;
+mod refusal;
+
+use super::{fail, must};
 use crate::transport::{Happened, Listening, Span, Transport};
-use crate::{Addr, Config, KernelTransport};
-use longshore_common::io::{BufId, Completions, Io, Limits, Op, Token};
+use crate::Addr;
+use longshore_common::io::{Io, Limits};
 use std::net::SocketAddr;
+
+pub use kernel::KernelRig;
 
 /// A transport with one listener slot (0), two connection slots for
 /// connects (0 and 1), and at least two that accepts fill.
@@ -37,10 +45,15 @@ pub trait Rig {
     fn span(&self, i: u32, len: u32) -> Span;
     /// Where the listener listens.
     fn addr(&self) -> Addr;
+    /// Take all the room the driver has for operations, so that the
+    /// transport must refuse the next one; `false` when this rig cannot.
+    fn starve(&mut self) -> bool;
+    /// Turn until the room [`Rig::starve`] took is back.
+    fn relieve(&mut self, seen: &mut Vec<Happened>);
 }
 
 /// Do `f` with the transport and its driver.
-fn with<R: Rig, V>(
+pub(super) fn with<R: Rig, V>(
     rig: &mut R,
     f: impl FnOnce(&mut R::T, &mut <R::T as Transport>::Driver) -> V,
 ) -> V {
@@ -49,7 +62,7 @@ fn with<R: Rig, V>(
 }
 
 /// Turn until `done` says so of everything reported so far.
-fn until<R: Rig>(
+pub(super) fn until<R: Rig>(
     rig: &mut R,
     seen: &mut Vec<Happened>,
     what: &str,
@@ -65,18 +78,18 @@ fn until<R: Rig>(
 }
 
 /// Turn a while longer, for anything that should not be reported.
-fn settle<R: Rig>(rig: &mut R, seen: &mut Vec<Happened>) {
+pub(super) fn settle<R: Rig>(rig: &mut R, seen: &mut Vec<Happened>) {
     for _ in 0..200 {
         rig.turn(seen);
     }
 }
 
-fn count(seen: &[Happened], of: impl Fn(&Happened) -> bool) -> usize {
+pub(super) fn count(seen: &[Happened], of: impl Fn(&Happened) -> bool) -> usize {
     seen.iter().filter(|h| of(h)).count()
 }
 
 /// Reports that name connection slot `slot`.
-fn of_slot(h: &Happened, slot: u32) -> bool {
+pub(super) fn of_slot(h: &Happened, slot: u32) -> bool {
     match *h {
         Happened::Connected { slot: s, .. }
         | Happened::Secured { slot: s, .. }
@@ -93,7 +106,7 @@ fn of_slot(h: &Happened, slot: u32) -> bool {
 }
 
 /// Listen, accept, and connect slot 0: the slot the accept filled.
-fn pair<R: Rig>(rig: &mut R, seen: &mut Vec<Happened>) -> u32 {
+pub(super) fn pair<R: Rig>(rig: &mut R, seen: &mut Vec<Happened>) -> u32 {
     let (addr, scratch) = (rig.addr(), rig.span(7, 256));
     with(rig, |t, d| {
         let bound = must(t.listen(d, 0, &addr, Listening::new(false, 16)), "listen");
@@ -117,7 +130,7 @@ fn pair<R: Rig>(rig: &mut R, seen: &mut Vec<Happened>) -> u32 {
 
 /// A receive on `slot` into `into`: how it ended. A receive that ends at
 /// once must not be reported as well.
-fn receive<R: Rig>(rig: &mut R, seen: &mut Vec<Happened>, slot: u32, into: Span) -> i32 {
+pub(super) fn receive<R: Rig>(rig: &mut R, seen: &mut Vec<Happened>, slot: u32, into: Span) -> i32 {
     let received = |h: &Happened| matches!(h, Happened::Received { slot: s, .. } if *s == slot);
     let before = count(seen, received);
     let at_once = with(rig, |t, d| must(t.recv_into(d, slot, into), "recv_into"));
@@ -253,83 +266,12 @@ fn sends_go_on_after_the_peers_end<R: Rig>(rig: &mut R) {
     }
 }
 
-/// The kernel transport on a backend of the caller's making.
-pub struct KernelRig<IO: Io> {
-    t: KernelTransport<IO>,
-    io: IO,
-    out: Completions,
-    cfg: Config,
-    addr: SocketAddr,
-    ticking: bool,
-}
-
-/// The rig's own timer, outside the transport's tokens.
-const TICK: Token = Token::new(1 << 40);
-
-impl<IO: Io> KernelRig<IO> {
-    /// A rig whose listener listens at `addr`.
-    pub fn new(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) -> KernelRig<IO> {
-        let (limits, cfg) = must(Config::plan(Limits::BASE, sizes(2, 2, 1)), "plan");
-        let cfg = cfg.resolved(&limits);
-        let mut t = KernelTransport::new(&cfg);
-        t.attach(&cfg);
-        KernelRig {
-            t,
-            io: make(limits.with_ops_max(limits.ops_max() + 2)),
-            out: Completions::new(32),
-            cfg,
-            addr,
-            ticking: false,
-        }
-    }
-}
-
-impl<IO: Io> Rig for KernelRig<IO> {
-    type T = KernelTransport<IO>;
-
-    fn parts(&mut self) -> (&mut KernelTransport<IO>, &mut IO) {
-        (&mut self.t, &mut self.io)
-    }
-
-    fn turn(&mut self, seen: &mut Vec<Happened>) {
-        if !self.ticking {
-            // So that time passes when nothing else does.
-            must(
-                self.io.submit(TICK, Op::Timeout { nanos: 250_000 }),
-                "timer",
-            );
-            self.ticking = true;
-        }
-        must(self.io.tick(true, &mut self.out), "tick");
-        while let Some(c) = self.out.pop() {
-            if c.token() == TICK {
-                self.ticking = false;
-                continue;
-            }
-            match self.t.translate(&mut self.io, c) {
-                Some(Happened::Nothing) => {}
-                Some(happened) => seen.push(happened),
-                None => fail(format_args!(
-                    "a completion the transport did not know: {c:?}"
-                )),
-            }
-        }
-    }
-
-    fn span(&self, i: u32, len: u32) -> Span {
-        Span::new(BufId::new(self.cfg.frame_first().get() + i), 0, len)
-    }
-
-    fn addr(&self) -> Addr {
-        Addr::Ip(self.addr)
-    }
-}
-
 /// Every statement, each on a rig of its own from `rig`.
 pub fn check<R: Rig>(rig: &mut impl FnMut() -> R) {
     every_operation_is_reported_once(&mut rig());
     closes_of_empty_and_connecting_slots(&mut rig());
     sends_go_on_after_the_peers_end(&mut rig());
+    refusal::a_refused_operation_changes_nothing(&mut rig());
 }
 
 /// The kernel transport on a backend from `make`, listening at `addr`
