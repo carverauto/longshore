@@ -187,8 +187,9 @@ impl PacketLink {
                 continue;
             };
             let size = self.sizes.packet_max as usize;
+            let len = self.packets[slot as usize].len as usize;
             let (from_at, to_at) = (slot as usize * size, twin as usize * size);
-            self.bytes.copy_within(from_at..from_at + size, to_at);
+            self.bytes.copy_within(from_at..from_at + len, to_at);
             self.packets[twin as usize] = self.packets[slot as usize];
             self.launch(twin, now);
             self.counts.duplicated += 1;
