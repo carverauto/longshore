@@ -13,7 +13,7 @@ use hegel::TestCase;
 use longshore_common::io::extents::{Extent, ExtentError, Extents};
 use longshore_common::io::{BufId, Limits};
 use longshore_common::sim::{Faults, SimIo};
-use longshore_tcp::check::{fail, must, sizes, World};
+use longshore_tcp::check::{fail, must, prefixed, sizes, World};
 use longshore_tcp::{Addr, Conn, ConnOpts, Framing, HeaderFraming, ListenConfig, Listener, Rx};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -42,16 +42,24 @@ fn world(seed: u64, client: ConnOpts, server: ConnOpts) -> (World<SimIo>, Conn, 
     (w, c, s)
 }
 
-/// Send `bytes` from the client, turning while there is no room.
-fn send(w: &mut World<SimIo>, c: Conn, bytes: &[u8]) {
-    for _ in 0..2000 {
+/// Send `bytes` from the client, turning while there is no room; whether
+/// it had to turn.
+fn send(w: &mut World<SimIo>, c: Conn, bytes: &[u8]) -> bool {
+    for turned in 0..2000 {
         if w.send(c, bytes) {
-            return;
+            return turned > 0;
         }
         w.turn();
         while w.client().0.next_event().is_some() {}
     }
-    fail(format_args!("never room to send {} bytes", bytes.len()));
+    fail(format_args!("never room to send {} bytes", bytes.len()))
+}
+
+/// Nothing more comes: what was pulled is all there is.
+fn nothing_more(w: &mut World<SimIo>, s: Conn, got: &mut Vec<Vec<u8>>) {
+    let so_far = got.len();
+    pull(w, s, 20, got);
+    assert_eq!(got.len(), so_far, "more arrived than was sent");
 }
 
 /// Turn `turns` times, pulling and releasing what the server's end has.
@@ -125,7 +133,7 @@ fn frames_survive_any_framing_and_any_cut_of_the_stream(tc: TestCase) {
     let (mut at, mut got) = (0, Vec::new());
     while at < stream.len() {
         let piece = (between(&tc, 1, 400) as usize).min(stream.len() - at);
-        send(&mut w, c, &stream[at..at + piece]);
+        let _waited: bool = send(&mut w, c, &stream[at..at + piece]);
         at += piece;
         let turns = between(&tc, 0, 3);
         pull(&mut w, s, turns, &mut got);
@@ -136,6 +144,7 @@ fn frames_survive_any_framing_and_any_cut_of_the_stream(tc: TestCase) {
         }
         pull(&mut w, s, 1, &mut got);
     }
+    nothing_more(&mut w, s, &mut got);
     assert!(
         got == frames,
         "{} of {} frames, {rx:?}",
@@ -159,7 +168,7 @@ fn raw_bytes_arrive_as_they_were_sent(tc: TestCase) {
     let (mut at, mut got) = (0, Vec::new());
     while at < stream.len() {
         let piece = (between(&tc, 1, 900) as usize).min(stream.len() - at);
-        send(&mut w, c, &stream[at..at + piece]);
+        let _waited: bool = send(&mut w, c, &stream[at..at + piece]);
         at += piece;
         let turns = between(&tc, 0, 2);
         pull(&mut w, s, turns, &mut got);
@@ -170,27 +179,37 @@ fn raw_bytes_arrive_as_they_were_sent(tc: TestCase) {
         }
         pull(&mut w, s, 1, &mut got);
     }
+    nothing_more(&mut w, s, &mut got);
     assert!(got.concat() == stream, "{} pieces", got.len());
 }
 
 /// Frames queued in one turn share segments and leave in fewer sends:
-/// they arrive in the order queued, each with its own boundaries.
+/// they arrive in the order queued, each with its own boundaries. And
+/// they do share: where three frames that fit one segment are queued with
+/// no turn between, there are fewer sends than frames.
 #[hegel::test]
 fn frames_queued_together_keep_their_order_and_their_boundaries(tc: TestCase) {
-    let framing = HeaderFraming::length_prefix(2000).unwrap();
+    let framing = must(HeaderFraming::length_prefix(2000), "framing");
     let opts = ConnOpts::new(Framing::Header(framing));
     let (mut w, c, s) = world(9, opts, opts);
+    *w.sends() = 0;
     let count = between(&tc, 1, 20);
     let (mut frames, mut got) = (Vec::new(), Vec::new());
+    // The frames queued since the last turn, and their bytes; and whether
+    // three that fit a segment of 4096 bytes were ever queued so.
+    let (mut together, mut bytes, mut shared) = (0, 0, false);
     for i in 0..count {
-        let body = between(&tc, 0, 1500);
-        let mut f = body.to_be_bytes().to_vec();
-        f.extend((0..body).map(|at| (at as u8).wrapping_mul(11) ^ i as u8));
-        send(&mut w, c, &f);
+        let f = prefixed(between(&tc, 0, 1500) as usize, i as u8);
+        if send(&mut w, c, &f) {
+            (together, bytes) = (0, 0);
+        }
+        (together, bytes) = (together + 1, bytes + f.len());
+        shared |= together >= 3 && bytes <= 4096;
         frames.push(f);
         // Mostly no turn between two frames: they are queued together.
         if between(&tc, 0, 3) == 0 {
             pull(&mut w, s, 1, &mut got);
+            (together, bytes) = (0, 0);
         }
     }
     for _ in 0..400 {
@@ -199,7 +218,13 @@ fn frames_queued_together_keep_their_order_and_their_boundaries(tc: TestCase) {
         }
         pull(&mut w, s, 1, &mut got);
     }
+    nothing_more(&mut w, s, &mut got);
     assert!(got == frames, "{} of {} frames", got.len(), frames.len());
+    let sends = *w.sends() as usize;
+    assert!(
+        !shared || sends < frames.len(),
+        "{sends} sends for {count} frames"
+    );
 }
 
 /// What the test knows of a buffer: its holds, and how often it has
