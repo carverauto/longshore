@@ -137,6 +137,8 @@ impl DiskFaults {
 
     /// A file or directory sync returns `-EIO` and marks covered writes un-durable.
     /// Models a failed `fsync(2)` / `fdatasync(2)` where Linux clears dirty pages with `AS_EIO`.
+    /// A write to a file opened with [`crate::io::OpenFlags::dsync`] carries its own
+    /// sync and rolls this rate too.
     #[inline]
     pub const fn sync_fail(self) -> u32 {
         self.sync_fail

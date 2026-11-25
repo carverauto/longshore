@@ -131,6 +131,11 @@ pub const O_DIRECTORY: u32 = 0o0040000;
 /// Bypass the page cache.
 #[cfg(target_arch = "aarch64")]
 pub const O_DIRECT: u32 = 0o0200000;
+/// Complete each write only when its data is on stable storage. The value is
+/// the one x86-64 and AArch64 share; other architectures differ, so it is
+/// defined for these two only.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub const O_DSYNC: u32 = 0o10000;
 /// Open for reading, with the descriptor closed on `exec`.
 pub const O_RDONLY_CLOEXEC: u32 = 0o2000000;
 /// Send on a socket.
@@ -301,6 +306,9 @@ pub fn open_flags_linux(f: crate::io::OpenFlags) -> u32 {
     }
     if f.directory {
         out |= O_DIRECTORY;
+    }
+    if f.dsync {
+        out |= O_DSYNC;
     }
     out
 }

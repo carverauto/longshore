@@ -43,6 +43,9 @@ pub const O_CREAT: c_int = 0x0200;
 pub const O_TRUNC: c_int = 0x0400;
 pub const O_EXCL: c_int = 0x0800;
 pub const O_DIRECTORY: c_int = 0x0010_0000;
+/// Hands each write to the drive before it returns; the drive's own cache
+/// is not flushed (only `F_FULLFSYNC` does that).
+pub const O_DSYNC: c_int = 0x0040_0000;
 pub const O_CLOEXEC: c_int = 0x0100_0000;
 
 pub const F_SETFD: c_int = 2;

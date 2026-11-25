@@ -51,6 +51,8 @@ pub const O_DIRECTORY: c_int = 0o0200000;
 pub const O_DIRECTORY: c_int = 0o0040000;
 #[cfg(target_arch = "aarch64")]
 pub const O_DIRECT: c_int = 0o0200000;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub const O_DSYNC: c_int = 0o10000;
 
 pub const AT_FDCWD: c_int = -100;
 pub const FALLOC_FL_KEEP_SIZE: c_int = 0x01;

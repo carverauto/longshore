@@ -17,6 +17,7 @@ impl OpenFlags {
         empty: false,
         direct: false,
         directory: false,
+        dsync: false,
     };
 
     /// Open for reading.
@@ -107,6 +108,26 @@ impl OpenFlags {
     #[inline]
     pub const fn with_directory(mut self, directory: bool) -> Self {
         self.directory = directory;
+        self
+    }
+
+    /// Every write completes only when its data, and the metadata needed to
+    /// read it back, is on stable storage (`O_DSYNC`), with no `FileSync`.
+    ///
+    /// The file's own name is not covered: a newly created file's directory
+    /// entry is durable only once its directory is synced. On macOS the
+    /// kernel hands each write to the drive but does not flush the drive's
+    /// own cache, as `F_FULLFSYNC` does for `FileSync`; a power loss there
+    /// can still lose a completed write.
+    #[inline]
+    pub const fn dsync(self) -> bool {
+        self.dsync
+    }
+
+    /// This value with [`OpenFlags::dsync`] set to `dsync`.
+    #[inline]
+    pub const fn with_dsync(mut self, dsync: bool) -> Self {
+        self.dsync = dsync;
         self
     }
 }

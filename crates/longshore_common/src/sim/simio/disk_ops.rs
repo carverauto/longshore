@@ -103,9 +103,24 @@ impl SimDisk {
             return -ENOSPC;
         }
         let data = &pool[range];
-        if let Some(pf) = placed {
-            return self.write_placed(ii, file_off, data, pf, ctx);
+        let res = match placed {
+            Some(pf) => self.write_placed(ii, file_off, data, pf, ctx),
+            None => self.write_rolled(ii, file_off, data, ctx),
+        };
+        if open.flags.dsync && res > 0 {
+            return self.settle_dsync_write(ii, res, ctx);
         }
+        res
+    }
+
+    /// A write with no placed fault: each fault rate is rolled in turn.
+    fn write_rolled(
+        &mut self,
+        ii: usize,
+        file_off: u64,
+        data: &[u8],
+        ctx: &mut DiskFaultCtx<'_>,
+    ) -> i32 {
         if data.is_empty() {
             return 0;
         }
