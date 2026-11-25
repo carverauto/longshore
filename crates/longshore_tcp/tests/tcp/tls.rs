@@ -24,6 +24,9 @@ use std::net::SocketAddr;
 #[cfg(test)]
 #[path = "tls/ending.rs"]
 mod ending;
+#[cfg(test)]
+#[path = "tls/memory.rs"]
+mod memory;
 
 #[global_allocator]
 static ALLOC: Guard = Guard;

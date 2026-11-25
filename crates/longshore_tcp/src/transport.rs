@@ -337,6 +337,14 @@ pub trait Transport {
         slot: u32,
         into: Span,
     ) -> Result<Option<i32>, Refused>;
+    /// Receive once on the protected `slot` into memory of the transport's
+    /// own: for when its armed receive ended because the ring had no
+    /// buffer. `true` when a receive was started. It ends with
+    /// [`Happened::Received`]: the bytes it took, 0 at the end of the
+    /// stream, or a negated error; what it took is opened with
+    /// [`Transport::open`] and no bytes. `false` when the transport holds
+    /// a whole record that waits to be opened.
+    fn recv_kept(&mut self, d: &mut Self::Driver, slot: u32) -> Result<bool, Refused>;
     /// Stop the receive in flight on `slot`; it reports its end as usual.
     fn cancel_recv(&mut self, d: &mut Self::Driver, slot: u32) -> Result<(), Refused>;
     /// Return a ring buffer named in [`Happened::RingData`].

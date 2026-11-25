@@ -325,6 +325,13 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         self.start(d, slot, RECV, op).map(|()| None)
     }
 
+    fn recv_kept(&mut self, d: &mut IO, slot: u32) -> Result<bool, Refused> {
+        if !self.secure.is_on(slot) {
+            return Err(Refused::Unsupported);
+        }
+        Ok(self.secure.recv_kept(d, slot))
+    }
+
     fn cancel_recv(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let target = self.conn_token(slot, RECV);
         self.start(d, slot, CANCEL, Op::Cancel { target })

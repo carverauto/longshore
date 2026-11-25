@@ -127,6 +127,8 @@ pub(super) struct ConnState {
     /// The socket in the slot, and how far its close has come.
     pub(super) sock: Socket,
     pub(super) redial: bool,
+    /// Its armed receive ended because the ring had no buffer.
+    pub(super) dry: bool,
     /// The listener whose next connection the kernel has already put in
     /// this slot, while operations of the last one are still in flight; or
     /// `NONE`. It becomes a connection once the slot is free.
@@ -199,6 +201,7 @@ impl ConnState {
             why: Why::Reset,
             sock: Socket::None,
             redial: false,
+            dry: false,
             parked: NONE,
             parked_by: None,
             accepted_by: Listener::NONE,

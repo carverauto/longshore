@@ -39,8 +39,10 @@ impl<T: Transport> Net<T> {
         if !self.cfg.sizes.tls || !self.t.can_secure(client) {
             return Err(NetError::NoTls);
         }
-        // A record is opened whole, into frame memory.
-        if opts.rx == Rx::Ring && self.cfg.sizes.frame_size < RING_DST_MIN {
+        // A record is opened whole, into frame memory, and a frame that
+        // spans records needs a second buffer while it is put together.
+        let sizes = &self.cfg.sizes;
+        if opts.rx == Rx::Ring && (sizes.frame_size < RING_DST_MIN || sizes.frames < 2) {
             return Err(NetError::Framing);
         }
         Ok(())
@@ -114,7 +116,17 @@ impl<T: Transport> Net<T> {
             let ext = match c.backlog {
                 Some(ext) => ext,
                 None => {
-                    let Some(ext) = self.extents.take() else {
+                    // A protected connection can need two buffers: the
+                    // frame it is putting together, and the records that
+                    // hold the rest of it. The last free one is kept for
+                    // a connection that holds one already, or those that
+                    // do could all wait for a second for ever.
+                    let first = c.asm.is_none() && c.ready.is_none();
+                    let spare = usize::from(first);
+                    let taken = (self.extents.free_count() > spare)
+                        .then(|| self.extents.take())
+                        .flatten();
+                    let Some(ext) = taken else {
                         if kept {
                             // Asked for again when frame memory is free.
                             c.unopened = true;
@@ -151,6 +163,39 @@ impl<T: Transport> Net<T> {
         }
         self.end_if_opened(slot);
         self.trim_backlog(slot)
+    }
+
+    /// The ring had no buffer for the protected `slot`: receive into its
+    /// stream's own memory instead, once.
+    pub(super) fn read_kept(&mut self, d: &mut T::Driver, slot: u32) {
+        match self.t.recv_kept(d, slot) {
+            Ok(true) => {
+                let c = &mut self.conns[slot as usize];
+                (c.recv_busy, c.dry) = (true, false);
+            }
+            // A whole record waits there for frame memory.
+            Ok(false) => self.conns[slot as usize].unopened = true,
+            Err(_) => self.add_work(slot, W_READ),
+        }
+    }
+
+    /// The receive [`Net::read_kept`] started ended.
+    pub(super) fn on_kept(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        let Ok(n) = u32::try_from(result) else {
+            return self.end(slot, Why::of(result));
+        };
+        let c = &mut self.conns[slot as usize];
+        if n == 0 {
+            // As when an armed receive finds the end of the stream.
+            c.cut_off = true;
+            return self.end_if_opened(slot);
+        }
+        (c.last_active, c.unopened) = (self.now, true);
+        if self.open_ring(d, slot) {
+            self.queue_event(slot, EV_READABLE);
+        }
+        // Back to the ring, or here again while it stays empty.
+        self.add_work(slot, W_READ);
     }
 
     /// The stream of `slot` ended without a close alert: it is a broken

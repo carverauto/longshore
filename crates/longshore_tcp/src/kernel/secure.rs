@@ -77,6 +77,8 @@ pub(super) struct Secure {
     /// One per slot once attached; empty without `Sizes::with_tls`.
     streams: Box<[Stream]>,
     phase: Box<[Phase]>,
+    /// The receive in flight brings bytes for the stream to keep.
+    kept: Box<[bool]>,
     /// The first of the slots' buffers, and what a stream is told of each.
     first: BufId,
     cap: u32,
@@ -88,6 +90,7 @@ impl Secure {
             tls: Tls::new(),
             streams: Box::default(),
             phase: vec![Phase::Plain; conns as usize].into_boxed_slice(),
+            kept: vec![false; conns as usize].into_boxed_slice(),
             first: BufId::new(0),
             cap: 0,
         }
@@ -178,6 +181,13 @@ impl Secure {
         }
     }
 
+    /// A receive into the stream's own buffer; `false` when it is full.
+    pub(super) fn recv_kept<IO: Io>(&mut self, d: &mut IO, slot: u32) -> bool {
+        let started = self.streams[slot as usize].recv_carried(d);
+        self.kept[slot as usize] = started;
+        started
+    }
+
     pub(super) fn send<IO: Io>(&mut self, d: &mut IO, slot: u32, from: Span) {
         self.streams[slot as usize].send(d, from.buf(), from.off(), from.len(), u32::MAX);
     }
@@ -229,23 +239,15 @@ impl Secure {
         shutdown: (Token, Op),
     ) -> Happened {
         let i = slot as usize;
+        let kept = !sent && core::mem::take(&mut self.kept[i]);
+        if kept && matches!(self.phase[i], Phase::Secure | Phase::Alerting) {
+            let result = self.streams[i].on_carried(result);
+            return Happened::Received { slot, result };
+        }
         match (self.phase[i], sent) {
             (Phase::Plain, true) => Happened::Sent { slot, result },
             (Phase::Plain | Phase::AlertAborted, false) => Happened::Received { slot, result },
-            (Phase::Handshake, _) => {
-                let result = match self.streams[i].on_handshake(d, sent, result) {
-                    Step::Pending => return Happened::Nothing,
-                    Step::Done(r) => r,
-                    Step::Tls(_) => TLS_FAILED,
-                };
-                self.phase[i] = if result == 0 {
-                    Phase::Secure
-                } else {
-                    self.streams[i].reset();
-                    Phase::Plain
-                };
-                Happened::Secured { slot, result }
-            }
+            (Phase::Handshake, _) => self.on_handshake_io(d, slot, sent, result),
             (Phase::Aborted, _) => {
                 self.streams[i].reset();
                 self.phase[i] = Phase::Plain;
@@ -295,5 +297,28 @@ impl Secure {
                 }
             }
         }
+    }
+
+    /// A completion of the handshake of `slot`.
+    fn on_handshake_io<IO: Io>(
+        &mut self,
+        d: &mut IO,
+        slot: u32,
+        sent: bool,
+        result: i32,
+    ) -> Happened {
+        let i = slot as usize;
+        let result = match self.streams[i].on_handshake(d, sent, result) {
+            Step::Pending => return Happened::Nothing,
+            Step::Done(r) => r,
+            Step::Tls(_) => TLS_FAILED,
+        };
+        self.phase[i] = if result == 0 {
+            Phase::Secure
+        } else {
+            self.streams[i].reset();
+            Phase::Plain
+        };
+        Happened::Secured { slot, result }
     }
 }

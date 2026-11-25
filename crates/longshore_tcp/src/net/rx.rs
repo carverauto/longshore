@@ -49,6 +49,11 @@ impl<T: Transport> Net<T> {
                     // hold to the last buffer.
                     return self.read_direct(d, slot);
                 }
+                if c.secure && c.dry && c.chunk_head == NONE {
+                    // Nor does a protected one: its stream has memory
+                    // for the records it carries.
+                    return self.read_kept(d, slot);
+                }
                 if self.t.recv_armed(d, slot).is_ok() {
                     self.conns[slot as usize].armed = true;
                 } else {
@@ -155,6 +160,9 @@ impl<T: Transport> Net<T> {
         if c.st != St::Up {
             return self.try_free(slot);
         }
+        if c.secure && c.opts.rx == Rx::Ring {
+            return self.on_kept(d, slot, result);
+        }
         let Ok(n) = u32::try_from(result) else {
             return self.end(slot, Why::of(result));
         };
@@ -247,7 +255,10 @@ impl<T: Transport> Net<T> {
             0 => self.peer_finished(slot),
             // The ring was empty, or we stopped the receive ourselves:
             // armed again on the next `poll` unless reading is paused.
-            r if r == -ENOBUFS || r == -ECANCELED => self.add_work(slot, W_READ),
+            r if r == -ENOBUFS || r == -ECANCELED => {
+                c.dry = r == -ENOBUFS;
+                self.add_work(slot, W_READ);
+            }
             _ => self.end(slot, Why::of(result)),
         }
     }

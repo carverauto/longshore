@@ -130,6 +130,48 @@ impl Stream {
     }
 }
 
+impl Stream {
+    /// Ask `Io` for more of what a TLS stream carries, into the stream's
+    /// own receive buffer: for an owner whose armed receive ended because
+    /// the ring had no buffer left. `true` when a receive was started:
+    /// its completion goes to [`Stream::on_carried`], and what it brought
+    /// is opened by [`Stream::on_ring_recv`] with no bytes. `false` on a
+    /// plain stream, and when the buffer is full: a whole record waits
+    /// there to be opened.
+    pub fn recv_carried<IO: Io>(&mut self, io: &mut IO) -> bool {
+        #[cfg(feature = "tls-core")]
+        {
+            let (sock, recv_token) = (self.sock, self.recv_token);
+            if let Some(t) = self.tls.as_mut().filter(|t| t.active) {
+                let room = t.carried_room(io);
+                if room > 0 {
+                    let (buf, off) = (t.rx_buf, t.rx_end);
+                    let op = longshore_common::io::Op::Recv {
+                        sock,
+                        buf,
+                        off,
+                        len: room,
+                    };
+                    Self::submit(io, recv_token, op);
+                }
+                return room > 0;
+            }
+        }
+        let _: &mut IO = io;
+        false
+    }
+
+    /// The completion of the receive [`Stream::recv_carried`] started:
+    /// `result` itself.
+    pub fn on_carried(&mut self, result: i32) -> i32 {
+        #[cfg(feature = "tls-core")]
+        if let Some(t) = self.tls.as_mut().filter(|t| t.active && result > 0) {
+            t.rx_end += result.unsigned_abs();
+        }
+        result
+    }
+}
+
 /// What opening one record came to.
 #[cfg(feature = "tls-core")]
 enum Opened {
@@ -211,6 +253,18 @@ impl crate::stream::Tls {
         }
         self.closed = step.closed;
         Ok(step)
+    }
+
+    /// Room behind the carried bytes, once they lie at the front.
+    fn carried_room<IO: Io>(&mut self, io: &mut IO) -> u32 {
+        let (start, end) = (self.rx_start as usize, self.rx_end as usize);
+        let rx = io.buf(self.rx_buf);
+        let cap = rx.len().min(self.cap as usize);
+        if start > 0 {
+            rx.copy_within(start..end, 0);
+            (self.rx_start, self.rx_end) = (0, (end - start) as u32);
+        }
+        (cap as u32).saturating_sub(self.rx_end)
     }
 
     /// Add `take` bytes of `buf` from `at` to the carried bytes. What
