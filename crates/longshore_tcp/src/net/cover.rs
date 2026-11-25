@@ -11,6 +11,7 @@
 use super::state::{LSt, St};
 use super::Net;
 use crate::handle::Conn;
+use crate::hits::Hits;
 use crate::transport::Transport;
 
 /// What can reach a connection: the columns of the state table.
@@ -61,8 +62,8 @@ pub(super) enum LCol {
 /// state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Coverage {
-    hits: [[u32; Coverage::EVENTS.len()]; Coverage::STATES.len()],
-    listeners: [[u32; Coverage::LISTENER_EVENTS.len()]; Coverage::LISTENER_STATES.len()],
+    hits: Hits<{ Coverage::STATES.len() }, { Coverage::EVENTS.len() }>,
+    listeners: Hits<{ Coverage::LISTENER_STATES.len() }, { Coverage::LISTENER_EVENTS.len() }>,
 }
 
 impl Coverage {
@@ -114,35 +115,27 @@ impl Coverage {
 
     /// Nothing counted.
     pub const NONE: Coverage = Coverage {
-        hits: [[0; Coverage::EVENTS.len()]; Coverage::STATES.len()],
-        listeners: [[0; Coverage::LISTENER_EVENTS.len()]; Coverage::LISTENER_STATES.len()],
+        hits: Hits::NONE,
+        listeners: Hits::NONE,
     };
 
     /// How often event `event` reached a listener in state `state`, by
     /// their places in [`Coverage::LISTENER_STATES`] and
     /// [`Coverage::LISTENER_EVENTS`].
     pub const fn listener_hits(&self, state: usize, event: usize) -> u32 {
-        self.listeners[state][event]
+        self.listeners.get(state, event)
     }
 
     /// How often event `event` reached a connection in state `state`, by
     /// their places in [`Coverage::STATES`] and [`Coverage::EVENTS`].
     pub const fn hits(&self, state: usize, event: usize) -> u32 {
-        self.hits[state][event]
+        self.hits.get(state, event)
     }
 
     /// Add what `other` counted.
     pub fn add(&mut self, other: &Coverage) {
-        for (row, more) in self.hits.iter_mut().zip(other.hits.iter()) {
-            for (cell, n) in row.iter_mut().zip(more.iter()) {
-                *cell = cell.saturating_add(*n);
-            }
-        }
-        for (row, more) in self.listeners.iter_mut().zip(other.listeners.iter()) {
-            for (cell, n) in row.iter_mut().zip(more.iter()) {
-                *cell = cell.saturating_add(*n);
-            }
-        }
+        self.hits.add(&other.hits);
+        self.listeners.add(&other.listeners);
     }
 }
 
@@ -171,26 +164,20 @@ impl<T: Transport> Net<T> {
     /// Count `col` reaching connection `slot` in the state it is in.
     #[inline]
     pub(super) fn cover(&mut self, slot: u32, col: Col) {
-        if cfg!(debug_assertions) {
-            let st = self.conns[slot as usize].st;
-            let cell = &mut self.coverage.hits[row(st)][col as usize];
-            *cell = cell.saturating_add(1);
-        }
+        let st = self.conns[slot as usize].st;
+        self.coverage.hits.count(row(st), col as usize);
     }
 
     /// Count `col` reaching listener `l` in the state it is in.
     #[inline]
     pub(super) fn cover_listener(&mut self, l: u32, col: LCol) {
-        if cfg!(debug_assertions) {
-            let row = match self.listeners[l as usize].st {
-                LSt::Free => 0,
-                LSt::Binding => 1,
-                LSt::Listening => 2,
-                LSt::Closing => 3,
-            };
-            let cell = &mut self.coverage.listeners[row][col as usize];
-            *cell = cell.saturating_add(1);
-        }
+        let row = match self.listeners[l as usize].st {
+            LSt::Free => 0,
+            LSt::Binding => 1,
+            LSt::Listening => 2,
+            LSt::Closing => 3,
+        };
+        self.coverage.listeners.count(row, col as usize);
     }
 
     /// Count `col` reaching the connection `conn` names, if it names one.

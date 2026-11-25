@@ -75,64 +75,62 @@ const PHASES: [&str; 6] = [
     "U.U..", // AlertAborted
 ];
 
-/// Hold `hits` of the cell `name` against what the table wants of it.
+/// Hold a counted table against what is wanted of it: `want` has a row
+/// of marks for each of `rows` and a mark for each of `cols`. `T` and `t`
+/// are for TLS, as [`EXPECTED`] says.
 #[cfg(test)]
-fn judge(wrong: &mut Vec<String>, name: core::fmt::Arguments<'_>, hits: u32, want: u8) {
-    println!("{name} | {hits:>8} | {}", want as char);
-    match want {
-        b'R' if hits == 0 => wrong.push(format!("{name}: never reached")),
-        b'U' if hits > 0 => wrong.push(format!("{name}: reached {hits} times")),
-        _ => {}
-    }
-}
-
-#[cfg(test)]
-fn report_others(cover: &Coverage, phases: &PhaseCoverage) -> Vec<String> {
-    let mut wrong = Vec::new();
-    for (row, state) in Coverage::LISTENER_STATES.iter().enumerate() {
-        for (col, event) in Coverage::LISTENER_EVENTS.iter().enumerate() {
-            let name = format_args!("listener {state:>9} | {event:<26}");
-            let want = LISTENERS[row].as_bytes()[col];
-            judge(&mut wrong, name, cover.listener_hits(row, col), want);
-        }
-    }
-    if !cfg!(feature = "tls-core") {
-        return wrong;
-    }
-    for (row, phase) in PhaseCoverage::PHASES.iter().enumerate() {
-        for (col, event) in PhaseCoverage::EVENTS.iter().enumerate() {
-            let name = format_args!("phase {phase:>12} | {event:<28}");
-            let want = PHASES[row].as_bytes()[col];
-            judge(&mut wrong, name, phases.hits(row, col), want);
-        }
-    }
-    wrong
-}
-
-#[cfg(test)]
-fn report(cover: &Coverage) -> Vec<String> {
-    let mut wrong = Vec::new();
-    for (row, state) in Coverage::STATES.iter().enumerate() {
-        let want = EXPECTED[row].as_bytes();
-        for (col, event) in Coverage::EVENTS.iter().enumerate() {
-            let hits = cover.hits(row, col);
+fn held(
+    wrong: &mut Vec<String>,
+    (table, rows, cols): (&str, &[&str], &[&str]),
+    want: &[&str],
+    hits: impl Fn(usize, usize) -> u32,
+) {
+    let tls = cfg!(feature = "tls-core");
+    for (row, state) in rows.iter().enumerate() {
+        for (col, event) in cols.iter().enumerate() {
+            let (n, mark) = (hits(row, col), want[row].as_bytes()[col]);
             println!(
-                "{state:>10} | {event:<24} | {hits:>8} | {}",
-                want[col] as char
+                "{table} {state:>12} | {event:<28} | {n:>8} | {}",
+                mark as char
             );
-            let tls = cfg!(feature = "tls-core");
-            let wanted = match want[col] {
+            let wanted = match mark {
                 b'T' if tls => b'R',
                 b't' if tls => b'.',
                 b'T' | b't' => b'U',
                 other => other,
             };
             match wanted {
-                b'R' if hits == 0 => wrong.push(format!("{state} / {event}: never reached")),
-                b'U' if hits > 0 => wrong.push(format!("{state} / {event}: reached {hits} times")),
+                b'R' if n == 0 => wrong.push(format!("{table} {state} / {event}: never reached")),
+                b'U' if n > 0 => {
+                    wrong.push(format!("{table} {state} / {event}: reached {n} times"));
+                }
                 _ => {}
             }
         }
+    }
+}
+
+/// What the three tables hold against what was counted.
+#[cfg(test)]
+fn report(cover: &Coverage, phases: &PhaseCoverage) -> Vec<String> {
+    let mut wrong = Vec::new();
+    let conns = ("connection", &Coverage::STATES[..], &Coverage::EVENTS[..]);
+    held(&mut wrong, conns, &EXPECTED, |r, c| cover.hits(r, c));
+    let listeners = (
+        "listener",
+        &Coverage::LISTENER_STATES[..],
+        &Coverage::LISTENER_EVENTS[..],
+    );
+    held(&mut wrong, listeners, &LISTENERS, |r, c| {
+        cover.listener_hits(r, c)
+    });
+    if cfg!(feature = "tls-core") {
+        let slots = (
+            "phase",
+            &PhaseCoverage::PHASES[..],
+            &PhaseCoverage::EVENTS[..],
+        );
+        held(&mut wrong, slots, &PHASES, |r, c| phases.hits(r, c));
     }
     wrong
 }
@@ -175,8 +173,7 @@ fn campaign(campaign: Campaign, seeds: core::ops::Range<u64>) -> Stats {
 /// excludes them.
 #[cfg(test)]
 fn excluded(total: &Stats) -> Vec<String> {
-    let mut wrong = report(&total.cover);
-    wrong.extend(report_others(&total.cover, &total.phases));
+    let mut wrong = report(&total.cover, &total.phases);
     wrong.retain(|cell| cell.contains(": reached "));
     wrong
 }
@@ -197,8 +194,7 @@ fn random_operations_keep_what_a_caller_relies_on() {
     // And were where the state table says a connection can be, and
     // nowhere it says one cannot.
     // (The cells are counted in debug builds only.)
-    let mut wrong = report(&total.cover);
-    wrong.extend(report_others(&total.cover, &total.phases));
+    let wrong = report(&total.cover, &total.phases);
     assert!(!cfg!(debug_assertions) || wrong.is_empty(), "{wrong:#?}");
 }
 

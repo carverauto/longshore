@@ -8,12 +8,13 @@
 //! in debug builds only, for the model test's report of what it reached.
 
 use super::KernelTransport;
+use crate::hits::Hits;
 use longshore_common::io::Io;
 
 /// How often each event reached a slot in each phase of its TLS.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PhaseCoverage {
-    hits: [[u32; PhaseCoverage::EVENTS.len()]; PhaseCoverage::PHASES.len()],
+    hits: Hits<{ PhaseCoverage::PHASES.len() }, { PhaseCoverage::EVENTS.len() }>,
 }
 
 impl PhaseCoverage {
@@ -37,33 +38,24 @@ impl PhaseCoverage {
     ];
 
     /// Nothing counted.
-    pub const NONE: PhaseCoverage = PhaseCoverage {
-        hits: [[0; PhaseCoverage::EVENTS.len()]; PhaseCoverage::PHASES.len()],
-    };
+    pub const NONE: PhaseCoverage = PhaseCoverage { hits: Hits::NONE };
 
     /// How often event `event` reached a slot in phase `phase`, by their
     /// places in [`PhaseCoverage::PHASES`] and [`PhaseCoverage::EVENTS`].
     pub const fn hits(&self, phase: usize, event: usize) -> u32 {
-        self.hits[phase][event]
+        self.hits.get(phase, event)
     }
 
     /// Count event `event` in phase `phase`.
     #[cfg(feature = "tls-core")]
     #[inline]
     pub(super) fn count(&mut self, phase: usize, event: usize) {
-        if cfg!(debug_assertions) {
-            let cell = &mut self.hits[phase][event];
-            *cell = cell.saturating_add(1);
-        }
+        self.hits.count(phase, event);
     }
 
     /// Add what `other` counted.
     pub fn add(&mut self, other: &PhaseCoverage) {
-        for (row, more) in self.hits.iter_mut().zip(other.hits.iter()) {
-            for (cell, n) in row.iter_mut().zip(more.iter()) {
-                *cell = cell.saturating_add(*n);
-            }
-        }
+        self.hits.add(&other.hits);
     }
 }
 

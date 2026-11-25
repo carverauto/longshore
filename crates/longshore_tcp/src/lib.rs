@@ -71,6 +71,7 @@ pub mod deadline;
 pub mod event;
 pub mod framing;
 pub mod handle;
+mod hits;
 pub mod kernel;
 pub mod net;
 mod sizes;
