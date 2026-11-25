@@ -108,17 +108,19 @@ pub(super) fn answered_after_shutdown<IO: Io>(
 /// closed connection comes back when its close and its receive have
 /// ended, not at once.
 fn await_client_slot<IO: Io>(w: &mut World<IO>, round: u8) {
+    let (client, _) = w.client();
+    let slots = client.config().conns();
     for _ in 0..4000 {
-        let (client, _) = w.client();
-        if client.usage().connections() < 4 {
+        let (set, _) = w.client();
+        if set.usage().connections() < slots {
             return;
         }
         w.turn();
     }
-    let (client, _) = w.client();
-    let held = client.usage();
+    let (set, _) = w.client();
+    let held = set.usage();
     fail(format_args!(
-        "round {round}: no connection slot came back: {held:?}"
+        "round {round}: none of {slots} connection slots came back: {held:?}"
     ));
 }
 
