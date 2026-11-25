@@ -203,14 +203,19 @@ fn closes_of_empty_and_connecting_slots<R: Rig>(rig: &mut R) {
         count(all, connected) == 1 && count(all, closed(0)) == 1
     });
     settle(rig, &mut seen);
-    // No socket was left in the slot: it connects again.
+    // No socket was left in the slot: it connects again. (The first
+    // connect may well have succeeded before its close took effect.)
+    let up = |h: &Happened| matches!(h, Happened::Connected { slot: 0, result } if *result >= 0);
+    let (before, attempts) = (count(&seen, up), count(&seen, connected));
     with(rig, |t, d| {
         must(t.connect(d, 0, &to, scratch), "connect again")
     });
-    let up = |h: &Happened| matches!(h, Happened::Connected { slot: 0, result } if *result >= 0);
     until(rig, &mut seen, "the second connect", |all| {
-        count(all, up) == 1
+        count(all, connected) == attempts + 1
     });
+    if count(&seen, up) != before + 1 {
+        fail(format_args!("the slot could not connect again: {seen:?}"));
+    }
     if count(&seen, closed(1)) != 1 || count(&seen, closed(0)) != 1 {
         fail(format_args!("a close was reported twice: {seen:?}"));
     }
