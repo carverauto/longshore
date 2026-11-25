@@ -315,3 +315,21 @@ fn a_run_is_read_from_bytes_as_the_fuzzer_makes_them() {
     // And no more steps than asked for.
     assert_eq!(from_bytes(&bytes, 1).map(|run| run.1.len()), Some(1));
 }
+
+/// Runs a fuzzer found to fail, as it wrote them (`tcp_model_steps`):
+/// each stays here, by what it showed, so that it cannot come back.
+#[test]
+fn runs_the_fuzzer_found_to_fail_pass() {
+    let found: [(&str, &[u8]); 1] = [(
+        // A cancel of the same receive for every pull that found no
+        // frame memory, until the backend had no room left.
+        "cancel-per-pull",
+        include_bytes!("model/found/cancel-per-pull.bin"),
+    )];
+    for (name, bytes) in found {
+        let (seed, steps) = from_bytes(bytes, usize::MAX).unwrap();
+        if let Err(f) = run_in(Campaign::Usual, seed, &steps, false) {
+            panic!("{name}, step {} of {}: {}", f.step, steps.len(), f.why);
+        }
+    }
+}

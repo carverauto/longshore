@@ -129,6 +129,9 @@ pub(super) struct ConnState {
     pub(super) redial: bool,
     /// Its armed receive ended because the ring had no buffer.
     pub(super) dry: bool,
+    /// A cancel of its armed receive is with the transport: one is
+    /// enough, however often reading is stopped before it lands.
+    pub(super) cancelling: bool,
     /// The listener whose next connection the kernel has already put in
     /// this slot, while operations of the last one are still in flight; or
     /// `NONE`. It becomes a connection once the slot is free.
@@ -202,6 +205,7 @@ impl ConnState {
             sock: Socket::None,
             redial: false,
             dry: false,
+            cancelling: false,
             parked: NONE,
             parked_by: None,
             accepted_by: Listener::NONE,

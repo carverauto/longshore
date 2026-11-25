@@ -59,6 +59,7 @@ impl<T: Transport> Net<T> {
                     // nothing of how this receive will end.
                     let reading = &mut self.conns[slot as usize];
                     (reading.armed, reading.dry) = (true, false);
+                    reading.cancelling = false;
                 } else {
                     self.add_work(slot, W_READ);
                 }
@@ -279,10 +280,13 @@ impl<T: Transport> Net<T> {
             return;
         }
         c.paused = true;
-        if c.armed {
-            // If the driver has no room, the receive simply runs on until
-            // the ring is empty; nothing is lost.
-            best_effort(self.t.cancel_recv(d, slot));
+        if c.armed && !c.cancelling {
+            // Once for an armed receive: a caller that pulls again and
+            // again before the next turn stops reading each time. If the
+            // driver has no room, the receive simply runs on until the
+            // ring is empty; nothing is lost.
+            let sent = self.t.cancel_recv(d, slot).is_ok();
+            self.conns[slot as usize].cancelling = sent;
         }
     }
 
@@ -308,6 +312,7 @@ impl<T: Transport> Net<T> {
         (c.hdr_have, c.asm_have, c.asm_len) = (0, 0, 0);
         (c.backlog_off, c.backlog_len, c.paused) = (0, 0, false);
         (c.unopened, c.cut_off, c.dry) = (false, false, false);
+        c.cancelling = false;
         for ext in held.into_iter().flatten() {
             // Net's own hold; frames the caller pulled keep theirs.
             best_effort(self.extents.release(ext));
