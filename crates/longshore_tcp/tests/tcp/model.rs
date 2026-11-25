@@ -29,18 +29,19 @@ const SEEDS: u64 = 150;
 /// state and a column per event, in the order of `Coverage::STATES` and
 /// `Coverage::EVENTS`: `R` a cell the runs must reach, `U` one that must
 /// never be reached, `.` one the table allows and these runs need not
-/// reach. `Securing` and the `Secured` column are of TLS, which the model
-/// does not do yet.
+/// reach, `T` one that must be reached where TLS is compiled in and
+/// never where it is not: a handshake's end, and the end of the stream
+/// that follows a close alert already taken for the peer's end.
 #[cfg(test)]
 const EXPECTED: [&str; 10] = [
     //close shut send next Conn Secd data eos other Sent ShutD Closed dead pulled accept
     "UUUUUUUUUUUUUUR", // Free
-    "RRRRRUUUUUUURUU", // Connecting
-    "UUUUUUUUUUUUUUU", // Securing
+    "RRRRRTUUUUUURUU", // Connecting
+    "UUUUUTUUUUUUUUU", // Securing
     "RRRRUURRRRRURRU", // Up
     "R.RRUUUUUR.UURU", // Refused
     "RRRRUURRRRRU.RU", // Finishing
-    "RRRRUUUUURRU.RU", // HalfClosed
+    "RRRRUUUTURRU.RU", // HalfClosed
     "RRRR..RRRRRUURU", // Dying
     "....R.RRRRRRUUR", // Closing
     "RRRRUUUUUUUURUU", // Backoff
@@ -57,7 +58,13 @@ fn report(cover: &Coverage) -> Vec<String> {
                 "{state:>10} | {event:<24} | {hits:>8} | {}",
                 want[col] as char
             );
-            match want[col] {
+            let tls = cfg!(feature = "tls-core");
+            let wanted = match want[col] {
+                b'T' if tls => b'R',
+                b'T' => b'U',
+                other => other,
+            };
+            match wanted {
                 b'R' if hits == 0 => wrong.push(format!("{state} / {event}: never reached")),
                 b'U' if hits > 0 => wrong.push(format!("{state} / {event}: reached {hits} times")),
                 _ => {}
@@ -82,6 +89,7 @@ fn random_operations_keep_what_a_caller_relies_on() {
         total.accepted += stats.accepted;
         total.refused += stats.refused;
         total.frames += stats.frames;
+        total.protected_frames += stats.protected_frames;
         total.relayed += stats.relayed;
         total.finished += stats.finished;
         total.closed_orderly += stats.closed_orderly;
@@ -93,6 +101,10 @@ fn random_operations_keep_what_a_caller_relies_on() {
     }
     // The runs did what they are for.
     assert!(total.accepted > 100 && total.frames > 1000, "{total:?}");
+    assert!(
+        !cfg!(feature = "tls-core") || total.protected_frames > 300,
+        "{total:?}"
+    );
     assert!(
         total.finished > 0 && total.relayed > 0 && total.full > 0,
         "{total:?}"

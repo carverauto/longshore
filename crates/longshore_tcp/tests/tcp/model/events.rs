@@ -11,6 +11,19 @@ use super::drive::Run;
 use longshore_common::io::alloc_guard::sealed;
 use longshore_tcp::{Conn, Event, Frame, Listener, NetError, SendError, Why};
 
+/// Nothing in a run breaks the framing or a TLS record: the frames are
+/// well formed, the certificate is the one expected, and the faults cut
+/// streams short without changing a byte. An end for either reason is the
+/// set's own doing, but for one: a handshake that the peer cut short ends
+/// a connection that was never up as a TLS failure.
+fn unbroken(why: Why, was_up: bool, tls: bool) -> Result<(), String> {
+    match why {
+        Why::Tls if tls && !was_up => Ok(()),
+        Why::Protocol | Why::Tls => Err(format!("ended with {why:?}, which nothing here causes")),
+        Why::Orderly | Why::Reset | Why::Timeout => Ok(()),
+    }
+}
+
 impl Run {
     pub(crate) fn pull_events(&mut self, server: bool, most: u32) -> Result<(), String> {
         for _ in 0..most {
@@ -43,7 +56,11 @@ impl Run {
         let side = usize::from(server);
         match e {
             Event::Up(conn) => self.came_up(server, conn)?,
-            Event::Down { conn, .. } => self.went_down(server, conn)?,
+            Event::Down { conn, why } => {
+                let at = self.named(server, conn)?;
+                unbroken(why, self.sides[side].handles[at].up, self.tls)?;
+                self.went_down(server, conn)?;
+            }
             Event::Accepted { listener, conn } => {
                 let half_close = self.accepting(server, listener)?;
                 self.stats.accepted += 1;
@@ -82,6 +99,7 @@ impl Run {
                 if h.refused {
                     return Err("a refused connection was reported closed".to_string());
                 }
+                unbroken(why, h.up, self.tls)?;
                 if why == Why::Orderly {
                     self.stats.closed_orderly += 1;
                     self.ended_in_order(server, at)?;
@@ -245,6 +263,7 @@ impl Run {
             .get(uid as usize)
             .ok_or_else(|| format!("no sender has the number {uid}"))?;
         self.stats.frames += 1;
+        self.stats.protected_frames += u32::from(self.tls);
         let h = &mut self.sides[side].handles[at];
         h.got += 1;
         let own = sender.server != server;

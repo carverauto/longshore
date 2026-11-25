@@ -7,13 +7,13 @@
 
 use super::book::{fill, Handle, Sender, Side, BODY_MIN};
 use super::steps::{Kind, Step};
+use super::world::{protected, world, NAME};
 use longshore_common::io::alloc_guard::sealed;
-use longshore_common::io::Limits;
 use longshore_common::sim::{Faults, SimIo};
 use longshore_tcp::check::World;
 use longshore_tcp::{
     Addr, ConnOpts, Coverage, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, NetError,
-    Reconnect, Rx, SendError, Sizes,
+    Reconnect, Rx, SendError,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -21,8 +21,12 @@ pub(crate) type SimNet = Net<KernelTransport<SimIo>>;
 
 const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7)), 7000);
 /// The longest frame, length prefix included: a send segment.
-const FRAME_MAX: usize = 4096;
+pub(crate) const FRAME_MAX: usize = 4096;
 const LENGTHS: [usize; 5] = [BODY_MIN, 64, 700, 2000, FRAME_MAX - 4];
+/// With TLS a frame can also be longer than a record, so that it comes
+/// in two and is put together from both.
+const ACROSS_RECORDS: usize = 20_000;
+const FRAME_MAX_TLS: usize = 24_000;
 /// Frames the caller keeps at most, of the three each set has.
 const HELD_MAX: usize = 2;
 
@@ -41,6 +45,8 @@ pub struct Stats {
     pub accepted: u32,
     pub refused: u32,
     pub frames: u32,
+    /// Those of them that came over TLS.
+    pub protected_frames: u32,
     pub relayed: u32,
     pub finished: u32,
     pub closed_orderly: u32,
@@ -54,6 +60,8 @@ pub struct Stats {
 
 pub(crate) struct Run {
     pub(crate) w: World<SimIo>,
+    /// Its connections are protected with TLS.
+    pub(crate) tls: bool,
     /// The client's side, then the server's.
     pub(crate) sides: [Side; 2],
     pub(crate) senders: Vec<Sender>,
@@ -67,26 +75,16 @@ pub(crate) struct Run {
     pub(crate) ended: Vec<super::book::Ended>,
 }
 
-/// Small pools: three connections a side, three frame buffers, three
-/// segments, two ring buffers, two queued sends a connection.
-fn sizes(connects: u32, accepts: u32, listeners: u32) -> Sizes {
-    Sizes::new(connects, accepts, listeners)
-        .with_frames(3, 8192)
-        .with_segments(3, FRAME_MAX as u32)
-        .with_ring(2, 1024)
-        .with_header_max(256)
-        .with_spans(2)
-}
-
 /// The options `bits` choose, and whether they have half-close.
-fn opts(bits: u32) -> Result<(ConnOpts, bool), String> {
-    opts_with(bits, false)
+fn opts(bits: u32, tls: bool) -> Result<(ConnOpts, bool), String> {
+    opts_with(bits, false, tls)
 }
 
 /// [`opts`], for a connection that dials again when it goes down if
 /// `reconnect` is set.
-fn opts_with(bits: u32, reconnect: bool) -> Result<(ConnOpts, bool), String> {
-    let framing = HeaderFraming::length_prefix(FRAME_MAX as u32).map_err(|e| format!("{e:?}"))?;
+fn opts_with(bits: u32, reconnect: bool, tls: bool) -> Result<(ConnOpts, bool), String> {
+    let longest = if tls { FRAME_MAX_TLS } else { FRAME_MAX };
+    let framing = HeaderFraming::length_prefix(longest as u32).map_err(|e| format!("{e:?}"))?;
     let rx = if bits & 1 == 0 { Rx::Ring } else { Rx::Direct };
     let half_close = bits & 2 != 0;
     // One connection in four ends when it has been idle for a while.
@@ -113,14 +111,9 @@ pub fn run_traced(seed: u64, steps: &[Step], trace: bool) -> Result<Stats, Failu
         .with_partial_recv(200_000)
         .with_short_send(200_000)
         .with_reset(if resets { 2_000 } else { 0 });
-    let w = World::new(
-        &mut |limits| SimIo::new(limits, seed, faults),
-        Limits::BASE,
-        sizes(3, 0, 0),
-        sizes(0, 3, 2),
-    );
     let mut run = Run {
-        w,
+        w: world(seed, faults),
+        tls: protected(seed),
         sides: [Side::default(), Side::default()],
         senders: Vec::new(),
         stats: Stats::default(),
@@ -206,9 +199,17 @@ impl Run {
     fn connect(&mut self, bits: u32) -> Result<(), String> {
         // One connection in eight keeps its handle through going down.
         let reconnect = bits & 0x1c0 == 0x1c0;
-        let (opts, half_close) = opts_with(bits, reconnect)?;
+        let (opts, half_close) = opts_with(bits, reconnect, self.tls)?;
+        let tls = self.tls;
         let (net, io) = self.net(false);
-        match sealed(|| net.connect(io, ADDR, opts)) {
+        let dialled = sealed(|| {
+            if tls {
+                net.connect_tls(io, ADDR, NAME, opts)
+            } else {
+                net.connect(io, ADDR, opts)
+            }
+        });
+        match dialled {
             Ok(conn) => {
                 self.stats.connects += 1;
                 let mut handle = Handle::new(conn, half_close, false, false);
@@ -221,10 +222,11 @@ impl Run {
     }
 
     fn listen(&mut self, bits: u32) -> Result<(), String> {
-        let (opts, half_close) = opts(bits)?;
+        let (opts, half_close) = opts(bits, self.tls)?;
         let limit = if bits & 4 == 0 { u32::MAX } else { 2 };
         let cfg = ListenConfig::new(opts)
             .with_reuse_port(true)
+            .with_tls(self.tls)
             .with_limit(limit);
         let (net, io) = self.net(true);
         match sealed(|| net.listen(io, Addr::Ip(ADDR), cfg)) {
@@ -318,7 +320,9 @@ impl Run {
         };
         let h = self.sides[usize::from(server)].handles[at];
         let sender = self.senders[h.uid as usize];
-        let total = 4 + LENGTHS[len as usize % LENGTHS.len()];
+        let choices = LENGTHS.len() + usize::from(self.tls);
+        let body = LENGTHS.get(len as usize % choices).copied();
+        let total = 4 + body.unwrap_or(ACROSS_RECORDS);
         let (net, io) = self.net(server);
         let open = sealed(|| net.can_send(h.conn));
         let got =
