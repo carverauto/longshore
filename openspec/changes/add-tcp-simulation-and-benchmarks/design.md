@@ -131,7 +131,7 @@ not yet called.
 | `Free` | — (5) | — (5) | — (5) | — (5) | — (5) | — (5) | — (5) | — (5) |
 | `Connecting` | ok, plain: → `Up`, `Up` owed, reading starts. ok, TLS: the handshake starts; stays `Connecting`. failed: → `Dying` (`Reset`) | ok: → `Up`, `Up` owed; in ring mode what arrived behind the handshake is opened. failed: → `Dying` (`Tls`, or `Reset`) | — (6) | — (6) | — (6) | — (6) | — (6) | — (7) |
 | `Securing` | — (8) | ok: admitted (→ `Up` and `Accepted` owed; at the limit → `Refused` and `Refused` owed; listener gone → `Closing`). failed: handle retired, → `Closing`, no event | — (6) | — (6) | — (6) | — (6) | — (6) | — (7) |
-| `Up` | — (9) | — (9) | ring: queued, `Readable` owed once; TLS ring: opened into frame memory first. direct: the header, then the frame; `Readable` owed when a frame is whole | → `Finishing`, or settled at once when no input is left (4). TLS ring: every record received is opened first; the end is in order only if a close alert was among them. TLS direct: in order only after a close alert | ring empty or receive cancelled: armed again on the next `poll`. An error: → `Finishing` with that failure, or → `Dying` when no input is left | ok: the span advances; the next goes out; `Writable` owed if a send was refused. failed: as a receive error | cleared; receiving goes on | — (7) |
+| `Up` | — (9) | — (9) | ring: queued, `Readable` owed once; TLS ring: opened into frame memory first; after the armed receive has ended, the rest of a frame being put together comes straight into its memory (C10). direct: the header, then the frame; `Readable` owed when a frame is whole | → `Finishing`, or settled at once when no input is left (4). TLS ring: every record received is opened first; the end is in order only if a close alert was among them. TLS direct: in order only after a close alert | ring empty or receive cancelled: armed again on the next `poll`. An error: → `Finishing` with that failure, or → `Dying` when no input is left | ok: the span advances; the next goes out; `Writable` owed if a send was refused. failed: as a receive error | cleared; receiving goes on | — (7) |
 | `Refused` | — (9) | — (9) | — (10) | — (10) | — (10) | ok or failed: the handle is retired, → `Closing`, no event | — (11) | — (7) |
 | `Finishing` | — (9) | — (9) | the ring buffer goes back (12) | ignore (12) | ignore | open for sending: as `Up`, and a failure becomes the reason of the end. Otherwise ignore | cleared | — (7) |
 | `HalfClosed` | — (9) | — (9) | — (12) | — (12) | — (12) | ok: as `Up`. failed: → `Dying` (`Reset`) | cleared: both sides are done, → `Dying` (`Orderly`) | — (7) |
@@ -224,11 +224,11 @@ routes the slot's send and receive completions through its stream.
 
 | Phase | `secure` | a send or receive completion | `shutdown_write` | `close` submitted | Closed |
 |---|---|---|---|---|---|
-| `Plain` | the stream is reset, the handshake starts: → `Handshake` | reported as it is | a shutdown | — | — |
-| `Handshake` | — | fed to the handshake. Pending: nothing reported. Done: → `Secure`, `Secured` ok. Failed: → `Plain`, `Secured` failed | — (not up yet) | → `Aborted` | stays (the operation is still due) |
+| `Plain` | the stream is reset, the handshake starts: → `Handshake` | reported as it is | a shutdown | stays (a slot that is not protected, or no longer) | stays |
+| `Handshake` | — | fed to the handshake. Pending: nothing reported. Done: → `Secure`, `Secured` ok. Failed: → `Plain`, `Secured` failed | — (not up yet) | → `Aborted` | — (the close made it `Aborted`) |
 | `Aborted` | — | → `Plain`, `Secured` reported as cancelled | — | stays | stays |
 | `Secure` | — | send: fed to the stream; `Sent` when all of it has gone. receive: `Received` with plaintext; an end without a close alert is a reset | the close alert is sent: → `Alerting` | stays | → `Plain`, keys forgotten |
-| `Alerting` | — | send: when the alert has gone, → `Secure` and the shutdown is submitted (`ShutDown` at once if the driver has no room). receive: as `Secure` | — (once) | → `AlertAborted` | stays |
+| `Alerting` | — | send: when the alert has gone, → `Secure` and the shutdown is submitted (`ShutDown` at once if the driver has no room). receive: as `Secure` | — (once) | → `AlertAborted` | — (the close made it `AlertAborted`) |
 | `AlertAborted` | — | send: → `Plain`, `ShutDown` reported as cancelled. receive: reported as it is | — | stays | stays |
 
 ## Where the merged code fell short of the tables
@@ -269,9 +269,29 @@ completion order of task 1.1 is what will.
   nothing. Fixed in group 1: the frame is put together in the backlog's
   own buffer, and a header that was collected in pieces goes back in
   front of what follows it there (the review of group 1 found that
-  second case, which the first fix missed). A protected connection in ring mode can still need two (a
-  backlog of opened records and a frame being put together); that is to
-  be closed with the TLS part of the model.
+  second case, which the first fix missed). A protected connection in
+  ring mode does need two (the frame being put together, and the records
+  that hold its rest): the last free buffer is kept for a connection
+  that holds one already, so one of them can always finish.
+- **C10 Connections waited on each other across the ring and frame
+  memory.** Found while closing the open items of group 1, with more
+  connections than frame buffers: those putting a frame together waited
+  for its rest from the buffer ring, and the ring was held to the last
+  buffer by the unpulled input of connections waiting for a frame
+  buffer. Four connections on two buffers stopped for ever. Fixed: a
+  connection whose armed receive has ended does not need the ring to
+  finish. A plain one receives the rest of its frame straight into the
+  frame's memory; a protected one receives into its stream's own buffer
+  (`Stream::recv_carried`, `Transport::recv_kept`). The steady state is
+  unchanged: an armed receive stays armed.
+- **C11 A stream was asked for more while a record waited in it.** Found
+  by the model over TLS, in the fix for C10: opening the record moved
+  the bytes the receive was being written behind, the next record did
+  not authenticate, and a connection that was up ended as a TLS failure
+  or never heard of its peer's end (6 of 4000 runs). And the mark that
+  the ring had been empty outlived its connection. Fixed: what a stream
+  holds is opened first, the stream asserts it, and the mark goes with
+  the rest of the receive state.
 - **C7 The connect timeout marks the socket open whether or not there is
   one**, and relies on the backend reporting the close of an empty socket
   slot like any other. Kept, as assumption A2 of the conformance suite.
@@ -327,11 +347,11 @@ that is cheap.
 | Connection slots (own) | `connect`, a single accept | `NoSlots`; the accept is not started | a freed slot; `poll` starts accepts |
 | Accept range (kernel's) | an armed accept | the kernel drops the connection, the accept fails, `Net` waits | the wait's deadline |
 | Frame memory (extents) | direct receive, assembling a frame, a spill, TLS opening, `hold` | the read pauses, the input stays where it is, a connection whose stream has ended stays `Finishing`; `hold` returns `NoMemory` | `release`, a send or write that drops its hold; `poll` retries |
-| Frame memory, among connections | each connection's undelivered input | a connection holds at most one buffer for input it has not delivered (its backlog, or the frame it is putting together, or a whole frame waiting), so connections cannot each hold one and wait for a second; found by the model test, where three connections and three buffers stalled for ever | — |
+| Frame memory, among connections | each connection's undelivered input | a connection holds at most one buffer for input it has not delivered (its backlog, or the frame it is putting together, or a whole frame waiting), so connections cannot each hold one and wait for a second; found by the model test, where three connections and three buffers stalled for ever. A protected connection in ring mode can hold two: the last free buffer goes only to one that holds one already, and ring mode with TLS needs two buffers at least | — |
 | Hold count of one extent | a frame lent from a backlog, `send_lent`, a file write | the frame is not lent and stays; `Stale` or `Full` to the caller | a hold released |
 | Send segments | `send_frame`, `send_bytes` | `Full`; the connection joins the fixed waiter list | a segment returned: one waiter is told `Writable`, and a waiter that leaves passes it on |
 | Send queue of a connection | every send | `Full` | its own send completing: `Writable` |
-| Buffer ring | the kernel, for armed receives | the receive ends with "no buffers" | `poll` arms again after giving buffers back; unpulled input is moved out at each `poll` |
+| Buffer ring | the kernel, for armed receives | the receive ends with "no buffers". A connection putting a frame together then receives its rest straight into the frame, and a protected one into its stream's buffer, so that neither waits for a ring that connections waiting for frame memory hold (C10) | `poll` arms again after giving buffers back; unpulled input is moved out at each `poll` |
 | The driver's operation slots | every submit | the transport refuses as busy; `Net` keeps the work | the next `poll` |
 | Event marks | every event | cannot be empty: one mark per connection | — |
 
@@ -359,6 +379,21 @@ One test binary, `tcp_model`, on the simulator.
 - **Budget.** Ten thousand steps over a few hundred seeds in
   `cargo test`; one hundred thousand seeds in the nightly workflow.
 
+As built, after group 1 and its open items: connect, listen, close,
+close a listener, shutdown, send, pull events, pull frames, release, lend
+to another connection and turn; one connection in eight reconnects; one
+run in three is over TLS where that is compiled in, with frames longer
+than a record and a fixed Ed25519 key, so that every handshake message
+has the same length in every run and a failing seed replays. Every call
+into a set runs under `alloc_guard`. An end as a protocol or TLS failure
+is a fault, except a TLS failure of a connection that was never up. The
+sum over the seeds is held against three tables: the connection state
+table, the listener state table and the TLS phase table of the kernel
+transport. Not in it: restart of a peer, drain, a bind that is retried
+(no run is ever `Binding`), and the stall of C9's TLS case, which needs
+frames of several records on every connection at once and has a scenario
+of its own.
+
 ## The transport conformance suite
 What `Net` relies on from any transport, as a suite a transport runs on
 itself with no `Net` above it (`longshore_tcp::check::conformance`), so
@@ -380,10 +415,11 @@ transport brings a rig: itself, its driver, and a way to turn the driver.
   still work and are reported, until the write side is shut down
   (half-close).
 
-Not in the suite yet: that a refusal as busy changes nothing (the
-scenario of a driver with too few operation slots covers it for the
-kernel transport), and `Secured` reported once per `secure`, also when
-the slot is closed under it.
+- An operation refused as busy has changed nothing: nothing is reported
+  for it, nothing was sent, and it works once there is room. (A rig can
+  take all the room its driver has.)
+- On a rig whose transport has TLS for both ends: a handshake is
+  reported once, as `Secured`, also when its slot is closed under it.
 
 ## Decisions
 - **The tables describe `Net` as it is to be.** Every cell that exists in

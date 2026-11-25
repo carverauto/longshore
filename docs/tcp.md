@@ -189,7 +189,8 @@ it, and the set waits (5 ms, doubling to 1 s) before accepting again. The
 limit refuses in order.
 
 With TLS in ring mode, frame memory holds at least one record
-(16,401 bytes).
+(16,401 bytes), and there are at least two frame buffers: a frame that
+spans records needs a second while it is put together.
 
 ## How it is checked
 

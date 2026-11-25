@@ -43,6 +43,10 @@ is room, with no further call needed to trigger it.
 - **WHEN** each pool in turn is the only one exhausted during an exchange
 - **THEN** the exchange completes after the pool has room again, and every byte arrives once and in order
 
+#### Scenario: More connections than frame buffers
+- **WHEN** more connections than there are frame buffers each receive frames that do not fit a ring buffer, plain or over TLS, while the caller pulls and releases what it is given
+- **THEN** every frame of every connection is delivered: no connection waits for ever for memory or ring buffers that other waiting connections hold
+
 ### Requirement: End of stream after everything received
 The TCP set SHALL NOT report the end of a connection (`Finished`, `Closed`
 or `Down`) while anything received on it is left to pull, in whatever
@@ -135,8 +139,9 @@ report.
 Every transport SHALL pass one conformance suite stating what the set
 relies on: one report per operation, a close reported once, nothing
 reported for a slot after its close and its operations have ended, no
-connection placed in a slot that still owes a report, and a busy refusal
-that changes nothing.
+connection placed in a slot that still owes a report, a busy refusal
+that changes nothing, and a TLS handshake reported once, also when its
+slot is closed under it.
 
 #### Scenario: Kernel transport on three backends
 - **WHEN** the conformance suite runs against the kernel transport on the simulator, the portable backend and the ring
