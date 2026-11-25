@@ -24,8 +24,8 @@ const SEEDS: u64 = 150;
 /// state and a column per event, in the order of `Coverage::STATES` and
 /// `Coverage::EVENTS`: `R` a cell the runs must reach, `U` one that must
 /// never be reached, `.` one the table allows and these runs need not
-/// reach. `Securing`, `Backoff` and the `Secured` column are of TLS and
-/// of reconnecting, which the model does not do yet.
+/// reach. `Securing` and the `Secured` column are of TLS, which the model
+/// does not do yet.
 #[cfg(test)]
 const EXPECTED: [&str; 10] = [
     //close shut send next Conn Secd data eos other Sent ShutD Closed dead pulled accept
@@ -38,7 +38,7 @@ const EXPECTED: [&str; 10] = [
     "RRRRUUUUURRU.RU", // HalfClosed
     "RRRR..RRRRRUURU", // Dying
     "....R.RRRRRRUUR", // Closing
-    "UUUUUUUUUUUUUUU", // Backoff
+    "RRRRUUUUUUUURUU", // Backoff
 ];
 
 #[cfg(test)]
@@ -81,6 +81,7 @@ fn random_operations_keep_what_a_caller_relies_on() {
         total.finished += stats.finished;
         total.closed_orderly += stats.closed_orderly;
         total.closed_otherwise += stats.closed_otherwise;
+        total.went_down += stats.went_down;
         total.full += stats.full;
         total.stale_calls += stats.stale_calls;
         total.cover.add(&stats.cover);

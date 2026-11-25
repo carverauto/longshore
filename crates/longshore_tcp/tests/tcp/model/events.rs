@@ -6,7 +6,7 @@
 //! What the caller is told and what it pulls, checked against the book;
 //! and the end of a run, where everything must come to rest.
 
-use super::book::{read, Ended, Handle};
+use super::book::{read, Ended, Handle, Sender};
 use super::drive::Run;
 use longshore_tcp::{Conn, Event, Frame, Listener, NetError, SendError, Why};
 
@@ -41,13 +41,8 @@ impl Run {
     fn told(&mut self, server: bool, e: Event) -> Result<(), String> {
         let side = usize::from(server);
         match e {
-            Event::Up(conn) => {
-                let at = self.named(server, conn)?;
-                let h = &mut self.sides[side].handles[at];
-                if core::mem::replace(&mut h.up, true) {
-                    return Err("up twice".to_string());
-                }
-            }
+            Event::Up(conn) => self.came_up(server, conn)?,
+            Event::Down { conn, .. } => self.went_down(server, conn)?,
             Event::Accepted { listener, conn } => {
                 let half_close = self.accepting(server, listener)?;
                 self.stats.accepted += 1;
@@ -96,11 +91,60 @@ impl Run {
                     self.senders[uid as usize].aborted = true;
                 }
             }
-            Event::Down { .. } | Event::ListenFailed { .. } | Event::Drained => {
+            Event::ListenFailed { .. } | Event::Drained => {
                 return Err("an event nothing in this run asks for".to_string());
             }
         }
         Ok(())
+    }
+
+    /// `conn` is up: once, until it goes down.
+    fn came_up(&mut self, server: bool, conn: Conn) -> Result<(), String> {
+        let at = self.named(server, conn)?;
+        let h = &mut self.sides[usize::from(server)].handles[at];
+        if core::mem::replace(&mut h.up, true) {
+            return Err("up twice".to_string());
+        }
+        Ok(())
+    }
+
+    /// `conn` went down: only one that reconnects. It is told again for
+    /// each attempt to dial that fails while it stays down.
+    fn went_down(&mut self, server: bool, conn: Conn) -> Result<(), String> {
+        let at = self.named(server, conn)?;
+        let h = &mut self.sides[usize::from(server)].handles[at];
+        if !h.reconnect {
+            return Err("down without reconnecting".to_string());
+        }
+        self.stats.went_down += 1;
+        if !core::mem::replace(&mut h.up, false) {
+            return Ok(());
+        }
+        // What it had queued is dropped. Whatever it sends from here on,
+        // which it can as soon as it is up, whether or not the caller has
+        // pulled that event yet, is a new stream.
+        let uid = h.uid;
+        self.senders[uid as usize].aborted = true;
+        self.restart(server, at);
+        Ok(())
+    }
+
+    /// The handle at `at` went down: when it is up again its frames are
+    /// numbered anew, as a new sender, and so are its peer's.
+    fn restart(&mut self, server: bool, at: usize) {
+        let uid = self.senders.len() as u32;
+        let h = &mut self.sides[usize::from(server)].handles[at];
+        (h.uid, h.peer, h.got, h.got_own) = (uid, None, 0, 0);
+        (h.finished, h.full) = (false, false);
+        let half_close = h.half_close;
+        self.senders.push(Sender {
+            server,
+            sent: 0,
+            own: 0,
+            shut: false,
+            aborted: false,
+            half_close,
+        });
     }
 
     /// Whether connections of `listener` are half-close; it must be a
@@ -327,7 +371,9 @@ impl Run {
         if !h.alive {
             return Ok(0);
         }
-        if h.refused {
+        if h.refused || h.reconnect {
+            // Neither ends by itself: one goes without a word, the other
+            // dials again for ever.
             self.close_at(server, at)?;
             return Ok(0);
         }

@@ -12,7 +12,7 @@ use longshore_common::sim::{Faults, SimIo};
 use longshore_tcp::check::World;
 use longshore_tcp::{
     Addr, ConnOpts, Coverage, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, NetError,
-    Rx, SendError, Sizes,
+    Reconnect, Rx, SendError, Sizes,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -44,6 +44,7 @@ pub struct Stats {
     pub finished: u32,
     pub closed_orderly: u32,
     pub closed_otherwise: u32,
+    pub went_down: u32,
     pub full: u32,
     pub stale_calls: u32,
     /// The cells of the state table both sets were in.
@@ -78,6 +79,12 @@ fn sizes(connects: u32, accepts: u32, listeners: u32) -> Sizes {
 
 /// The options `bits` choose, and whether they have half-close.
 fn opts(bits: u32) -> Result<(ConnOpts, bool), String> {
+    opts_with(bits, false)
+}
+
+/// [`opts`], for a connection that dials again when it goes down if
+/// `reconnect` is set.
+fn opts_with(bits: u32, reconnect: bool) -> Result<(ConnOpts, bool), String> {
     let framing = HeaderFraming::length_prefix(FRAME_MAX as u32).map_err(|e| format!("{e:?}"))?;
     let rx = if bits & 1 == 0 { Rx::Ring } else { Rx::Direct };
     let half_close = bits & 2 != 0;
@@ -87,6 +94,7 @@ fn opts(bits: u32) -> Result<(ConnOpts, bool), String> {
         .with_rx(rx)
         .with_half_close(half_close)
         .with_idle_timeout_ns(idle)
+        .with_reconnect(reconnect.then(|| Reconnect::new(1_000_000, 8_000_000, 100)))
         .with_connect_timeout_ns(50_000_000);
     Ok((opts, half_close))
 }
@@ -195,12 +203,16 @@ impl Run {
     }
 
     fn connect(&mut self, bits: u32) -> Result<(), String> {
-        let (opts, half_close) = opts(bits)?;
+        // One connection in eight keeps its handle through going down.
+        let reconnect = bits & 0x1c0 == 0x1c0;
+        let (opts, half_close) = opts_with(bits, reconnect)?;
         let (net, io) = self.net(false);
         match net.connect(io, ADDR, opts) {
             Ok(conn) => {
                 self.stats.connects += 1;
-                self.adopt(false, Handle::new(conn, half_close, false, false))
+                let mut handle = Handle::new(conn, half_close, false, false);
+                handle.reconnect = reconnect;
+                self.adopt(false, handle)
             }
             Err(NetError::NoSlots) => Ok(()),
             Err(e) => Err(format!("connect: {e:?}")),

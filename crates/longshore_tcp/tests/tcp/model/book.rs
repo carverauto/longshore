@@ -56,6 +56,8 @@ pub(crate) struct Handle {
     /// Accepted over a limit: it may end without a word.
     pub(crate) refused: bool,
     pub(crate) half_close: bool,
+    /// It dials again when it goes down, under the same handle.
+    pub(crate) reconnect: bool,
     pub(crate) up: bool,
     pub(crate) finished: bool,
     /// A send was refused for want of room: it is owed word of room.
@@ -76,6 +78,7 @@ impl Handle {
             alive: true,
             refused,
             half_close,
+            reconnect: false,
             up,
             finished: false,
             full: false,
