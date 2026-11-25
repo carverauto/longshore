@@ -11,6 +11,7 @@
 //! that continues in the next is put together in frame memory, as is a
 //! header that arrives in pieces.
 
+use super::cover::Col;
 use super::frames::{Frame, Mem};
 use super::state::{best_effort, St, NONE, W_READ};
 use super::Net;
@@ -34,6 +35,7 @@ impl<T: Transport> Net<T> {
     /// The next frame received on `conn`, or `None` when there is none for
     /// now. Pull until `None` after each [`crate::Event::Readable`].
     pub fn next_frame(&mut self, d: &mut T::Driver, conn: Conn) -> Result<Option<Frame>, NetError> {
+        self.cover_call(conn, Col::NextFrame);
         let slot = self.gens.slot_of(conn).ok_or(NetError::Stale)?;
         if !matches!(self.conns[slot as usize].st, St::Up | St::Finishing) {
             return Ok(None);

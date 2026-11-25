@@ -11,8 +11,8 @@ use longshore_common::io::Limits;
 use longshore_common::sim::{Faults, SimIo};
 use longshore_tcp::check::World;
 use longshore_tcp::{
-    Addr, ConnOpts, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, NetError, Rx,
-    SendError, Sizes,
+    Addr, ConnOpts, Coverage, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, NetError,
+    Rx, SendError, Sizes,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -46,6 +46,8 @@ pub struct Stats {
     pub closed_otherwise: u32,
     pub full: u32,
     pub stale_calls: u32,
+    /// The cells of the state table both sets were in.
+    pub cover: Coverage,
 }
 
 pub(crate) struct Run {
@@ -79,9 +81,12 @@ fn opts(bits: u32) -> Result<(ConnOpts, bool), String> {
     let framing = HeaderFraming::length_prefix(FRAME_MAX as u32).map_err(|e| format!("{e:?}"))?;
     let rx = if bits & 1 == 0 { Rx::Ring } else { Rx::Direct };
     let half_close = bits & 2 != 0;
+    // One connection in four ends when it has been idle for a while.
+    let idle = if bits & 24 == 24 { 20_000_000 } else { 0 };
     let opts = ConnOpts::new(Framing::Header(framing))
         .with_rx(rx)
         .with_half_close(half_close)
+        .with_idle_timeout_ns(idle)
         .with_connect_timeout_ns(50_000_000);
     Ok((opts, half_close))
 }
@@ -124,6 +129,11 @@ pub fn run_traced(seed: u64, steps: &[Step], trace: bool) -> Result<Stats, Failu
     run.note(format_args!("-- the end"));
     let step = steps.len();
     run.finish().map_err(|why| Failure { step, why })?;
+    for server in [false, true] {
+        let (net, _) = run.net(server);
+        let cover = net.coverage();
+        run.stats.cover.add(&cover);
+    }
     Ok(run.stats)
 }
 

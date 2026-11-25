@@ -133,7 +133,7 @@ not yet called.
 | `Securing` | — (8) | ok: admitted (→ `Up` and `Accepted` owed; at the limit → `Refused` and `Refused` owed; listener gone → `Closing`). failed: handle retired, → `Closing`, no event | — (6) | — (6) | — (6) | — (6) | — (6) | — (7) |
 | `Up` | — (9) | — (9) | ring: queued, `Readable` owed once; TLS ring: opened into frame memory first. direct: the header, then the frame; `Readable` owed when a frame is whole | → `Finishing`, or settled at once when no input is left (4). TLS ring: every record received is opened first; the end is in order only if a close alert was among them. TLS direct: in order only after a close alert | ring empty or receive cancelled: armed again on the next `poll`. An error: → `Finishing` with that failure, or → `Dying` when no input is left | ok: the span advances; the next goes out; `Writable` owed if a send was refused. failed: as a receive error | cleared; receiving goes on | — (7) |
 | `Refused` | — (9) | — (9) | — (10) | — (10) | — (10) | ok or failed: the handle is retired, → `Closing`, no event | — (11) | — (7) |
-| `Finishing` | — (9) | — (9) | the ring buffer goes back (12) | — (12) | ignore | open for sending: as `Up`, and a failure becomes the reason of the end. Otherwise ignore | cleared | — (7) |
+| `Finishing` | — (9) | — (9) | the ring buffer goes back (12) | ignore (12) | ignore | open for sending: as `Up`, and a failure becomes the reason of the end. Otherwise ignore | cleared | — (7) |
 | `HalfClosed` | — (9) | — (9) | — (12) | — (12) | — (12) | ok: as `Up`. failed: → `Dying` (`Reset`) | cleared: both sides are done, → `Dying` (`Orderly`) | — (7) |
 | `Dying` | `free?` (not closing yet: nothing) | `free?` | the ring buffer goes back | ignore | ignore | ignore; what is queued is dropped when the slot is freed | cleared | — (7) |
 | `Closing` | `free?` (13) | `free?` | the ring buffer goes back; `free?` | `free?` | `free?` | `free?` | `free?` | the close has completed; `free?`; then → `Free`, or → `Backoff` for a redial |
@@ -182,8 +182,12 @@ Notes:
 9. A connect and a handshake are over before any later state.
 10. A refused connection does not read.
 11. `shutdown_write` is refused for a refused connection.
-12. Nothing is received after the end of the stream. A ring buffer that
-    was already on its way is given back unread.
+12. Nothing is received after the end of the stream. But a connection
+    is also `Finishing` when something failed (a send, say) with input
+    left and its receive still running: what that receive then reports,
+    bytes or the end, is of no use any more. A ring buffer goes back
+    unread. (The model test's coverage showed these cells are reached;
+    the table first had them as impossible.)
 13. A connect that succeeds after its close was submitted leaves no
     socket: the close took it. `Net` relies on the backend for that
     (assumption A1 of the conformance suite).

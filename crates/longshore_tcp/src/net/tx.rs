@@ -11,6 +11,7 @@
 //! (`send_lent`), under one more hold. One send is in flight per
 //! connection; its memory stays until the transport reports the send done.
 
+use super::cover::Col;
 use super::frames::Frame;
 use super::state::{best_effort, Keep, St, TxSpan, W_FLUSH, W_REFUSE, W_SHUT};
 use super::Net;
@@ -51,6 +52,7 @@ impl<T: Transport> Net<T> {
         len: u32,
         fill: impl FnOnce(&mut [u8]),
     ) -> Result<(), SendError> {
+        self.cover_call(conn, Col::Send);
         let slot = self.sendable(conn)?;
         let size = self.cfg.sizes.segment_size;
         if len > size {
@@ -158,6 +160,7 @@ impl<T: Transport> Net<T> {
     /// where it lies: nothing is copied. The `Net` takes a hold of its own
     /// until the send is done, so the caller may release the frame at once.
     pub fn send_lent(&mut self, conn: Conn, frame: &Frame) -> Result<(), SendError> {
+        self.cover_call(conn, Col::Send);
         let slot = self.sendable(conn)?;
         let ext = frame.extent().ok_or(SendError::NotHeld)?;
         if self.conns[slot as usize].tx_len == self.cfg.sizes.spans {
@@ -215,6 +218,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_sent(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        self.cover(slot, Col::Sent);
         self.conns[slot as usize].sending = false;
         if !self.flushable(slot) {
             return self.try_free(slot);
@@ -287,6 +291,7 @@ impl<T: Transport> Net<T> {
     /// peer reads everything and then the end of the stream. Receiving
     /// goes on.
     pub fn shutdown_write(&mut self, d: &mut T::Driver, conn: Conn) -> Result<(), NetError> {
+        self.cover_call(conn, Col::Shutdown);
         let slot = self.gens.slot_of(conn).ok_or(NetError::Stale)?;
         if !self.flushable(slot) || self.conns[slot as usize].st == St::Refused {
             return Err(NetError::NotUp);

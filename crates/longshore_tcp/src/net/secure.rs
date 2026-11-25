@@ -7,6 +7,7 @@
 //! runs and how long it may take, and where the plaintext of an armed
 //! receive goes. The records themselves are the transport's business.
 
+use super::cover::Col;
 use super::state::{best_effort, St, EV_READABLE, W_READ};
 use super::Net;
 use crate::addr::{Addr, ServerName};
@@ -62,6 +63,7 @@ impl<T: Transport> Net<T> {
 
     /// The handshake of `slot` ended.
     pub(super) fn on_secured(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        self.cover(slot, Col::Secured);
         let c = &mut self.conns[slot as usize];
         c.securing = false;
         match c.st {

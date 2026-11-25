@@ -11,6 +11,7 @@
 //! peer that finished in order leaves the connection `HalfClosed`, open
 //! for sending until the caller shuts its own side down.
 
+use super::cover::Col;
 use super::state::{St, EV_CLOSED, EV_DOWN, EV_FINISHED, EV_READABLE};
 use super::Net;
 use crate::event::Why;
@@ -44,6 +45,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_conn_deadline(&mut self, d: &mut T::Driver, slot: u32) {
+        self.cover(slot, Col::Deadline);
         let c = &self.conns[slot as usize];
         match c.st {
             St::Connecting => {
@@ -164,6 +166,7 @@ impl<T: Transport> Net<T> {
 
     /// The shutdown of `slot`'s write side ended, with `result`.
     pub(super) fn on_shut_down(&mut self, slot: u32, result: i32) {
+        self.cover(slot, Col::ShutDown);
         self.conns[slot as usize].shutting = false;
         if result < 0 {
             // A shutdown that failed did not end our side in order: the

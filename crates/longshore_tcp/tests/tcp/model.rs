@@ -10,6 +10,7 @@
 #[path = "model/mod.rs"]
 mod model;
 
+use longshore_tcp::Coverage;
 use model::drive::{run, Stats};
 use model::steps::generate;
 
@@ -18,6 +19,48 @@ use model::steps::generate;
 const STEPS: usize = 3000;
 #[cfg(test)]
 const SEEDS: u64 = 150;
+
+/// What the runs must reach of the connection state table, a row per
+/// state and a column per event, in the order of `Coverage::STATES` and
+/// `Coverage::EVENTS`: `R` a cell the runs must reach, `U` one that must
+/// never be reached, `.` one the table allows and these runs need not
+/// reach. `Securing`, `Backoff` and the `Secured` column are of TLS and
+/// of reconnecting, which the model does not do yet.
+#[cfg(test)]
+const EXPECTED: [&str; 10] = [
+    //close shut send next Conn Secd data eos other Sent ShutD Closed dead pulled accept
+    "UUUUUUUUUUUUUUR", // Free
+    "RRRRRUUUUUUURUU", // Connecting
+    "UUUUUUUUUUUUUUU", // Securing
+    "RRRRUURRRRRURRU", // Up
+    "R.RRUUUUUR.UURU", // Refused
+    "RRRRUURRRRRU.RU", // Finishing
+    "RRRRUUUUURRU.RU", // HalfClosed
+    "RRRR..RRRRRUURU", // Dying
+    "....R.RRRRRRUUR", // Closing
+    "UUUUUUUUUUUUUUU", // Backoff
+];
+
+#[cfg(test)]
+fn report(cover: &Coverage) -> Vec<String> {
+    let mut wrong = Vec::new();
+    for (row, state) in Coverage::STATES.iter().enumerate() {
+        let want = EXPECTED[row].as_bytes();
+        for (col, event) in Coverage::EVENTS.iter().enumerate() {
+            let hits = cover.hits(row, col);
+            println!(
+                "{state:>10} | {event:<24} | {hits:>8} | {}",
+                want[col] as char
+            );
+            match want[col] {
+                b'R' if hits == 0 => wrong.push(format!("{state} / {event}: never reached")),
+                b'U' if hits > 0 => wrong.push(format!("{state} / {event}: reached {hits} times")),
+                _ => {}
+            }
+        }
+    }
+    wrong
+}
 
 #[test]
 fn random_operations_keep_what_a_caller_relies_on() {
@@ -40,12 +83,16 @@ fn random_operations_keep_what_a_caller_relies_on() {
         total.closed_otherwise += stats.closed_otherwise;
         total.full += stats.full;
         total.stale_calls += stats.stale_calls;
+        total.cover.add(&stats.cover);
     }
-    println!("{total:?}");
     // The runs did what they are for.
     assert!(total.accepted > 100 && total.frames > 1000, "{total:?}");
     assert!(
         total.finished > 0 && total.relayed > 0 && total.full > 0,
         "{total:?}"
     );
+    // And were where the state table says a connection can be, and
+    // nowhere it says one cannot.
+    let wrong = report(&total.cover);
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }

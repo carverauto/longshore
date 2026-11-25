@@ -32,6 +32,7 @@ use longshore_common::io::{BufId, Limits};
 use state::{Chunk, ConnState, Keep, ListenerState, St, TxSpan, NONE};
 
 mod conn;
+mod cover;
 mod ending;
 mod frames;
 mod listen;
@@ -43,6 +44,7 @@ mod state;
 mod tx;
 mod usage;
 
+pub use cover::Coverage;
 pub use frames::Frame;
 pub use usage::Usage;
 
@@ -97,6 +99,8 @@ pub struct Net<T: Transport> {
     tx_busy: u32,
     /// With TLS: the server name of each connection the caller opened.
     names: Box<[ServerName]>,
+    /// Which cells of the state table were reached, in debug builds.
+    coverage: Coverage,
 }
 
 impl<T: Transport> Net<T> {
@@ -163,6 +167,7 @@ impl<T: Transport> Net<T> {
             drain_reported: false,
             tx_busy: 0,
             names: vec![ServerName::NONE; names].into_boxed_slice(),
+            coverage: Coverage::NONE,
         }
     }
 
@@ -208,6 +213,7 @@ impl<T: Transport> Net<T> {
             Happened::Sent { slot, result } => self.on_sent(d, slot, result),
             Happened::ShutDown { slot, result } => self.on_shut_down(slot, result),
             Happened::Closed { slot } => {
+                self.cover(slot, cover::Col::Closed);
                 self.conns[slot as usize].closed = true;
                 self.try_free(slot);
             }

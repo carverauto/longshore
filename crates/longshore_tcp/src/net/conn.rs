@@ -5,6 +5,7 @@
 
 //! A connection's life: connecting, ending, closing, dialling again.
 
+use super::cover::Col;
 use super::state::{
     St, EV_ACCEPTED, EV_DOWN, EV_FINISHED, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE, NONE,
     W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
@@ -88,6 +89,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_connected(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        self.cover(slot, Col::Connected);
         let c = &mut self.conns[slot as usize];
         c.connecting = false;
         if c.st != St::Connecting {
@@ -131,6 +133,7 @@ impl<T: Transport> Net<T> {
 
     /// The event for bit `bit` of connection `slot`.
     pub(super) fn conn_event(&mut self, slot: u32, bit: u8) -> Event {
+        self.cover(slot, Col::EventPulled);
         let conn = self.gens.conn(slot);
         let c = &self.conns[slot as usize];
         let why = c.why;
@@ -164,6 +167,7 @@ impl<T: Transport> Net<T> {
     /// Close a connection now. Its handle is stale at once and no event
     /// follows; what was queued to send is dropped.
     pub fn close(&mut self, d: &mut T::Driver, conn: Conn) -> Result<(), NetError> {
+        self.cover_call(conn, Col::Close);
         let slot = self.gens.slot_of(conn).ok_or(NetError::Stale)?;
         self.gens.retire(slot);
         match self.conns[slot as usize].st {

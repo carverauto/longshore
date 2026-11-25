@@ -11,6 +11,7 @@
 //! Cutting chunks into frames happens when the caller pulls
 //! (`pull.rs`).
 
+use super::cover::Col;
 use super::state::{best_effort, Chunk, St, EV_READABLE, NONE, W_READ};
 use super::Net;
 use crate::config::Rx;
@@ -138,6 +139,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_received(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+        self.cover(slot, Col::of_receive(result));
         let c = &mut self.conns[slot as usize];
         c.recv_busy = false;
         if c.st != St::Up {
@@ -179,6 +181,7 @@ impl<T: Transport> Net<T> {
         len: u32,
         armed: bool,
     ) {
+        self.cover(slot, Col::Data);
         let c = &mut self.conns[slot as usize];
         c.armed = armed;
         if c.st != St::Up {
@@ -213,6 +216,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_recv_ended(&mut self, slot: u32, result: i32) {
+        self.cover(slot, Col::of_receive(result.min(0)));
         let c = &mut self.conns[slot as usize];
         c.armed = false;
         if c.st != St::Up {

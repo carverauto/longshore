@@ -7,6 +7,7 @@
 //! with peer addresses), the connection limit, and backing off after an
 //! accept fails.
 
+use super::cover::Col;
 use super::state::{LSt, ListenerState, St, EV_ACCEPTED, EV_REFUSED, NONE};
 use super::Net;
 use crate::addr::Addr;
@@ -174,6 +175,7 @@ impl<T: Transport> Net<T> {
     }
 
     pub(super) fn on_accepted(&mut self, d: &mut T::Driver, l: u32, slot: u32, armed: bool) {
+        self.cover(slot, Col::Accepted);
         let state = &mut self.listeners[l as usize];
         if state.cfg.peer_addr {
             state.single = None;
