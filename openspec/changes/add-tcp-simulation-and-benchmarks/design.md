@@ -187,7 +187,10 @@ Notes:
     left and its receive still running: what that receive then reports,
     bytes or the end, is of no use any more. A ring buffer goes back
     unread. (The model test's coverage showed these cells are reached;
-    the table first had them as impossible.)
+    the table first had them as impossible.) Over TLS the peer's
+    end is its close alert, and the receive runs on behind it: the end
+    of the stream that follows, or a reset, reaches a `HalfClosed`
+    connection and changes nothing.
 13. A connect that succeeds after its close was submitted leaves no
     socket: the close took it. `Net` relies on the backend for that
     (assumption A1 of the conformance suite).
@@ -207,11 +210,11 @@ Notes:
 
 | State | `listen()` | `close_listener()`, `drain()` | accept ok | accept failed | Closed | deadline |
 |---|---|---|---|---|---|---|
-| `Free`, no failure owed | takes the slot. Bind ok: → `Listening`, an accept starts. In use, with a retry time: → `Binding`. Otherwise the error | `Stale` | — (a) | — (a) | — | — |
+| `Free`, no failure owed | takes the slot. Bind ok: → `Listening`, an accept starts. In use, with a retry time: → `Binding`. Otherwise the error | `Stale`; a drain finds nothing to stop | — (a) | — (a) | — | — |
 | `Free`, failure owed | not picked until `ListenFailed` has been pulled; pulling it retires the handle | the failure is forgotten | as above | as above | — | — |
 | `Binding` | — | handle retired, → `Free`, nothing owed | — (b) | — (b) | — | bind again. Ok: → `Listening`. Still in use, time left: again in 50 ms. Otherwise: → `Free`, `ListenFailed` owed |
 | `Listening` | — | handle retired, → `Closing`, the close is submitted | the connection takes its slot, or is parked if the slot is still closing; the wait after failures is reset; the next accept starts | cancelled: nothing. Otherwise wait (5 ms, doubling to 1 s; the length is kept until an accept works), then accept again | — | the wait is over: accept again; `poll` retries if the driver has no room |
-| `Closing` | — | `Stale` | the connection is closed at once, unannounced | the reserved slot goes back; → `Free` if the close has completed | → `Free` once no accept is in flight (c) | —; every `poll` retries a close the driver had no room for |
+| `Closing` | — | `Stale`; a drain finds nothing to stop | the connection is closed at once, unannounced | the reserved slot goes back; → `Free` if the close has completed | → `Free` once no accept is in flight (c) | —; every `poll` retries a close the driver had no room for |
 
 a. A listener is `Free` only when its accept has made its last report.
    (The merged code frees it earlier: finding C6.)
@@ -389,10 +392,32 @@ into a set runs under `alloc_guard`. An end as a protocol or TLS failure
 is a fault, except a TLS failure of a connection that was never up. The
 sum over the seeds is held against three tables: the connection state
 table, the listener state table and the TLS phase table of the kernel
-transport. Not in it: restart of a peer, drain, a bind that is retried
-(no run is ever `Binding`), and the stall of C9's TLS case, which needs
-frames of several records on every connection at once and has a scenario
-of its own.
+transport. Not in it: restart of a peer, a bind that is retried (no run
+is ever `Binding`), and the stall of C9's TLS case, which needs frames of
+several records on every connection at once and has a scenario of its
+own.
+
+Group 2 runs it under fault campaigns, each a setting of the simulator's
+faults on top of the usual ones (reports out of order, receives and
+sends cut short): `resets` often enough to fall inside frames, `slow`
+with most receives and sends cut short, `delays` holding ready
+operations back, `refusals` of connects, and `flips` of bits in transit
+over TLS, where a TLS failure of a connection that was up is then an
+allowed end and a frame with other bytes than were sent never is. The
+adversary's own closes, the small pools and the end of the run put each
+fault under a close, under exhaustion and at the end of a stream. Half
+the runs end with a drain of the server, which must say so once. A run
+returns a hash of every completion the backend delivered: the same
+seed gives the same hash, another seed another. `cargo test` runs 150
+seeds of the usual campaign and 40 of each other; CI a thousand more
+(`-- --ignored a_thousand`); the nightly workflow a hundred thousand on
+every core (`-- --ignored a_hundred_thousand`, four and a half minutes
+on sixteen cores). `tcp_model --campaign NAME` replays one.
+
+What the campaigns found was in the model, not in `Net`: a connection
+that was refused for want of room, sends again without waiting and is
+not refused has seen the room for itself, and is owed no `Writable` for
+the refusal. `docs/tcp.md` says so now.
 
 ## The transport conformance suite
 What `Net` relies on from any transport, as a suite a transport runs on
