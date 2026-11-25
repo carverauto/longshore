@@ -18,6 +18,9 @@ use longshore_tcp::Addr;
 static ALLOC: Guard = Guard;
 
 #[cfg(test)]
+#[path = "storage/disk.rs"]
+mod disk;
+#[cfg(test)]
 #[path = "storage/durable.rs"]
 mod durable;
 
