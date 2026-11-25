@@ -275,7 +275,11 @@ completion order of task 1.1 is what will.
   second case, which the first fix missed). A protected connection in
   ring mode does need two (the frame being put together, and the records
   that hold its rest): the last free buffer is kept for a connection
-  that holds one already, so one of them can always finish.
+  that holds one already, so one of them can always finish. It is kept
+  back only while another protected ring connection holds frame memory
+  for undelivered input; the review of group 2 found that the first
+  form of the rule withheld it from the only connection that wanted it,
+  when the caller kept a frame of two.
 - **C10 Connections waited on each other across the ring and frame
   memory.** Found while closing the open items of group 1, with more
   connections than frame buffers: those putting a frame together waited
@@ -350,7 +354,7 @@ that is cheap.
 | Connection slots (own) | `connect`, a single accept | `NoSlots`; the accept is not started | a freed slot; `poll` starts accepts |
 | Accept range (kernel's) | an armed accept | the kernel drops the connection, the accept fails, `Net` waits | the wait's deadline |
 | Frame memory (extents) | direct receive, assembling a frame, a spill, TLS opening, `hold` | the read pauses, the input stays where it is, a connection whose stream has ended stays `Finishing`; `hold` returns `NoMemory` | `release`, a send or write that drops its hold; `poll` retries |
-| Frame memory, among connections | each connection's undelivered input | a connection holds at most one buffer for input it has not delivered (its backlog, or the frame it is putting together, or a whole frame waiting), so connections cannot each hold one and wait for a second; found by the model test, where three connections and three buffers stalled for ever. A protected connection in ring mode can hold two: the last free buffer goes only to one that holds one already, and ring mode with TLS needs two buffers at least | — |
+| Frame memory, among connections | each connection's undelivered input | a connection holds at most one buffer for input it has not delivered (its backlog, or the frame it is putting together, or a whole frame waiting), so connections cannot each hold one and wait for a second; found by the model test, where three connections and three buffers stalled for ever. A protected connection in ring mode can hold two: while another such connection holds frame memory, the last free buffer goes only to one that holds one already; ring mode with TLS needs two buffers at least | — |
 | Hold count of one extent | a frame lent from a backlog, `send_lent`, a file write | the frame is not lent and stays; `Stale` or `Full` to the caller | a hold released |
 | Send segments | `send_frame`, `send_bytes` | `Full`; the connection joins the fixed waiter list | a segment returned: one waiter is told `Writable`, and a waiter that leaves passes it on |
 | Send queue of a connection | every send | `Full` | its own send completing: `Writable` |
@@ -449,6 +453,12 @@ transport brings a rig: itself, its driver, and a way to turn the driver.
   take all the room its driver has.)
 - On a rig whose transport has TLS for both ends: a handshake is
   reported once, as `Secured`, also when its slot is closed under it.
+- The receives `Net` falls back to when the ring has nothing for a
+  connection: when an armed receive has ended, a single receive works
+  and is reported once; on a protected slot a receive into the
+  transport's own memory is reported once, what it brought opens with no
+  bytes, and one that a close ends is reported once. A transport without
+  such memory refuses as unsupported, and `Net` waits for the ring.
 
 ## Decisions
 - **The tables describe `Net` as it is to be.** Every cell that exists in
