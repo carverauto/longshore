@@ -17,7 +17,7 @@ Each group ends with a review of its own diff (no-mistakes or
 - [x] 1.4 A scenario for every row of the exhaustion table: six existed, three are new, and `net/exhaustion.rs` names them all
 - [x] 1.5 Flags to states where they exclude each other: the socket of a slot is one state; the reading flags and the redial flag stay, for the reasons in `design.md`; the model test unchanged and green
 - [x] 1.6 `longshore_tcp::check::conformance`: a transport brings a rig, the suite checks what `Net` relies on. Run against `KernelTransport` on `SimIo` (200 seeds of reordered reports), `PosixIo`, and in `tcp_uring` on `UringIo` and `epoll`. Not in it yet: the busy refusal, and `Secured`
-- [ ] 1.7 Review of group 1
+- [x] 1.7 Review of group 1: ten findings, each closed in a commit of its own. One was a fault in `Net` (a header that came in pieces still took a second frame buffer, reproduced by a scenario); one in the simulator (the reorder setting delayed named cancels too, and could put a close off for ever); the rest were holes in the model test, the conformance suite and the replay tool
 
 ## 2. Fault campaigns
 - [ ] 2.1 Seeded fault scenarios for `KernelTransport<SimIo>`: resets mid-frame, short writes, partial reads, delays, flipped bits, peers that close and listen again; each also under close, under exhaustion and at the end of the stream
