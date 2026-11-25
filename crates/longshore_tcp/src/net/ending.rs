@@ -12,7 +12,7 @@
 //! for sending until the caller shuts its own side down.
 
 use super::cover::Col;
-use super::state::{St, EV_CLOSED, EV_DOWN, EV_FINISHED, EV_READABLE};
+use super::state::{Socket, St, EV_CLOSED, EV_DOWN, EV_FINISHED, EV_READABLE};
 use super::Net;
 use crate::event::Why;
 use crate::transport::Transport;
@@ -50,7 +50,7 @@ impl<T: Transport> Net<T> {
         match c.st {
             St::Connecting => {
                 // The close ends the connect in flight.
-                self.conns[slot as usize].sock_open = true;
+                self.conns[slot as usize].sock = Socket::Open;
                 self.end(slot, Why::Timeout);
             }
             St::Backoff => self.start_connect(d, slot),

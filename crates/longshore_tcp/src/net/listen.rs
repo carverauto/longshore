@@ -8,7 +8,7 @@
 //! accept fails.
 
 use super::cover::Col;
-use super::state::{LSt, ListenerState, St, EV_ACCEPTED, EV_REFUSED, NONE};
+use super::state::{LSt, ListenerState, Socket, St, EV_ACCEPTED, EV_REFUSED, NONE};
 use super::Net;
 use crate::addr::Addr;
 use crate::config::ListenConfig;
@@ -224,7 +224,7 @@ impl<T: Transport> Net<T> {
         c.renew(cfg.conn, seed);
         c.accepted_by = if live { by } else { Listener::NONE };
         c.unix = unix;
-        c.sock_open = true;
+        c.sock = Socket::Open;
         c.last_active = self.now;
         if !listening {
             // Accepted while the listener was closing: not a connection.

@@ -7,8 +7,8 @@
 
 use super::cover::Col;
 use super::state::{
-    St, EV_ACCEPTED, EV_DOWN, EV_FINISHED, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE, NONE,
-    W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
+    Socket, St, EV_ACCEPTED, EV_DOWN, EV_FINISHED, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE,
+    NONE, W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
 };
 use super::Net;
 use crate::addr::{Addr, ServerName};
@@ -80,7 +80,7 @@ impl<T: Transport> Net<T> {
     pub(super) fn start_connect(&mut self, d: &mut T::Driver, slot: u32) {
         let c = &mut self.conns[slot as usize];
         c.st = St::Connecting;
-        c.closed = false;
+        c.sock = Socket::None;
         let timeout = c.opts.connect_timeout_ns;
         self.dial(d, slot);
         if timeout > 0 {
@@ -101,7 +101,7 @@ impl<T: Transport> Net<T> {
             // A connect that fails leaves no socket behind.
             return self.end(slot, Why::Reset);
         }
-        c.sock_open = true;
+        c.sock = Socket::Open;
         if c.secure {
             // Still connecting, as far as the caller and the connect
             // timeout are concerned, until the handshake is done.
@@ -185,7 +185,7 @@ impl<T: Transport> Net<T> {
             | St::HalfClosed
             | St::Dying => {
                 // A connect in flight is ended by the close.
-                self.conns[slot as usize].sock_open = true;
+                self.conns[slot as usize].sock = Socket::Open;
                 self.begin_close(slot, false);
                 self.do_work(d, slot);
             }
@@ -252,21 +252,27 @@ impl<T: Transport> Net<T> {
         if c.st != St::Closing {
             return;
         }
-        if !c.sock_open {
-            c.closed = true;
-            return self.try_free(slot);
-        }
-        if self.t.close(d, slot).is_ok() {
-            self.conns[slot as usize].sock_open = false;
-        } else {
-            self.add_work(slot, W_CLOSE);
+        match c.sock {
+            Socket::Open => {
+                if self.t.close(d, slot).is_ok() {
+                    self.conns[slot as usize].sock = Socket::Closing;
+                } else {
+                    self.add_work(slot, W_CLOSE);
+                }
+            }
+            Socket::None => {
+                // Nothing to close.
+                c.sock = Socket::Closed;
+                self.try_free(slot);
+            }
+            Socket::Closing | Socket::Closed => {}
         }
     }
 
     /// Free `slot` once its close and every operation in flight have ended.
     pub(super) fn try_free(&mut self, slot: u32) {
         let c = &self.conns[slot as usize];
-        if c.st != St::Closing || !c.closed || c.sock_open || c.in_flight() {
+        if c.st != St::Closing || c.sock != Socket::Closed || c.in_flight() {
             return;
         }
         self.drop_rx(slot);

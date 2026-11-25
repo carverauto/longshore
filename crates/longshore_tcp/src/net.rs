@@ -29,7 +29,7 @@ use crate::handle::Generations;
 use crate::transport::{Happened, Transport};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::{BufId, Limits};
-use state::{Chunk, ConnState, Keep, ListenerState, St, TxSpan, NONE};
+use state::{Chunk, ConnState, Keep, ListenerState, Socket, St, TxSpan, NONE};
 
 mod conn;
 mod cover;
@@ -214,7 +214,7 @@ impl<T: Transport> Net<T> {
             Happened::ShutDown { slot, result } => self.on_shut_down(slot, result),
             Happened::Closed { slot } => {
                 self.cover(slot, cover::Col::Closed);
-                self.conns[slot as usize].closed = true;
+                self.conns[slot as usize].sock = Socket::Closed;
                 self.try_free(slot);
             }
             Happened::ListenerClosed { listener } => self.on_listener_closed(listener),

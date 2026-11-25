@@ -62,6 +62,20 @@ pub(super) enum St {
     Backoff,
 }
 
+/// The socket of a connection slot. A slot is freed only when its socket
+/// is `Closed`, or it never had one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Socket {
+    /// None: not connected yet, or the connect failed.
+    None,
+    /// Open, or taken to be: its close has not been handed over yet.
+    Open,
+    /// Its close is with the transport.
+    Closing,
+    /// Its close has completed, or there was nothing to close.
+    Closed,
+}
+
 /// What keeps a queued send's bytes alive.
 #[derive(Clone, Copy)]
 pub(super) enum Keep {
@@ -110,9 +124,8 @@ pub(super) struct ConnState {
     pub(super) want: u8,
     pub(super) working: bool,
     pub(super) why: Why,
-    /// The slot holds a socket that must be closed.
-    pub(super) sock_open: bool,
-    pub(super) closed: bool,
+    /// The socket in the slot, and how far its close has come.
+    pub(super) sock: Socket,
     pub(super) redial: bool,
     /// The listener whose next connection the kernel has already put in
     /// this slot, while operations of the last one are still in flight; or
@@ -184,8 +197,7 @@ impl ConnState {
             want: 0,
             working: false,
             why: Why::Reset,
-            sock_open: false,
-            closed: false,
+            sock: Socket::None,
             redial: false,
             parked: NONE,
             parked_by: None,

@@ -389,10 +389,17 @@ transport is held to it from its first commit:
   after the peer's end then has nothing to do at the end, as today.
 - **The end is held by state, not by withdrawing an event**: `Finishing`
   replaces the flag that took an owed end back when frame memory ran out.
-- **Flags to states.** `sock_open`, `closed`, `redial` and the in-flight
-  flags of a `Closing` connection become one small enum of what the slot
-  still waits for; `paused`, `unopened` and `cut_off` become one enum of
-  why a connection does not read. Done in group 1, behind the model test.
+- **Flags to states, where the flags exclude each other.** Whether a
+  slot's socket is open and whether its close has completed were two
+  flags, of which one combination meant nothing and one was reached by a
+  path that marked a socket closed while its close was still in flight.
+  They are one state now (none, open, closing, closed). The three flags
+  of why a connection does not read (paused for frame memory, records the
+  stream still holds, a stream cut off without a close alert) stay flags:
+  they do occur together, so an enum would have to name every
+  combination. Whether a closing connection redials stays a flag too; it
+  means something in one state only, and making it part of that state
+  would touch every place that asks for the state.
 - **Benchmarks** as in the proposal; unchanged by this revision.
 
 ## Risks / Trade-offs

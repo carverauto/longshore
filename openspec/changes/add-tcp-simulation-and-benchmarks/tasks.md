@@ -13,9 +13,9 @@ Each group ends with a review of its own diff (no-mistakes or
 ## 1. The contract, checked
 - [x] 1.1 Seeded order for the reports of a closed socket's operations in `SimIo` (`Faults::with_reorder`, off by default), with its own tests. With it the model reproduces what group 0 could only guard: reintroducing the early free of a listener slot, or dropping the parking of an accepted connection, fails
 - [x] 1.2 `tcp_model`: the adversary, the frame-carried reference and the caller-visible invariants checked as the run goes and at its end; small pools; the example `tcp_model` with `--seed`, `--steps`, `--shrink`, `--trace`. Not yet in it: TLS connections, and running under `alloc_guard` (its own bookkeeping allocates)
-- [ ] 1.3 Every cell of the connection and listener state tables is either reached by `tcp_model` (a coverage report by state and event says so) or shown unreachable by a debug assertion
-- [ ] 1.4 Every row of the exhaustion table has a scenario test: the pool empty, the taker refused or paused, then woken without a further call
-- [ ] 1.5 Flags to states: what a closing slot waits for, and why a connection does not read, as enums; no behaviour change, `tcp_model` unchanged and green
+- [x] 1.3 `Net::coverage` counts, in debug builds, which event reached a connection in which state; the model test holds the sum over its seeds against the connection state table: every cell the table allows and the model can reach is reached, none the table excludes is. Not reached: the rows and column of TLS and of reconnecting. The listener table and the TLS phase table are not counted yet
+- [x] 1.4 A scenario for every row of the exhaustion table: six existed, three are new, and `net/exhaustion.rs` names them all
+- [x] 1.5 Flags to states where they exclude each other: the socket of a slot is one state; the reading flags and the redial flag stay, for the reasons in `design.md`; the model test unchanged and green
 - [ ] 1.6 `longshore_tcp::check::conformance` for transports, run against `KernelTransport` on `SimIo`, `PosixIo` and (in `tcp_uring`) `UringIo`
 - [ ] 1.7 Review of group 1
 
