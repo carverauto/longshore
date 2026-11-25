@@ -90,3 +90,40 @@ pub fn generate(seed: u64, count: usize) -> Vec<Step> {
     }
     steps
 }
+
+/// The bytes one step is read from.
+pub const STEP_BYTES: usize = 9;
+
+/// A run from bytes, as a fuzzer makes them: the first eight are the
+/// simulator's seed, and each nine after them a step, up to `most` of
+/// them. The first byte of a step says what it does (its high bits, by
+/// the order of [`Kind`]) and on which side (its low bit); the others
+/// are its two numbers. `None` for fewer than eight bytes.
+pub fn from_bytes(data: &[u8], most: usize) -> Option<(u64, Vec<Step>)> {
+    const KINDS: [Kind; 10] = [
+        Kind::Turn,
+        Kind::PullEvents,
+        Kind::PullFrames,
+        Kind::Send,
+        Kind::Connect,
+        Kind::Listen,
+        Kind::Close,
+        Kind::CloseListener,
+        Kind::Shutdown,
+        Kind::Release,
+    ];
+    let (seed, rest) = data.split_first_chunk::<8>()?;
+    let steps = rest
+        .as_chunks::<STEP_BYTES>()
+        .0
+        .iter()
+        .take(most)
+        .map(|s| Step {
+            kind: KINDS[usize::from(s[0] >> 1) % KINDS.len()],
+            server: s[0] & 1 == 1,
+            a: u32::from_le_bytes([s[1], s[2], s[3], s[4]]),
+            b: u32::from_le_bytes([s[5], s[6], s[7], s[8]]),
+        })
+        .collect();
+    Some((u64::from_le_bytes(*seed), steps))
+}

@@ -8,6 +8,11 @@
 //!
 //!   cargo run -p longshore_tcp --example tcp_model -- --seed N [--steps M] [--campaign NAME] [--shrink] [--trace]
 //!
+//!   cargo run -p longshore_tcp --example tcp_model -- --input FILE [--shrink] [--trace]
+//!
+//! The second form replays a run from the bytes of FILE, as the fuzz
+//! target `tcp_model_steps` reads them: a crash it wrote.
+//!
 //! The campaigns are the fault settings a run is under: usual (the
 //! default), resets, slow, delays, refusals, and flips where TLS is
 //! compiled in.
@@ -25,7 +30,7 @@
 mod model;
 
 use model::drive::{run_in, Failure};
-use model::steps::{generate, Step};
+use model::steps::{from_bytes, generate, Step};
 use model::world::Campaign;
 use std::sync::Mutex;
 
@@ -84,10 +89,29 @@ fn named(name: &str) -> Option<Campaign> {
         .find(|c| format!("{c:?}").eq_ignore_ascii_case(name))
 }
 
-/// The campaign and the seed, the number of steps, and whether to shrink
-/// and to trace.
-fn arguments() -> ((Campaign, u64), usize, bool, bool) {
+/// What to run: the campaign and the seed, and the steps of an input
+/// file if one was named; the number of steps otherwise; and whether to
+/// shrink and to trace.
+type Asked = ((Campaign, u64), Option<Vec<Step>>, usize, bool, bool);
+
+/// The run the bytes of the file at `path` describe.
+fn input(path: &str) -> (u64, Vec<Step>) {
+    let read = std::fs::read(path).ok();
+    match read
+        .as_deref()
+        .and_then(|bytes| from_bytes(bytes, usize::MAX))
+    {
+        Some(run) => run,
+        None => {
+            eprintln!("tcp_model: {path} cannot be read, or is shorter than a seed");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn arguments() -> Asked {
     let (mut seed, mut count, mut cut, mut trace) = (0u64, 3000usize, false, false);
+    let mut given = None;
     let mut campaign = Campaign::Usual;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -108,6 +132,16 @@ fn arguments() -> ((Campaign, u64), usize, bool, bool) {
                     std::process::exit(2);
                 }
             },
+            "--input" => match args.next() {
+                Some(path) => {
+                    let (from, steps) = input(&path);
+                    (seed, given) = (from, Some(steps));
+                }
+                None => {
+                    eprintln!("tcp_model: --input needs a file");
+                    std::process::exit(2);
+                }
+            },
             "--shrink" => cut = true,
             "--trace" => trace = true,
             other => {
@@ -116,11 +150,11 @@ fn arguments() -> ((Campaign, u64), usize, bool, bool) {
             }
         }
     }
-    ((campaign, seed), count, cut, trace)
+    ((campaign, seed), given, count, cut, trace)
 }
 
 fn main() {
-    let (run, count, cut, trace) = arguments();
+    let (run, given, asked, cut, trace) = arguments();
     let (campaign, seed) = run;
     // A failing run's panic is kept and shown with its step, once.
     std::panic::set_hook(Box::new(|info| {
@@ -128,7 +162,8 @@ fn main() {
             *said = info.to_string();
         }
     }));
-    let steps = generate(seed, count);
+    let steps = given.unwrap_or_else(|| generate(seed, asked));
+    let count = steps.len();
     if trace {
         // What each step did, up to where the run fails.
         drop(std::panic::catch_unwind(|| {

@@ -17,7 +17,7 @@ use longshore_tcp::{Coverage, PhaseCoverage};
 #[global_allocator]
 static ALLOC: longshore_common::io::alloc_guard::Guard = longshore_common::io::alloc_guard::Guard;
 use model::drive::{run_in, Stats};
-use model::steps::generate;
+use model::steps::{from_bytes, generate, Kind, STEP_BYTES};
 use model::world::Campaign;
 
 /// Steps of one run, and seeds in `cargo test`.
@@ -293,4 +293,25 @@ fn a_hundred_thousand_seeds_of_fault_campaigns() {
     for worker in workers {
         assert!(worker.join().is_ok(), "a run failed: see above");
     }
+}
+
+#[test]
+fn a_run_is_read_from_bytes_as_the_fuzzer_makes_them() {
+    assert!(from_bytes(&[0; 7], 10).is_none());
+    let mut bytes = 5u64.to_le_bytes().to_vec();
+    // A send on the server set, then a turn on the client's, then seven
+    // bytes of a step that is not whole.
+    bytes.extend([3 << 1 | 1, 1, 0, 0, 0, 2, 0, 0, 0]);
+    bytes.extend([10 << 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    bytes.extend([0; STEP_BYTES - 2]);
+    let (seed, steps) = from_bytes(&bytes, 10).unwrap();
+    assert_eq!((seed, steps.len()), (5, 2));
+    let shown = format!("{steps:?}");
+    assert!(
+        shown.contains("kind: Send, server: true, a: 1, b: 2"),
+        "{shown}"
+    );
+    assert!(shown.contains(&format!("kind: {:?}, server: false", Kind::Turn)));
+    // And no more steps than asked for.
+    assert_eq!(from_bytes(&bytes, 1).map(|run| run.1.len()), Some(1));
 }

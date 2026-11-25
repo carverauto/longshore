@@ -10,7 +10,11 @@
 //! step against what a caller may rely on. A run that fails is a crash.
 //!
 //! The first eight bytes are the simulator's seed; each nine after them
-//! are a step: what it does, on which side, and its two numbers.
+//! are a step: what it does, on which side, and its two numbers
+//! (`model::steps::from_bytes`). A crash is replayed, traced and cut down
+//! with the model's own tool:
+//!
+//!   cargo run -p longshore_tcp --example tcp_model -- --input FILE --trace --shrink
 
 use libfuzzer_sys::fuzz_target;
 // The model itself, from the test's own source: see fuzz/Cargo.toml for
@@ -21,44 +25,18 @@ use libfuzzer_sys::fuzz_target;
 mod model;
 
 use model::drive::run_in;
-use model::steps::{Kind, Step};
+use model::steps::{from_bytes, STEP_BYTES};
 use model::world::Campaign;
 
-/// The most steps of a run: enough for connections to come up, carry
-/// frames and end, and few enough for many runs a second.
-const STEPS: usize = 600;
-
-fn kind(of: u8) -> Kind {
-    match of % 10 {
-        0 => Kind::Turn,
-        1 => Kind::PullEvents,
-        2 => Kind::PullFrames,
-        3 => Kind::Send,
-        4 => Kind::Connect,
-        5 => Kind::Listen,
-        6 => Kind::Close,
-        7 => Kind::CloseListener,
-        8 => Kind::Shutdown,
-        _ => Kind::Release,
-    }
-}
+/// The most steps of a run: what libFuzzer's longest input, 4096 bytes
+/// unless told otherwise, holds behind the seed.
+const STEPS: usize = (4096 - 8) / STEP_BYTES;
 
 fuzz_target!(|data: &[u8]| {
-    let Some((seed, rest)) = data.split_first_chunk::<8>() else {
+    let Some((seed, steps)) = from_bytes(data, STEPS) else {
         return;
     };
-    let steps: Vec<Step> = rest
-        .chunks_exact(9)
-        .take(STEPS)
-        .map(|s| Step {
-            // The high bits choose the kind, the low one the side.
-            kind: kind(s[0] >> 1),
-            server: s[0] & 1 == 1,
-            a: u32::from_le_bytes([s[1], s[2], s[3], s[4]]),
-            b: u32::from_le_bytes([s[5], s[6], s[7], s[8]]),
-        })
-        .collect();
-    if let Err(failure) = run_in(Campaign::Usual, u64::from_le_bytes(*seed), &steps, false) {
+    if let Err(failure) = run_in(Campaign::Usual, seed, &steps, false) {
         panic!("step {} of {}: {}", failure.step, steps.len(), failure.why);
     }
 });
