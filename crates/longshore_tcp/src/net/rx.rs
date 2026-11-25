@@ -6,7 +6,9 @@
 //! Receiving: what the transport delivers, kept until the caller pulls it.
 //!
 //! Ring mode: each ring buffer the armed receive delivers is queued on its
-//! connection as a chunk. Direct mode: a frame's header is received into
+//! connection as a chunk; when the armed receive has ended and a frame is
+//! being put together, the rest of that frame is received straight into
+//! its memory. Direct mode: a frame's header is received into
 //! the connection's header area, then the whole frame into frame memory.
 //! Cutting chunks into frames happens when the caller pulls
 //! (`pull.rs`).
@@ -36,8 +38,16 @@ impl<T: Transport> Net<T> {
         }
         match c.opts.rx {
             Rx::Ring => {
-                if c.armed {
+                if c.armed || c.recv_busy {
                     return;
+                }
+                if c.asm.is_some() && c.backlog.is_none() && c.chunk_head == NONE && !c.secure {
+                    // The frame it is putting together has memory of its
+                    // own: the rest is received straight into it. It
+                    // must not wait for the ring, which the unpulled
+                    // input of connections that wait for frame memory may
+                    // hold to the last buffer.
+                    return self.read_direct(d, slot);
                 }
                 if self.t.recv_armed(d, slot).is_ok() {
                     self.conns[slot as usize].armed = true;
@@ -161,7 +171,12 @@ impl<T: Transport> Net<T> {
                 c.asm_have += n;
                 if c.asm_have == c.asm_len {
                     (c.asm, c.ready) = (None, Some((ext, c.asm_len)));
+                    let ring = c.opts.rx == Rx::Ring;
                     self.queue_event(slot, EV_READABLE);
+                    if ring {
+                        // Back to the ring for what follows the frame.
+                        self.add_work(slot, W_READ);
+                    }
                 } else {
                     self.read_direct(d, slot);
                 }

@@ -239,3 +239,40 @@ fn headers_that_came_in_pieces_need_no_second_frame_buffer_either() {
         "connections waited on each other for frame memory"
     );
 }
+
+#[test]
+fn more_connections_than_frame_buffers_all_deliver() {
+    let few =
+        |connects, accepts, listeners| sizes(connects, accepts, listeners).with_frames(2, 8192);
+    for seed in 0..40u64 {
+        // Half the runs with receives and sends cut short.
+        let faults = if seed.is_multiple_of(2) {
+            Faults::NONE
+        } else {
+            Faults::NONE
+                .with_partial_recv(300_000)
+                .with_short_send(300_000)
+        };
+        let mut w = World::with(seed, faults, few(4, 0, 0), few(0, 4, 1));
+        let _: Listener = w.listen(ListenConfig::new(prefix()));
+        let pairs: Vec<(Conn, Conn)> = (0..4).map(|_| w.connect(prefix())).collect();
+        let frame = |i: usize, n: usize| prefixed(3000 + i, (i * 16 + n) as u8);
+        let (mut sent, mut got) = ([0usize; 4], [0usize; 4]);
+        for _ in 0..6000 {
+            for (i, (c, s)) in pairs.iter().enumerate() {
+                if sent[i] < 3 && send(&mut w, *c, &frame(i, sent[i])) {
+                    sent[i] += 1;
+                }
+                for (f, bytes) in w.pull_all(*s) {
+                    assert!(bytes == frame(i, got[i]), "connection {i}");
+                    got[i] += 1;
+                    w.server.release(f);
+                }
+            }
+            w.turn();
+            while w.client.next_event().is_some() {}
+            while w.server.next_event().is_some() {}
+        }
+        assert_eq!(got, [3; 4], "seed {seed}: {:?}", w.server.usage());
+    }
+}
