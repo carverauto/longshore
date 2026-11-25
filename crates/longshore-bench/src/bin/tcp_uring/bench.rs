@@ -141,6 +141,17 @@ impl Opts {
         self.conns + if self.kind == Kind::Path { 3 } else { 0 }
     }
 
+    /// Sends a connection can have queued. A replica of a log node is
+    /// sent every source's block, all of them at once when their writes
+    /// complete together: its queue holds two for each source.
+    fn spans(&self) -> u32 {
+        if self.kind == Kind::Path {
+            (2 * self.conns + 8).clamp(16, 1024)
+        } else {
+            16
+        }
+    }
+
     /// The pools of one end: `connects` it opens, `accepts` it takes.
     fn sizes(&self, connects: u32, accepts: u32) -> Sizes {
         let frame = self.frame_len();
@@ -149,7 +160,7 @@ impl Opts {
             .with_frames(many, frame.next_multiple_of(4096))
             .with_segments(many, self.segment.max(frame))
             .with_ring((4 * self.lines()).clamp(64, 16_384), self.ring)
-            .with_spans(16)
+            .with_spans(self.spans())
             .with_zero_copy_min(self.zc_min)
     }
 
