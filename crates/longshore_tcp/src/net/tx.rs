@@ -221,6 +221,8 @@ impl<T: Transport> Net<T> {
         self.cover(slot, Col::Sent);
         self.conns[slot as usize].sending = false;
         if !self.flushable(slot) {
+            // What was queued behind it goes nowhere now.
+            self.drop_unsendable(slot);
             return self.try_free(slot);
         }
         let c = &mut self.conns[slot as usize];

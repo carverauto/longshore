@@ -320,12 +320,21 @@ fn a_run_is_read_from_bytes_as_the_fuzzer_makes_them() {
 /// each stays here, by what it showed, so that it cannot come back.
 #[test]
 fn runs_the_fuzzer_found_to_fail_pass() {
-    let found: [(&str, &[u8]); 1] = [(
-        // A cancel of the same receive for every pull that found no
-        // frame memory, until the backend had no room left.
-        "cancel-per-pull",
-        include_bytes!("model/found/cancel-per-pull.bin"),
-    )];
+    let found: [(&str, &[u8]); 2] = [
+        (
+            // A cancel of the same receive for every pull that found no
+            // frame memory, until the backend had no room left.
+            "cancel-per-pull",
+            include_bytes!("model/found/cancel-per-pull.bin"),
+        ),
+        (
+            // Connections whose peer had reset kept what was queued to
+            // send, lent frames among it, while their last input waited
+            // for the frame memory those frames were in.
+            "sends-kept-past-a-failure",
+            include_bytes!("model/found/sends-kept-past-a-failure.bin"),
+        ),
+    ];
     for (name, bytes) in found {
         let (seed, steps) = from_bytes(bytes, usize::MAX).unwrap();
         if let Err(f) = run_in(Campaign::Usual, seed, &steps, false) {

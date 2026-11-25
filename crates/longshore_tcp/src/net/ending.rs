@@ -132,7 +132,7 @@ impl<T: Transport> Net<T> {
                     self.deadlines.set(slot, self.now.saturating_add(idle));
                 }
             }
-            return;
+            return self.drop_unsendable(slot);
         }
         let c = &mut self.conns[slot as usize];
         if c.why == Why::Orderly && c.mid_frame() {
@@ -155,6 +155,20 @@ impl<T: Transport> Net<T> {
         c.st = St::Dying;
         self.deadlines.clear(slot);
         self.owe_end(slot);
+        self.drop_unsendable(slot);
+    }
+
+    /// Let go of what `slot` has queued to send, if it can never go out
+    /// any more: its segments, and the frame memory of frames lent for
+    /// sending. A connection that has failed may wait long for its caller
+    /// to pull its last input and its end, and that input, or another
+    /// connection's, may need the very memory. A send in flight is waited
+    /// for: its completion comes here again.
+    pub(super) fn drop_unsendable(&mut self, slot: u32) {
+        let c = &self.conns[slot as usize];
+        if c.tx_len > 0 && !c.sending && !self.flushable(slot) {
+            self.drop_tx(slot);
+        }
     }
 
     /// Owe the caller the end of the `Dying` `slot`.
