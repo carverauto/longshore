@@ -460,6 +460,90 @@ transport brings a rig: itself, its driver, and a way to turn the driver.
   bytes, and one that a close ends is reported once. A transport without
   such memory refuses as unsupported, and `Net` waits for the ring.
 
+## The packet device
+`longshore_common::sim::PacketLink`: a link between two ends that carries
+packets, for a transport that has a TCP of its own (change 3) to be
+tested on, where `SimIo` stands in for the kernel's sockets. It stands
+where the NIC and the wire do: an end hands it whole packets and takes
+whole packets, and between the two a seeded generator loses, duplicates,
+delays and reorders them.
+
+It follows the rules of the rest: its packet memory and its queues are
+built once, for a number of packets and a longest packet, and nothing
+allocates afterwards; it does no I/O and has no clock, the caller gives
+the time with every call; the same seed and the same calls give the same
+packets, in the same order, at the same times.
+
+### Where a packet is
+A slot of the device's packet memory is in exactly one place.
+
+| Place | It got there by | It leaves when | To |
+|---|---|---|---|
+| Free | being built; a packet delivered, taken or dropped | `send` | Queued |
+| Queued (the sender's transmit queue) | `send` | the next `turn` | In flight; Dropped (lost) |
+| In flight | a `turn` that sent it, with the time it is due; a duplicate is a second slot with the same bytes and a time of its own | a `turn` at or after its due time | Delivered; Dropped (the receive queue is full) |
+| Delivered (the receiver's receive queue) | a `turn` | `recv` | Free |
+| Dropped | loss, or a full receive queue | at once: it is counted, and its slot is Free | Free |
+
+### What each call does
+
+| Call | Free slots, and room in the queue | none |
+|---|---|---|
+| `send(from, bytes)` | the bytes are copied to a slot: → Queued | `Full`, nothing changes; `TooLong` for a packet longer than the device carries |
+| `turn(now)` | every Queued packet of both ends, in the order sent: lost (→ Dropped), or → In flight due at `now` + the latency + its delay, and with it a duplicate if one is drawn and a slot is free. Then every In flight packet that is due, in the order of due time and then of sending: → Delivered, or → Dropped when the receive queue is full | a duplicate that finds no slot is not made (counted as none) |
+| `recv(at, into)` | the oldest Delivered packet of that end is copied out: → Free | `None` |
+| `next_due()` | the earliest time a `turn` would do something: now if anything is Queued, else the earliest due time In flight | `None` |
+
+Reordering is a delay: a packet drawn to be reordered is due later by a
+fixed time longer than the latency, so that packets sent after it arrive
+before it. Delay is a time drawn below a bound. With neither, and no
+loss, packets arrive in the order sent, each once, a latency after the
+`turn` that sent them.
+
+### Invariants
+
+- **P1 One place.** Every slot is Free, Queued, In flight or Delivered,
+  and in one queue or list only. Free + Queued + In flight + Delivered is
+  the number of slots, after every call.
+- **P2 Conservation.** Packets accepted by `send`, plus duplicates made,
+  equal packets taken by `recv`, plus packets dropped, plus those Queued,
+  In flight and Delivered now.
+- **P3 Nothing invented, nothing changed.** A packet taken by `recv` has
+  the bytes and the length of a packet sent from the other end. The
+  device flips no bits: corruption is not among its faults.
+- **P4 Without faults: once and in order.** With every rate zero and room
+  in the queues, each packet sent is delivered once, in the order sent.
+- **P5 Not before its time.** No packet is Delivered earlier than the
+  latency after the `turn` that sent it, nor later than the latency plus
+  the longest delay plus the reordering time; and none is delivered
+  before it was sent.
+- **P6 Order is kept unless asked.** With the reordering and delay rates
+  zero, packets of one direction are delivered in the order sent
+  whatever is lost or duplicated, and a duplicate comes next to its
+  original.
+- **P7 The same seed, the same trace.** Two devices with the same seed,
+  rates and sizes, given the same calls, hand out the same packets at the
+  same calls and have the same trace hash; another seed gives another.
+- **P8 The two directions do not mix.** What one end sends only the other
+  receives. One draw sequence serves both, so what one direction does
+  changes the faults of the other: that is what a seed fixes.
+- **P9 Nothing allocates after it is built.**
+
+### Exhaustion
+
+| Pool | Who takes | When it is empty | What makes room |
+|---|---|---|---|
+| Slots (shared by both directions) | `send`; a duplicate | `send` answers `Full`; the duplicate is not made | `recv`; a loss; a drop |
+| An end's transmit queue | `send` | `Full` | the next `turn` |
+| An end's receive queue | a `turn` delivering | the packet is dropped and counted, as a NIC's receive ring that is not read drops | `recv` |
+
+### How it is checked
+Its own test binary, `sim_packet`, under `alloc_guard`: a scenario for P4,
+for each fault alone with its rate held against the count over many
+packets, for each row of the exhaustion table, and for P7; and a run of
+seeded random calls (send from either end, turn, receive, time passing)
+that checks P1, P2, P3 and P5 after every call and P6 where it applies.
+
 ## Decisions
 - **The tables describe `Net` as it is to be.** Every cell that exists in
   the merged code was checked against it; `Finishing`, `HalfClosed` and

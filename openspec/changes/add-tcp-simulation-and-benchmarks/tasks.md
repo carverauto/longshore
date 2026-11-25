@@ -29,7 +29,7 @@ Each group ends with a review of its own diff (no-mistakes or
 - [x] 2.6 Review of group 2 and of the open items before it: ten findings, each closed in a commit of its own. One was a fault in `Net`: the rule that keeps the last frame buffer for a connection holding one withheld it when nobody else could want it, and a single TLS connection stalled once the caller kept a frame (a scenario reproduces it). The others: no fallback when a transport cannot receive into its own memory, a duplicate flag that went stale, a mark that outlived the ring's shortage, an undocumented error, the long runs not naming their seeds after an allocation, the fallback receives exercised on the simulator only (now in the conformance suite, on real sockets and the ring), duplicated coverage tables, a misplaced doc comment and two files over the size limit. While fixing them the trace test turned out flaky under flipped bits: those runs do not repeat by seed, and the claim is withdrawn for that campaign
 
 ## 3. Packet device
-- [ ] 3.1 Its state table and invariants in `design.md` first (a packet is in exactly one place: queued, in flight, delivered, dropped)
+- [x] 3.1 Its state table and invariants in `design.md` first: where a packet is (free, queued, in flight, delivered; dropped is counted and free at once), what each call does, invariants P1 to P9, and its exhaustion table
 - [ ] 3.2 Packet device in `longshore_common::sim` with seeded loss, reordering, duplication and delay, and its own tests
 - [ ] 3.3 Review of group 3
 
