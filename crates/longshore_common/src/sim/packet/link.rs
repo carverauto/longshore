@@ -256,8 +256,10 @@ impl PacketLink {
         if self.tx[0].len + self.tx[1].len > 0 {
             return Some(now);
         }
+        // Never earlier than `now`: a packet whose time has passed is due
+        // at once.
         (0..self.flight_len)
-            .map(|at| self.packets[self.flight[at] as usize].due)
+            .map(|at| self.packets[self.flight[at] as usize].due.max(now))
             .min()
     }
 

@@ -243,3 +243,17 @@ fn the_trace_tells_which_packet_was_lost() {
     assert!(first.is_some() && second.is_some(), "neither case came up");
     assert_ne!(first, second);
 }
+
+#[test]
+fn what_is_due_next_is_never_in_the_past() {
+    let mut link = PacketLink::new(8, PacketFaults::NONE, PacketSizes::new(4, MAX as u32));
+    sealed(|| {
+        assert_eq!(link.send(End::A, &[7; 20]), Ok(()));
+        assert_eq!(link.next_due(50), Some(50));
+        link.turn(50);
+        assert_eq!(link.next_due(60), Some(50 + LATENCY));
+        // The caller's clock passes the time with no turn between.
+        let late = 50 + LATENCY + 12_345;
+        assert_eq!(link.next_due(late), Some(late));
+    });
+}
