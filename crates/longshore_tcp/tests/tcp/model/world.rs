@@ -47,6 +47,9 @@ pub enum Campaign {
     /// Connects refused.
     Refusals,
     /// Bits flipped in transit, over TLS, which must notice every one.
+    /// The one campaign whose runs do not repeat by seed: see
+    /// `the_same_seed_gives_the_same_trace`. A failing seed of it may
+    /// take several replays to fail again.
     Flips,
 }
 

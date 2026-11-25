@@ -408,7 +408,11 @@ adversary's own closes, the small pools and the end of the run put each
 fault under a close, under exhaustion and at the end of a stream. Half
 the runs end with a drain of the server, which must say so once. A run
 returns a hash of every completion the backend delivered: the same
-seed gives the same hash, another seed another. `cargo test` runs 150
+seed gives the same hash, another seed another. Not under `flips`: a
+handshake carries random bytes, and what a flipped bit does there can
+depend on the value it meets, so a seed of that campaign can take
+another course the next time and may need several replays to fail
+again. `cargo test` runs 150
 seeds of the usual campaign and 40 of each other; CI a thousand more
 (`-- --ignored a_thousand`); the nightly workflow a hundred thousand on
 every core (`-- --ignored a_hundred_thousand`, four and a half minutes
