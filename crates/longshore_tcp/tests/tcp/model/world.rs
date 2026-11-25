@@ -9,7 +9,7 @@ use super::drive::FRAME_MAX;
 use longshore_common::io::Limits;
 use longshore_common::sim::{Faults, SimIo};
 use longshore_tcp::check::World;
-use longshore_tcp::Sizes;
+use longshore_tcp::{ConnOpts, Framing, HeaderFraming, Reconnect, Rx, Sizes};
 
 /// The name the server's certificate is for.
 pub(crate) const NAME: &str = "replica.longshore.test";
@@ -146,4 +146,32 @@ pub(crate) fn world(campaign: Campaign, seed: u64) -> World<SimIo> {
         return World::new_tls(&mut make, Limits::BASE, client, server, certs());
     }
     World::new(&mut make, Limits::BASE, client, server)
+}
+
+/// With TLS a frame can also be longer than a record, so that it comes
+/// in two and is put together from both.
+pub(crate) const ACROSS_RECORDS: usize = 20_000;
+const FRAME_MAX_TLS: usize = 24_000;
+
+/// The options `bits` choose, and whether they have half-close.
+pub(crate) fn opts(bits: u32, tls: bool) -> Result<(ConnOpts, bool), String> {
+    opts_with(bits, false, tls)
+}
+
+/// [`opts`], for a connection that dials again when it goes down if
+/// `reconnect` is set.
+pub(crate) fn opts_with(bits: u32, reconnect: bool, tls: bool) -> Result<(ConnOpts, bool), String> {
+    let longest = if tls { FRAME_MAX_TLS } else { FRAME_MAX };
+    let framing = HeaderFraming::length_prefix(longest as u32).map_err(|e| format!("{e:?}"))?;
+    let rx = if bits & 1 == 0 { Rx::Ring } else { Rx::Direct };
+    let half_close = bits & 2 != 0;
+    // One connection in four ends when it has been idle for a while.
+    let idle = if bits & 24 == 24 { 20_000_000 } else { 0 };
+    let opts = ConnOpts::new(Framing::Header(framing))
+        .with_rx(rx)
+        .with_half_close(half_close)
+        .with_idle_timeout_ns(idle)
+        .with_reconnect(reconnect.then(|| Reconnect::new(1_000_000, 8_000_000, 100)))
+        .with_connect_timeout_ns(50_000_000);
+    Ok((opts, half_close))
 }

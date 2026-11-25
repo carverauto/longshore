@@ -7,13 +7,12 @@
 
 use super::book::{fill, Handle, Sender, Side, BODY_MIN};
 use super::steps::{Kind, Step};
-use super::world::{world, Campaign, NAME};
+use super::world::{opts, opts_with, world, Campaign, ACROSS_RECORDS, NAME};
 use longshore_common::io::alloc_guard::sealed;
 use longshore_common::sim::SimIo;
 use longshore_tcp::check::World;
 use longshore_tcp::{
-    Addr, ConnOpts, Coverage, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, NetError,
-    PhaseCoverage, Reconnect, Rx, SendError,
+    Addr, Coverage, KernelTransport, ListenConfig, Net, NetError, PhaseCoverage, SendError,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -23,10 +22,6 @@ const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7))
 /// The longest frame, length prefix included: a send segment.
 pub(crate) const FRAME_MAX: usize = 4096;
 const LENGTHS: [usize; 5] = [BODY_MIN, 64, 700, 2000, FRAME_MAX - 4];
-/// With TLS a frame can also be longer than a record, so that it comes
-/// in two and is put together from both.
-const ACROSS_RECORDS: usize = 20_000;
-const FRAME_MAX_TLS: usize = 24_000;
 /// Frames the caller keeps at most, of the three each set has.
 const HELD_MAX: usize = 2;
 
@@ -81,29 +76,6 @@ pub(crate) struct Run {
     pub(crate) trace: bool,
     /// Ends in order, to be judged when every sender's own end is known.
     pub(crate) ended: Vec<super::book::Ended>,
-}
-
-/// The options `bits` choose, and whether they have half-close.
-fn opts(bits: u32, tls: bool) -> Result<(ConnOpts, bool), String> {
-    opts_with(bits, false, tls)
-}
-
-/// [`opts`], for a connection that dials again when it goes down if
-/// `reconnect` is set.
-fn opts_with(bits: u32, reconnect: bool, tls: bool) -> Result<(ConnOpts, bool), String> {
-    let longest = if tls { FRAME_MAX_TLS } else { FRAME_MAX };
-    let framing = HeaderFraming::length_prefix(longest as u32).map_err(|e| format!("{e:?}"))?;
-    let rx = if bits & 1 == 0 { Rx::Ring } else { Rx::Direct };
-    let half_close = bits & 2 != 0;
-    // One connection in four ends when it has been idle for a while.
-    let idle = if bits & 24 == 24 { 20_000_000 } else { 0 };
-    let opts = ConnOpts::new(Framing::Header(framing))
-        .with_rx(rx)
-        .with_half_close(half_close)
-        .with_idle_timeout_ns(idle)
-        .with_reconnect(reconnect.then(|| Reconnect::new(1_000_000, 8_000_000, 100)))
-        .with_connect_timeout_ns(50_000_000);
-    Ok((opts, half_close))
 }
 
 /// Run `steps` with `seed` under the faults of `campaign`, then bring
