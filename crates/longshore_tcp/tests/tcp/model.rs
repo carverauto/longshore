@@ -93,6 +93,7 @@ fn random_operations_keep_what_a_caller_relies_on() {
     );
     // And were where the state table says a connection can be, and
     // nowhere it says one cannot.
+    // (The cells are counted in debug builds only.)
     let wrong = report(&total.cover);
-    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(!cfg!(debug_assertions) || wrong.is_empty(), "{wrong:#?}");
 }
