@@ -299,6 +299,27 @@ completion order of task 1.1 is what will.
   the ring had been empty outlived its connection. Fixed: what a stream
   holds is opened first, the stream asserts it, and the mark goes with
   the rest of the receive state.
+- **C12 A cancel for every pull that found no frame memory.** Found by
+  the fuzz target `tcp_model_steps` in group 4: a pull that finds no
+  frame memory stops the connection reading, which cancels its armed
+  receive; a caller that pulled again before the next turn sent another
+  cancel of the same receive, and nineteen of them left the backend no
+  room for anything else. The model test's generator never pulls that
+  often between two turns, so its hundred thousand seeds passed: what a
+  seeded generator will not do, a fuzzer does. Fixed: one cancel for an
+  armed receive. The input is kept with the model test, which replays
+  every run a fuzzer found.
+- **C13 Sends kept past a failure held the memory the last input
+  needed.** Found by the same fuzz target, in the run that was to close
+  group 4. A connection whose peer has reset keeps what it had queued to
+  send until it is closed, and it is closed only when its caller has
+  pulled its last input and its end. Frames lent for sending were among
+  what two such connections had queued, all three frame buffers of the
+  set in them; their last input, frames longer than a ring buffer,
+  waited for frame memory, and they waited for ever, telling `Readable`
+  at every turn. Fixed: what a connection has queued is let go as soon
+  as it can never go out (it has failed, or its end is owed), a send in
+  flight being waited for. Kept as a second run with the model test.
 - **C7 The connect timeout marks the socket open whether or not there is
   one**, and relies on the backend reporting the close of an empty socket
   slot like any other. Kept, as assumption A2 of the conformance suite.
@@ -353,7 +374,7 @@ that is cheap.
 |---|---|---|---|
 | Connection slots (own) | `connect`, a single accept | `NoSlots`; the accept is not started | a freed slot; `poll` starts accepts |
 | Accept range (kernel's) | an armed accept | the kernel drops the connection, the accept fails, `Net` waits | the wait's deadline |
-| Frame memory (extents) | direct receive, assembling a frame, a spill, TLS opening, `hold` | the read pauses, the input stays where it is, a connection whose stream has ended stays `Finishing`; `hold` returns `NoMemory` | `release`, a send or write that drops its hold; `poll` retries |
+| Frame memory (extents) | direct receive, assembling a frame, a spill, TLS opening, `hold`, a frame lent for sending (until it has gone, or its connection can send no more: C13) | the read pauses, the input stays where it is, a connection whose stream has ended stays `Finishing`; `hold` returns `NoMemory` | `release`, a send or write that drops its hold; `poll` retries |
 | Frame memory, among connections | each connection's undelivered input | a connection holds at most one buffer for input it has not delivered (its backlog, or the frame it is putting together, or a whole frame waiting), so connections cannot each hold one and wait for a second; found by the model test, where three connections and three buffers stalled for ever. A protected connection in ring mode can hold two: while another such connection holds frame memory, the last free buffer goes only to one that holds one already; ring mode with TLS needs two buffers at least | — |
 | Hold count of one extent | a frame lent from a backlog, `send_lent`, a file write | the frame is not lent and stays; `Stale` or `Full` to the caller | a hold released |
 | Send segments | `send_frame`, `send_bytes` | `Full`; the connection joins the fixed waiter list | a segment returned: one waiter is told `Writable`, and a waiter that leaves passes it on |
