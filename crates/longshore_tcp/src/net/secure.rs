@@ -14,7 +14,7 @@ use crate::addr::{Addr, ServerName};
 use crate::config::{ConnOpts, Rx};
 use crate::event::{NetError, Why};
 use crate::handle::Conn;
-use crate::transport::{Role, Span, Transport};
+use crate::transport::{Refused, Role, Span, Transport};
 use longshore_stream::RING_DST_MIN;
 
 impl<T: Transport> Net<T> {
@@ -187,7 +187,13 @@ impl<T: Transport> Net<T> {
             }
             // A whole record waits there for frame memory.
             Ok(false) => self.conns[slot as usize].unopened = true,
-            Err(_) => self.add_work(slot, W_READ),
+            Err(Refused::Busy) => self.add_work(slot, W_READ),
+            Err(Refused::Unsupported) => {
+                // A transport without memory of its own for this: back
+                // to the ring, and to waiting for a buffer of it.
+                self.conns[slot as usize].dry = false;
+                self.add_work(slot, W_READ);
+            }
         }
     }
 

@@ -343,7 +343,9 @@ pub trait Transport {
     /// [`Happened::Received`]: the bytes it took, 0 at the end of the
     /// stream, or a negated error; what it took is opened with
     /// [`Transport::open`] and no bytes. `false` when the transport holds
-    /// a whole record that waits to be opened.
+    /// a whole record that waits to be opened. A transport that cannot do
+    /// this refuses as [`Refused::Unsupported`], and `Net` waits for the
+    /// ring instead.
     fn recv_kept(&mut self, d: &mut Self::Driver, slot: u32) -> Result<bool, Refused>;
     /// Stop the receive in flight on `slot`; it reports its end as usual.
     fn cancel_recv(&mut self, d: &mut Self::Driver, slot: u32) -> Result<(), Refused>;
