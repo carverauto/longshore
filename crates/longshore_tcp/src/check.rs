@@ -159,6 +159,12 @@ impl<IO: Io> World<IO> {
         &mut self.io
     }
 
+    /// The backend alone: what is left when the sets are done with, as
+    /// after a simulated power loss.
+    pub fn into_io(self) -> IO {
+        self.io
+    }
+
     /// The client set and the backend.
     pub fn client(&mut self) -> (&mut Net<KernelTransport<IO>>, &mut IO) {
         (&mut self.client, &mut self.io)
