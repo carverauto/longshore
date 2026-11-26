@@ -10,7 +10,7 @@ its write-up is the result.
 - [x] 1.4 Review of group 1
 
 ## 2. The contract
-- [ ] 2.1 `design.md`: the ownership table of chunks, the states of a queue's registration, the invariants and the exhaustion rows, reviewed before code; first, from the kernel's source and a run on the Spark, what the kernel does when the area is empty and how many returns can be outstanding
+- [ ] 2.1 (written and reviewed once: not passed, see "Review of the contract" in `design.md`) `design.md`: the ownership table of chunks, the states of a queue's registration, the invariants and the exhaustion rows, reviewed before code; first, from the kernel's source and a run on the Spark, what the kernel does when the area is empty and how many returns can be outstanding
 - [ ] 2.2 `SimIo`: `Rx::ZeroCopy` receives delivered in chunks with seeded boundaries and seeded exhaustion; same seed, same trace
 - [ ] 2.3 The model test and the conformance suite take the mode (failing until group 3)
 - [ ] 2.4 Review of group 2

@@ -75,6 +75,76 @@ into chunks of the page size unless a larger length is asked and granted.
   zero-copy send as done for the queue when its first completion comes,
   holding only its memory until the notification.
 
+## Review of the contract: not passed
+The sections from "What the kernel does" to "The simulator's model" were
+reviewed against the kernel's source and the existing code before any
+code was written, and do not stand as written. No code follows from them
+until they are redone. What the review found, in the order that matters:
+
+1. **The stop rule deadlocks.** A piece that is delivered but not yet part
+   of a whole frame can only leave by becoming one. Thirty-two connections
+   each part-way through a 1 MiB frame fill any table; every receive is
+   then stopped and nothing can ever be released. Ring mode avoids this
+   by copying a spanning frame into frame memory at once and by moving
+   unpulled input out at every `poll`; this design carried neither over.
+2. **The bound cannot be held where it was put.** The kernel delivers
+   until the socket is empty or the completion ring is full; it knows
+   nothing of `pieces_max`. Completions already delivered when the table
+   fills cannot be refused. And ring mode does not "cancel its receives
+   when the ring runs dry": the kernel ends them there.
+3. **One connection can take everything.** Nothing bounds one
+   connection's pieces: a connection the caller does not pull, or a frame
+   lent to a peer that reads slowly, stops every connection of the mode.
+4. **A piece has several holders at once.** A frame can be with the
+   caller, in sends to several peers and under a file write together;
+   the table gave a piece one place. `Frame` is `Copy` and a ring-lent
+   frame needs no `release` today, so a program that is correct in ring
+   mode would leak or return twice here.
+5. **Sending a frame in pieces does not fit.** A 1 MiB frame is about 290
+   pieces; a connection queues sixteen sends and the backend has no
+   vectored send.
+6. **TLS copies anyway.** A record spans four or five pieces and is
+   gathered before it is opened.
+7. **The sizing rule is not computable**: socket buffers are charged by
+   the kernel's own measure, not in chunks; backlog, accept queues and
+   other processes' flows on the queue hold chunks unseen; no call sets a
+   socket's receive buffer today.
+8. **Claims about the kernel that need redoing**: an overrun refill ring
+   is read twice (double returns), not merely lost; the copy path draws
+   only from the area's free list and can fail with `ENOMEM` on an area
+   that is not empty; a flow from another ring's queue fails with
+   `EFAULT`; what a full completion ring does (K5) and whether an
+   ordinary receive works on such a socket (it would break the TLS
+   handshake and direct receive) are not established; the flush call is
+   not in 6.15, so the floor is nearer 7.0.
+9. **The stall run shows less than was claimed**: one run, an area empty
+   for a second by construction, order and content of the stream not
+   checked, and its own returns in the last phases not bounded.
+
+## What the mode can be worth, after milestone 31 and this review
+With the two modes that exist, a frame that is logged costs one copy (the
+kernel's, straight into block-aligned memory), and so does a frame that
+is forwarded (received direct, sent zero-copy). Zero-copy receive can
+only improve on that for:
+
+- a frame read in place and not kept: a quarter less on the receiving
+  thread, a tenth counting the queue's core; and
+- a frame forwarded with no copy at all, which needs pieces held across
+  turns, counted holds and a send from the area: findings 1 to 5.
+
+Three ways on from here; the choice is recorded when made.
+
+- **Narrow.** Pieces live one turn, as ring buffers do: a frame whole
+  within a turn is lent in place until the next `poll`; anything else is
+  moved into frame memory then. Findings 1 to 5 fall away (nothing is
+  held), `release` stays what it is, the area is bounded by a turn's
+  completions. Wins only the first case above; plain TCP only.
+- **Full.** As proposed, with findings 1 to 9 answered. Wins both cases.
+  Several times the work of the narrow form, and most of the risk.
+- **Shelve.** Keep the measurements and the note; do the zero-copy send
+  fault (group 4) as a change of its own; come back when a workload
+  shows the receive copy is what it waits for.
+
 ## What the kernel does (Linux 7.0, `io_uring/zcrx.c`, and a run)
 Read from the source of the kernel the Sparks run, and checked by the
 `stall` run of `bench/spikes/zcrx/zcrecv.c` (milestone 31).
