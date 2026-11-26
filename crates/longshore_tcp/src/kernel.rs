@@ -49,6 +49,9 @@ pub struct KernelTransport<IO: Io> {
     sock_base: u32,
     /// Per connection slot: an armed receive is in flight.
     armed: Box<[bool]>,
+    /// Per connection slot: the receive in flight is a zero-copy receive,
+    /// whose completions with bytes are pieces of pages.
+    pieces: Box<[bool]>,
     /// Per connection slot: the listener whose single accept will fill it.
     accepting: Box<[u32]>,
     /// Per connection slot, then per listener: the kinds of operation
@@ -77,6 +80,7 @@ impl<IO: Io> KernelTransport<IO> {
             listeners: config.sizes.listeners,
             sock_base: config.sock_base,
             armed: vec![false; conns as usize].into_boxed_slice(),
+            pieces: vec![false; conns as usize].into_boxed_slice(),
             accepting: vec![0; conns as usize].into_boxed_slice(),
             flight: vec![0; (conns + config.sizes.listeners) as usize].into_boxed_slice(),
             lent_base: config.token_base() + config.lent_tokens(),
@@ -171,6 +175,18 @@ impl<IO: Io> KernelTransport<IO> {
     fn conn_happened(&mut self, d: &mut IO, slot: u32, kind: u64, c: Completion) -> Happened {
         let result = c.result();
         match kind {
+            RECV if self.pieces[slot as usize] => match c.buf() {
+                Some(page) if c.more() => Happened::Piece {
+                    slot,
+                    page,
+                    off: c.off(),
+                    len: result.unsigned_abs(),
+                },
+                Some(_) | None => {
+                    self.pieces[slot as usize] = false;
+                    Happened::RecvEnded { slot, result }
+                }
+            },
             RECV => {
                 let was_armed = core::mem::replace(&mut self.armed[slot as usize], c.more());
                 match c.buf() {

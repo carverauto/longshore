@@ -251,6 +251,21 @@ pub trait Transport {
     /// this refuses as [`Refused::Unsupported`], and `Net` waits for the
     /// ring instead.
     fn recv_kept(&mut self, d: &mut Self::Driver, slot: u32) -> Result<bool, Refused>;
+    /// Receive on `slot` straight into pages of the backend's receive
+    /// area, at most `credit` bytes, which is not 0: each run of bytes is
+    /// a [`Happened::Piece`], and the receive ends with
+    /// [`Happened::RecvEnded`]: 0 when the credit is used or the stream
+    /// ended first, which `Net` tells apart by the bytes it was given; or
+    /// a negated error, `-ENOSPC` and `-ENOMEM` among them, after which
+    /// the rest is asked for again. A transport without a receive area
+    /// ends it with `-ENOBUFS` at once.
+    fn recv_zc(&mut self, d: &mut Self::Driver, slot: u32, credit: u32) -> Result<(), Refused>;
+    /// Return a piece a [`Happened::Piece`] named: once, as it was given.
+    fn give_back_piece(&mut self, d: &mut Self::Driver, page: BufId, off: u32, len: u32);
+    /// Whether the driver found no room to report in during its last
+    /// turn: a zero-copy receive with credit left may then stay silent
+    /// though bytes wait for it, until it is stopped and started again.
+    fn ring_was_full(&self, d: &Self::Driver) -> bool;
     /// Stop the receive in flight on `slot`; it reports its end as usual.
     fn cancel_recv(&mut self, d: &mut Self::Driver, slot: u32) -> Result<(), Refused>;
     /// Return a ring buffer named in [`Happened::RingData`].

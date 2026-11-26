@@ -84,6 +84,21 @@ pub enum Happened {
         /// Whether the armed receive is still running.
         armed: bool,
     },
+    /// A zero-copy receive ([`super::Transport::recv_zc`]) delivered a
+    /// piece: `len` bytes of page `page` of the receive area, from `off`.
+    /// `Net` returns it with [`super::Transport::give_back_piece`] when it
+    /// is done with it, as it was delivered. The receive's end is
+    /// reported with [`Happened::RecvEnded`].
+    Piece {
+        /// The connection slot.
+        slot: u32,
+        /// The page of the receive area the bytes lie in.
+        page: BufId,
+        /// Where the bytes start in the page.
+        off: u32,
+        /// How many bytes.
+        len: u32,
+    },
     /// An armed receive ended without bytes: 0 at end of stream, a negated
     /// error otherwise (`-ENOBUFS` when the ring is empty, `-ECANCELED`
     /// when it was cancelled). On a protected slot the end of stream is

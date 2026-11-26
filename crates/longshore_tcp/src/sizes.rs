@@ -26,6 +26,11 @@ pub struct Sizes {
     pub(crate) zero_copy_min: u32,
     pub(crate) zero_copy_sends: u32,
     pub(crate) zero_copy_sends_in_all: u32,
+    pub(crate) zc_pages: u32,
+    pub(crate) zc_frames: u32,
+    pub(crate) zc_pieces: u32,
+    pub(crate) zc_min_frame: u32,
+    pub(crate) zc_spare: u32,
     pub(crate) tls: bool,
     pub(crate) token_base: u64,
     pub(crate) seed: u64,
@@ -55,6 +60,11 @@ impl Sizes {
             zero_copy_min: 16 << 10,
             zero_copy_sends: 4,
             zero_copy_sends_in_all: 256,
+            zc_pages: 0,
+            zc_frames: 0,
+            zc_pieces: 0,
+            zc_min_frame: 4096,
+            zc_spare: 0,
             tls: false,
             token_base: 0,
             seed: 0x6c6f_6e67_7368_6f72,
@@ -127,6 +137,39 @@ impl Sizes {
     #[must_use]
     pub const fn with_zero_copy_sends(mut self, per_connection: u32, in_all: u32) -> Sizes {
         (self.zero_copy_sends, self.zero_copy_sends_in_all) = (per_connection, in_all);
+        self
+    }
+
+    /// Room for `Rx::ZeroCopy`, the receive mode that lends a frame in the
+    /// pages of the backend's receive area it arrived in: `pages` pages
+    /// that frames in pages may hold at once, arriving or lent; `frames`
+    /// such frames at once, each with a block of its own for its last,
+    /// partial block; and `pieces` records of what a frame's pages were
+    /// delivered as, at least two a frame in the usual case. All zero by
+    /// default: no connection may then ask for the mode. With pages, a
+    /// set needs a frame buffer for every connection it can have.
+    #[must_use]
+    pub const fn with_zc(mut self, pages: u32, frames: u32, pieces: u32) -> Sizes {
+        (self.zc_pages, self.zc_frames, self.zc_pieces) = (pages, frames, pieces);
+        self
+    }
+
+    /// A frame shorter than `bytes` is never lent in its pages: it is
+    /// moved into frame memory, so that small frames do not hold a page
+    /// each. One page by default.
+    #[must_use]
+    pub const fn with_zc_min_frame(mut self, bytes: u32) -> Sizes {
+        self.zc_min_frame = bytes;
+        self
+    }
+
+    /// Pages of the receive area beyond what the set can account for:
+    /// for what the kernel holds in the card's ring and in the receive
+    /// queues of sockets, which a program cannot count. An area that runs
+    /// dry stops every connection of its queue, for seconds.
+    #[must_use]
+    pub const fn with_zc_spare(mut self, pages: u32) -> Sizes {
+        self.zc_spare = pages;
         self
     }
 

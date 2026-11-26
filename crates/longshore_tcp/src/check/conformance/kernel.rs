@@ -42,6 +42,12 @@ impl<IO: Io> KernelRig<IO> {
         KernelRig::build(make, addr, lending(sizes(2, 2, 1)), None, |t| t)
     }
 
+    /// [`KernelRig::new`], on a backend with a receive area.
+    pub fn new_zc(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) -> KernelRig<IO> {
+        let sizes = lending(sizes(2, 2, 1)).with_zc(16, 4, 32);
+        KernelRig::build(make, addr, sizes, None, |t| t)
+    }
+
     /// [`KernelRig::new`], with TLS for both ends from `certs`.
     #[cfg(feature = "tls-core")]
     pub fn new_tls(

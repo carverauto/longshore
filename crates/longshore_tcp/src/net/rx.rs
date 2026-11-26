@@ -65,6 +65,8 @@ impl<T: Transport> Net<T> {
                 }
             }
             Rx::Direct => self.read_direct(d, slot),
+            // Refused at `connect` and `listen` until the mode is built.
+            Rx::ZeroCopy => {}
         }
     }
 

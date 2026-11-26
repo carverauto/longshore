@@ -13,11 +13,19 @@
 
 use crate::framing::Framing;
 pub use crate::sizes::{Sizes, TLS_SEGMENT_MIN};
+
+mod zc;
 use longshore_common::io::{BufId, Limits};
 
 /// How a connection reads.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Rx {
+    /// As [`Rx::Direct`], but a frame whose blocks arrive lying in whole
+    /// pages of the backend's receive area is lent as those pages, with
+    /// no copy by the kernel or by the set; any other frame is moved once
+    /// into frame memory. Needs a backend with a receive area and a set
+    /// sized for it (`Sizes::with_zc`); plain TCP with header framing only.
+    ZeroCopy,
     /// From the backend's shared buffer ring: a frame lying whole in one
     /// ring buffer is lent in place until the next `poll`; one that spans
     /// buffers is assembled in frame memory. For many connections with
@@ -261,6 +269,20 @@ pub enum ConfigError {
     /// A segment is too small for `header_max` (or, with TLS, smaller than
     /// `TLS_SEGMENT_MIN`), or a count overflows.
     TooSmall,
+    /// With pages for `Rx::ZeroCopy`: fewer frame buffers than the set
+    /// has connections. Each connection of the mode takes frame memory
+    /// before it asks for a frame's body, so that nothing it receives
+    /// waits for memory another arriving frame holds.
+    Frames {
+        /// Frame buffers the set was given.
+        have: u32,
+        /// Connections it can have: as many frame buffers are needed.
+        need: u32,
+    },
+    /// With pages for `Rx::ZeroCopy`: no frames in pages or no piece
+    /// records to go with them, or more pieces than a backend can have
+    /// out at once (32,768).
+    Pages,
 }
 
 /// A `Net`'s share of the backend: built by [`Config::plan`].
@@ -286,6 +308,14 @@ pub struct Config {
     pub(crate) tls_first: BufId,
     pub(crate) ring_first: BufId,
     pub(crate) ring_count: u32,
+    /// Position of the first buffer of tail blocks in the block-aligned
+    /// class, behind the frame buffers, and its id; how many buffers.
+    pub(crate) tail_at: u32,
+    pub(crate) tail_first: BufId,
+    pub(crate) tail_bufs: u32,
+    /// The backend's receive area: its first page and how many it has.
+    pub(crate) area_first: BufId,
+    pub(crate) area_count: u32,
 }
 
 impl Config {
@@ -326,6 +356,7 @@ impl Config {
         if headers_per_buf == 0 || (s.tls && s.segment_size < TLS_SEGMENT_MIN) {
             return Err(ConfigError::TooSmall);
         }
+        zc::check(s, conns)?;
         Ok((conns, headers_per_buf))
     }
 
@@ -358,13 +389,14 @@ impl Config {
         let mut limits = base
             .with_sockets_max(sock_base + socks)
             .with_block_size(base.block_size().max(4096))
-            .with_aligned_buffers(base.aligned_buffers() + s.frames)
+            .with_aligned_buffers(base.aligned_buffers() + s.frames + zc::tail_bufs(&s))
             .with_aligned_buffer_size(s.frame_size)
             .with_small_buffers(base.small_buffers() + small)
             .with_small_buffer_size(s.segment_size)
             .with_ring_buffers(base.ring_buffers().max(s.ring_buffers))
             .with_ring_buffer_size(s.ring_buffer_size)
             .with_ops_max(base.ops_max().saturating_add(ops));
+        limits = zc::area(limits, &s, conns);
         if s.accepts > 0 {
             limits = limits
                 .with_accept_range_start(sock_base + s.listeners + s.connects)
@@ -382,6 +414,11 @@ impl Config {
             tls_first: BufId::new(0),
             ring_first: BufId::new(0),
             ring_count: 0,
+            tail_at: base.aligned_buffers() + s.frames,
+            tail_first: BufId::new(0),
+            tail_bufs: zc::tail_bufs(&s),
+            area_first: BufId::new(0),
+            area_count: 0,
         }
         .resolved(&limits);
         Ok((limits, config))
@@ -427,6 +464,11 @@ impl Config {
         }
         self.ring_first = BufId::new(limits.ring_base());
         self.ring_count = limits.ring_buffers();
+        if self.tail_bufs > 0 {
+            self.tail_first = limits.aligned(self.tail_at);
+        }
+        self.area_first = BufId::new(limits.area_base());
+        self.area_count = limits.area_pages();
         self
     }
 

@@ -42,6 +42,9 @@ mod lifecycle;
 #[path = "net/listening.rs"]
 mod listening;
 #[cfg(test)]
+#[path = "net/pages.rs"]
+mod pages;
+#[cfg(test)]
 #[path = "net/pins.rs"]
 mod pins;
 #[cfg(test)]

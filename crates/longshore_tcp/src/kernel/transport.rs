@@ -146,6 +146,21 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         Ok(self.secure.recv_kept(d, slot))
     }
 
+    fn recv_zc(&mut self, d: &mut IO, slot: u32, credit: u32) -> Result<(), Refused> {
+        let sock = self.conn_sock(slot);
+        self.start(d, slot, RECV, Op::ArmedRecvZc { sock, credit })?;
+        self.pieces[slot as usize] = true;
+        Ok(())
+    }
+
+    fn give_back_piece(&mut self, d: &mut IO, page: BufId, off: u32, len: u32) {
+        d.give_back_piece(page, off, len);
+    }
+
+    fn ring_was_full(&self, d: &IO) -> bool {
+        d.ring_was_full()
+    }
+
     fn cancel_recv(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let target = self.conn_token(slot, RECV);
         self.start(d, slot, CANCEL, Op::Cancel { target })

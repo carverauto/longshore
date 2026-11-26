@@ -230,6 +230,8 @@ impl<T: Transport> Net<T> {
                 len,
                 armed,
             } => self.on_ring_data(d, slot, buf, len, armed),
+            // No connection reads in pages yet: nothing to keep.
+            Happened::Piece { page, off, len, .. } => self.t.give_back_piece(d, page, off, len),
             Happened::RecvEnded { slot, result } => self.on_recv_ended(slot, result),
             Happened::Received { slot, result } => self.on_received(d, slot, result),
             Happened::Sent { slot, result } => self.on_sent(d, slot, result, false),

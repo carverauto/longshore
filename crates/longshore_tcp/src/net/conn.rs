@@ -23,6 +23,9 @@ use std::net::SocketAddr;
 impl<T: Transport> Net<T> {
     /// Whether `opts` fits the sizes this `Net` was built with.
     pub(super) fn fits(&self, opts: &ConnOpts) -> bool {
+        if opts.rx == Rx::ZeroCopy {
+            return false;
+        }
         match opts.framing {
             Framing::Bytes => true,
             Framing::Header(h) => {
