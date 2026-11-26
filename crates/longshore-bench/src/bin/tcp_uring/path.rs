@@ -177,7 +177,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer 
         dsync: o.dsync,
         seen: Peer::default(),
     };
-    let (cpu0, mut first) = (thread_cpu(), None);
+    let mut first = None;
     while !stop.now() {
         side.turn();
         while let Some(c) = side.others.pop_front() {
@@ -199,7 +199,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer 
                 | Event::Drained => unexpected(e),
             };
             while let Ok(Some(frame)) = side.net.next_frame(&mut side.io, conn) {
-                first = first.or_else(|| Some(std::time::Instant::now()));
+                first = first.or_else(|| Some((std::time::Instant::now(), thread_cpu())));
                 let says = side
                     .net
                     .bytes(&mut side.io, &frame)
@@ -215,7 +215,8 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer 
             }
         }
     }
-    node.seen.cpu = thread_cpu() - cpu0;
-    node.seen.secs = first.map_or(0.0, |at| at.elapsed().as_secs_f64());
+    if let Some((at, cpu0)) = first {
+        (node.seen.secs, node.seen.cpu) = (at.elapsed().as_secs_f64(), thread_cpu() - cpu0);
+    }
     node.seen
 }

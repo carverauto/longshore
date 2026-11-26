@@ -22,7 +22,8 @@ const ASKS: usize = 4;
 /// Accept, count, and send back what asks for it, until told to stop.
 pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
     let mut seen = Peer::default();
-    let cpu0 = thread_cpu();
+    // The time and the CPU time measured start at the first frame: a peer
+    // alone waits for its load before that.
     let mut first = None;
     while !stop.now() {
         side.turn();
@@ -42,7 +43,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
                 | Event::Drained => unexpected(e),
             };
             while let Ok(Some(frame)) = side.net.next_frame(&mut side.io, conn) {
-                first = first.or_else(|| Some(Instant::now()));
+                first = first.or_else(|| Some((Instant::now(), thread_cpu())));
                 seen.frames += 1;
                 seen.bytes += u64::from(frame.len());
                 let asks = side
@@ -72,8 +73,9 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
             }
         }
     }
-    seen.cpu = thread_cpu() - cpu0;
-    seen.secs = first.map_or(0.0, |at| at.elapsed().as_secs_f64());
+    if let Some((at, cpu0)) = first {
+        (seen.secs, seen.cpu) = (at.elapsed().as_secs_f64(), thread_cpu() - cpu0);
+    }
     seen
 }
 
