@@ -108,7 +108,7 @@ delivers bytes as they arrive.
 
 ## Receiving
 
-A received frame is lent where it lies. There are two modes, per
+A received frame is lent where it lies. There are three modes, per
 connection:
 
 - `Rx::Ring`: one armed receive delivers into a ring of buffers shared by
@@ -122,6 +122,15 @@ connection:
   the frame's own memory, at the start of a block-aligned buffer. Nothing
   is copied, and the frame can go to a direct-I/O write as it is. This is
   the mode for large frames and for frames that are logged.
+- `Rx::ZeroCopy` (Linux 7.0, the ring backend, a network card that splits
+  headers from payload): direct mode, with the kernel's copy gone for the
+  frames that allow it. The card writes payload into pages of a receive
+  area the backend registered for one receive queue; a frame whose first
+  byte starts a page, and whose blocks each lie in one page, is lent in
+  those pages (a *frame in pages*, read with `Net::pages`), its last,
+  partial block copied into a zero-padded block of its own. Any other
+  frame is moved once into frame memory and is then what direct mode
+  gives. See "Receiving into pages" below.
 
 A log that wants a frame's body, not its header, at a block boundary asks
 for it in the framing: `HeaderFraming::with_body_at_block(4096)`. In
@@ -137,6 +146,86 @@ direct mode without the option. Measured between two machines with
 `tcp_uring path`, it saves the move a log would make: about 5 % of the
 log node's CPU a block, three runs each, anywhere from 3 to 9 % by run
 (`bench/results/m31-tcp-zero-copy-receive-spike-dgx-spark.md`).
+
+## Receiving into pages
+
+`Rx::ZeroCopy` keeps the kernel's TCP and takes away its copy of every
+received byte: between two DGX Sparks that copy was nearly all a
+receiving thread did (`bench/results/m30-tcp-dgx-spark-pair-200gbe-aarch64.md`).
+It is for traffic whose frames go on as they lie, the replication of a log
+above all.
+
+**What the operator sets** on the receiving machine, as root, for the
+interface and queue the backend is built for (`Limits::with_area_queue`):
+
+```
+ethtool -G IFACE tcp-data-split on          # headers apart from payload
+ethtool -K IFACE ntuple on
+ethtool -X IFACE equal N                    # queues 0..N-1 for other traffic
+ethtool -N IFACE flow-type tcp4 dst-ip ADDR dst-port PORT action N
+ip link set IFACE mtu 8244                  # on both ends: two pages a packet
+```
+
+The program needs `CAP_NET_ADMIN`. Building the backend refuses, naming
+what is missing, on a kernel without the feature or without the flush of
+returns (Linux 7.0), without the capability, on a queue that does not split
+headers (or does not exist), and past the memory-lock limit. The flow rule
+must steer the listener's port to the queue, and nothing else may reach
+it; a connection of the mode on a port shared between rings
+(`with_reuse_port`), on a Unix-domain address, with TLS, with
+`Framing::Bytes` or with `with_body_at_block` is refused when it is opened.
+
+**When a frame is lent in its pages.** Its first byte must start a page,
+which takes all three of these: packets that carry a whole number of
+pages (MTU 8244 gives 8,192 bytes), frames that are whole 4 KiB blocks,
+and a sender that ends a buffer at each frame (`with_frame_on_packet`,
+below). Measured: 99.8 to 100 % of frames then started a page; with frames
+of any other length, almost none did, whatever the sender does, because
+the card lays the payloads of a run of packets back to back
+(`bench/results/m31-tcp-zero-copy-receive-spike-dgx-spark.md`). A frame
+that does not line up is moved once, at the cost direct mode has plus the
+mode's bookkeeping: the mode pays only where frames line up.
+
+**Reading and holding.** `Net::pages(&frame)` yields the frame's spans in
+order, its whole pages and then its tail block; `Net::bytes` and
+`Frame::span` are `None` for such a frame, and `Frame::run()` names it. A
+file write takes a hold of its own with `net.runs().hold(run)` and gives it
+back with `net.runs().release(run)` when its write and sync are done; the
+pages go back to the card when the caller has released the frame and no
+write holds it. `Op::FileWriteSpans` writes the spans as one gathered
+write, with direct I/O. `hold` copies a frame in pages into frame memory
+once, for a caller that must keep or send it: a frame in pages cannot be
+sent as it lies (`SendError::NotHeld`). Every frame of the mode must be
+released, as in direct mode.
+
+**Sizing.** `Sizes::with_zc(pages, frames, pieces)` gives the set its
+budget: pages that frames in pages may hold at once, such frames at once,
+and records of how their pages were delivered (a page and two more a
+frame). A frame that finds the budget spent is moved, never kept waiting.
+`Config::plan` asks the backend for an area of the budget, a page a
+connection, what one turn can bring, and `with_zc_spare` pages more for
+what the kernel holds and no program can count: the card's ring and pool
+and the sockets' receive queues. A rule of thumb for the spare is the
+card's receive ring entries plus each connection's receive buffer in
+pages. The plan also refuses a set with fewer frame buffers than
+connections: every connection of the mode takes its frame memory before
+its body is asked for, so that a frame that falls out of step can always
+be moved at once.
+
+**The one failure to size against.** An area that runs dry stops every
+flow of its queue: the card has nowhere to put payload, drops it, and the
+senders' retransmission brings it back seconds later, with no word to the
+program. The backend asks the kernel to read the returned pages whenever
+the thread is about to sleep or a turn brought nothing, so that a dry area
+recovers; it does not make the seconds go away. `Usage::pages` reports
+what the set holds; its `area_short` counts receives that ended because
+the kernel's own copy, for payload that did not arrive in the area, found
+no page. That is not the area running dry, which shows only in the card's
+counters (`ethtool -S IFACE`, `rx_out_of_buffer`).
+
+**Before the set is dropped** while its backend lives on, call
+`Net::give_back_all`: the pages it holds go back to the card. Dropping
+the backend takes every page back by itself.
 
 ## Frame memory and holds
 
@@ -185,22 +274,22 @@ A connection with `ConnOpts::with_frame_on_packet` sends every frame as
 a send of its own: a frame is not put into a segment behind another, and
 the next frame's send begins when the transport has taken the last
 frame whole, which for a zero-copy send is its first report, not the
-return of its memory. It is for a peer that receives into pages
-(`Rx::ZeroCopy`), which can lend a frame where it lies only when the
-frame starts a packet. A frame then takes a segment however short it is,
-so segments are counted in frames. What the option cannot give is the
-packet itself. TCP still does these to it:
+return of its memory. Every send of the connection is marked as the end
+of one of the kernel's buffers (`MSG_EOR`, through `Io::end_sends`), to
+which nothing later is joined: the next frame begins a packet of its
+own. It is for a peer that receives into pages (`Rx::ZeroCopy`), which
+can lend a frame where it lies only when the frame starts a page. A
+frame then takes a segment however short it is, so segments are counted
+in frames. Switch Nagle's algorithm off on the backend
+(`Io::no_delay(true)`), or the kernel holds a short last packet back.
 
-- it puts the first bytes of a send into an unsent packet that has room,
-  so a frame sent while bytes of the one before wait in the socket may
-  not start a packet;
-- with Nagle's algorithm it holds a short last packet back to do just
-  that: switch it off on the backend (`Io::no_delay(true)`);
-- it joins packets that it sends again, and cuts a packet short when the
-  peer's window or its own congestion state says so.
-
-A frame that did not start a packet is moved by its receiver once, as in
-direct mode; nothing else follows from it.
+What it cannot give: a frame begins a packet, but begins a page only if
+every frame before it filled whole pages (frames of whole 4 KiB blocks,
+packets of whole pages; see "Receiving into pages"); TCP still cuts a
+packet short when the peer's window says so; and a send taken short ends
+a buffer in the frame's middle. A frame that did not start a page is
+moved by its receiver once, as in direct mode; nothing else follows from
+it. macOS's TCP does not act on the mark.
 
 ## TLS
 
@@ -368,8 +457,12 @@ allocation guard and once per TLS provider. See
 
 ## Not there yet
 
-- Figures from a network card: `tcp_uring rr`, `bulk` and `path` measure,
-  and what there is so far is loopback in a container.
+- `Rx::ZeroCopy` measured through `longshore_tcp` on a card
+  (`tcp_uring --rx zc`); so far the backend's own receive and log from
+  pages (`zc_uring`) and the test programs of milestone 31 are.
+- Reading the card's header-and-data-split setting before registering, to
+  name it for certain: the registration answers its absence with the same
+  `EINVAL` as other faults, and the refusal names the likely causes.
 - The AF_XDP transport. The simulated packet link it is to be tested on
   is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.
