@@ -108,6 +108,25 @@ fn a_full_completion_ring_is_armed_again_and_a_silent_receive_woken() {
     assert!(p.rearmed() > 0 && p.frames_kept() > 0, "{p:?}");
 }
 
+/// A driver that ticks twice before it polls the sets again: that a tick
+/// found the completion ring full is not lost in the second, and the
+/// receive it left silent is woken all the same.
+#[test]
+fn a_full_ring_seen_two_ticks_before_a_poll_still_wakes_the_receive() {
+    let mut rearmed = 0;
+    for seed in 0..40 {
+        let faults = Faults::NONE.with_ring_full(200_000);
+        let mut w = world_with(seed, faults, paged(64, 8, 256));
+        w.ticks = 2;
+        let pair = paired(&mut w);
+        let _none: Vec<Frame> = exchange(&mut w, pair, &mixed(seed as u8), |_| false);
+        settle(&mut w);
+        none_out(&mut w);
+        rearmed += w.server.usage().pages().rearmed();
+    }
+    assert!(rearmed > 0, "no receive was woken");
+}
+
 /// A world whose backend has an area of `pages` pages.
 fn small_area(seed: u64, faults: Faults, server: Sizes, pages: u32) -> World {
     let w = world_with(seed, faults, server);

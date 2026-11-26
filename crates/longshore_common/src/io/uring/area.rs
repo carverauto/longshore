@@ -300,10 +300,9 @@ impl UringIo {
         self.finish(i, c.res, out);
     }
 
-    /// A tick begins: the completion queue has not been found full in it
-    /// yet, and the area's returns move on.
+    /// A tick begins: the area's returns move on. That the completion
+    /// queue was found full stays until it is asked for.
     pub(super) fn begin_tick(&mut self, wait: bool) {
-        self.cq_full = false;
         if let Some(area) = self.area.as_mut() {
             area.turn(&mut self.ring, wait);
         }

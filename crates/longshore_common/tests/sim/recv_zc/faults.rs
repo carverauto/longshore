@@ -107,7 +107,7 @@ fn a_full_completion_ring_ends_a_receive_or_leaves_it_silent() {
         let (mut quiet, mut armed) = (0, true);
         while left > 0 {
             io.tick(false, &mut out).unwrap();
-            said_full |= io.ring_was_full();
+            said_full |= io.take_ring_full();
             quiet += 1;
             while let Some(c) = out.pop() {
                 if c.token() != RECV {

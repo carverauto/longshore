@@ -202,12 +202,11 @@ impl<W: World> Io for Engine<W> {
         Ok(())
     }
 
-    fn ring_was_full(&self) -> bool {
-        self.world.ring_was_full()
+    fn take_ring_full(&mut self) -> bool {
+        self.world.take_ring_full()
     }
 
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()> {
-        self.world.new_tick();
         let mut idle = 0u32;
         loop {
             while !out.is_full() {

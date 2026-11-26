@@ -85,10 +85,9 @@ pub trait World {
     fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
         None
     }
-    /// A tick begins.
-    fn new_tick(&mut self) {}
-    /// Whether a receive found no room to report in since the tick began.
-    fn ring_was_full(&self) -> bool {
+    /// Whether a receive found no room to report in since this was last
+    /// asked; asking clears it.
+    fn take_ring_full(&mut self) -> bool {
         false
     }
     /// Return a buffer-ring buffer back to the world's ring.

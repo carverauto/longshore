@@ -316,7 +316,7 @@ impl<T: Transport> Net<T> {
     /// of the mode with credit left may stay silent though bytes wait
     /// for it. Each is stopped, once, and armed again when its end comes.
     pub(super) fn wake_silent(&mut self, d: &mut T::Driver) {
-        if self.cfg.sizes.zc_pages == 0 || !self.t.ring_was_full(d) {
+        if self.cfg.sizes.zc_pages == 0 || !self.t.take_ring_full(d) {
             return;
         }
         for slot in 0..self.cfg.conns() {

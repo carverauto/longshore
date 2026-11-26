@@ -150,12 +150,8 @@ impl World for Virtual {
         self.rng.chance(self.faults.reorder.min(REORDER_MOST))
     }
 
-    fn new_tick(&mut self) {
-        self.ring_full = false;
-    }
-
-    fn ring_was_full(&self) -> bool {
-        self.ring_full
+    fn take_ring_full(&mut self) -> bool {
+        core::mem::take(&mut self.ring_full)
     }
 
     fn on_submit(&mut self, op: &Op) -> u64 {

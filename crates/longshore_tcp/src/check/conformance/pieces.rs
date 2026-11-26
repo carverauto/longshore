@@ -83,7 +83,7 @@ fn receive_zc<R: Rig>(
                 break;
             }
             rig.turn(seen);
-            if !cancelled && with(rig, |t, d| t.ring_was_full(d)) {
+            if !cancelled && with(rig, |t, d| t.take_ring_full(d)) {
                 cancelled = with(rig, |t, d| t.cancel_recv(d, slot).is_ok());
             }
         }

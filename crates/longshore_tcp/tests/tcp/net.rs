@@ -88,6 +88,9 @@ struct World {
     /// Sends completed, for counting how many it took.
     sends: u32,
     ticking: bool,
+    /// Ticks of the backend a turn, the first waiting: more than one is a
+    /// driver that ticks again before it polls the sets.
+    ticks: u32,
 }
 
 #[cfg(test)]
@@ -119,6 +122,7 @@ impl World {
             out: Completions::new(64),
             sends: 0,
             ticking: false,
+            ticks: 1,
         }
     }
 
@@ -133,7 +137,14 @@ impl World {
             self.io.submit(TICK, Op::Timeout { nanos: MS / 4 }).unwrap();
             self.ticking = true;
         }
-        self.io.tick(true, &mut self.out).unwrap();
+        for k in 0..self.ticks {
+            self.io.tick(k == 0, &mut self.out).unwrap();
+            self.collect();
+        }
+    }
+
+    /// Route what a tick brought.
+    fn collect(&mut self) {
         while let Some(c) = self.out.pop() {
             if c.token() == TICK {
                 self.ticking = false;

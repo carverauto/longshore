@@ -282,9 +282,10 @@ pub trait Io {
     /// does nothing.
     fn give_back_piece(&mut self, _page: BufId, _off: u32, _len: u32) {}
     /// Whether the backend found no room to report completions at some
-    /// point of the last [`Io::tick`]: an [`Op::ArmedRecvZc`] with credit
-    /// left may then stay silent though bytes wait in its socket.
-    fn ring_was_full(&self) -> bool {
+    /// point since this was last asked, in any number of [`Io::tick`]s: an
+    /// [`Op::ArmedRecvZc`] with credit left may then stay silent though
+    /// bytes wait in its socket. Asking clears it.
+    fn take_ring_full(&mut self) -> bool {
         false
     }
     /// Ask for the segment sizes of each TCP connection opened from now on:

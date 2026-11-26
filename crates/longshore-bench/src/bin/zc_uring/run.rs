@@ -201,7 +201,7 @@ impl Run {
         while let Some(c) = out.pop() {
             self.handle(c);
         }
-        if self.io.ring_was_full() && self.armed.is_some() && !self.cancelling {
+        if self.io.take_ring_full() && self.armed.is_some() && !self.cancelling {
             // A receive with credit left may stay silent: cancel it, and
             // arm it again for the rest.
             let cancel = Op::Cancel {

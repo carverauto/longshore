@@ -76,8 +76,8 @@ impl Io for UringIo {
         self.return_piece(page, off, len);
     }
 
-    fn ring_was_full(&self) -> bool {
-        self.cq_full
+    fn take_ring_full(&mut self) -> bool {
+        core::mem::take(&mut self.cq_full)
     }
 
     fn waker(&mut self) -> Option<std::sync::Arc<dyn crate::io::Wake>> {

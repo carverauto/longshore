@@ -157,8 +157,8 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         d.give_back_piece(page, off, len);
     }
 
-    fn ring_was_full(&self, d: &IO) -> bool {
-        d.ring_was_full()
+    fn take_ring_full(&self, d: &mut IO) -> bool {
+        d.take_ring_full()
     }
 
     fn end_sends(&mut self, d: &mut IO, slot: u32) {

@@ -86,7 +86,7 @@ pub enum Op {
     /// had no room to report a piece and `-ENOMEM` when it had no page for
     /// one, both with what was delivered still good and the rest to be
     /// asked for again; or the socket's error. After a turn in which
-    /// [`Io::ring_was_full`](super::Io::ring_was_full) says so, a receive
+    /// [`Io::take_ring_full`](super::Io::take_ring_full) says so, a receive
     /// with credit left may stay silent until the peer sends again: cancel
     /// it and arm it again for the rest. Refused with `-ENOBUFS` by a
     /// backend built without an area. Counts toward `Limits::ops_max`
