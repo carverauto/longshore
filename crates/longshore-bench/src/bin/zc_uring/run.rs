@@ -43,11 +43,12 @@ impl Frame {
     fn eat(&mut self, mut bytes: &[u8], c: &mut Counts) {
         while !bytes.is_empty() {
             let take = bytes.len().min((self.len - self.at) as usize);
-            for (k, b) in bytes[..take].iter().enumerate() {
-                let at = self.at as usize + k;
-                if at < 4 {
-                    self.prefix[at] = *b;
-                }
+            // Only the length is read: reading every byte would cost what
+            // the copy this mode saves does.
+            let need = 4usize.saturating_sub(self.at as usize).min(take);
+            if need > 0 {
+                let at = self.at as usize;
+                self.prefix[at..at + need].copy_from_slice(&bytes[..need]);
             }
             let end = self.at + take as u32;
             if self.at < 4 && end >= 4 && u32::from_be_bytes(self.prefix) != self.len - 4 {
