@@ -22,7 +22,7 @@ use super::{thread_cpu, unexpected, Opts, Peer, Side, Stop, BLOCK};
 use crate::die::{die, OrDie};
 use longshore::io::extents::Extent;
 use longshore::io::{FileSlot, Io, Op, OpenFlags, Token};
-use longshore::tcp::{Conn, Event, Frame, SendError};
+use longshore::tcp::{Conn, Event, Frame, SendError, Why};
 
 const FILE: FileSlot = FileSlot::new(0);
 /// Blocks of the file: it is written round and round.
@@ -229,8 +229,12 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer 
             let conn = match e {
                 Event::Readable(conn) => conn,
                 Event::Accepted { .. } | Event::Writable(_) => continue,
-                Event::Closed { .. } => {
+                Event::Closed { conn, why } => {
                     stop.closed();
+                    if why != Why::Orderly {
+                        // Not what a load does at its end: say so.
+                        eprintln!("tcp_uring: the peer's {conn:?} closed: {why:?}");
+                    }
                     continue;
                 }
                 Event::Up(_)

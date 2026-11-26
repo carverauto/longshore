@@ -60,7 +60,7 @@ impl Opts {
             rx: Rx::Ring,
             ring: 4096,
             zc_min: 16_384,
-            zc_sends: 1,
+            zc_sends: 4,
             segment: 65_536,
             spin: false,
             header: 0,

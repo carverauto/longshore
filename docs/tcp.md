@@ -170,7 +170,7 @@ reading the memory until the peer has acknowledged the bytes; until then
 the memory is pinned: a send segment stays out of the pool though its
 place in the queue is free, and frame memory keeps one more hold. A
 connection has so many such sends out at most, and the set so many in
-all (`Sizes::with_zero_copy_sends`, 1 and 256), and a connection sends
+all (`Sizes::with_zero_copy_sends`, 4 and 256), and a connection sends
 with a copy while either is reached. Each is an operation of the
 backend while it is out, so the second number is what the set adds to
 `Limits::ops_max` for them. Its slot is not free, and a drain not
@@ -178,7 +178,8 @@ done, before their memory is back. With `with_zero_copy_sends(0, 0)` a
 connection waits for the memory of each zero-copy send before the next,
 which over a network is one send a round trip: measured between two
 machines, 64 KiB sends then carried about 1 GB/s where copied ones
-carried 6 (`bench/results/m30-tcp-dgx-spark-pair-200gbe-aarch64.md`).
+carried 6, and 5.6 to 6.1 with the default
+(`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`).
 
 ## TLS
 
@@ -317,10 +318,13 @@ Runs on hosts with 200 and 300 Gb/s cards are to settle them.
   little.
 - **Send segments: 64 KiB.** Larger ones gained nothing.
 - **Zero-copy from 16 KiB.** Unchanged: loopback cannot tell.
-- **One zero-copy send a connection with its memory out.** Over
-  loopback eight carried less than one (7.5 against 11 GB/s in 64 KiB
-  sends, the receiving thread full either way); over a card more than
-  one has not been measured.
+- **Four zero-copy sends a connection with their memory out.** Measured
+  between two machines over a 200 Gb/s card
+  (`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`): four
+  carried as much as any number tried and about halved the sending
+  thread's CPU against one, with which most sends are copied; eight was
+  slower in two cases of nine. Over loopback, which copies whatever it
+  is asked, more than one carries less (eight: 7.5 against 11 GB/s).
 - **How a log is made durable, and whether a thread waits or spins:** no
   default. On the container's virtual disk the two ways of syncing could
   not be told apart. A single connection was answered in 24 µs with both

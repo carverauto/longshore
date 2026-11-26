@@ -53,7 +53,7 @@ impl Sizes {
             header_max: 256,
             spans: 16,
             zero_copy_min: 16 << 10,
-            zero_copy_sends: 1,
+            zero_copy_sends: 4,
             zero_copy_sends_in_all: 256,
             tls: false,
             token_base: 0,
@@ -117,10 +117,12 @@ impl Sizes {
     /// fewer) is what the set adds to the backend's operations for them.
     /// With `per_connection` 0 a connection has one zero-copy send at a
     /// time and waits for its memory before the next: a send every round
-    /// trip. The default of one is provisional: over loopback in a
-    /// container eight carried less than one (7.5 against 11 GB/s in
-    /// 64 KiB sends), and what more than one is worth over a network
-    /// card has not been measured.
+    /// trip. The default of four is from runs between two machines over
+    /// a 200 Gb/s card (`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`):
+    /// four carried as much as any number tried and about halved the
+    /// sending thread's CPU against one, with which most sends are
+    /// copied; eight was slower in two cases of nine. Over loopback,
+    /// which copies whatever it is asked, more than one carries less.
     #[must_use]
     pub const fn with_zero_copy_sends(mut self, per_connection: u32, in_all: u32) -> Sizes {
         (self.zero_copy_sends, self.zero_copy_sends_in_all) = (per_connection, in_all);

@@ -37,10 +37,10 @@ its write-up is the result.
 - [ ] 3.10 Review of group 3
 
 ## 4. Zero-copy sends over a card
-- [ ] 4.1 Where a zero-copy send of 64 KiB waits between its completion and its notification, traced on the Spark pair
-- [ ] 4.2 The fix it points to; defaults for segment length and sends in flight
-- [ ] 4.3 The wire matrix of milestone 30 again, five runs a cell: no frame size slower with zero-copy than without, by the medians
-- [ ] 4.4 Review of group 4
+- [x] 4.1 Where a zero-copy send of 64 KiB waits: in our own code, not the kernel. The ring reported a zero-copy send done at the kernel's notification, and a connection kept one send in flight: one segment a round trip
+- [x] 4.2 The fix: `Op::SendZc` reports when the bytes are taken and again when the memory is free; `Net` sends on at the first and holds only the memory (`net/pins.rs`); default four sends out a connection, 256 a set, segment length unchanged
+- [x] 4.3 The wire matrix again, five runs a cell (milestone 32): 64 KiB frames from 0.64 to 5.6 GB/s on one connection; no frame size below 0.93 of the copied rate, by the medians
+- [x] 4.4 Review of group 4 (read by the author of the task, not independently; the fix's own tests include four deliberate faults, each caught; a reset seen in two runs was traced to the test's refused login, not the fix)
 
 ## 5. Measurement and the decision on AF_XDP
 - [ ] 5.1 (after 3.9) Spark pair, both interfaces, MTU 9000 and 8244: GB/s a receiving core and cores at the full link, counting the queues' cores, `Ring`, `Direct` and `ZeroCopy`, frames of 324 bytes, 64 KiB and 1 MiB, checked and written to a log with several writes in flight, read in place, and relayed after `hold`; the share of frames lent in pages with the sender's `with_frame_on_packet` and without; the card's drop counters with an area sized as `docs/tcp.md` advises and with one too small; three runs a cell

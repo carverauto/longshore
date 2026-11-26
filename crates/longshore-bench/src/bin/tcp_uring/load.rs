@@ -12,7 +12,7 @@ use super::path::{LOG, REPLICA};
 use super::{queued, thread_cpu, unexpected, Kind, Opts, Peer, Side, Stop, HEADER};
 use crate::die::OrDie;
 use longshore::io::Io;
-use longshore::tcp::{Conn, Event, SendError};
+use longshore::tcp::{Conn, Event, SendError, Why};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -32,8 +32,12 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
             let conn = match e {
                 Event::Readable(conn) => conn,
                 Event::Accepted { .. } | Event::Writable(_) => continue,
-                Event::Closed { .. } => {
+                Event::Closed { conn, why } => {
                     stop.closed();
+                    if why != Why::Orderly {
+                        // Not what a load does at its end: say so.
+                        eprintln!("tcp_uring: the peer's {conn:?} closed: {why:?}");
+                    }
                     continue;
                 }
                 Event::Up(_)

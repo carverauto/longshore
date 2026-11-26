@@ -152,8 +152,9 @@ What these say together:
 ## Sending, for completeness
 
 Sending from registered memory without a copy costs 0.024 to
-0.030 CPU-seconds a GB. One fault is open: zero-copy sends of one 64 KiB
-segment each are slow over a card (about 1 GB/s on four connections
-against 6 GB/s copied). Until it is fixed in `add-tcp-zero-copy-receive`,
-a bulk sender should use segments of 1 MiB (`Sizes::with_segments`), with
-which the fault does not show.
+0.030 CPU-seconds a GB. A fault that made zero-copy sends of 64 KiB
+segments slow over a card (about 1 GB/s on four connections against
+6 GB/s copied) is fixed: a connection's next send no longer waits for the
+kernel to let go of the last one's memory
+(`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`). A connection
+has four zero-copy sends out at most by default, and copies beyond that.
