@@ -80,6 +80,29 @@ and `links`. A Spark shows its 200 Gb/s port as two interfaces
 - **A receiver's core is the limit below that**: two receivers, one an
   interface, are full at 7.3 GB/s each (0.136 CPU-seconds a GB).
 
+## Hardware receive offload on and off
+
+`rx-gro-hw` switched on both interfaces of both machines, off, on, off,
+on; after each switch 1, 2 and 8 receivers as above. Two runs a cell, both
+shown. The lines carry `rx_gro_hw` and `round` in the raw file.
+
+| Receivers | `rx-gro-hw` | Total GB/s | Receive CPU-seconds a GB | Receiving machine idle |
+|---|---|---|---|---|
+| 1 | off | 6.1, 5.9 | 0.146, 0.153 | 93 %, 94 % |
+| 1 | on | 6.9, 6.4 | 0.133, 0.134 | 93 %, 94 % |
+| 2 | off | 13.2, 11.8 | 0.149, 0.160 | 87 %, 87 % |
+| 2 | on | 13.0, 13.3 | 0.150, 0.144 | 88 %, 88 % |
+| 8 | off | 24.6, 24.3 | 0.259, 0.254 | 51 %, 51 % |
+| 8 | on | 24.7, 24.7 | 0.244, 0.234 | 55 %, 53 % |
+
+- **On is a little better, never worse**: about a tenth less CPU a byte
+  for one receiver (0.134 against 0.150), and at the full link three
+  points more of the machine idle and less time in the kernel's packet
+  handling (6 % against 8 to 11 % of the machine). With two receivers the
+  difference is within what two runs vary by.
+- It does not change what a core can receive by much: the copy into the
+  program's memory is the cost either way.
+
 ## What it means for kernel bypass
 
 Receive is where the CPU goes: a core takes 43 to 58 Gb/s, and sending the
