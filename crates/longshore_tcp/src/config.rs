@@ -323,10 +323,12 @@ impl Config {
             .checked_add(s.listeners)
             .ok_or(ConfigError::TooSmall)?;
         // Per connection: a receive, a send, and a connect, close, shutdown
-        // or cancel; per listener: an accept and a close.
+        // or cancel; per listener: an accept and a close; and the
+        // zero-copy sends whose memory is still read.
         let ops = conns
             .saturating_mul(3)
-            .saturating_add(s.listeners.saturating_mul(2));
+            .saturating_add(s.listeners.saturating_mul(2))
+            .saturating_add(s.lent_most(conns));
         let mut limits = base
             .with_sockets_max(sock_base + socks)
             .with_block_size(base.block_size().max(4096))
@@ -367,6 +369,13 @@ impl Config {
     /// Tokens the `Net` uses, from `Sizes::with_token_base` up: route a
     /// completion with a token in that range to `Net::on_completion`.
     pub const fn tokens(&self) -> u64 {
+        self.lent_tokens() + self.conns() as u64 * self.sizes.zero_copy_sends as u64
+    }
+
+    /// How far above the first token those of the zero-copy sends
+    /// reported twice start: `Sizes::with_zero_copy_sends` a connection,
+    /// behind the eight of every connection and listener.
+    pub(crate) const fn lent_tokens(&self) -> u64 {
         (self.conns() as u64 + self.sizes.listeners as u64) * 8
     }
 

@@ -345,7 +345,9 @@ impl<T: Transport> Net<T> {
     }
 
     /// Stop accepting and report [`Event::Drained`] once every queued send
-    /// has gone, or at `until_ns` at the latest. Connections stay open.
+    /// has gone and the memory of every zero-copy send is back, which is
+    /// when the peer has acknowledged it, or at `until_ns` at the latest.
+    /// Connections stay open.
     pub fn drain(&mut self, d: &mut T::Driver, until_ns: u64) {
         self.draining = Some(until_ns);
         self.drain_reported = false;

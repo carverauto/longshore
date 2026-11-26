@@ -90,4 +90,6 @@ pub use handle::{Conn, Generations, Listener};
 pub use kernel::Tls;
 pub use kernel::{KernelTransport, PhaseCoverage};
 pub use net::{Coverage, Frame, Net, Usage};
-pub use transport::{Happened, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED};
+pub use transport::{
+    Happened, Lend, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED,
+};

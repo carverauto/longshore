@@ -37,17 +37,17 @@ const SEEDS: u64 = 150;
 /// it: a reset after that close alert.
 #[cfg(test)]
 const EXPECTED: [&str; 10] = [
-    //close shut send next Conn Secd data eos other Sent ShutD Closed dead pulled accept
-    "UUUUUUUUUUUUUUR", // Free
-    "RRRRRTUUUUUURUU", // Connecting
-    "UUUUUTUUUUUUUUU", // Securing
-    "RRRRUURRRRRURRU", // Up
-    "R.RRUUUUUR.UURU", // Refused
-    "RRRRUURRRRRU.RU", // Finishing
-    "RRRRUUUTtRRU.RU", // HalfClosed
-    "RRRR..RRRRRUURU", // Dying
-    "....R.RRRRRRUUR", // Closing
-    "RRRRUUUUUUUURUU", // Backoff
+    //close shut send next Conn Secd data eos other Sent ShutD Closed dead pulled accept Released
+    "UUUUUUUUUUUUUURU", // Free
+    "RRRRRTUUUUUURUUU", // Connecting
+    "UUUUUTUUUUUUUUUU", // Securing
+    "RRRRUURRRRRURRUR", // Up
+    "R.RRUUUUUR.UURU.", // Refused
+    "RRRRUURRRRRU.RUR", // Finishing
+    "RRRRUUUTtRRU.RUR", // HalfClosed
+    "RRRR..RRRRRUURUR", // Dying
+    "....R.RRRRRRUURR", // Closing
+    "RRRRUUUUUUUURUUU", // Backoff
 ];
 
 /// The same for the listener state table: `listen()`, `close_listener()`,

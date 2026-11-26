@@ -29,6 +29,11 @@ fn sizes(connects: u32, accepts: u32, listeners: u32, tls: bool) -> Sizes {
         .with_ring(2, 1024)
         .with_header_max(256)
         .with_spans(2)
+        // Frames from a kilobyte up go without a copy. Two of a
+        // connection's sends may have their memory out at once, and four
+        // of all three connections': one more is copied.
+        .with_zero_copy_min(1024)
+        .with_zero_copy_sends(2, 4)
         .with_tls(tls)
 }
 

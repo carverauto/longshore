@@ -8,12 +8,13 @@
 //! A frame the caller builds is written straight into a send segment;
 //! frames queued back to back share a segment and go out in one send. A
 //! frame the caller already holds in frame memory is queued where it lies
-//! (`send_lent`), under one more hold. One send is in flight per
-//! connection; its memory stays until the transport reports the send done.
+//! (`send_lent`), under one more hold. One send is unreported per
+//! connection; its memory stays until the transport reports the send
+//! done, or, for a zero-copy send, lets go of it (`pins.rs`).
 
 use super::cover::Col;
 use super::frames::Frame;
-use super::state::{best_effort, Keep, St, TxSpan, W_FLUSH, W_REFUSE, W_SHUT};
+use super::state::{best_effort, Keep, St, TxSpan, NONE, W_FLUSH, W_REFUSE, W_SHUT};
 use super::Net;
 use crate::event::{NetError, SendError, Why};
 use crate::handle::Conn;
@@ -126,7 +127,7 @@ impl<T: Transport> Net<T> {
 
     /// A segment is free again: tell the connection that has waited
     /// longest and still waits.
-    fn segment_returned(&mut self) {
+    pub(super) fn segment_returned(&mut self) {
         while self.seg_wait_len > 0 {
             let slot = self.seg_waiters[self.seg_wait_head];
             self.seg_wait_head = (self.seg_wait_head + 1) % self.seg_waiters.len();
@@ -151,7 +152,7 @@ impl<T: Transport> Net<T> {
         };
         let c = &mut self.conns[slot as usize];
         c.tx_len += 1;
-        if c.tx_len == 1 {
+        if c.tx_len == 1 && c.pins == 0 {
             self.tx_busy += 1;
         }
     }
@@ -203,23 +204,31 @@ impl<T: Transport> Net<T> {
             return;
         }
         let s = self.spans[self.span_at(slot, 0)];
-        // The kernel copies for a Unix-domain socket whatever it is asked.
-        // Nor is anything sealed for TLS sent from where the caller put it.
-        let zero_copy = !c.unix && !c.secure && s.len >= self.cfg.sizes.zero_copy_min;
-        if self
-            .t
-            .send(d, slot, Span::new(s.buf, s.off, s.len), zero_copy)
-            .is_ok()
-        {
-            self.conns[slot as usize].sending = true;
+        let (lend, pin) = self.lend_for(slot, &s);
+        let from = Span::new(s.buf, s.off, s.len);
+        if self.t.send(d, slot, from, lend).is_ok() {
+            let sent = &mut self.conns[slot as usize];
+            (sent.sending, sent.send_pin) = (true, pin);
         } else {
+            if pin != NONE {
+                self.unpin(slot, pin);
+            }
             self.add_work(slot, W_FLUSH);
         }
     }
 
-    pub(super) fn on_sent(&mut self, d: &mut T::Driver, slot: u32, result: i32) {
+    /// The send in flight on `slot` was reported, with `result`. `held`
+    /// says that the transport still reads its memory, and will say when
+    /// it no longer does.
+    pub(super) fn on_sent(&mut self, d: &mut T::Driver, slot: u32, result: i32, held: bool) {
         self.cover(slot, Col::Sent);
-        self.conns[slot as usize].sending = false;
+        let reported = &mut self.conns[slot as usize];
+        reported.sending = false;
+        let pin = core::mem::replace(&mut reported.send_pin, NONE);
+        if pin != NONE && !held {
+            // Copied after all, or failed, or let go of already.
+            self.unpin(slot, pin);
+        }
         if !self.flushable(slot) {
             // What was queued behind it goes nowhere now.
             self.drop_unsendable(slot);
@@ -255,22 +264,20 @@ impl<T: Transport> Net<T> {
     /// Remove the front span of `slot`'s queue and let go of its memory.
     fn pop_span(&mut self, slot: u32) {
         let s = self.spans[self.span_at(slot, 0)];
-        match s.keep {
-            Keep::Segment(index) => {
-                self.segs[self.segs_len] = index;
-                self.segs_len += 1;
-            }
+        let returned = match s.keep {
+            Keep::Segment(index) => self.retire_segment(index),
             Keep::Extent(ext) => {
                 best_effort(self.extents.release(ext));
+                false
             }
-        }
+        };
         let c = &mut self.conns[slot as usize];
         c.tx_head = (c.tx_head + 1) % self.cfg.sizes.spans;
         c.tx_len -= 1;
-        if c.tx_len == 0 {
+        if c.tx_len == 0 && c.pins == 0 {
             self.tx_busy -= 1;
         }
-        if matches!(s.keep, Keep::Segment(_)) {
+        if returned {
             self.segment_returned();
         }
     }

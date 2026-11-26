@@ -9,7 +9,7 @@
 
 use super::{count, of_slot, pair, receive, settle, until, with, Rig};
 use crate::check::{fail, must};
-use crate::transport::{Happened, Refused, Role, Span, Transport};
+use crate::transport::{Happened, Lend, Refused, Role, Span, Transport};
 
 /// An armed receive is stopped, and reports its end once; a single
 /// receive on the slot then delivers what the peer sends, once.
@@ -27,7 +27,7 @@ pub(super) fn a_single_receive_follows_an_armed_one<R: Rig>(rig: &mut R) {
     });
     with(rig, |t, d| {
         t.bytes(d, from.buf())[..100].fill(0x71);
-        must(t.send(d, 0, from, false), "send");
+        must(t.send(d, 0, from, Lend::No), "send");
     });
     if receive(rig, &mut seen, s, into) != 100 {
         fail(format_args!("the single receive got other bytes: {seen:?}"));
@@ -65,7 +65,7 @@ pub(super) fn a_kept_receive_is_reported_once<R: Rig>(rig: &mut R) {
     });
     with(rig, |t, d| {
         t.bytes(d, from.buf())[..100].fill(0x3c);
-        must(t.send(d, 0, from, false), "send");
+        must(t.send(d, 0, from, Lend::No), "send");
     });
     let received = |h: &Happened| matches!(h, Happened::Received { slot, .. } if *slot == s);
     let mut opened = 0;

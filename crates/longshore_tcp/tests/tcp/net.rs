@@ -39,6 +39,9 @@ mod lifecycle;
 #[path = "net/listening.rs"]
 mod listening;
 #[cfg(test)]
+#[path = "net/pins.rs"]
+mod pins;
+#[cfg(test)]
 #[path = "net/slots.rs"]
 mod slots;
 
@@ -113,6 +116,9 @@ impl World {
                 continue;
             }
             // Kind 1 of a connection's tokens is its send.
+            // (A zero-copy send that
+            // outlives its report has a token of its own and is not counted:
+            // the worlds counted here send nothing that long.)
             self.sends += u32::from(c.token().get() % 8 == 1);
             let taken = self.client.on_completion(&mut self.io, c)
                 || self.server.on_completion(&mut self.io, c);

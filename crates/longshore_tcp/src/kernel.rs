@@ -8,10 +8,13 @@
 //!
 //! Slots map to socket slots of the shared `Io` and operations to tokens in
 //! the `Net`'s range: token = base + index * 8 + kind, where the index is a
-//! connection slot, or the connection count plus a listener slot.
+//! connection slot, or the connection count plus a listener slot. Behind
+//! those, a zero-copy send whose memory outlives its report has a token
+//! of its own, by slot and by the number `Net` gave it, so that the end
+//! of each is told apart whatever order they come in.
 
 use crate::config::Config;
-use crate::transport::{Happened, Refused};
+use crate::transport::{Happened, Refused, Span};
 use core::marker::PhantomData;
 use longshore_common::io::{Completion, Io, Op, Shut, Sock, Token};
 
@@ -52,6 +55,12 @@ pub struct KernelTransport<IO: Io> {
     /// the transport has in flight, a bit each. Kept to assert that `Net`
     /// never starts a second of a kind.
     flight: Box<[u8]>,
+    /// The first token of the zero-copy sends reported twice, and how
+    /// many a connection has.
+    lent_base: u64,
+    lends: u32,
+    /// Per such send: its bytes were taken and reported; its end is due.
+    taken: Box<[bool]>,
     /// TLS, where it is compiled in and set up.
     secure: Secure,
     io: PhantomData<fn(&mut IO)>,
@@ -70,6 +79,9 @@ impl<IO: Io> KernelTransport<IO> {
             armed: vec![false; conns as usize].into_boxed_slice(),
             accepting: vec![0; conns as usize].into_boxed_slice(),
             flight: vec![0; (conns + config.sizes.listeners) as usize].into_boxed_slice(),
+            lent_base: config.token_base() + config.lent_tokens(),
+            lends: config.sizes.zero_copy_sends,
+            taken: vec![false; (conns * config.sizes.zero_copy_sends) as usize].into_boxed_slice(),
             secure: Secure::new(conns),
             io: PhantomData,
         }
@@ -109,6 +121,50 @@ impl<IO: Io> KernelTransport<IO> {
         d.submit(token, op).map_err(|_| Refused::Busy)?;
         self.flight[index as usize] |= bit;
         Ok(())
+    }
+
+    /// Send `from` on `slot` from where it lies, as send `id` of the
+    /// slot's sends whose memory outlives their report.
+    fn send_lent(&mut self, d: &mut IO, slot: u32, id: u32, from: Span) -> Result<(), Refused> {
+        if id >= self.lends {
+            return Err(Refused::Unsupported);
+        }
+        let at = slot * self.lends + id;
+        let bit = 1u8 << SEND;
+        debug_assert!(
+            self.flight[slot as usize] & bit == 0 && !self.taken[at as usize],
+            "send {id} of {slot} while one is unreported, or its own memory is still read"
+        );
+        let op = Op::SendZc {
+            sock: self.conn_sock(slot),
+            buf: from.buf(),
+            off: from.off(),
+            len: from.len(),
+        };
+        let token = Token::new(self.lent_base + u64::from(at));
+        d.submit(token, op).map_err(|_| Refused::Busy)?;
+        self.flight[slot as usize] |= bit;
+        Ok(())
+    }
+
+    /// A completion of the `at`-th zero-copy send that reports twice:
+    /// its bytes taken and its memory still read, or its end. An end that
+    /// no such report went before is the whole send.
+    fn lent_happened(&mut self, at: u64, c: Completion) -> Option<Happened> {
+        let at = usize::try_from(at).ok().filter(|i| *i < self.taken.len())?;
+        let (slot, id) = (at as u32 / self.lends, at as u32 % self.lends);
+        if !c.more() && core::mem::take(&mut self.taken[at]) {
+            return Some(Happened::Released { slot, id });
+        }
+        // The send is reported: the slot's next may start.
+        self.flight[slot as usize] &= !(1u8 << SEND);
+        self.taken[at] = c.more();
+        let result = c.result();
+        Some(if c.more() {
+            Happened::Taken { slot, result }
+        } else {
+            Happened::Sent { slot, result }
+        })
     }
 
     /// A completion on a connection slot.

@@ -10,7 +10,7 @@
 use super::{KernelTransport, ACCEPT, CANCEL, CLOSE, CONNECT, RECV, SEND, SHUTDOWN};
 use crate::addr::Addr;
 use crate::config::Config;
-use crate::transport::{Happened, Listening, Opened, Refused, Role, Span, Transport};
+use crate::transport::{Happened, Lend, Listening, Opened, Refused, Role, Span, Transport};
 use longshore_common::io::{BufId, Completion, Io, ListenOpts, Op, Shut, Sock, Token};
 use std::net::SocketAddr;
 
@@ -155,12 +155,17 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         d.give_back(buf);
     }
 
-    fn send(&mut self, d: &mut IO, slot: u32, from: Span, zero_copy: bool) -> Result<(), Refused> {
+    fn send(&mut self, d: &mut IO, slot: u32, from: Span, lend: Lend) -> Result<(), Refused> {
         if self.secure.is_on(slot) {
             // Sealed into the connection's own buffer and sent from there.
             self.secure.send(d, slot, from);
             return Ok(());
         }
+        let zero_copy = match lend {
+            Lend::UntilReleased(id) => return self.send_lent(d, slot, id, from),
+            Lend::UntilSent => true,
+            Lend::No => false,
+        };
         let op = Op::Send {
             sock: self.conn_sock(slot),
             buf: from.buf(),
@@ -201,7 +206,11 @@ impl<IO: Io> Transport for KernelTransport<IO> {
     }
 
     fn translate(&mut self, d: &mut IO, completion: Completion) -> Option<Happened> {
-        let rel = completion.token().get().checked_sub(self.token_base)?;
+        let token = completion.token().get();
+        if let Some(at) = token.checked_sub(self.lent_base) {
+            return self.lent_happened(at, completion);
+        }
+        let rel = token.checked_sub(self.token_base)?;
         let (index, kind) = (u32::try_from(rel / 8).ok()?, rel % 8);
         if !completion.more() {
             if let Some(flight) = self.flight.get_mut(index as usize) {

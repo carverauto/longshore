@@ -88,7 +88,8 @@ deadline is due.
   connections it accepts.
 - `shutdown_write` finishes after what is queued, and receiving goes on;
   `close` ends at once, with no event; `drain` stops accepting and reports
-  `Event::Drained` when queued sends have gone or its deadline passes.
+  `Event::Drained` when queued sends have gone and the memory of every
+  zero-copy send is back, or its deadline passes.
 - `is_up` says a connection has both directions open; `can_send` says a
   send would be accepted, which is also true of a half-closed connection.
 - A call on a connection that is not open for it fails with `NotUp`: a
@@ -163,6 +164,22 @@ and is not refused, has seen the room for itself and is not told. Sends
 above
 `Sizes::with_zero_copy_min` are zero-copy on TCP without TLS.
 
+A zero-copy send is reported as soon as the kernel has taken its bytes,
+and the connection's next send follows at once. The kernel goes on
+reading the memory until the peer has acknowledged the bytes; until then
+the memory is pinned: a send segment stays out of the pool though its
+place in the queue is free, and frame memory keeps one more hold. A
+connection has so many such sends out at most, and the set so many in
+all (`Sizes::with_zero_copy_sends`, 8 and 256), and a connection sends
+with a copy while either is reached. Each is an operation of the
+backend while it is out, so the second number is what the set adds to
+`Limits::ops_max` for them. Its slot is not free, and a drain not
+done, before their memory is back. With `with_zero_copy_sends(0, 0)` a
+connection waits for the memory of each zero-copy send before the next,
+which over a network is one send a round trip: measured between two
+machines, 64 KiB sends then carried about 1 GB/s where copied ones
+carried 6 (`bench/results/m30-tcp-dgx-spark-pair-200gbe-aarch64.md`).
+
 ## TLS
 
 `Sizes::with_tls(true)` reserves two buffers of the segment size per
@@ -197,6 +214,7 @@ from the `Config`. Plan several components one on top of the other.
 | `with_header_max(bytes)` | The longest header | 256 |
 | `with_spans(n)` | Queued sends per connection | 16 |
 | `with_zero_copy_min(bytes)` | Sends at least this long are zero-copy | 16 KiB |
+| `with_zero_copy_sends(per_connection, in_all)` | Zero-copy sends whose memory the kernel still reads, a connection and in the whole set; each is an operation of the backend until it is back | 8 and 256 |
 | `with_tls(on)` | Room for TLS; segments are then at least `TLS_SEGMENT_MIN` (36 KiB) | off |
 | `with_token_base(base)` | The first of the set's tokens; it uses `Config::tokens()` of them | 0 |
 
@@ -238,9 +256,13 @@ that is cheap.
 - **I1 Slot ownership.** A connection slot is owned by at most one
   connection; it is freed only when its close has completed and nothing is
   in flight for it.
-- **I2 One in flight.** Per connection at most one send, one receive (or
-  one armed receive), and one of connect, handshake, shutdown and close.
-  Per listener at most one accept and one close.
+- **I2 One in flight.** Per connection at most one send not yet
+  reported, one receive (or one armed receive), and one of connect,
+  handshake, shutdown and close. Per listener at most one accept and one
+  close. Zero-copy sends that were reported and whose memory the
+  transport still reads are in flight too, up to
+  `Sizes::with_zero_copy_sends` a connection and in all, each told apart
+  by a number of its own.
 - **I3 Quiet when free.** Nothing is in flight, queued or held for a slot
   that is `Free` or `Backoff`.
 - **I4 Handles.** A retired handle reaches nothing. A handle the caller
@@ -262,9 +284,14 @@ that is cheap.
   until the caller shuts it down or closes it; with the option off the
   peer's end is the connection's end.
 - **I8 Memory.** Every extent, segment and ring buffer has exactly one of:
-  free, or held with a count that equals its holders. Counts never go
+  free, or held with a count that equals its holders. A zero-copy send
+  whose memory the transport still reads is a holder. Counts never go
   below zero or wrap. With no connection open and no frame held, every
   pool is full.
+- **I8a Bytes in flight.** No byte is written while a send still reads
+  it: a segment a zero-copy send reads is in no queue that can grow into
+  the bytes it sent and is not in the pool, and frame memory it reads is
+  held.
 - **I9 Deadlines.** A slot has a deadline only in a state whose row has
   one, and `next_deadline` is the earliest of them.
 - **I10 Wakes.** Whoever was refused for lack of room (`Full`, a paused

@@ -36,6 +36,7 @@ mod cover;
 mod ending;
 mod frames;
 mod listen;
+mod pins;
 mod pull;
 mod rx;
 mod secure;
@@ -62,6 +63,16 @@ pub struct Net<T: Transport> {
     /// Free send segments, as a stack of indexes.
     segs: Box<[u32]>,
     segs_len: usize,
+    /// Per connection, a place for each zero-copy send whose memory the
+    /// transport may still read: what the send keeps.
+    pins: Box<[Option<Keep>]>,
+    /// How many of them are out, in all.
+    pins_out: u32,
+    /// Per send segment: the zero-copy sends that still read it, and
+    /// whether its span is gone, so that it returns to the pool with the
+    /// last of them.
+    seg_pins: Box<[u32]>,
+    seg_parked: Box<[bool]>,
     /// Connections refused a send segment because none was free, as a
     /// ring: one is told each time a segment returns.
     seg_waiters: Box<[u32]>,
@@ -95,7 +106,8 @@ pub struct Net<T: Transport> {
     draining: Option<u64>,
     drained_owed: bool,
     drain_reported: bool,
-    /// Connections with sends queued.
+    /// Connections with sends queued, or with the memory of a zero-copy
+    /// send still out.
     tx_busy: u32,
     /// With TLS: the server name of each connection the caller opened.
     names: Box<[ServerName]>,
@@ -143,6 +155,10 @@ impl<T: Transport> Net<T> {
             extents: Extents::new(cfg.frame_first, s.frames),
             segs: (0..s.segments).rev().collect(),
             segs_len: s.segments as usize,
+            pins: vec![None; (conns * s.zero_copy_sends) as usize].into_boxed_slice(),
+            pins_out: 0,
+            seg_pins: vec![0; s.segments as usize].into_boxed_slice(),
+            seg_parked: vec![false; s.segments as usize].into_boxed_slice(),
             seg_waiters: vec![0; conns as usize].into_boxed_slice(),
             seg_wait_head: 0,
             seg_wait_len: 0,
@@ -216,7 +232,9 @@ impl<T: Transport> Net<T> {
             } => self.on_ring_data(d, slot, buf, len, armed),
             Happened::RecvEnded { slot, result } => self.on_recv_ended(slot, result),
             Happened::Received { slot, result } => self.on_received(d, slot, result),
-            Happened::Sent { slot, result } => self.on_sent(d, slot, result),
+            Happened::Sent { slot, result } => self.on_sent(d, slot, result, false),
+            Happened::Taken { slot, result } => self.on_sent(d, slot, result, true),
+            Happened::Released { slot, id } => self.on_released(slot, id),
             Happened::ShutDown { slot, result } => self.on_shut_down(slot, result),
             Happened::Closed { slot } => {
                 self.cover(slot, cover::Col::Closed);

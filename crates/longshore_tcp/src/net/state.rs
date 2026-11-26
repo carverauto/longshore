@@ -178,6 +178,12 @@ pub(super) struct ConnState {
     pub(super) tx_head: u32,
     pub(super) tx_len: u32,
     pub(super) sending: bool,
+    /// The pin of the send in flight, or `NONE`.
+    pub(super) send_pin: u32,
+    /// Zero-copy sends reported whose memory the transport still reads.
+    pub(super) pins: u32,
+    /// Where the search for a free pin starts.
+    pub(super) pin_next: u32,
     pub(super) full: bool,
     /// Listed among the connections waiting for a send segment.
     pub(super) seg_listed: bool,
@@ -234,6 +240,9 @@ impl ConnState {
             tx_head: 0,
             tx_len: 0,
             sending: false,
+            send_pin: NONE,
+            pins: 0,
+            pin_next: 0,
             full: false,
             seg_listed: false,
             shut: false,
@@ -258,9 +267,11 @@ impl ConnState {
         self.hdr_have > 0 || (self.asm.is_some() && self.asm_have > 0)
     }
 
-    /// Whether an operation of this connection is still with the transport.
+    /// Whether an operation of this connection is still with the
+    /// transport: a zero-copy send whose memory it still reads is one.
     pub(super) fn in_flight(&self) -> bool {
         self.sending
+            || self.pins > 0
             || self.recv_busy
             || self.armed
             || self.connecting

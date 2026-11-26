@@ -24,6 +24,8 @@ pub struct Sizes {
     pub(crate) header_max: u32,
     pub(crate) spans: u32,
     pub(crate) zero_copy_min: u32,
+    pub(crate) zero_copy_sends: u32,
+    pub(crate) zero_copy_sends_in_all: u32,
     pub(crate) tls: bool,
     pub(crate) token_base: u64,
     pub(crate) seed: u64,
@@ -35,7 +37,8 @@ impl Sizes {
     /// listeners accept, `listeners` listeners. Defaults for the rest: 64
     /// frames of 1 MiB, 64 send segments of 64 KiB, 64 ring buffers of
     /// 16 KiB, headers up to 256 bytes, 16 queued sends per connection,
-    /// zero-copy sends from 16 KiB, tokens from 0.
+    /// zero-copy sends from 16 KiB, eight of them a connection and 256 in
+    /// all whose memory the kernel may still read, tokens from 0.
     pub const fn new(connects: u32, accepts: u32, listeners: u32) -> Sizes {
         Sizes {
             connects,
@@ -50,6 +53,8 @@ impl Sizes {
             header_max: 256,
             spans: 16,
             zero_copy_min: 16 << 10,
+            zero_copy_sends: 8,
+            zero_copy_sends_in_all: 256,
             tls: false,
             token_base: 0,
             seed: 0x6c6f_6e67_7368_6f72,
@@ -99,6 +104,35 @@ impl Sizes {
     pub const fn with_zero_copy_min(mut self, bytes: u32) -> Sizes {
         self.zero_copy_min = bytes;
         self
+    }
+
+    /// Zero-copy sends whose memory the kernel still reads: how many a
+    /// connection may have, and how many all connections together. A
+    /// zero-copy send is reported as soon as its bytes are taken, so that
+    /// the next follows at once; its memory comes back when the peer has
+    /// acknowledged the bytes. With `per_connection` of its own out, or
+    /// `in_all` out in the set, a connection sends with a copy until one
+    /// comes back. Each is an operation of the backend until then, and
+    /// `in_all` (or `per_connection` for every connection, if that is
+    /// fewer) is what the set adds to the backend's operations for them.
+    /// With `per_connection` 0 a connection has one zero-copy send at a
+    /// time and waits for its memory before the next: a send every round
+    /// trip.
+    #[must_use]
+    pub const fn with_zero_copy_sends(mut self, per_connection: u32, in_all: u32) -> Sizes {
+        (self.zero_copy_sends, self.zero_copy_sends_in_all) = (per_connection, in_all);
+        self
+    }
+
+    /// The most zero-copy sends a set of `conns` connections has whose
+    /// memory is still read.
+    pub(crate) const fn lent_most(&self, conns: u32) -> u32 {
+        let each = conns.saturating_mul(self.zero_copy_sends);
+        if each < self.zero_copy_sends_in_all {
+            each
+        } else {
+            self.zero_copy_sends_in_all
+        }
     }
 
     /// Room for TLS: two more buffers of the segment size for every

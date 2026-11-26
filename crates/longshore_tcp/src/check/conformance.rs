@@ -28,12 +28,13 @@
 //! the driver. [`run_all`] is the kernel transport's own.
 
 mod kernel;
+mod lent;
 mod receive;
 mod refusal;
 mod secured;
 
 use super::{fail, must};
-use crate::transport::{Happened, Listening, Span, Transport};
+use crate::transport::{Happened, Lend, Listening, Span, Transport};
 use crate::{Addr, ServerName};
 use longshore_common::io::{Io, Limits};
 use std::net::SocketAddr;
@@ -109,6 +110,8 @@ pub(super) fn of_slot(h: &Happened, slot: u32) -> bool {
         | Happened::RecvEnded { slot: s, .. }
         | Happened::Received { slot: s, .. }
         | Happened::Sent { slot: s, .. }
+        | Happened::Taken { slot: s, .. }
+        | Happened::Released { slot: s, .. }
         | Happened::ShutDown { slot: s, .. }
         | Happened::Closed { slot: s } => s == slot,
         Happened::AcceptFailed { slot: s, .. } => s == Some(slot),
@@ -169,7 +172,7 @@ fn every_operation_is_reported_once<R: Rig>(rig: &mut R) {
     let (from, into) = (rig.span(0, 100), rig.span(1, 4096));
     with(rig, |t, d| {
         t.bytes(d, from.buf())[..100].fill(0x5a);
-        must(t.send(d, 0, from, false), "send");
+        must(t.send(d, 0, from, Lend::No), "send");
     });
     let sent = |h: &Happened| {
         matches!(
@@ -266,7 +269,7 @@ fn sends_go_on_after_the_peers_end<R: Rig>(rig: &mut R) {
     }
     with(rig, |t, d| {
         t.bytes(d, from.buf())[..300].fill(0xa5);
-        must(t.send(d, s, from, false), "send after the peer's end");
+        must(t.send(d, s, from, Lend::No), "send after the peer's end");
     });
     let sent = |h: &Happened| matches!(h, Happened::Sent { slot, result: 300 } if *slot == s);
     until(rig, &mut seen, "the send after the peer's end", |all| {
@@ -283,6 +286,7 @@ pub fn check<R: Rig>(rig: &mut impl FnMut() -> R) {
     closes_of_empty_and_connecting_slots(&mut rig());
     sends_go_on_after_the_peers_end(&mut rig());
     refusal::a_refused_operation_changes_nothing(&mut rig());
+    lent::a_lent_send_is_reported_and_released_once(&mut rig());
     receive::a_single_receive_follows_an_armed_one(&mut rig());
     receive::a_kept_receive_is_reported_once(&mut rig());
     secured::a_handshake_is_reported_once(&mut rig());
