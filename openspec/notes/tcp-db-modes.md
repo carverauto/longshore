@@ -114,11 +114,16 @@ What these say together:
   11 without it. That combination has not been run: the test program
   does not keep writes in flight, and `longshore_tcp` has no zero-copy
   receive yet.
-- **Sustained, this disk is the limit.** After about 236 GB at full rate
-  it takes about 3 GB/s, less than one receiving thread delivers either
-  way. A log that is written at more than that for longer than twenty
-  seconds outruns this disk, whatever the receive mode; what zero-copy
-  receive then saves is CPU, not time.
+- **Sustained, this disk is the limit; in operation that is rare.** After
+  about 236 GB at full rate it takes about 3 GB/s, less than one
+  receiving thread delivers either way. Only the first import of a large
+  data set writes that much without a pause. A database in operation
+  writes in bursts far below 236 GB, and for those the burst rate is the
+  one that counts: 13 GB/s, where the receiving thread is the limit and
+  zero-copy receive carries more as well as costing less. One thing is
+  not measured: how fast the disk's fast cache comes back. A run twenty
+  seconds after the cache was filled still got 1.3 to 2.9 GB/s, so
+  bursts that follow a very large one closely are slower for a while.
 - **CPU a byte is where the modes differ**: 0.066 against 0.154
   CPU-seconds a GB from the card to the disk when the payload is not
   read. With the checksum's read on top the difference was not measured
