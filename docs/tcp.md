@@ -460,9 +460,11 @@ allocation guard and once per TLS provider. See
 - `Rx::ZeroCopy` measured through `longshore_tcp` on a card
   (`tcp_uring --rx zc`); so far the backend's own receive and log from
   pages (`zc_uring`) and the test programs of milestone 31 are.
-- Reading the card's header-and-data-split setting before registering, to
-  name it for certain: the registration answers its absence with the same
-  `EINVAL` as other faults, and the refusal names the likely causes.
+- The card's answer on header-and-data-split read on a card: a refused
+  registration asks the card over ethtool netlink and names the cause
+  for certain where the card says; so far only the question has been
+  checked against a kernel, on interfaces that do not answer it, which
+  leave the refusal naming the likely causes.
 - The AF_XDP transport. The simulated packet link it is to be tested on
   is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.

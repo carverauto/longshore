@@ -13,6 +13,7 @@
 //! region. Both are the kernel's for as long as the ring lives; dropping
 //! the ring takes every page back, whoever holds it.
 
+use super::split::Split;
 use super::*;
 use crate::io::refill::{Refill, Rqe};
 use crate::io::{EBUSY, EINVAL, ENOMEM, ENOSPC, EOPNOTSUPP};
@@ -66,6 +67,23 @@ pub(super) struct Area {
     _region: Region,
 }
 
+/// What an `EINVAL` was for, as far as the card says.
+fn invalid(interface: u32) -> &'static str {
+    match super::split::split_of(interface) {
+        Some(Split::Off) => {
+            "the interface does not split headers from payload: ethtool -G IFACE tcp-data-split on"
+        }
+        Some(Split::On) => {
+            "the interface splits headers from payload; the queue does not exist, \
+             or an XDP program is attached"
+        }
+        Some(Split::Unknown) | None => {
+            "the queue does not split headers from payload (ethtool -G IFACE \
+             tcp-data-split on), or does not exist, or an XDP program is attached"
+        }
+    }
+}
+
 /// Name what a refused registration was refused for.
 fn refusal(errno: i32, limits: &Limits) -> io::Error {
     let (interface, queue) = limits.area_queue();
@@ -83,11 +101,7 @@ fn refusal(errno: i32, limits: &Limits) -> io::Error {
             io::ErrorKind::AddrInUse,
             "the queue is registered already, by this ring or another",
         ),
-        EINVAL => (
-            io::ErrorKind::InvalidInput,
-            "the queue does not split headers from payload (ethtool -G IFACE \
-             tcp-data-split on), or does not exist, or an XDP program is attached",
-        ),
+        EINVAL => (io::ErrorKind::InvalidInput, invalid(interface)),
         _ => (io::ErrorKind::Other, "see io_uring_register(2)"),
     };
     let e = io::Error::from_raw_os_error(errno);
