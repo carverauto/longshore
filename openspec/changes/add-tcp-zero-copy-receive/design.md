@@ -397,15 +397,21 @@ of frames back to back the next one starts wherever the last ended in its
 page, and is moved. A frame is kept only if its sender starts it on a
 packet of its own, with header and body in one send. That is the sending
 side's work (task 3.9): `ConnOpts::with_frame_on_packet` (*new*) makes a
-connection send a frame only when nothing of an earlier frame is still
-unsent in the socket (it waits for the queue of that socket to drain,
-which it sees as the earlier send's completion with nothing left over),
-and queue header and body as one send. It cannot guarantee the packet
-boundary: TCP may still join the frame's first bytes to a segment it
-sends again, or cut a packet short inside the frame when its window or
-its congestion state says so. Such a frame is moved; nothing is wrong.
-Without this option on the sender the mode keeps almost no frame and is
-direct mode at more cost; task 5.1 measures the share with and without.
+connection queue header and body as one send, send a frame only when the
+transport has taken the earlier one whole, and mark every send of the
+socket `MSG_EOR` (`Io::end_sends`, *new*), so that the kernel never fills
+the next frame's first bytes into an unsent packet of the last. Waiting
+alone was not enough: at speed the socket still held unsent bytes when the
+next frame was sent, and only 0.3 to 2.5 % of frames started a page
+(milestone 31). With the mark, packets of whole pages (MTU 8,244 on the
+Sparks) and frames of whole 4 KiB blocks, 99.8 to 100 % did; with frames
+of any other length almost none do whatever the sender does, because the
+card lays the payloads of a run of packets back to back and its driver
+does not let that be turned off while headers are split. It still cannot
+guarantee the boundary: TCP cuts a packet short when the peer's window
+says so, and a send taken short ends a buffer inside a frame. Such a
+frame is moved; nothing is wrong. Task 5.1 measures the share through
+`longshore_tcp`.
 
 ### C5 The credit and the budgets
 - **The credit is the frame.** A connection's receive is armed for the

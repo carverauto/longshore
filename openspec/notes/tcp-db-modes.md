@@ -144,10 +144,17 @@ What these say together:
 - **Zero-copy receive binds a thread to one receive queue** of one
   interface; the operator steers the listener's port to it. The other
   modes need no such setting.
-- **Whole pages need the packet size set on both ends** (MTU 8,244 on the
-  Sparks' card), and a sender that starts each frame on a packet of its
-  own. Neither is needed for correctness: a frame that does not line up
-  costs one move.
+- **A frame is kept in its pages only if it starts a page**, which takes
+  three things together: packets of whole pages (MTU 8,244 on both ends
+  of the Sparks' link), frames of whole 4 KiB blocks, and a sender with
+  `ConnOpts::with_frame_on_packet`, which marks each frame's send
+  `MSG_EOR` so the kernel starts the next frame on a packet of its own.
+  With all three, 99.8 to 100 % of frames started a page on the card;
+  without the block-sized frames almost none do, because the card packs
+  the payloads of packets back to back. For UltraGraphDB this means its
+  log frames, padded to whole blocks for direct I/O anyway, line up, and
+  short requests do not and need not: a frame that does not line up costs
+  one move, never correctness.
 
 ## Sending, for completeness
 
