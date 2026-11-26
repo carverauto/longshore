@@ -14,6 +14,14 @@ concept.
 Third of three changes (`add-tcp-crate`, `add-tcp-simulation-and-
 benchmarks`, this). The API from change 1 does not change.
 
+**Held behind `add-tcp-zero-copy-receive`.** Measured between two DGX
+Sparks (milestone 30), kernel TCP fills a 200 Gb/s link with four to eight
+receiving cores, and the receive copy is what those cores do. io_uring
+zero-copy receive removes that copy and keeps the kernel's TCP, so it is
+built and measured first. This change starts only if those numbers leave
+something for a user-space stack to win, and its case is then restated
+from them (task 0.0).
+
 ## What Changes
 - `XdpTransport` behind the `Transport` seam, its `Driver` the core's
   AF_XDP sockets: one socket per NIC queue per core; fill, completion,
@@ -45,9 +53,6 @@ benchmarks`, this). The API from change 1 does not change.
   queue (source ports chosen against the NIC's RSS hash, or flow rules);
   neighbour (ARP/NDP) and route data read from the kernel.
 - TLS through the `longshore_tls` record layer, which does no I/O.
-- io_uring zero-copy receive (`zcrx`, Linux 6.15+) evaluated in the same
-  benchmarks as an option for kernel TCP; its payload lands in pages the
-  kernel chooses, so it too is followed by the one move into an extent.
 - Tuning on physical hosts with 200 and 300 Gb/s NICs: queues, ring and
   batch sizes, busy polling, interrupt placement, huge pages, NUMA, core
   pinning; profiles and results in `bench/results/`.
@@ -74,4 +79,5 @@ benchmarks`, this). The API from change 1 does not change.
   floor from the features it uses (AF_XDP multi-buffer needs 6.6) and
   refuses below it.
 - Depends on `add-tcp-crate` and `add-tcp-simulation-and-benchmarks`
-  (packet-level simulator and baselines)
+  (packet-level simulator and baselines), and on the results of
+  `add-tcp-zero-copy-receive`

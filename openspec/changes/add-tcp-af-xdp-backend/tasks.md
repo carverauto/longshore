@@ -4,6 +4,7 @@ code for a state machine is written before its table in `design.md` has
 been reviewed.
 
 ## 0. The contract
+- [ ] 0.0 The case restated from the results of `add-tcp-zero-copy-receive` (cores at the full link with and without the receive copy): go, or the change is closed
 - [ ] 0.1 Review of the TCP connection, chunk ownership and queue socket state tables, the invariants X1 to X11 and the exhaustion table in `design.md`; corrections made there first
 - [ ] 0.2 The packet-level model test's harness on change 2's packet device: both ends, seeded packet faults, the smallest pools, invariants checked after every step, replay by seed (failing until the stack exists)
 - [ ] 0.3 The transport conformance suite of change 2 wired to run against `XdpTransport` on the packet device
@@ -44,7 +45,7 @@ been reviewed.
 - [ ] 4.7 Review of group 4
 
 ## 5. Tuning on 200 and 300 Gb/s NICs
-- [ ] 5.1 Baselines: kernel transport, with and without zcrx where available
+- [ ] 5.1 Baselines: kernel transport in ring, direct and zero-copy receive mode
 - [ ] 5.2 Queues, ring and batch sizes, busy-poll budget, interrupt placement, huge page size, NUMA placement, core pinning; profiles per step
 - [ ] 5.3 Results and settings in `bench/results/`; support matrix and tuning guide in `docs/tcp.md`
 - [ ] 5.4 Review of group 5
