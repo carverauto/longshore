@@ -54,6 +54,7 @@ impl<W: World> Engine<W> {
             | Op::ConnectUdp { .. }
             | Op::Accept { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -87,6 +88,7 @@ impl<W: World> Engine<W> {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -131,6 +133,7 @@ impl<W: World> Engine<W> {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }

@@ -54,6 +54,7 @@ impl World for MockWorld {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
             | Op::Close { .. }
@@ -101,6 +102,7 @@ impl World for MockWorld {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
             | Op::AwaitWake

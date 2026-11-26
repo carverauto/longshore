@@ -82,6 +82,7 @@ impl<W: World> Engine<W> {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -132,7 +133,10 @@ impl<W: World> Engine<W> {
                 i = idx + 1;
                 continue;
             }
-            let ready = if p.cancelled || p.chain_aborted {
+            let ready = if let Some((result, free_from)) = p.taken {
+                // A zero-copy send whose bytes went: its last report.
+                self.let_go(&p, result, free_from)
+            } else if p.cancelled || p.chain_aborted {
                 if p.attached {
                     self.world.release(&p.op);
                 }
@@ -149,7 +153,8 @@ impl<W: World> Engine<W> {
                 if self.world.hold(&p.op) {
                     None
                 } else {
-                    self.resolve_or_attempt(&p)
+                    let got = self.resolve_or_attempt(&p);
+                    self.take(idx, &p, got)
                 }
             };
             if self.deliver(idx, p, ready, out) {
@@ -227,6 +232,7 @@ impl<W: World> Engine<W> {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -303,6 +309,7 @@ fn op_socket(op: &Op) -> Option<Sock> {
         | Op::Accept { listener: s, .. }
         | Op::ArmedAccept { listener: s }
         | Op::Send { sock: s, .. }
+        | Op::SendZc { sock: s, .. }
         | Op::Recv { sock: s, .. }
         | Op::RecvNow { sock: s, .. }
         | Op::Shutdown { sock: s, .. }
@@ -339,6 +346,7 @@ fn is_short_rw(op: &Op, result: i32) -> bool {
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }

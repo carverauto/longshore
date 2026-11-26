@@ -29,6 +29,15 @@ impl UringIo {
                 len,
                 zero_copy,
             } => self.prep_send(i, sock, (buf, off, len), zero_copy),
+            Op::SendZc {
+                sock,
+                buf,
+                off,
+                len,
+            } => {
+                self.slots[i as usize].reports_taken = true;
+                self.prep_send(i, sock, (buf, off, len), true)
+            }
             Op::Recv {
                 sock,
                 buf,

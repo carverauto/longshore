@@ -54,12 +54,19 @@ impl Posix {
             Op::Connect { sock, addr } => self.attempt_connect(sock, addr),
             Op::ConnectUdp { sock, addr } => self.attempt_connect_udp(sock, addr),
             Op::Accept { listener, sock } => self.attempt_accept(listener, sock),
+            // A zero-copy send is copied here, and so reports once.
             Op::Send {
                 sock,
                 buf,
                 off,
                 len,
                 ..
+            }
+            | Op::SendZc {
+                sock,
+                buf,
+                off,
+                len,
             } => self.attempt_send(sock, pool, limits.range(buf, off, len)),
             Op::Recv {
                 sock,

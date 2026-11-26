@@ -96,6 +96,9 @@ struct Slot {
     phase: u64,
     /// A cancel has been submitted for this operation. See `Op::Cancel`.
     cancel_requested: bool,
+    /// A zero-copy send that reports its result as soon as it has one,
+    /// and its end apart. See `Op::SendZc`.
+    reports_taken: bool,
     // Kernel reads these while the operation is in flight, so they live here.
     addr: sockaddr_any,
     addr_len: u32,

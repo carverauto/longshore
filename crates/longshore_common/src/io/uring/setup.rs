@@ -137,6 +137,7 @@ pub(super) fn check_features(features: u32) -> io::Result<()> {
 fn idle_slot() -> Slot {
     Slot {
         cancel_requested: false,
+        reports_taken: false,
         token: 0,
         state: State::Free,
         result: 0,

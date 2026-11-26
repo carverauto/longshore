@@ -118,6 +118,17 @@ impl World for Virtual {
         self.rng.chance(self.faults.delay)
     }
 
+    fn linger(&mut self, _op: &Op) -> u64 {
+        // One zero-copy send in eight reports once, as a kernel's may. The
+        // others keep their buffer for one to six steps, each its own
+        // number, so that several on one socket let go in any order.
+        if self.rng.below(8) == 0 {
+            0
+        } else {
+            1 + self.rng.below(6)
+        }
+    }
+
     fn late(&mut self) -> bool {
         // Nothing is drawn when it is off: existing traces stay as they are.
         // Never certain, or a close would be put off for ever.
@@ -162,6 +173,7 @@ impl World for Virtual {
             | Op::ConnectUdp { .. }
             | Op::Accept { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }

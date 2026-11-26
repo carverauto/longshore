@@ -83,6 +83,39 @@ pub enum Op {
         /// then completes only once the kernel has released the buffer.
         zero_copy: bool,
     },
+    /// Send `len` bytes of buffer `buf` starting at `off` straight from the
+    /// buffer, where the backend can, and say when the bytes were taken
+    /// apart from when the buffer is free again. May be taken short.
+    ///
+    /// A backend that sends from the buffer reports twice under the
+    /// operation's token: a first completion with `more: true` and the
+    /// bytes taken as soon as they were taken, so that the next send on
+    /// the socket can follow at once, and a last completion with
+    /// `more: false` and the same result once the backend no longer reads
+    /// the buffer. Over a network that is when the peer has acknowledged
+    /// the bytes. A backend that copies, and a send that fails before
+    /// anything was taken, report once, with `more: false`.
+    ///
+    /// The bytes sent must not be written before the last completion;
+    /// other bytes of the same buffer may be. The last completions of
+    /// several such sends on one socket come in no fixed order, nor in a
+    /// fixed order with the first completions of later sends. A close of
+    /// the socket gives each its last completion like any other operation
+    /// in flight. Counts toward `Limits::ops_max` until its last
+    /// completion.
+    ///
+    /// [`Op::Send`] with `zero_copy` is the same send reported once, at
+    /// the end.
+    SendZc {
+        /// The connected socket.
+        sock: Sock,
+        /// The pool buffer to send from.
+        buf: BufId,
+        /// Where the bytes start in `buf`.
+        off: u32,
+        /// How many bytes to send.
+        len: u32,
+    },
     /// Receive up to `len` bytes into buffer `buf` at `off`. 0 means end of stream.
     Recv {
         /// The connected socket.

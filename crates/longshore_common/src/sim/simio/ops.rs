@@ -70,6 +70,12 @@ impl Virtual {
                 off,
                 len,
                 ..
+            }
+            | Op::SendZc {
+                sock,
+                buf,
+                off,
+                len,
             } => {
                 let span = (buf, off, len);
                 if self.is_udp(sock) {

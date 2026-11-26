@@ -195,6 +195,7 @@ impl UringIo {
 
     /// A zero-copy send reports its result and, separately, the notification
     /// that the kernel no longer reads the buffer; it finishes on the later.
+    /// An [`Op::SendZc`] also says so when its result comes first.
     #[inline]
     fn on_send_zc_cqe(&mut self, i: u32, state: State, c: &io_uring_cqe, out: &mut Completions) {
         if c.flags & IORING_CQE_F_NOTIF != 0 {
@@ -213,6 +214,9 @@ impl UringIo {
             }
             s.result = c.res;
             s.state = State::AwaitNotif;
+            if s.reports_taken {
+                out.push(Completion::new(Token(s.token), c.res).with_more(true));
+            }
             return;
         }
         self.finish(i, c.res, out)

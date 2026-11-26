@@ -63,6 +63,7 @@ pub(super) fn check_non_lifecycle(
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }
@@ -116,6 +117,7 @@ fn check_path_op(op: &Op, pool: &[u8], limits: &Limits) -> Result<(), i32> {
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }
@@ -193,6 +195,7 @@ pub(super) fn slot_of(op: &Op) -> Option<FileSlot> {
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }

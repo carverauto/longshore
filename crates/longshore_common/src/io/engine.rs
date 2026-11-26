@@ -22,6 +22,7 @@ use std::sync::Arc;
 mod backend;
 mod step;
 mod submit;
+mod taken;
 #[cfg(test)]
 mod tests;
 
@@ -108,6 +109,13 @@ pub trait World {
     /// Wait when `tick(true, ...)` has no completions yet.
     fn wait(&mut self, deadline: Option<u64>, only_timers: bool, idle: u32) -> io::Result<()>;
 
+    /// How many steps this world goes on reading the buffer of an
+    /// [`Op::SendZc`] whose bytes it has just taken. Zero for a world that
+    /// copied them: the send then reports once.
+    fn linger(&mut self, _op: &Op) -> u64 {
+        0
+    }
+
     /// Whether a report that is due now comes in a later step instead: the
     /// end of an operation its socket's close cancelled, or a close before
     /// the operations it ends. A real kernel fixes no order among them.
@@ -173,6 +181,11 @@ pub(crate) struct Pending {
     pub(crate) last_delivered_step: u64,
     pub(crate) unix_path: [u8; 108],
     pub(crate) unix_len: u8,
+    /// For an [`Op::SendZc`] whose bytes were taken: the bytes, and the
+    /// step from which the world no longer reads its buffer.
+    pub(crate) taken: Option<(i32, u64)>,
+    /// What those bytes hashed to when they were taken.
+    pub(crate) taken_sum: u64,
 }
 
 /// [`crate::io::Io`] implementation backed by a [`World`].

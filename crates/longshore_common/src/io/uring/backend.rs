@@ -248,6 +248,7 @@ impl UringIo {
         s.op_sock = None;
         s.sock_closed = false;
         s.cancel_requested = false;
+        s.reports_taken = false;
     }
 
     /// Keepalive `(idle, interval, count)` read from the most recent `listen` descriptor.
@@ -456,6 +457,7 @@ impl UringIo {
             | Op::ConnectUdp { .. }
             | Op::Accept { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Close { .. }

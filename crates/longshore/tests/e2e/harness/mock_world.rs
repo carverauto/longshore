@@ -51,7 +51,7 @@ impl OpKind {
             Op::ConnectUnix { .. } => Self::ConnectUnix,
             Op::Accept { .. } => Self::Accept,
             Op::ArmedAccept { .. } => Self::ArmedAccept,
-            Op::Send { .. } => Self::Send,
+            Op::Send { .. } | Op::SendZc { .. } => Self::Send,
             Op::Recv { .. } => Self::Recv,
             Op::ArmedRecv { .. } => Self::ArmedRecv,
             Op::RecvNow { .. } => Self::RecvNow,
@@ -196,6 +196,7 @@ impl TestWorld {
             | Op::Accept { listener: sock, .. }
             | Op::ArmedAccept { listener: sock }
             | Op::Send { sock, .. }
+            | Op::SendZc { sock, .. }
             | Op::Recv { sock, .. }
             | Op::ArmedRecv { sock }
             | Op::RecvNow { sock, .. }
@@ -288,6 +289,7 @@ impl World for TestWorld {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -324,6 +326,7 @@ impl World for TestWorld {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }

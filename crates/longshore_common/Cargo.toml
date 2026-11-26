@@ -116,6 +116,10 @@ path = "tests/sim/packet.rs"
 name = "sim_wal"
 path = "tests/sim/wal.rs"
 
+[[test]]
+name = "sim_send_zc"
+path = "tests/sim/send_zc.rs"
+
 [package.metadata.docs.rs]
 # io_uring is Linux only, and the simulator is part of the documented API.
 default-target = "x86_64-unknown-linux-gnu"

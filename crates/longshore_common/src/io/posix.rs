@@ -262,7 +262,10 @@ impl World for Posix {
 
     fn is_ready(&self, op: &Op) -> bool {
         match *op {
-            Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. } | Op::Send { sock, .. } => {
+            Op::Connect { sock, .. }
+            | Op::ConnectUnix { sock, .. }
+            | Op::Send { sock, .. }
+            | Op::SendZc { sock, .. } => {
                 let s = &self.socks[sock.0 as usize];
                 s.fd < 0 || s.write_ready
             }
@@ -344,6 +347,7 @@ impl World for Posix {
             | Op::ConnectUdp { .. }
             | Op::Accept { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -412,7 +416,10 @@ impl World for Posix {
                     s.want_read = true;
                 }
             }
-            Op::Connect { sock, .. } | Op::ConnectUnix { sock, .. } | Op::Send { sock, .. } => {
+            Op::Connect { sock, .. }
+            | Op::ConnectUnix { sock, .. }
+            | Op::Send { sock, .. }
+            | Op::SendZc { sock, .. } => {
                 let s = &mut self.socks[sock.0 as usize];
                 if s.fd >= 0 && !s.write_ready {
                     s.want_write = true;

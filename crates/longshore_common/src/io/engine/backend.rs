@@ -122,6 +122,8 @@ impl<W: World> Io for Engine<W> {
             last_delivered_step: 0,
             unix_path,
             unix_len,
+            taken: None,
+            taken_sum: 0,
         });
         Ok(())
     }
@@ -166,6 +168,8 @@ impl<W: World> Io for Engine<W> {
                 last_delivered_step: 0,
                 unix_path: [0u8; 108],
                 unix_len: 0,
+                taken: None,
+                taken_sum: 0,
             });
         }
         Ok(())

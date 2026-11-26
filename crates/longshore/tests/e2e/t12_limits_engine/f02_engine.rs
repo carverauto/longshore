@@ -200,6 +200,7 @@ fn readiness_world(flag: Arc<AtomicBool>) -> TestWorld {
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
