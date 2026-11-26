@@ -60,6 +60,8 @@ pub(super) struct Area {
     /// What names the registration in a receive and in a flush.
     id: u32,
     refill: Refill,
+    /// A piece came since the last tick began.
+    fed: bool,
     /// Keeps the ring of returns mapped; the kernel reads it.
     _region: Region,
 }
@@ -172,6 +174,7 @@ impl Area {
         Ok(Some(Area {
             id: reg.zcrx_id,
             refill,
+            fed: false,
             _region: region,
         }))
     }
@@ -186,12 +189,21 @@ impl Area {
     }
 
     /// The start of a tick: what waited goes into the ring, and the
-    /// kernel reads it if that was asked for.
-    pub(super) fn turn(&mut self, ring: &mut Ring) {
+    /// kernel reads it if that was asked for, or if returns lie unread in
+    /// it while no piece came in the last tick or this one is to wait.
+    ///
+    /// The kernel reads the returns when the card wants pages. A card left
+    /// with none wants none, and its queue stalls (milestone 31: for good
+    /// in a run whose area ran dry). While pieces come the kernel is
+    /// reading; when they stop, or the thread is about to sleep, it is
+    /// asked to, at one call a pause.
+    pub(super) fn turn(&mut self, ring: &mut Ring, wait: bool) {
         self.refill.drain();
-        if self.refill.wants_flush() {
+        let idle = (wait || !self.fed) && self.refill.unread() > 0;
+        if self.refill.wants_flush() || idle {
             self.flush(ring);
         }
+        self.fed = false;
     }
 
     /// Return `len` bytes at `off` of the area; a return that found the
@@ -244,6 +256,9 @@ impl UringIo {
             let page = BufId(self.limits.area_base() + (at / u64::from(Limits::PAGE)) as u32);
             let off = (at % u64::from(Limits::PAGE)) as u32;
             let piece = Completion::new(token, c.res).with_more(true);
+            if let Some(area) = self.area.as_mut() {
+                area.fed = true;
+            }
             return out.push(piece.with_piece(page, off));
         }
         if c.flags & IORING_CQE_F_MORE != 0 {
@@ -265,10 +280,10 @@ impl UringIo {
 
     /// A tick begins: the completion queue has not been found full in it
     /// yet, and the area's returns move on.
-    pub(super) fn begin_tick(&mut self) {
+    pub(super) fn begin_tick(&mut self, wait: bool) {
         self.cq_full = false;
         if let Some(area) = self.area.as_mut() {
-            area.turn(&mut self.ring);
+            area.turn(&mut self.ring, wait);
         }
     }
 

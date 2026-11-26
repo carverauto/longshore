@@ -206,7 +206,7 @@ impl Io for UringIo {
         if core::mem::take(&mut self.fail_tick) {
             return Err(io::Error::other("injected: tick fails"));
         }
-        self.begin_tick();
+        self.begin_tick(wait);
         loop {
             while !out.is_full() {
                 let Some((slot_i, c)) = self.ready.pop() else {

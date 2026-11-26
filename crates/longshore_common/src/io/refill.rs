@@ -136,6 +136,12 @@ impl Refill {
         self.flush = true;
     }
 
+    /// Returns in the ring that the kernel has not read yet.
+    pub(crate) fn unread(&self) -> u32 {
+        let read = unsafe { (*self.head).load(Ordering::Acquire) };
+        self.written.wrapping_sub(read)
+    }
+
     /// Whether the kernel is to be asked to read the ring now.
     pub(crate) fn wants_flush(&self) -> bool {
         self.flush
