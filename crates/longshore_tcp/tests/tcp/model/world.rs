@@ -162,8 +162,15 @@ pub(crate) fn opts(bits: u32, tls: bool) -> Result<(ConnOpts, bool), String> {
 /// `reconnect` is set.
 pub(crate) fn opts_with(bits: u32, reconnect: bool, tls: bool) -> Result<(ConnOpts, bool), String> {
     let longest = if tls { FRAME_MAX_TLS } else { FRAME_MAX };
-    let framing = HeaderFraming::length_prefix(longest as u32).map_err(|e| format!("{e:?}"))?;
+    let mut framing = HeaderFraming::length_prefix(longest as u32).map_err(|e| format!("{e:?}"))?;
     let rx = if bits & 1 == 0 { Rx::Ring } else { Rx::Direct };
+    if rx == Rx::Direct && bits & 0x20 != 0 {
+        // Half the direct connections lay a frame so that its body starts
+        // at a block: nothing else about them may differ.
+        framing = framing
+            .with_body_at_block(64)
+            .map_err(|e| format!("{e:?}"))?;
+    }
     let half_close = bits & 2 != 0;
     // One connection in four ends when it has been idle for a while.
     let idle = if bits & 24 == 24 { 20_000_000 } else { 0 };
