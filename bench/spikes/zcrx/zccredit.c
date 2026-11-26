@@ -104,8 +104,9 @@ static int listener(const char *addr, int port) {
 }
 
 // One arming, to its last completion. Returns the bytes its data completions carried;
-// *res and *flags are the last completion's. Pieces are noted through `first`/`n`.
-struct got { uint64_t first_off; unsigned first_len, pieces; int res; unsigned flags; };
+// *res and *flags are the last completion's. Pieces are noted through `first`/`n`; the
+// arming's first four bytes are gathered across pieces, as a piece may be shorter.
+struct got { uint64_t first_off; unsigned first_len, pieces; int res; unsigned flags; unsigned char lead[4]; unsigned lead_n; };
 static uint64_t one_arming(int fd, unsigned credit, struct got *g, int keep_first) {
     uint64_t bytes = 0; unsigned submit = 1; memset(g, 0, sizeof *g);
     arm(fd, credit, 1);
@@ -117,6 +118,8 @@ static uint64_t one_arming(int fd, unsigned credit, struct got *g, int keep_firs
             uint64_t off = *(uint64_t *)(c + 1);
             if (!(c->flags & IORING_CQE_F_MORE)) { g->res = c->res; g->flags = c->flags; done = 1; continue; }
             if (!g->pieces) { g->first_off = off & ~AREA_MASK; g->first_len = c->res; }
+            for (unsigned k = 0; k < (unsigned)c->res && g->lead_n < 4; k++)
+                g->lead[g->lead_n++] = ((unsigned char *)area)[(off & ~AREA_MASK) + k];
             g->pieces++; bytes += c->res;
             if (!(keep_first && g->pieces == 1)) give_back(off, c->res);
         }
@@ -140,7 +143,7 @@ static int run_credit(int fd, unsigned frame) {
         if (n < 256) { printf("stream ended in a header: %llu of 256 bytes, last completion res %d flags %#x\n", (unsigned long long)n, h.res, h.flags); break; }
         if (n != 256) hdr_wrong++;
         ends[(h.res != 0) * 2 + (h.flags != 0)]++;
-        unsigned char *p = (unsigned char *)area + h.first_off;
+        unsigned char *p = h.lead;
         unsigned said = (unsigned)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
         if (said != frame - 4) bad_prefix++;
         if (h.pieces == 1 && h.first_len == 256) hdr_one_piece++;
@@ -153,7 +156,8 @@ static int run_credit(int fd, unsigned frame) {
         ends[(b.res != 0) * 2 + (b.flags != 0)]++;
         // The body goes on where the header stopped, in the same page: a second reference on it.
         if (b.first_off == h.first_off + 256) body_same_page++;
-        give_back(h.first_off, 256);
+        // Only the first piece was kept, and it may be shorter than the header.
+        give_back(h.first_off, h.first_len);
     }
     printf("{\"cmd\":\"zccredit\",\"frames\":%u,\"prefix_wrong\":%u,\"header_bytes_wrong\":%u,\"body_bytes_wrong\":%u,\"header_in_one_piece\":%u,\"header_at_page_start\":%u,\"body_goes_on_in_the_header's_page\":%u,\"last_completions_res0_flags0\":%u,\"last_completions_other\":%u,\"page_kept_by_one_piece\":%d,\"its_bytes_changed_while_kept\":%d,\"its_bytes_changed_after_return\":%d}\n",
         frames, bad_prefix, hdr_wrong, body_wrong, hdr_one_piece, hdr_at_page_start, body_same_page, ends[0], ends[1] + ends[2] + ends[3], kept_len != 0, page_changed, reused_after);
