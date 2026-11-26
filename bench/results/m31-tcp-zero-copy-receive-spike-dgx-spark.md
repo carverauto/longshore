@@ -151,6 +151,18 @@ disk sustains:
 | 4 | 16 MiB | 13.1 |
 | 1 | 128 KiB | 0.57 |
 
+Sustained, 1 MiB writes for 22 seconds, the rate read from the disk's own
+counters every two seconds:
+
+| Writers at once | GB/s, every 2 s | Written |
+|---|---|---|
+| 8 | 13.1 for nine samples (18 s), then 3.1 | 246 GB |
+| 1, twenty seconds after that run | 2.1, 2.9, 2.6, 2.9, 2.1, 1.5, 1.4, 1.3, 1.3, 1.4 | 42 GB |
+
+The disk holds 13 GB/s for about 236 GB and then takes about 3. The
+single writer ran after the eight had filled the disk's fast cache, so
+its figures are of a disk still recovering, not of a fresh one.
+
 So the 3.8 GB/s of "pages written as they lie" is what one write at a
 time gets from this disk (3.3 to 3.5 with `dd`), not what the disk can
 take: with eight or more writes in flight it takes about 13 GB/s, which
