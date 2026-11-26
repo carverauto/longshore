@@ -121,8 +121,9 @@ impl Sizes {
     /// a 200 Gb/s card (`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`):
     /// four carried as much as any number tried and about halved the
     /// sending thread's CPU against one, with which most sends are
-    /// copied; eight was slower in two cases of nine. Over loopback,
-    /// which copies whatever it is asked, more than one carries less.
+    /// copied; eight was slower in two cases of nine. Nothing is lent
+    /// to a loopback address or a Unix-domain socket, where the kernel
+    /// copies whatever it is asked.
     #[must_use]
     pub const fn with_zero_copy_sends(mut self, per_connection: u32, in_all: u32) -> Sizes {
         (self.zero_copy_sends, self.zero_copy_sends_in_all) = (per_connection, in_all);

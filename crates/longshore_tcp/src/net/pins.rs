@@ -18,16 +18,28 @@
 use super::cover::Col;
 use super::state::{best_effort, Keep, TxSpan, NONE};
 use super::Net;
+use crate::addr::Addr;
 use crate::transport::{Lend, Transport};
+
+/// Whether the kernel copies what is sent to `addr` (for an accepted
+/// connection, the address it was accepted at) whatever it is asked: a
+/// Unix-domain socket, or loopback. A zero-copy send there only adds the
+/// bookkeeping of one, and over loopback carries less than a copied one.
+/// A listener at the unspecified address is not known to be either.
+pub(super) fn copies_anyway(addr: &Addr) -> bool {
+    match addr {
+        Addr::Unix(_) => true,
+        Addr::Ip(at) => at.ip().is_loopback(),
+    }
+}
 
 impl<T: Transport> Net<T> {
     /// How the span `s` at the front of `slot`'s queue is to be sent, and
     /// the pin taken for it, or `NONE`.
     pub(super) fn lend_for(&mut self, slot: u32, s: &TxSpan) -> (Lend, u32) {
         let c = &self.conns[slot as usize];
-        // The kernel copies for a Unix-domain socket whatever it is asked.
-        // Nor is anything sealed for TLS sent from where the caller put it.
-        if c.unix || c.secure || s.len < self.cfg.sizes.zero_copy_min {
+        // Nothing sealed for TLS is sent from where the caller put it.
+        if c.copied || c.secure || s.len < self.cfg.sizes.zero_copy_min {
             return (Lend::No, NONE);
         }
         if self.cfg.sizes.zero_copy_sends == 0 {

@@ -222,12 +222,12 @@ impl<T: Transport> Net<T> {
         let state = &self.listeners[l as usize];
         let (cfg, listening) = (state.cfg, live && state.st == LSt::Listening);
         let by = self.lgens.listener(l);
-        let unix = matches!(state.addr, Addr::Unix(_));
+        let copied = super::pins::copies_anyway(&state.addr);
         let seed = self.cfg.sizes.seed ^ u64::from(slot);
         let c = &mut self.conns[slot as usize];
         c.renew(cfg.conn, seed);
         c.accepted_by = if live { by } else { Listener::NONE };
-        c.unix = unix;
+        c.copied = copied;
         c.sock = Socket::Open;
         c.last_active = self.now;
         if !listening {

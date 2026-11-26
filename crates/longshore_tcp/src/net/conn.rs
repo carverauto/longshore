@@ -82,7 +82,7 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         c.renew(opts, seed);
         c.peer = Some(addr);
-        c.unix = matches!(addr, Addr::Unix(_));
+        c.copied = super::pins::copies_anyway(&addr);
         if let Some(r) = opts.reconnect {
             c.backoff = Backoff::new(r.base_ns, r.max_ns, r.jitter_per_mille, seed);
         }

@@ -323,8 +323,10 @@ Runs on hosts with 200 and 300 Gb/s cards are to settle them.
   (`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`): four
   carried as much as any number tried and about halved the sending
   thread's CPU against one, with which most sends are copied; eight was
-  slower in two cases of nine. Over loopback, which copies whatever it
-  is asked, more than one carries less (eight: 7.5 against 11 GB/s).
+  slower in two cases of nine. Nothing is lent to a loopback address
+  or a Unix-domain socket: the kernel copies there whatever it is
+  asked, and zero-copy sends over loopback carried less than copied
+  ones (eight out: 7.5 against 11 GB/s).
 - **How a log is made durable, and whether a thread waits or spins:** no
   default. On the container's virtual disk the two ways of syncing could
   not be told apart. A single connection was answered in 24 µs with both

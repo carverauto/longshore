@@ -157,7 +157,12 @@ impl World {
 
     /// One more connection to the listener, both ends up.
     fn connect(&mut self, opts: ConnOpts) -> (Conn, Conn) {
-        let c = self.client.connect(&mut self.io, ADDR, opts).unwrap();
+        self.connect_to(ADDR, opts)
+    }
+
+    /// A connection to a listener at `addr`, both ends up.
+    fn connect_to(&mut self, addr: SocketAddr, opts: ConnOpts) -> (Conn, Conn) {
+        let c = self.client.connect(&mut self.io, addr, opts).unwrap();
         let (mut up, mut accepted) = (false, None);
         self.until(|_, _, e| {
             match e {

@@ -115,8 +115,9 @@ pub(super) struct ConnState {
     pub(super) parked_by: Option<Listener>,
     /// Where to dial again.
     pub(super) peer: Option<Addr>,
-    /// A Unix-domain socket: never sent from without a copy.
-    pub(super) unix: bool,
+    /// A Unix-domain socket or a loopback address: the kernel copies
+    /// what is sent there whatever it is asked, so nothing is lent.
+    pub(super) copied: bool,
     pub(super) backoff: Backoff,
     pub(super) last_active: u64,
     pub(super) ev: u8,
@@ -200,7 +201,7 @@ impl ConnState {
             st: St::Free,
             opts,
             peer: None,
-            unix: false,
+            copied: false,
             backoff: Backoff::new(1, 1, 0, seed),
             last_active: 0,
             ev: 0,

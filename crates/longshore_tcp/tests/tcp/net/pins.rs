@@ -105,6 +105,44 @@ fn frames_arrive_in_order_however_many_sends_have_their_memory_out() {
     }
 }
 
+/// Over loopback the kernel copies whatever it is asked, so nothing is
+/// lent there: a send's memory is back with its report, as for a copy,
+/// from the end that dialled and from the end that accepted at a
+/// loopback address.
+#[test]
+fn nothing_is_lent_over_loopback() {
+    let local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7000);
+    for seed in 0..20 {
+        let mut w = world(seed, 4);
+        let _: Listener = w
+            .server
+            .listen(&mut w.io, local, ListenConfig::new(prefix()))
+            .unwrap();
+        let (c, s) = w.connect_to(local, prefix());
+        let frames: Vec<Vec<u8>> = (0..30u8)
+            .map(|i| prefixed(300 + 97 * usize::from(i % 7), i))
+            .collect();
+        let (got, outlived) = exchange(&mut w, c, s, &frames);
+        assert!(got == frames && !outlived, "dialled, seed {seed}");
+        // The other way: the accepting end sends.
+        for frame in &frames {
+            while w.server.send_bytes(&mut w.io, s, frame).is_err() {
+                w.turn();
+            }
+            w.turn();
+            let (free, all) = w.server.usage().segments();
+            assert!(
+                free == all || w.server.send_queue(s) > 0,
+                "accepted, seed {seed}: memory out with nothing queued"
+            );
+            while w.client.next_event().is_some() {}
+            while let Ok(Some(lent)) = w.client.next_frame(&mut w.io, c) {
+                w.client.release(lent);
+            }
+        }
+    }
+}
+
 #[test]
 fn a_frame_sent_from_where_it_lies_keeps_its_memory_until_the_send_lets_go() {
     let opts = prefix().with_rx(Rx::Direct);
