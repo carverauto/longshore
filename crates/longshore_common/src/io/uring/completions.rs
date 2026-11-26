@@ -151,6 +151,7 @@ impl UringIo {
             result,
             more,
             buf,
+            off: 0,
         });
         if !more {
             s.state = State::Free;

@@ -53,6 +53,7 @@ impl World for MockWorld {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::RecvNow { .. }
@@ -101,6 +102,7 @@ impl World for MockWorld {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::RecvNow { .. }
@@ -158,11 +160,13 @@ fn armed_op_stays_pending_and_delivers_at_most_one_completion_per_step() {
         result: 12,
         more: true,
         buf: Some(BufId(1)),
+        off: 0,
     });
     world.queues[0].push_back(Attempt {
         result: 5,
         more: false,
         buf: Some(BufId(2)),
+        off: 0,
     });
     let mut engine = Engine::with_world(limits(1), world);
     engine.submit(Token(10), recv_op(0)).unwrap();
@@ -179,6 +183,7 @@ fn armed_op_stays_pending_and_delivers_at_most_one_completion_per_step() {
             result: 12,
             more: true,
             buf: Some(BufId(1)),
+            off: 0,
         })
     );
     assert!(out.is_empty());
@@ -192,6 +197,7 @@ fn armed_op_stays_pending_and_delivers_at_most_one_completion_per_step() {
             result: 5,
             more: false,
             buf: Some(BufId(2)),
+            off: 0,
         })
     );
     assert!(out.is_empty());
@@ -207,21 +213,25 @@ fn swap_remove_and_wrap_never_double_delivers_an_armed_op_in_one_step() {
         result: 1,
         more: true,
         buf: Some(BufId(0)),
+        off: 0,
     });
     world.queues[0].push_back(Attempt {
         result: 2,
         more: true,
         buf: Some(BufId(1)),
+        off: 0,
     });
     world.queues[3].push_back(Attempt {
         result: 3,
         more: true,
         buf: Some(BufId(2)),
+        off: 0,
     });
     world.queues[3].push_back(Attempt {
         result: 4,
         more: true,
         buf: Some(BufId(3)),
+        off: 0,
     });
     let mut engine = Engine::with_world(limits(8), world);
     engine.submit(Token(1), recv_op(0)).unwrap();
@@ -264,16 +274,19 @@ fn cancel_and_close_end_armed_ops_with_final_canceled_completion() {
         result: 7,
         more: true,
         buf: Some(BufId(0)),
+        off: 0,
     });
     world.queues[0].push_back(Attempt {
         result: 8,
         more: true,
         buf: Some(BufId(1)),
+        off: 0,
     });
     world.queues[1].push_back(Attempt {
         result: 9,
         more: true,
         buf: Some(BufId(2)),
+        off: 0,
     });
     let mut engine = Engine::with_world(limits(8), world);
     engine.submit(Token(10), recv_op(0)).unwrap();
@@ -328,11 +341,13 @@ fn full_completions_buffer_delivers_remaining_armed_completions_next_turn() {
         result: 10,
         more: true,
         buf: Some(BufId(0)),
+        off: 0,
     });
     world.queues[1].push_back(Attempt {
         result: 20,
         more: false,
         buf: Some(BufId(1)),
+        off: 0,
     });
     let mut engine = Engine::with_world(limits(4), world);
     engine.submit(Token(1), recv_op(0)).unwrap();
@@ -362,12 +377,14 @@ fn conditional_trace_hash_changes_only_when_more_or_buf_is_set() {
         result: 42,
         more: true,
         buf: None,
+        off: 0,
     });
     e3.record_trace(Completion {
         token: Token(5),
         result: 42,
         more: false,
         buf: Some(BufId(0)),
+        off: 0,
     });
 
     assert_ne!(e1.trace_hash(), e2.trace_hash());

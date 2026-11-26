@@ -127,6 +127,7 @@ impl Posix {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -188,6 +189,7 @@ impl Posix {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }

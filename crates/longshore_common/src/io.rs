@@ -261,6 +261,18 @@ pub trait Io {
     /// Return a buffer-ring buffer named in an [`Op::ArmedRecv`] completion
     /// back to the backend's ring without submitting an operation.
     fn give_back(&mut self, id: BufId);
+    /// Return a piece an [`Op::ArmedRecvZc`] completion delivered, `len`
+    /// bytes of `page` from `off`, without submitting an operation. Every
+    /// piece is returned once, as it was delivered; its bytes are not read
+    /// after that. A backend without a receive area has no pieces, and
+    /// does nothing.
+    fn give_back_piece(&mut self, _page: BufId, _off: u32, _len: u32) {}
+    /// Whether the backend found no room to report completions at some
+    /// point of the last [`Io::tick`]: an [`Op::ArmedRecvZc`] with credit
+    /// left may then stay silent though bytes wait in its socket.
+    fn ring_was_full(&self) -> bool {
+        false
+    }
     /// Ask for the segment sizes of each TCP connection opened from now on:
     /// a connect that succeeds then completes with an encoded [`Segment`]
     /// in place of 0. May be changed at any time. A backend that cannot measure

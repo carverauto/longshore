@@ -74,6 +74,7 @@ impl SimDisk {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -167,6 +168,7 @@ impl SimDisk {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }

@@ -98,6 +98,17 @@ impl World for Virtual {
         self.give_back_ring(id);
     }
 
+    fn give_back_piece(
+        &mut self,
+        page: BufId,
+        off: u32,
+        len: u32,
+        pool: &mut [u8],
+        limits: &Limits,
+    ) {
+        self.give_back_piece_of(page, off, len, pool, limits);
+    }
+
     fn waker(&mut self, woken: Arc<AtomicBool>) -> Option<Arc<dyn Wake>> {
         Some(Arc::new(SimWaker(woken)))
     }
@@ -168,6 +179,7 @@ impl World for Virtual {
         match *op {
             Op::ArmedAccept { listener } => self.attempt_accept_armed(listener),
             Op::ArmedRecv { sock } => self.attempt_recv_armed(sock, pool, limits),
+            Op::ArmedRecvZc { sock, credit } => self.attempt_recv_zc(sock, credit, pool, limits),
             Op::Connect { .. }
             | Op::ConnectUnix { .. }
             | Op::ConnectUdp { .. }

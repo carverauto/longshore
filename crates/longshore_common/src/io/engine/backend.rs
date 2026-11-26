@@ -74,6 +74,20 @@ impl<W: World> Io for Engine<W> {
         self.world.give_back(id);
     }
 
+    fn give_back_piece(&mut self, page: BufId, off: u32, len: u32) {
+        assert!(
+            self.limits.is_page(page) && u64::from(off) + u64::from(len) <= u64::from(Limits::PAGE),
+            "give_back_piece requires a piece of a page of the receive area"
+        );
+        self.world.give_back_piece(
+            page,
+            off,
+            len,
+            &mut self.bufs[self.pool_base..],
+            &self.limits,
+        );
+    }
+
     fn measure_segment_sizes(&mut self, on: bool) {
         self.world.measure_segment_sizes(on);
     }

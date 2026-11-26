@@ -25,6 +25,7 @@ pub struct Limits {
     pub(crate) block_size: u32,
     pub(crate) ring_buffers: u32,
     pub(crate) ring_buffer_size: u32,
+    pub(crate) area_pages: u32,
     pub(crate) ops_max: u32,
 }
 
@@ -45,8 +46,13 @@ impl Limits {
         block_size: 4096,
         ring_buffers: 0,
         ring_buffer_size: 0,
+        area_pages: 0,
         ops_max: 0,
     };
+
+    /// Bytes in a page of the receive area: what a network card that
+    /// writes into it grants, and no other size.
+    pub const PAGE: u32 = 4096;
 
     /// Validate alignment, buffer-ring, and accept-range invariants.
     pub fn validate(&self) {
@@ -89,6 +95,7 @@ impl Limits {
                 .checked_add(self.small_buffers)
                 .and_then(|n| n.checked_add(self.aligned_buffers))
                 .and_then(|n| n.checked_add(self.ring_buffers))
+                .and_then(|n| n.checked_add(self.area_pages))
                 .is_some(),
             "total buffer count overflows u32"
         );
@@ -99,9 +106,25 @@ impl Limits {
         self.buffers + self.small_buffers + self.aligned_buffers
     }
 
-    /// Total buffers across all four classes.
-    pub fn buffer_count(&self) -> u32 {
+    /// First buffer id of the receive area's pages.
+    pub fn area_base(&self) -> u32 {
         self.ring_base() + self.ring_buffers
+    }
+
+    /// Total buffers across all five classes.
+    pub fn buffer_count(&self) -> u32 {
+        self.area_base() + self.area_pages
+    }
+
+    /// The id of page `i` of the receive area.
+    pub fn page(&self, i: u32) -> BufId {
+        assert!(i < self.area_pages, "page out of range");
+        BufId(self.area_base() + i)
+    }
+
+    /// Whether `id` is a page of the receive area.
+    pub fn is_page(&self, id: BufId) -> bool {
+        id.0 >= self.area_base() && id.0 < self.buffer_count()
     }
 
     /// The id of small buffer `i`.
@@ -156,8 +179,19 @@ impl Limits {
         self.aligned_start() + self.aligned_buffers as usize * self.aligned_buffer_size as usize
     }
 
+    /// Byte offset inside the aligned pool view where the receive area
+    /// begins: at a page boundary, as a card needs it.
+    pub fn area_start(&self) -> usize {
+        let end = self.ring_start() + self.ring_buffers as usize * self.ring_buffer_size as usize;
+        if self.area_pages == 0 {
+            end
+        } else {
+            end.next_multiple_of(Self::PAGE as usize)
+        }
+    }
+
     fn content_bytes(&self) -> usize {
-        self.ring_start() + self.ring_buffers as usize * self.ring_buffer_size as usize
+        self.area_start() + self.area_pages as usize * Self::PAGE as usize
     }
 
     /// Bytes to allocate for the one pool holding every buffer, including
@@ -203,11 +237,17 @@ impl Limits {
                 self.aligned_start() + idx * self.aligned_buffer_size as usize,
                 self.aligned_buffer_size as usize,
             )
-        } else {
+        } else if id.0 < self.area_base() {
             let idx = (id.0 - self.ring_base()) as usize;
             (
                 self.ring_start() + idx * self.ring_buffer_size as usize,
                 self.ring_buffer_size as usize,
+            )
+        } else {
+            let idx = (id.0 - self.area_base()) as usize;
+            (
+                self.area_start() + idx * Self::PAGE as usize,
+                Self::PAGE as usize,
             )
         }
     }

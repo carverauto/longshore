@@ -199,6 +199,7 @@ impl FileTable {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -296,6 +297,7 @@ impl FileTable {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -344,6 +346,7 @@ impl FileTable {
                 | Op::Accept { .. }
                 | Op::ArmedAccept { .. }
                 | Op::ArmedRecv { .. }
+                | Op::ArmedRecvZc { .. }
                 | Op::Send { .. }
                 | Op::SendZc { .. }
                 | Op::Recv { .. }

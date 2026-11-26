@@ -15,6 +15,7 @@ pub struct Completion {
     pub(crate) result: i32,
     pub(crate) more: bool,
     pub(crate) buf: Option<BufId>,
+    pub(crate) off: u32,
 }
 
 impl Completion {
@@ -26,6 +27,7 @@ impl Completion {
             result,
             more: false,
             buf: None,
+            off: 0,
         }
     }
 
@@ -65,6 +67,24 @@ impl Completion {
     #[inline]
     pub const fn buf(self) -> Option<BufId> {
         self.buf
+    }
+
+    /// This completion, carrying a piece of a zero-copy receive: `result`
+    /// bytes of page `page` of the receive area, from `off`.
+    #[inline]
+    pub const fn with_piece(mut self, page: BufId, off: u32) -> Self {
+        (self.buf, self.off) = (Some(page), off);
+        self
+    }
+
+    /// Where in [`Completion::buf`] the bytes of this completion start:
+    /// the offset of a piece in its page for an [`Op::ArmedRecvZc`],
+    /// 0 for every other operation.
+    ///
+    /// [`Op::ArmedRecvZc`]: super::Op::ArmedRecvZc
+    #[inline]
+    pub const fn off(self) -> u32 {
+        self.off
     }
 }
 

@@ -44,6 +44,7 @@ impl Virtual {
                 result: count_result(slot_idx),
                 more: true,
                 buf: None,
+                off: 0,
             })
         } else {
             let cs = &mut self.socks[c as usize];
@@ -106,6 +107,7 @@ impl Virtual {
             result: count_result(n),
             more: true,
             buf: Some(buf_id),
+            off: 0,
         })
     }
 

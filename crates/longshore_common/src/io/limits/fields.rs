@@ -170,6 +170,22 @@ impl Limits {
         self
     }
 
+    /// Pages of the receive area, which a zero-copy receive
+    /// ([`crate::io::Op::ArmedRecvZc`]) delivers pieces of: buffers of
+    /// [`Limits::PAGE`] bytes each, with ids from [`Limits::area_base`].
+    /// May be zero.
+    #[inline]
+    pub const fn area_pages(self) -> u32 {
+        self.area_pages
+    }
+
+    /// This value with [`Limits::area_pages`] set to `area_pages`.
+    #[inline]
+    pub const fn with_area_pages(mut self, area_pages: u32) -> Self {
+        self.area_pages = area_pages;
+        self
+    }
+
     /// Size in bytes of each buffer-ring buffer. Must be `> 0` when
     /// `ring_buffers > 0`.
     #[inline]

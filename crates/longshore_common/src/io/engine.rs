@@ -32,6 +32,8 @@ pub struct Attempt {
     pub(crate) result: i32,
     pub(crate) more: bool,
     pub(crate) buf: Option<BufId>,
+    /// Where the bytes start in `buf`: a piece of a zero-copy receive.
+    pub(crate) off: u32,
 }
 
 impl Attempt {
@@ -41,6 +43,7 @@ impl Attempt {
             result,
             more: false,
             buf: None,
+            off: 0,
         }
     }
 }
@@ -82,6 +85,17 @@ pub trait World {
     }
     /// Return a buffer-ring buffer back to the world's ring.
     fn give_back(&mut self, _id: BufId) {}
+    /// Return a piece of the receive area, `len` bytes of `page` from
+    /// `off`, to a world that has one.
+    fn give_back_piece(
+        &mut self,
+        _page: BufId,
+        _off: u32,
+        _len: u32,
+        _pool: &mut [u8],
+        _limits: &Limits,
+    ) {
+    }
     /// Ask to measure TCP segment sizes on future connects, if supported.
     fn measure_segment_sizes(&mut self, _on: bool) {}
     /// Build a cross-thread wake handle tied to `woken`, if supported.
@@ -257,7 +271,24 @@ impl Attempt {
     /// buffer an armed receive selected.
     #[inline]
     pub const fn new(result: i32, more: bool, buf: Option<BufId>) -> Self {
-        Self { result, more, buf }
+        Self {
+            result,
+            more,
+            buf,
+            off: 0,
+        }
+    }
+
+    /// A piece of a zero-copy receive: `result` bytes of `page` from `off`,
+    /// with more to follow.
+    #[inline]
+    pub const fn piece(result: i32, page: BufId, off: u32) -> Self {
+        Self {
+            result,
+            more: true,
+            buf: Some(page),
+            off,
+        }
     }
 
     /// A byte count or 0 on success, or a negated Linux errno.

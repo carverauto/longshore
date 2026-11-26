@@ -50,6 +50,8 @@ impl<W: World> Engine<W> {
                 .then_some(0)
                 .map(Attempt::single),
             Op::Cancel { .. } => Some(Attempt::single(self.resolve_cancel(p.cancel_target))),
+            // Its credit is used up: the receive ends, as at a stream's end.
+            Op::ArmedRecvZc { credit: 0, .. } => Some(Attempt::single(0)),
             Op::FileRead { slot, .. }
             | Op::FileWrite { slot, .. }
             | Op::FileSync { slot, .. }
@@ -81,6 +83,7 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -154,6 +157,7 @@ impl<W: World> Engine<W> {
                     None
                 } else {
                     let got = self.resolve_or_attempt(&p);
+                    self.spend(idx, &p, got);
                     self.take(idx, &p, got)
                 }
             };
@@ -193,7 +197,13 @@ impl<W: World> Engine<W> {
         ready: Option<Attempt>,
         out: &mut Completions,
     ) -> bool {
-        let Some(Attempt { result, more, buf }) = ready else {
+        let Some(Attempt {
+            result,
+            more,
+            buf,
+            off,
+        }) = ready
+        else {
             if self.world.claimed(&p.op) {
                 self.pending[idx].attached = true;
             }
@@ -204,6 +214,7 @@ impl<W: World> Engine<W> {
             result,
             more,
             buf,
+            off,
         };
         if more {
             self.pending[idx].last_delivered_step = self.step_seq;
@@ -231,6 +242,7 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -313,7 +325,8 @@ fn op_socket(op: &Op) -> Option<Sock> {
         | Op::Recv { sock: s, .. }
         | Op::RecvNow { sock: s, .. }
         | Op::Shutdown { sock: s, .. }
-        | Op::ArmedRecv { sock: s } => Some(s),
+        | Op::ArmedRecv { sock: s }
+        | Op::ArmedRecvZc { sock: s, .. } => Some(s),
         Op::Close { .. }
         | Op::AwaitWake
         | Op::ReadFile { .. }
@@ -345,6 +358,7 @@ fn is_short_rw(op: &Op, result: i32) -> bool {
         | Op::Accept { .. }
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
+        | Op::ArmedRecvZc { .. }
         | Op::Send { .. }
         | Op::SendZc { .. }
         | Op::Recv { .. }

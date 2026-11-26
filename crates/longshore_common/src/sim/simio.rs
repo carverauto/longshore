@@ -16,6 +16,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+mod area;
 mod disk;
 mod faults;
 pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
@@ -131,6 +132,8 @@ pub struct Virtual {
     pub(super) ring_free: Box<[u16]>,
     pub(super) ring_free_len: usize,
     pub(super) ring_in_free: Box<[bool]>,
+    /// The receive area's pages and the pieces out of them.
+    pub(super) area: area::Area,
     pub(super) accept_start: u32,
     pub(super) accept_len: u32,
     pub(super) keep_timing: Option<crate::io::KeepAlive>,
@@ -178,6 +181,7 @@ impl Virtual {
             ring_free: (0..limits.ring_buffers as u16).rev().collect(),
             ring_free_len: ring_count,
             ring_in_free: vec![true; ring_count].into_boxed_slice(),
+            area: area::Area::new(&limits),
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
             keep_timing: None,
@@ -205,6 +209,7 @@ impl Virtual {
         }
         self.ring_free_len = n;
         self.ring_in_free.fill(true);
+        self.area.reset();
         if let Some(disk) = self.disk.as_mut() {
             disk.power_loss(&mut self.rng);
         }
@@ -220,6 +225,13 @@ impl SimIo {
     /// `faults` says how often the network misbehaves.
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
         Engine::with_world(limits, Virtual::new(limits, seed, faults))
+    }
+
+    /// Pieces of the receive area that are out, and pages with a piece
+    /// out, by the simulator's own count: for a test that does not trust
+    /// the counters of the code it tests.
+    pub fn pieces_out(&mut self) -> (usize, usize) {
+        self.world_mut().area.out()
     }
 
     /// Preallocate the virtual disk tables. Test setup, so it allocates once.

@@ -99,7 +99,10 @@ impl Posix {
             | Op::FileRename { .. }
             | Op::FileUnlink { .. }
             | Op::FileMkdir { .. } => self.attempt_file_op(op, pool, limits),
-            Op::ConnectUnix { .. } | Op::ArmedAccept { .. } | Op::ArmedRecv { .. } => {
+            Op::ConnectUnix { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. } => {
                 unreachable!("handled above")
             }
         }

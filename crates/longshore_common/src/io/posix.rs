@@ -262,6 +262,8 @@ impl World for Posix {
 
     fn is_ready(&self, op: &Op) -> bool {
         match *op {
+            // Answered at once: this backend has no receive area.
+            Op::ArmedRecvZc { .. } => true,
             Op::Connect { sock, .. }
             | Op::ConnectUnix { sock, .. }
             | Op::Send { sock, .. }
@@ -342,6 +344,7 @@ impl World for Posix {
         match *op {
             Op::ArmedAccept { listener } => self.attempt_accept_armed(listener),
             Op::ArmedRecv { sock } => self.attempt_recv_armed(sock, pool, limits),
+            Op::ArmedRecvZc { .. } => Some(Attempt::single(-crate::io::ENOBUFS)),
             Op::Connect { .. }
             | Op::ConnectUnix { .. }
             | Op::ConnectUdp { .. }
@@ -404,6 +407,7 @@ impl World for Posix {
 
     fn add_interest(&mut self, op: &Op) {
         match *op {
+            Op::ArmedRecvZc { .. } => {}
             Op::Accept { listener, .. } | Op::ArmedAccept { listener } => {
                 let s = &mut self.socks[listener.0 as usize];
                 if s.fd >= 0 && !s.read_ready {

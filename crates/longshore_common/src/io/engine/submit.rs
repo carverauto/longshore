@@ -11,6 +11,19 @@ impl<W: World> Engine<W> {
     /// Checks a socket operation's preconditions before it is queued. Returns
     /// the Unix-domain path it carries (empty for every other operation), or
     /// the errno it completes with at once.
+    /// A zero-copy receive has a credit, and a backend with an area.
+    fn precheck_recv_zc(&self, sock: Sock, credit: u32) -> Result<([u8; 108], u8), i32> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        assert!(
+            credit != 0,
+            "a zero-copy receive is never armed with a credit of 0"
+        );
+        if self.limits.area_pages == 0 {
+            return Err(-ENOBUFS);
+        }
+        Ok(([0u8; 108], 0))
+    }
+
     pub(super) fn socket_precheck(&self, op: &Op) -> Result<([u8; 108], u8), i32> {
         match *op {
             Op::ArmedAccept { listener } => {
@@ -30,6 +43,7 @@ impl<W: World> Engine<W> {
                 }
                 Ok(([0u8; 108], 0))
             }
+            Op::ArmedRecvZc { sock, credit } => self.precheck_recv_zc(sock, credit),
             Op::ConnectUnix {
                 sock,
                 path_buf,
@@ -87,6 +101,7 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -132,6 +147,7 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }

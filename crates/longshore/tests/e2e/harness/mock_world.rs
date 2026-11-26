@@ -53,7 +53,7 @@ impl OpKind {
             Op::ArmedAccept { .. } => Self::ArmedAccept,
             Op::Send { .. } | Op::SendZc { .. } => Self::Send,
             Op::Recv { .. } => Self::Recv,
-            Op::ArmedRecv { .. } => Self::ArmedRecv,
+            Op::ArmedRecv { .. } | Op::ArmedRecvZc { .. } => Self::ArmedRecv,
             Op::RecvNow { .. } => Self::RecvNow,
             Op::Shutdown { .. } => Self::Shutdown,
             Op::Close { .. } => Self::Close,
@@ -199,6 +199,7 @@ impl TestWorld {
             | Op::SendZc { sock, .. }
             | Op::Recv { sock, .. }
             | Op::ArmedRecv { sock }
+            | Op::ArmedRecvZc { sock, .. }
             | Op::RecvNow { sock, .. }
             | Op::Shutdown { sock, .. }
             | Op::Close { sock } => Some(sock),
@@ -288,6 +289,7 @@ impl World for TestWorld {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }
@@ -325,6 +327,7 @@ impl World for TestWorld {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
             | Op::SendZc { .. }
             | Op::Recv { .. }

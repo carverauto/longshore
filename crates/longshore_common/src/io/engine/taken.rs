@@ -9,6 +9,18 @@
 use super::*;
 
 impl<W: World> Engine<W> {
+    /// A piece an armed zero-copy receive was just given comes off its
+    /// credit: with none left its next visit ends it.
+    pub(super) fn spend(&mut self, idx: usize, p: &Pending, got: Option<Attempt>) {
+        let (Op::ArmedRecvZc { sock, credit }, Some(piece)) = (p.op, got) else {
+            return;
+        };
+        if piece.more {
+            let left = credit.saturating_sub(piece.result.unsigned_abs());
+            self.pending[idx].op = Op::ArmedRecvZc { sock, credit: left };
+        }
+    }
+
     /// What visiting `p` gave: when it is a zero-copy send whose bytes the
     /// world has just taken and still reads, that becomes its first
     /// report, and its last follows when the world has let go.

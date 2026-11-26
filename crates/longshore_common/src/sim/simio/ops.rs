@@ -52,9 +52,13 @@ impl Virtual {
         file_op_num: u64,
     ) -> Option<i32> {
         match *op {
-            Op::Timeout { .. } | Op::AwaitWake | Op::Cancel { .. } => {
-                unreachable!("resolved by Engine")
-            }
+            Op::Timeout { .. }
+            | Op::AwaitWake
+            | Op::Cancel { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. } => unreachable!("resolved before this"),
             Op::Connect { sock, addr } => self.sim_connect(sock, addr),
             Op::ReadFile {
                 file,
@@ -116,9 +120,6 @@ impl Virtual {
             | Op::FileRename { .. }
             | Op::FileUnlink { .. }
             | Op::FileMkdir { .. } => Some(self.sim_file_op(op, pool, limits, file_op_num)),
-            Op::ConnectUnix { .. } | Op::ArmedAccept { .. } | Op::ArmedRecv { .. } => {
-                unreachable!("handled above")
-            }
         }
     }
 

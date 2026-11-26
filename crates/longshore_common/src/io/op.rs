@@ -69,6 +69,34 @@ pub enum Op {
         /// The connected socket.
         sock: Sock,
     },
+    /// Receive bytes on `sock` straight into pages of the receive area
+    /// ([`Limits::area_pages`](super::Limits::area_pages)), without a copy
+    /// by the backend where it can: at most `credit` bytes, which is never
+    /// 0. Each completion with bytes is a piece: `result > 0` bytes of the
+    /// page [`Completion::buf`](super::Completion::buf) from
+    /// [`Completion::off`](super::Completion::off), with `more: true`. A
+    /// page can lie behind several pieces, of this receive and of the
+    /// socket's next. Each piece stays the caller's until it is returned
+    /// with [`Io::give_back_piece`](super::Io::give_back_piece); the page
+    /// is not written again before every piece of it is back.
+    ///
+    /// The last completion has `more: false`: `0` when `credit` bytes were
+    /// delivered, and also when the peer finished first, which the caller
+    /// tells apart by the bytes it was given; `-ENOSPC` when the backend
+    /// had no room to report a piece and `-ENOMEM` when it had no page for
+    /// one, both with what was delivered still good and the rest to be
+    /// asked for again; or the socket's error. After a turn in which
+    /// [`Io::ring_was_full`](super::Io::ring_was_full) says so, a receive
+    /// with credit left may stay silent until the peer sends again: cancel
+    /// it and arm it again for the rest. Refused with `-ENOBUFS` by a
+    /// backend built without an area. Counts toward `Limits::ops_max`
+    /// until its last completion.
+    ArmedRecvZc {
+        /// The connected socket.
+        sock: Sock,
+        /// The most bytes to deliver before the receive ends; not 0.
+        credit: u32,
+    },
     /// Send `len` bytes of buffer `buf` starting at `off`. May complete short.
     Send {
         /// The connected socket.
