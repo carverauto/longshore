@@ -166,8 +166,10 @@ ethtool -N IFACE flow-type tcp4 dst-ip ADDR dst-port PORT action N
 ip link set IFACE mtu 8244                  # on both ends: two pages a packet
 ```
 
-The program needs `CAP_NET_ADMIN`. Building the backend refuses, naming
-what is missing, on a kernel without the feature or without the flush of
+The program needs `CAP_NET_ADMIN`. A refused registration says what the
+card reports of its header-and-data split, asked over ethtool netlink (the
+ConnectX-7's driver reports it while it is on, and not at all while it is
+off). Building the backend refuses, naming what is missing, on a kernel without the feature or without the flush of
 returns (Linux 7.0), without the capability, on a queue that does not split
 headers (or does not exist), and past the memory-lock limit. The flow rule
 must steer the listener's port to the queue, and nothing else may reach
@@ -460,11 +462,6 @@ allocation guard and once per TLS provider. See
 - `Rx::ZeroCopy` measured through `longshore_tcp` on a card
   (`tcp_uring --rx zc`); so far the backend's own receive and log from
   pages (`zc_uring`) and the test programs of milestone 31 are.
-- The card's answer on header-and-data-split read on a card: a refused
-  registration asks the card over ethtool netlink and names the cause
-  for certain where the card says; so far only the question has been
-  checked against a kernel, on interfaces that do not answer it, which
-  leave the refusal naming the likely causes.
 - The AF_XDP transport. The simulated packet link it is to be tested on
   is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.

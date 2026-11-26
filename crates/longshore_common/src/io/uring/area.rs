@@ -67,9 +67,11 @@ pub(super) struct Area {
     _region: Region,
 }
 
-/// What an `EINVAL` was for, as far as the card says.
-fn invalid(interface: u32) -> &'static str {
-    match super::split::split_of(interface) {
+/// What an `EINVAL` was for, as far as the card says. A card that does not
+/// say may not split: the Sparks' does not report the setting while it is
+/// off.
+fn invalid(split: Option<Split>) -> &'static str {
+    match split {
         Some(Split::Off) => {
             "the interface does not split headers from payload: ethtool -G IFACE tcp-data-split on"
         }
@@ -84,31 +86,45 @@ fn invalid(interface: u32) -> &'static str {
     }
 }
 
-/// Name what a refused registration was refused for.
+/// What the card says of its split, for every refusal.
+fn said(split: Option<Split>) -> &'static str {
+    match split {
+        Some(Split::On) => "the card reports header-data split on",
+        Some(Split::Off) => "the card reports header-data split off",
+        Some(Split::Unknown) => "the card does not report header-data split",
+        None => "the card could not be asked about header-data split",
+    }
+}
+
+/// Name what a refused registration was refused for, with what the card
+/// says of its split, asked over ethtool netlink.
 fn refusal(errno: i32, limits: &Limits) -> io::Error {
     let (interface, queue) = limits.area_queue();
+    let split = super::split::split_of(interface);
     let (kind, why) = match errno {
         EPERM => (
             io::ErrorKind::PermissionDenied,
             "registering a receive queue needs CAP_NET_ADMIN",
         ),
         ENODEV => (io::ErrorKind::NotFound, "there is no such interface"),
+        // A queue past the interface's last is refused so too.
         EOPNOTSUPP => (
             io::ErrorKind::Unsupported,
-            "the interface's driver has no zero-copy receive",
+            "the queue does not exist, or the interface's driver has no zero-copy receive",
         ),
         EBUSY | EEXIST => (
             io::ErrorKind::AddrInUse,
             "the queue is registered already, by this ring or another",
         ),
-        EINVAL => (io::ErrorKind::InvalidInput, invalid(interface)),
+        EINVAL => (io::ErrorKind::InvalidInput, invalid(split)),
         _ => (io::ErrorKind::Other, "see io_uring_register(2)"),
     };
     let e = io::Error::from_raw_os_error(errno);
+    let card = said(split);
     let named = io::Error::new(
         if errno == ENOMEM { e.kind() } else { kind },
         format!(
-            "zero-copy receive on queue {queue} of interface {interface} was refused: {e}; {why}"
+            "zero-copy receive on queue {queue} of interface {interface} was refused: {e}; {why}; {card}"
         ),
     );
     let bytes = limits.area_pages as usize * Limits::PAGE as usize;
