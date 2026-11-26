@@ -67,6 +67,7 @@ impl UringIo {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

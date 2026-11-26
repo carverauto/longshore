@@ -92,6 +92,7 @@ impl Posix {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

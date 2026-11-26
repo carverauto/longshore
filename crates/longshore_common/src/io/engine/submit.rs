@@ -81,6 +81,7 @@ impl<W: World> Engine<W> {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -115,6 +116,7 @@ impl<W: World> Engine<W> {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -161,6 +163,7 @@ impl<W: World> Engine<W> {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

@@ -214,6 +214,7 @@ fn readiness_world(flag: Arc<AtomicBool>) -> TestWorld {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

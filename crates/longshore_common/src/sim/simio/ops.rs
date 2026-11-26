@@ -43,6 +43,21 @@ impl Virtual {
         }
     }
 
+    /// A send on `sock`, a datagram's or a stream's.
+    fn send_either(
+        &mut self,
+        sock: Sock,
+        pool: &mut [u8],
+        limits: &Limits,
+        span: (BufId, u32, u32),
+    ) -> Option<i32> {
+        if self.is_udp(sock) {
+            self.sim_udp_send(sock, pool, limits, span)
+        } else {
+            self.sim_send(sock, pool, limits, span)
+        }
+    }
+
     /// Try to make progress on one operation. `None` means not ready yet.
     pub(super) fn attempt_op(
         &mut self,
@@ -80,14 +95,7 @@ impl Virtual {
                 buf,
                 off,
                 len,
-            } => {
-                let span = (buf, off, len);
-                if self.is_udp(sock) {
-                    self.sim_udp_send(sock, pool, limits, span)
-                } else {
-                    self.sim_send(sock, pool, limits, span)
-                }
-            }
+            } => self.send_either(sock, pool, limits, (buf, off, len)),
             Op::Recv {
                 sock,
                 buf,
@@ -113,6 +121,7 @@ impl Virtual {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

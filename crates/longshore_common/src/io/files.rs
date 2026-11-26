@@ -9,7 +9,7 @@ use crate::io::{Limits, Op, Token, EBADF, EBUSY, EINVAL};
 
 mod open_flags;
 mod validate;
-pub(crate) use validate::check_unix_path;
+pub(crate) use validate::{check_unix_path, span_at};
 
 /// Index into the fixed file table (`0..limits.files_max`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -62,6 +62,7 @@ impl Op {
                 | Op::FileClose { .. }
                 | Op::FileRead { .. }
                 | Op::FileWrite { .. }
+                | Op::FileWriteSpans { .. }
                 | Op::FileSync { .. }
                 | Op::FileReserve { .. }
                 | Op::FilePunch { .. }
@@ -212,6 +213,7 @@ impl FileTable {
             | Op::Cancel { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -310,6 +312,7 @@ impl FileTable {
             | Op::Cancel { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -359,6 +362,7 @@ impl FileTable {
                 | Op::Cancel { .. }
                 | Op::FileRead { .. }
                 | Op::FileWrite { .. }
+                | Op::FileWriteSpans { .. }
                 | Op::FileSync { .. }
                 | Op::FileReserve { .. }
                 | Op::FilePunch { .. }

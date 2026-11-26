@@ -64,7 +64,7 @@ impl OpKind {
             Op::FileOpen { .. } => Self::FileOpen,
             Op::FileClose { .. } => Self::FileClose,
             Op::FileRead { .. } => Self::FileRead,
-            Op::FileWrite { .. } => Self::FileWrite,
+            Op::FileWrite { .. } | Op::FileWriteSpans { .. } => Self::FileWrite,
             Op::FileSync { .. } => Self::FileSync,
             Op::FileReserve { .. } => Self::FileReserve,
             Op::FilePunch { .. } => Self::FilePunch,
@@ -211,6 +211,7 @@ impl TestWorld {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -303,6 +304,7 @@ impl World for TestWorld {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -342,6 +344,7 @@ impl World for TestWorld {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

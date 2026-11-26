@@ -11,6 +11,45 @@ use crate::io::posix::errno::linux::{EBADF, EINVAL, EIO};
 use crate::io::{FileSlot, Limits, Op, OpenFlags};
 
 impl SimDisk {
+    /// The gathered write `op`: one write after another, as far as they
+    /// go. The memory of each span is read now, at the write's completion.
+    fn write_spans(
+        &mut self,
+        op: &Op,
+        pool: &mut [u8],
+        limits: &Limits,
+        placed: Option<PlacedFault>,
+        ctx: &mut DiskFaultCtx<'_>,
+    ) -> i32 {
+        let Op::FileWriteSpans {
+            slot,
+            list,
+            list_off,
+            count,
+            file_off,
+            ..
+        } = *op
+        else {
+            return -crate::io::EINVAL;
+        };
+        let at = limits.range(list, list_off, count * 12).start;
+        let mut done = 0i32;
+        for i in 0..count {
+            let (buf, off, len) = crate::io::files::span_at(pool, at, i);
+            let r = limits.range(buf, off, len);
+            let to = file_off + u64::from(done.unsigned_abs());
+            let wrote = self.write(slot, pool, r, to, placed, ctx);
+            if wrote < 0 {
+                return if done == 0 { wrote } else { done };
+            }
+            done += wrote;
+            if wrote.unsigned_abs() < len {
+                break;
+            }
+        }
+        done
+    }
+
     pub(in crate::sim::simio) fn attempt(
         &mut self,
         op: &Op,
@@ -52,6 +91,7 @@ impl SimDisk {
                 let r = limits.range(buf, off, len);
                 self.write(slot, pool, r, file_off, placed, ctx)
             }
+            Op::FileWriteSpans { .. } => self.write_spans(op, pool, limits, placed, ctx),
             Op::FileSync { slot, .. } => self.attempt_sync(slot, placed, ctx),
             Op::FileReserve {
                 slot,
@@ -183,6 +223,7 @@ impl SimDisk {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. } => -EINVAL,

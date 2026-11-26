@@ -417,6 +417,10 @@ impl UringIo {
         if op.is_file_op() {
             let pool = &self.bufs[self.pool_base..];
             self.files_table.check_op(op, pool, &self.limits)?;
+            if matches!(op, Op::FileWriteSpans { .. }) {
+                // The ring does not gather yet.
+                return Err(-crate::io::EOPNOTSUPP);
+            }
         }
         match *op {
             Op::ArmedAccept { listener } => {
@@ -478,6 +482,7 @@ impl UringIo {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

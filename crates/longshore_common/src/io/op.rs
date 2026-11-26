@@ -267,6 +267,30 @@ pub enum Op {
         /// Where in the file to write to.
         file_off: u64,
     },
+    /// Write `len` bytes to `slot` at `file_off` as one write gathered from
+    /// `count` spans of the pool, in order. The list of spans lies in
+    /// `list` from `list_off`, twelve bytes a span: a buffer's id, an
+    /// offset in it and a length, each a little-endian `u32`; `len` is the
+    /// sum of their lengths. A span may be of any buffer class, a page of
+    /// the receive area among them. For a file opened for direct I/O
+    /// every span is whole blocks of a block-aligned buffer or of a page,
+    /// from a block boundary in it. The spans' memory is read until the
+    /// write completes, not only when it is submitted: it must not change
+    /// before. Completes like [`Op::FileWrite`], possibly short.
+    FileWriteSpans {
+        /// The open file.
+        slot: FileSlot,
+        /// The pool buffer the list of spans lies in.
+        list: BufId,
+        /// Where the list starts in `list`.
+        list_off: u32,
+        /// How many spans it has; not 0.
+        count: u32,
+        /// The bytes of all spans together.
+        len: u32,
+        /// Where in the file to write to.
+        file_off: u64,
+    },
     /// Flush dirty data (and metadata unless `datasync`) for `slot`.
     FileSync {
         /// The open file.

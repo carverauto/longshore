@@ -150,6 +150,10 @@ impl World for Virtual {
         self.ring_full = false;
     }
 
+    fn gathers(&self) -> bool {
+        true
+    }
+
     fn ring_was_full(&self) -> bool {
         self.ring_full
     }
@@ -210,6 +214,7 @@ impl World for Virtual {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

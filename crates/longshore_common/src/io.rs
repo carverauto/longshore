@@ -173,6 +173,8 @@ pub const EMFILE: i32 = 24;
 pub const ENAMETOOLONG: i32 = 36;
 /// No buffer is available.
 pub const ENOBUFS: i32 = 105;
+/// Linux `EOPNOTSUPP`: the backend has no such operation.
+pub const EOPNOTSUPP: i32 = 95;
 /// Linux `ENOMEM`: no memory, here no page of the receive area.
 pub const ENOMEM: i32 = 12;
 /// Linux `ENOSPC`: no room, here in the completions.

@@ -58,6 +58,7 @@ impl<W: World> Engine<W> {
             Op::ArmedRecvZc { credit: 0, .. } => Some(Attempt::single(0)),
             Op::FileRead { slot, .. }
             | Op::FileWrite { slot, .. }
+            | Op::FileWriteSpans { slot, .. }
             | Op::FileSync { slot, .. }
             | Op::FileReserve { slot, .. }
             | Op::FilePunch { slot, .. }
@@ -259,6 +260,7 @@ impl<W: World> Engine<W> {
             | Op::Cancel { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -340,6 +342,7 @@ fn op_socket(op: &Op) -> Option<Sock> {
         | Op::FileClose { .. }
         | Op::FileRead { .. }
         | Op::FileWrite { .. }
+        | Op::FileWriteSpans { .. }
         | Op::FileSync { .. }
         | Op::FileReserve { .. }
         | Op::FilePunch { .. }
@@ -353,7 +356,7 @@ fn op_socket(op: &Op) -> Option<Sock> {
 /// Whether a file read or write moved fewer bytes than it asked for.
 fn is_short_rw(op: &Op, result: i32) -> bool {
     match *op {
-        Op::FileRead { len, .. } | Op::FileWrite { len, .. } => {
+        Op::FileRead { len, .. } | Op::FileWrite { len, .. } | Op::FileWriteSpans { len, .. } => {
             u32::try_from(result).is_ok_and(|done| done < len)
         }
         Op::Connect { .. }
