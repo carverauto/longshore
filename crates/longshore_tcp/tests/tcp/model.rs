@@ -156,6 +156,7 @@ fn campaign(campaign: Campaign, seeds: core::ops::Range<u64>) -> Stats {
         total.refused += stats.refused;
         total.frames += stats.frames;
         total.protected_frames += stats.protected_frames;
+        total.paged_frames += stats.paged_frames;
         total.relayed += stats.relayed;
         total.finished += stats.finished;
         total.closed_orderly += stats.closed_orderly;
@@ -191,6 +192,8 @@ fn random_operations_keep_what_a_caller_relies_on() {
         total.finished > 0 && total.relayed > 0 && total.full > 0,
         "{total:?}"
     );
+    // Some frames came in their pages.
+    assert!(total.paged_frames > 50, "{total:?}");
     // And were where the state table says a connection can be, and
     // nowhere it says one cannot.
     // (The cells are counted in debug builds only.)
@@ -203,6 +206,8 @@ fn every_fault_campaign_keeps_what_a_caller_relies_on() {
     for named in Campaign::all().iter().filter(|c| **c != Campaign::Usual) {
         let total = campaign(*named, 0..40);
         assert!(total.frames > 100, "{named:?}: {total:?}");
+        let paged = *named == Campaign::Area || *named == Campaign::Slow;
+        assert!(!paged || total.paged_frames > 0, "{named:?}: {total:?}");
         let wrong = excluded(&total);
         assert!(
             !cfg!(debug_assertions) || wrong.is_empty(),

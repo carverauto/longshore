@@ -6,12 +6,12 @@
 //! What the caller is told and what it pulls, checked against the book;
 //! and the end of a run, where everything must come to rest.
 
-use super::book::{read, Ended, Handle};
+use super::book::{Ended, Handle};
 use super::drive::Run;
 use super::life::unbroken;
 use longshore_common::io::alloc_guard::sealed;
 use longshore_common::io::Io;
-use longshore_tcp::{Conn, Event, Frame, Listener, NetError, SendError, Why};
+use longshore_tcp::{Conn, Event, Listener, NetError, Why};
 
 impl Run {
     pub(crate) fn pull_events(&mut self, server: bool, most: u32) -> Result<(), String> {
@@ -185,77 +185,6 @@ impl Run {
                 .map_err(|why| format!("frame {} on {:?}: {why}", h.got, h.conn))?;
         }
         Ok(())
-    }
-
-    /// A frame pulled on handle `at`: checked, then released, kept, or
-    /// sent on from where it lies.
-    fn received(&mut self, server: bool, at: usize, frame: Frame) -> Result<(), String> {
-        let side = usize::from(server);
-        let (net, io) = self.net(server);
-        let bytes = net
-            .bytes(io, &frame)
-            .ok_or("a frame just pulled has no bytes")?;
-        let (uid, seq) = read(bytes)?;
-        let on = self.sides[side].handles[at];
-        self.note(format_args!(
-            "   pulled on {:?} uid {}: frame {seq} of sender {uid}",
-            on.conn, on.uid
-        ));
-        let sender = *self
-            .senders
-            .get(uid as usize)
-            .ok_or_else(|| format!("no sender has the number {uid}"))?;
-        self.stats.frames += 1;
-        self.stats.protected_frames += u32::from(self.tls);
-        let h = &mut self.sides[side].handles[at];
-        h.got += 1;
-        let own = sender.server != server;
-        if own {
-            // The peer's own frame: always the same peer, and the next one.
-            if *h.peer.get_or_insert(uid) != uid || seq != h.got_own {
-                return Err(format!(
-                    "frame {seq} of sender {uid}, after {} of sender {:?}",
-                    h.got_own, h.peer
-                ));
-            }
-            h.got_own += 1;
-        }
-        let choice = (uid + seq) % 4;
-        let (set, backend) = self.net(server);
-        if choice == 0 || !own {
-            sealed(|| set.release(frame));
-        } else if let Ok(held) = sealed(|| set.hold(backend, frame)) {
-            if choice == 1 && self.held_room(server) {
-                self.sides[side].held.push(held);
-            } else {
-                self.relay(server, seq, held);
-            }
-        }
-        Ok(())
-    }
-
-    /// Send the held `frame` on to another connection of the same side,
-    /// from where it lies, and release it.
-    fn relay(&mut self, server: bool, pick: u32, frame: Frame) {
-        if let Some(to) = self.pick(server, pick) {
-            let target = self.sides[usize::from(server)].handles[to];
-            let (net, _) = self.net(server);
-            let open = sealed(|| net.can_send(target.conn));
-            let got = sealed(|| net.send_lent(target.conn, &frame));
-            self.note(format_args!(
-                "   lent to {:?} uid {} (open: {open}) -> {got:?}",
-                target.conn, target.uid
-            ));
-            if got == Ok(()) && open {
-                self.senders[target.uid as usize].sent += 1;
-                self.stats.relayed += 1;
-            } else if got == Err(SendError::Full) {
-                self.stats.full += 1;
-                self.sides[usize::from(server)].handles[to].full = true;
-            }
-        }
-        let (net, _) = self.net(server);
-        sealed(|| net.release(frame));
     }
 
     /// Bring the run to an end: everything is pulled and released, every

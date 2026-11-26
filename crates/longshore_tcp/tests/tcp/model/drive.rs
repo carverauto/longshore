@@ -7,7 +7,7 @@
 
 use super::book::{fill, Handle, Sender, Side, BODY_MIN};
 use super::steps::{Kind, Step};
-use super::world::{opts, opts_with, world, Campaign, ACROSS_RECORDS, NAME};
+use super::world::{in_pages, opts, opts_with, world, Campaign, ACROSS_RECORDS, NAME};
 use longshore_common::io::alloc_guard::sealed;
 use longshore_common::sim::SimIo;
 use longshore_tcp::check::World;
@@ -42,6 +42,8 @@ pub struct Stats {
     pub frames: u32,
     /// Those of them that came over TLS.
     pub protected_frames: u32,
+    /// Those of them that came in their pages.
+    pub paged_frames: u32,
     pub relayed: u32,
     pub finished: u32,
     pub closed_orderly: u32,
@@ -76,6 +78,8 @@ pub(crate) struct Run {
     pub(crate) trace: bool,
     /// Ends in order, to be judged when every sender's own end is known.
     pub(crate) ended: Vec<super::book::Ended>,
+    /// Where frames in pages are read, and what they say was copied.
+    pub(crate) pages: super::received::Paged,
 }
 
 /// Run `steps` with `seed` under the faults of `campaign`, then bring
@@ -99,6 +103,7 @@ pub fn run_in(
         resets: campaign.breaks(seed),
         trace,
         ended: Vec::new(),
+        pages: super::received::Paged::new(),
     };
     for (at, step) in steps.iter().enumerate() {
         run.note(format_args!(
@@ -106,10 +111,12 @@ pub fn run_in(
             step.kind, step.server
         ));
         run.step(*step).map_err(|why| Failure { step: at, why })?;
+        run.pages_hold().map_err(|why| Failure { step: at, why })?;
     }
     run.note(format_args!("-- the end"));
     let step = steps.len();
     run.finish().map_err(|why| Failure { step, why })?;
+    run.pages_at_rest().map_err(|why| Failure { step, why })?;
     for server in [false, true] {
         let (net, _) = run.net(server);
         let (cover, phases) = (net.coverage(), net.transport().phase_coverage());
@@ -207,8 +214,9 @@ impl Run {
     fn listen(&mut self, bits: u32) -> Result<(), String> {
         let (opts, half_close) = opts(bits, self.tls)?;
         let limit = if bits & 4 == 0 { u32::MAX } else { 2 };
+        // A port shared between rings is refused to the mode.
         let cfg = ListenConfig::new(opts)
-            .with_reuse_port(true)
+            .with_reuse_port(!in_pages(bits, self.tls))
             .with_tls(self.tls)
             .with_limit(limit);
         let (net, io) = self.net(true);

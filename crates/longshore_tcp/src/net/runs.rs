@@ -326,16 +326,9 @@ impl Pages {
         self.returns_len += 1;
     }
 
-    /// Pieces that wait to go back: those of retired runs and of headers.
-    pub(super) fn waiting(&self) -> u32 {
-        let mut pieces = self.returns_len as u32;
-        for index in &self.retired[..self.retired_len] {
-            let mut at = self.runs[*index as usize].head;
-            while at != NONE {
-                (pieces, at) = (pieces + 1, self.recs[at as usize].next);
-            }
-        }
-        pieces
+    /// Headers' pieces that wait to go back.
+    pub(super) const fn queued(&self) -> u32 {
+        self.returns_len as u32
     }
 
     /// Give every piece that waits to `back`, and free the retired runs:

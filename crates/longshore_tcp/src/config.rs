@@ -395,6 +395,12 @@ impl Config {
         Ok((limits, config))
     }
 
+    /// The backend's receive area, as resolved: its first page and how
+    /// many it has. Frames in pages lie there, but for their tail blocks.
+    pub const fn area(&self) -> (BufId, u32) {
+        (self.area_first, self.area_count)
+    }
+
     /// Connections in all: those the `Net` opens and those it accepts.
     pub const fn conns(&self) -> u32 {
         self.sizes.connects + self.sizes.accepts

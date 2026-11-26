@@ -35,6 +35,10 @@ fn sizes(connects: u32, accepts: u32, listeners: u32, tls: bool) -> Sizes {
         .with_zero_copy_min(1024)
         .with_zero_copy_sends(2, 4)
         .with_tls(tls)
+        // Without TLS, connections may receive in pages: eight pages for
+        // three frames, records for few pieces each, so that both run
+        // out now and then.
+        .with_zc(if tls { 0 } else { 8 }, 3, 24)
 }
 
 /// The faults a run is under.
@@ -51,6 +55,9 @@ pub enum Campaign {
     Delays,
     /// Connects refused.
     Refusals,
+    /// The receive area's own faults: pieces through the copy path, and
+    /// a completion ring found full, with nothing reported or part-way.
+    Area,
     /// Bits flipped in transit, over TLS, which must notice every one.
     /// The one campaign whose runs do not repeat by seed: see
     /// `the_same_seed_gives_the_same_trace`. A failing seed of it may
@@ -61,12 +68,13 @@ pub enum Campaign {
 impl Campaign {
     /// Every campaign that can run: `Flips` only where TLS is compiled in.
     pub fn all() -> &'static [Campaign] {
-        const ALL: [Campaign; 6] = [
+        const ALL: [Campaign; 7] = [
             Campaign::Usual,
             Campaign::Resets,
             Campaign::Slow,
             Campaign::Delays,
             Campaign::Refusals,
+            Campaign::Area,
             Campaign::Flips,
         ];
         &ALL[..ALL.len() - usize::from(!cfg!(feature = "tls-core"))]
@@ -84,6 +92,7 @@ impl Campaign {
             Campaign::Slow => usual.with_partial_recv(700_000).with_short_send(700_000),
             Campaign::Delays => usual.with_delay(400_000),
             Campaign::Refusals => usual.with_connect_refused(300_000),
+            Campaign::Area => usual.with_copied(100_000).with_ring_full(100_000),
             Campaign::Flips => usual.with_bit_flip(3_000),
         }
     }
@@ -94,7 +103,7 @@ impl Campaign {
         match self {
             Campaign::Usual => seed.is_multiple_of(4),
             Campaign::Resets | Campaign::Flips => true,
-            Campaign::Slow | Campaign::Delays | Campaign::Refusals => false,
+            Campaign::Slow | Campaign::Delays | Campaign::Refusals | Campaign::Area => false,
         }
     }
 
@@ -163,12 +172,22 @@ pub(crate) fn opts(bits: u32, tls: bool) -> Result<(ConnOpts, bool), String> {
     opts_with(bits, false, tls)
 }
 
+/// Whether the options `bits` choose receive in pages: half the direct
+/// connections, where TLS is not on.
+pub(crate) const fn in_pages(bits: u32, tls: bool) -> bool {
+    bits & 1 != 0 && bits & 0x40 != 0 && !tls
+}
+
 /// [`opts`], for a connection that dials again when it goes down if
 /// `reconnect` is set.
 pub(crate) fn opts_with(bits: u32, reconnect: bool, tls: bool) -> Result<(ConnOpts, bool), String> {
     let longest = if tls { FRAME_MAX_TLS } else { FRAME_MAX };
     let mut framing = HeaderFraming::length_prefix(longest as u32).map_err(|e| format!("{e:?}"))?;
-    let rx = if bits & 1 == 0 { Rx::Ring } else { Rx::Direct };
+    let rx = match (bits & 1, in_pages(bits, tls)) {
+        (0, _) => Rx::Ring,
+        (_, false) => Rx::Direct,
+        (_, true) => Rx::ZeroCopy,
+    };
     if rx == Rx::Direct && bits & 0x20 != 0 {
         // Half the direct connections lay a frame so that its body starts
         // at a block: nothing else about them may differ.

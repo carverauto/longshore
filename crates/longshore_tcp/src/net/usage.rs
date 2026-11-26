@@ -32,6 +32,7 @@ pub struct Paged {
     pages: (u32, u32),
     runs: u32,
     pieces: u32,
+    headers: u32,
     frames_kept: u64,
     frames_moved: u64,
     moved_bytes: u64,
@@ -54,6 +55,12 @@ impl Paged {
     /// back: in runs, in headers kept for a decision, waiting.
     pub const fn pieces(&self) -> u32 {
         self.pieces
+    }
+
+    /// Of those, the pieces of headers: kept for a decision, or given up
+    /// and waiting to go back. Each lies in a page of its own.
+    pub const fn headers(&self) -> u32 {
+        self.headers
     }
 
     /// Frames lent in their pages.
@@ -161,7 +168,10 @@ impl<T: Transport> Net<T> {
         Paged {
             pages: z.kept(),
             runs,
-            pieces: records + z.headers + z.waiting(),
+            // Records of runs retired and not yet drained are among the
+            // records in use.
+            pieces: records + z.headers + z.queued(),
+            headers: z.headers + z.queued(),
             frames_kept: z.frames_kept,
             frames_moved: z.frames_moved,
             moved_bytes: z.moved_bytes,
