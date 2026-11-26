@@ -50,9 +50,10 @@ into chunks of the page size unless a larger length is asked and granted.
 - **The log path keeps its one move.** A direct-I/O write needs a
   block-aligned run; payload arrives behind the stream's own offsets.
   Receive, `hold`, write, send to replicas is one move, as with `Direct`
-  today. What zero-copy receive removes is the copy for frames consumed
-  in place (queries, small writes batched by the caller, frames
-  forwarded).
+  today. What zero-copy receive removes is the copy for frames handed on
+  unread (forwarded, replicated without a log write); a frame the caller
+  reads saves less (milestone 31), and a small request in ring mode was
+  never the cost.
 - **One queue a ring, one ring a thread.** A registration binds a ring to
   one receive queue. A thread's listener must therefore be reached only
   through that queue: the operator steers the listener's port (or the
@@ -61,10 +62,15 @@ into chunks of the page size unless a larger length is asked and granted.
 - **Accounting as one structure**, as for chunks of the buffer ring: every
   chunk is in exactly one of kernel, lent with a frame, or queued for
   refill; checked after every step of the model test.
-- **Exhaustion.** No free chunk: the kernel stops filling the queue and
-  TCP's window closes; the program is told nothing is lost and continues
-  when frames are released. A full refill ring cannot happen: it has as
-  many entries as the area has chunks.
+- **Exhaustion.** No free chunk: the card has nowhere to put payload for
+  that queue. Nothing is lost for the program: the stream continues in
+  order once frames are released. How the kernel gets there (a closed
+  window, or packets dropped at the card and sent again, which would
+  stall every flow of the queue) is not known and is established in
+  task 2.1 before the exhaustion rows are written. The refill ring is
+  sized for the worst case of returns outstanding, which is also
+  established there: a page can back more than one completion, so the
+  number of chunks is not the bound it was taken for.
 - **TLS.** Records are opened from pieces into frame memory, as from ring
   buffers today; the mode saves the kernel's copy, not the decryption's.
 - **Zero-copy sends.** The measured case fits sixteen sends in flight a
@@ -82,6 +88,14 @@ into chunks of the page size unless a larger length is asked and granted.
 - `CAP_NET_ADMIN` is needed to register → refusal names it.
 - 32-byte completions double the completion ring's memory → only when the
   mode is asked for.
+- The registration answers a missing header and data split with a bare
+  `EINVAL`, as it does other faults → the builder asks the card for the
+  setting first (ethtool's ring parameters over netlink) and names it;
+  what cannot be told apart is reported as the registration's own error
+  with the settings it needs listed.
+- The kernel's packet handling costs more a byte in this mode (0.035
+  against 0.014 CPU-seconds a GB on the queue's core) → results count
+  that core, not the thread alone.
 - The saving may be small where the consumer touches every byte anyway
   (the copy's cache misses move to the consumer) → measured per case
   before any default changes.
@@ -91,14 +105,17 @@ None: an added mode, off unless chosen. Rollback is not choosing it.
 
 ## Spike result (milestone 31): go
 `mlx5_core` in 7.0 takes the registration once `ethtool -G IFACE
-tcp-data-split on` is set (refused with `EINVAL` before). One receiving
-thread: 0.036 CPU-seconds a GB without the copy against 0.125 with it,
-10.9 GB/s on one interface. A consumer that reads every byte gains
-nothing (0.120): the saving is for payload handed on unread. Completions
-carry one page at most.
+tcp-data-split on` is set (refused with `EINVAL` before). CPU-seconds a
+GB, receiving thread and queue's core together: 0.07 without the copy
+against 0.14 with it when payload is not read; 0.155 against 0.177 when
+every byte is read. On the thread alone: 0.035 against 0.128, and 0.117
+against 0.159. Completions carry one page at most, and larger chunks are
+refused by the driver.
 
 ## Open Questions
 - Can memory of the area also be registered as fixed buffers, so that a
-  frame is forwarded from where it lies with a zero-copy send?
+  frame is forwarded from where it lies with a zero-copy send? Task 3.5
+  answers it; if not, the frame's pieces are sent as they lie, by the
+  kernel's copying send.
 - Mixed completions (`IORING_SETUP_CQE_MIXED`) instead of 32-byte ones:
   from which kernel, and is it worth a second floor?

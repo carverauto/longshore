@@ -29,6 +29,10 @@ the caller asks to hold it.
 - **WHEN** a frame of 1 MiB arrives across many chunks and the caller reads its pieces
 - **THEN** the pieces together are the frame's bytes in order and no payload byte was copied
 
+#### Scenario: Forwarded unread
+- **WHEN** a frame that spans chunks is sent on to another connection without being read or held
+- **THEN** no payload byte was copied by the program, and its chunks are returned when the send is done
+
 #### Scenario: Held for a direct write
 - **WHEN** the caller holds a frame that spans chunks and writes it to a file with direct I/O
 - **THEN** its payload was moved once, into frame memory, and its chunks were returned
@@ -88,8 +92,9 @@ conformance suite SHALL run in the mode.
 
 ### Requirement: Measured against the copying modes
 The mode's CPU cost per byte received SHALL be measured on a card against
-ring and direct mode, for frames consumed in place and for frames held for
-a log write, and the results SHALL be recorded in `bench/results/` with the
+ring and direct mode, counting the cores that handle the queue's packets,
+for frames forwarded unread, frames read in place and frames held for a
+log write, and the results SHALL be recorded in `bench/results/` with the
 card settings used.
 
 #### Scenario: Result on record

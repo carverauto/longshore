@@ -28,7 +28,7 @@ that one copy lands, and whether it happens at all.
 | A frame is lent | In place if it lies in one ring buffer; put together in frame memory if not | In place, always | In place if in one page; as its pieces, in order, if not |
 | Ready for a direct-I/O write | After `hold` (one move) or after being put together | As it is | After `hold` (one move) |
 | Operations a frame | Fewest: one armed receive serves everything | Two receives (header, then body) | One armed receive; one completion a page |
-| Receiver's CPU-seconds a GB | 0.13 to 0.16 | 0.13 (1 MiB frames) | 0.036 if the bytes are not read, 0.12 if they are |
+| Receiving thread's CPU-seconds a GB | 0.13 to 0.16 | 0.13 to 0.16 | 0.035 if the bytes are not read; 0.12 if they are, against 0.16 for a copy that is then read |
 | Needs | Nothing | Nothing | Linux 6.15, a card that splits headers from payload, a receive queue set aside by the operator, root |
 
 - **Ring** is the mode for many connections with small frames: a request
@@ -39,11 +39,14 @@ that one copy lands, and whether it happens at all.
   the body lands at the start of a block-aligned buffer and goes to the
   log as it lies, with no move of our own. It pays two receives a frame,
   which small frames feel.
-- **Zero-copy** removes the kernel's copy. It pays off for payload that is
-  handed on without being read: a third of the CPU, and one thread
-  carries 87 Gb/s. Payload that is read on the way gains nothing, since
-  reading it for the first time costs what the copy cost. Payload that is
-  logged still needs one move into block-aligned memory, because it
+- **Zero-copy** removes the kernel's copy. It pays off most for payload
+  that is handed on without being read: half the CPU, counting the core
+  that handles the queue's packets as well (0.07 against 0.14
+  CPU-seconds a GB), and one thread carries 66 to 87 Gb/s. Payload that
+  is read on the way gains less: a quarter of the thread's cost, a tenth
+  counting both cores, because reading it for the first time is dearer
+  than reading what a copy has just brought into the cache. Payload that
+  is logged still needs one move into block-aligned memory, because it
   arrives in pages at whatever offset the stream puts it. On the Sparks'
   card a page is 4 KiB and nothing larger is granted.
 
@@ -61,15 +64,16 @@ answered). Where the database differs, the row changes with it.
 | Bulk load from clients | Logged, then replicated | `Direct` | Lands block-aligned, written and sent from where it lies with no move |
 | Blocks from the leader, on a replica | Logged | `Direct` | Same |
 | Payload relayed to another node unread | Sent on | `ZeroCopy`, once built | Nothing reads it, so the copy is pure cost |
-| Payload the node checks on arrival (a checksum over the body) | Read in full, then logged | `Direct` | Zero-copy gains nothing where every byte is read; direct is ready for the log |
-| Results streamed from another node into a query | Read by the query | `Ring` or `Direct` by size | Read anyway |
+| Payload the node checks on arrival (a checksum over the body) | Read in full, then logged | `Direct` | Ready for the log as it lies; zero-copy would save a little on the read and pay the move for the log |
+| Large results streamed from another node into a query | Read by the query, not logged | `ZeroCopy`, once built; `Direct` until then | Read in place: a quarter less on the receiving thread |
 
 So for the database as modelled, the two existing modes already cover the
-hot paths, and they do it with one copy a byte, the kernel's. Zero-copy
-receive adds a win only where payload passes through a node untouched.
-How much of UltraGraphDB's traffic that is decides what the mode is
-worth to it; that is the question to answer before group 3 of the change
-is built for the database's sake.
+logged paths, and they do it with one copy a byte, the kernel's.
+Zero-copy receive wins most where payload passes through a node
+untouched, and something where large payload is read but not logged. How
+much of UltraGraphDB's traffic is of those two kinds decides what the
+mode is worth to it; that is the question to answer before group 3 of
+the change is built for the database's sake.
 
 ## How many cores, which interface
 

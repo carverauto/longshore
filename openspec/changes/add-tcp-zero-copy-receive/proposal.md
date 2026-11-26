@@ -4,7 +4,7 @@
 Between two DGX Sparks over 200 GbE (milestone 30) the receiving thread is
 the bottleneck of kernel TCP: it fills its core at 43 to 58 Gb/s
 (0.13 to 0.16 CPU-seconds a GB), while a thread that sends the same bytes
-without copying them spends a sixth of that. The whole difference is the
+without copying them spends a sixth of that. Most of the difference is the
 kernel's copy of every received byte into our buffer. The link itself is
 filled without bypass, by four to eight receiving cores of twenty, so what
 is left to win on these machines is those cores.
@@ -23,15 +23,22 @@ sends of one 64 KiB segment each carry 0.7 to 1.2 GB/s over a card against
 default it concerns was called provisional until measured on a card.
 
 ## What Changes
-- **A spike first.** Whether the Sparks' card and kernel take a zero-copy
-  receive registration at all is not known: the kernel has
-  `CONFIG_IO_URING_ZCRX`, but the driver shows no header and data split
-  setting. Group 1 is a program of a hundred lines that registers a queue
-  and receives; if it is refused there, the change stops at its write-up
-  and the next host is tried.
+- **A spike first** (done, milestone 31). The Sparks' card takes the
+  registration once header and data split is switched on. Measured with a
+  test program, counting the receiving thread and the core that handles
+  the queue's packets: half the CPU for payload that is not read on the
+  way (0.07 against 0.14 CPU-seconds a GB), a tenth less for payload that
+  is read; on the receiving thread alone a quarter of the cost, and three
+  quarters of it. Chunks are one page of 4 KiB; the driver grants nothing
+  larger.
 - `Rx::ZeroCopy`, a third receive mode beside `Ring` and `Direct`, on the
   ring backend only. Payload arrives in chunks of a memory area the
   backend registers at build for one receive queue of one card.
+- A frame forwarded from where it lies. The largest saving is for
+  payload handed on unread, so a frame in chunks must be sendable without
+  a copy of ours: `send_lent` takes it as it takes a frame in frame
+  memory, by whichever of registering the area as fixed buffers or
+  sending its pieces the spike of task 3.5 shows to work.
 - Frames read in pieces. A frame that lies in one chunk is lent in place,
   as in ring mode. A frame that spans chunks is lent as its pieces, in
   order, with no copy (`Net::pieces`); a caller that needs it in one
