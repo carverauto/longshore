@@ -13,48 +13,17 @@
 //! region. Both are the kernel's for as long as the ring lives; dropping
 //! the ring takes every page back, whoever holds it.
 
+use super::mapped::Mapped;
 use super::split::Split;
 use super::*;
 use crate::io::refill::{Refill, Rqe};
 use crate::io::{EBUSY, EINVAL, ENOMEM, ENOSPC, EOPNOTSUPP};
-use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
 
 /// Linux `EPERM`, `ENODEV` and `EEXIST`, as a registration answers.
 const EPERM: i32 = 1;
 const ENODEV: i32 = 19;
 const EEXIST: i32 = 17;
-
-/// Memory mapped for the ring of returns.
-struct Region {
-    ptr: *mut c_void,
-    len: usize,
-}
-
-impl Region {
-    fn new(len: usize) -> io::Result<Region> {
-        let ptr = unsafe {
-            mmap(
-                core::ptr::null_mut(),
-                len,
-                PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE,
-                -1,
-                0,
-            )
-        };
-        if ptr == MAP_FAILED {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Region { ptr, len })
-    }
-}
-
-impl Drop for Region {
-    fn drop(&mut self) {
-        let _: i32 = unsafe { munmap(self.ptr, self.len) };
-    }
-}
 
 /// A registered receive area.
 pub(super) struct Area {
@@ -64,7 +33,7 @@ pub(super) struct Area {
     /// A piece came since the last tick began.
     fed: bool,
     /// Keeps the ring of returns mapped; the kernel reads it.
-    _region: Region,
+    _region: Mapped,
 }
 
 /// What an `EINVAL` was for, as far as the card says. A card that does not
@@ -154,7 +123,8 @@ impl Area {
         let page = Limits::PAGE as usize;
         let region_len =
             (entries as usize * core::mem::size_of::<Rqe>() + page).next_multiple_of(page);
-        let region = Region::new(region_len)?;
+        let mut region = Mapped::new(region_len, true)?;
+        let base = region.as_mut_ptr();
         let start = unsafe { bufs.as_mut_ptr().add(pool_base + limits.area_start()) };
         let mut area = io_uring_zcrx_area_reg {
             addr: start as u64,
@@ -162,7 +132,7 @@ impl Area {
             ..Default::default()
         };
         let desc = io_uring_region_desc {
-            user_addr: region.ptr as u64,
+            user_addr: base as u64,
             size: region_len as u64,
             flags: IORING_MEM_REGION_TYPE_USER,
             ..Default::default()
@@ -186,7 +156,7 @@ impl Area {
                 "the kernel cannot be asked to read a receive area's returns (needs Linux 7.0)",
             ));
         }
-        let at = |off: u32| unsafe { region.ptr.cast::<u8>().add(off as usize) };
+        let at = |off: u32| unsafe { base.add(off as usize) };
         let counters: (*const AtomicU32, *const AtomicU32) =
             (at(reg.offsets.head).cast(), at(reg.offsets.tail).cast());
         let rqes: *mut Rqe = at(reg.offsets.rqes).cast();

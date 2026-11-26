@@ -26,6 +26,7 @@ mod completions_steps;
 mod fault;
 mod gather;
 mod listen;
+mod mapped;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
 mod ops;
@@ -174,7 +175,9 @@ impl ReadyQueue {
 pub struct UringIo {
     ring: ManuallyDrop<Ring>,
     limits: Limits,
-    bufs: Box<[u8]>,
+    /// Mapped by the backend, never an allocator's: the kernel may read
+    /// and the card write it until the ring's exit work is done.
+    bufs: mapped::Mapped,
     pool_base: usize,
     buf_range: Box<[u16]>,
     buf_ring: Option<BufRing>,
@@ -264,7 +267,7 @@ impl UringIo {
     /// because it may still be in use.
     fn leak(&mut self) {
         let _: &mut [Slot] = Box::leak(core::mem::take(&mut self.slots));
-        let _: &mut [u8] = Box::leak(core::mem::take(&mut self.bufs));
+        core::mem::forget(core::mem::take(&mut self.bufs));
         let _: &mut timespec = Box::leak(core::mem::take(&mut self.quiet_ts));
         let _: &mut [u16] = Box::leak(core::mem::take(&mut self.buf_range));
         core::mem::forget(self.buf_ring.take());

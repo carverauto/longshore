@@ -190,7 +190,7 @@ impl UringIo {
         limits.validate();
         let table_len = check_nofile_limit(&limits)?;
         let mut ring = open_ring(&limits)?;
-        let mut bufs = vec![0u8; limits.pool_bytes()].into_boxed_slice();
+        let mut bufs = mapped::Mapped::new(limits.pool_bytes(), false)?;
         let pool_base = limits.pool_base(bufs.as_ptr() as usize);
         let buf_range = register_pool_ranges(&mut ring, &limits, &mut bufs, pool_base)?;
         if table_len > 0 {

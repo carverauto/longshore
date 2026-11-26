@@ -309,9 +309,16 @@ that settles it.
   limit (source). The builder reads the card's split setting over netlink
   first, since `EINVAL` alone does not say which.
 - **K9 Dropping the ring** takes back every page a program holds
-  (`io_zcrx_scrub`). That pages in socket queues go back when those
-  sockets do is taken for granted, not shown by the saved source; the
-  backend closes its sockets before its ring, so it does not rely on it.
+  (`io_zcrx_scrub`), but only in the ring's exit work, after its
+  descriptor is closed: until then the card may still write into the
+  area and the kernel read the ring of returns. That pages in socket
+  queues go back when those sockets do is taken for granted, not shown
+  by the saved source. The backend relies on neither: its pool, the area
+  within it, and the ring of returns are memory it maps itself and
+  unmaps when dropped, never an allocator's, so nothing it has let go of
+  is handed out again while the kernel still has it; the kernel's pins
+  keep the pages until it lets go. (Review of group 3: the pool had been
+  an allocator's, and the sockets were not closed before the ring.)
 - **K10 Not shown.** What a ring is told when the operator reconfigures
   the queue or takes the interface down: the source's `io_pp_uninstall`
   posts nothing (task 3.1). Whether an ordinary receive works on a socket
