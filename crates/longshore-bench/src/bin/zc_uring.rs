@@ -227,6 +227,9 @@ mod run {
         cancelling: bool,
         connected: bool,
         finished: bool,
+        /// Pages the log may hold before the receive waits for its writes:
+        /// half the area, so that the card is never left without.
+        budget: usize,
     }
 
     impl Run {
@@ -345,7 +348,11 @@ mod run {
                 self.cancelling = true;
             }
             self.write();
-            if self.connected && !self.finished && self.armed.is_none() {
+            let held = self.log.as_ref().map_or(0, |l| {
+                l.waiting.len() + l.rows.iter().map(Vec::len).sum::<usize>()
+            });
+            let room = held < self.budget;
+            if self.connected && !self.finished && self.armed.is_none() && room {
                 let credit = self.frame.credit();
                 let recv = Op::ArmedRecvZc {
                     sock: Sock::new(1),
@@ -432,6 +439,7 @@ mod run {
             cancelling,
             connected,
             finished,
+            budget: o.pages as usize / 2,
         };
         let mut out = Completions::new(limits.ops_max() as usize + limits.area_returns() as usize);
         if let Some(path) = o.file.as_deref().filter(|_| o.mode == "log") {
