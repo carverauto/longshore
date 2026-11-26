@@ -44,6 +44,14 @@
 //!                           moves the body to a block before the write
 //!                           (frame)
 //!
+//!   --tls FILE              rr and bulk over TLS 1.3, the certificate in FILE
+//!                           and its key in FILE.key, made if FILE is missing
+//!                           (on two machines: the peer makes them, the load
+//!                           is given a copy of FILE)
+//!   --provider P            aws-lc, ring or rustls seals the records (the
+//!                           first compiled in); sealed records are never
+//!                           sent zero-copy
+//!
 //!   --listen ADDR:PORT      be the peer alone, at this address, until every
 //!                           connection of the run has come and closed
 //!   --connect ADDR:PORT     be the load alone, against a peer elsewhere
@@ -77,6 +85,7 @@ mod load;
 mod opts;
 mod path;
 mod stop;
+mod tls;
 
 pub(crate) use opts::Opts;
 pub(crate) use stop::Stop;
@@ -120,6 +129,7 @@ impl<IO: Io> Side<IO> {
         sizes: Sizes,
         (spin, no_delay): (bool, bool),
         (files, area): (u32, Option<(u32, u32)>),
+        tls: Option<longshore::tcp::Tls>,
     ) -> Side<IO> {
         let mut base = Limits::BASE.with_files_max(u32::from(files > 0));
         if let Some((interface, queue)) = area {
@@ -129,7 +139,11 @@ impl<IO: Io> Side<IO> {
         let mut io = make(limits.with_ops_max(limits.ops_max() + 2 + files));
         // A frame on a packet of its own: no short packet held back.
         io.no_delay(no_delay);
-        let net = Net::new(KernelTransport::new(&config), config, &limits);
+        let transport = match tls {
+            Some(tls) => KernelTransport::new(&config).with_tls(tls),
+            None => KernelTransport::new(&config),
+        };
+        let net = Net::new(transport, config, &limits);
         Side {
             io,
             net,
@@ -213,9 +227,12 @@ fn listening<IO: Io>(
         o.sizes(0, o.lines()),
         (o.spin, o.frame_on_packet),
         (files, o.zc_queue),
+        tls::server(o),
     );
     // Every connection of the run is opened at once.
-    let how = ListenConfig::new(o.peer_opts()).with_backlog(o.lines().max(128));
+    let how = ListenConfig::new(o.peer_opts())
+        .with_backlog(o.lines().max(128))
+        .with_tls(o.tls.is_some());
     let listener = side.net.listen(&mut side.io, at, how).ok().or_die("listen");
     let addr = side
         .net
@@ -250,6 +267,7 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
             o.sizes(o.lines(), 0),
             (o.spin, o.frame_on_packet),
             (0, None),
+            tls::client(o),
         );
         let done = load::drive(&mut side, o, addr);
         return load::report(o, &done, &Peer::default());
@@ -272,6 +290,7 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
         o.sizes(o.lines(), 0),
         (o.spin, o.frame_on_packet),
         (0, None),
+        tls::client(o),
     );
     let done = load::drive(&mut side, o, addr);
     stop.tell();

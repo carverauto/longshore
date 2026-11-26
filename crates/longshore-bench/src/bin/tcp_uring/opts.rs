@@ -9,7 +9,8 @@
 
 use super::{Kind, BLOCK, HEADER};
 use crate::die::{die, OrDie};
-use longshore::tcp::{ConnOpts, Framing, HeaderFraming, Rx, Sizes};
+use longshore::tcp::{ConnOpts, Framing, HeaderFraming, Rx, Sizes, TLS_SEGMENT_MIN};
+use longshore::tls::provider::Provider;
 use std::net::SocketAddr;
 
 /// Where the length of a frame lies in a header of `path`, as in
@@ -49,6 +50,10 @@ pub(crate) struct Opts {
     pub(super) listen: Option<SocketAddr>,
     /// The load alone, against a peer at this address.
     pub(crate) connect: Option<SocketAddr>,
+    /// Over TLS, with the certificate in this file (`tls.rs`).
+    pub(crate) tls: Option<String>,
+    /// What seals and opens the records of a run over TLS.
+    pub(crate) provider: Provider,
 }
 
 impl Opts {
@@ -74,6 +79,8 @@ impl Opts {
             body_at_block: false,
             listen: None,
             connect: None,
+            tls: None,
+            provider: Provider::preferred(),
         }
     }
 
@@ -158,6 +165,8 @@ impl Opts {
                 }
                 "--listen" => o.listen = Some(addr()),
                 "--connect" => o.connect = Some(addr()),
+                "--tls" => o.tls = Some(value.clone()),
+                "--provider" => o.provider = provider(&value),
                 other => die(format_args!("unknown flag {other}")),
             }
         }
@@ -183,6 +192,18 @@ impl Opts {
             // node forwards what it receives, which a frame in pages cannot
             // be (zc_uring log writes from pages).
             die("--rx zc is of a peer alone (--listen) of rr or bulk, with --zc-queue IFACE:QUEUE");
+        }
+        if self.tls.is_some() {
+            // Records are not frames: a frame in pages has nothing to lend
+            // (`Net::connect_tls`). A log node's replicas are not wired for it.
+            if self.rx == Rx::ZeroCopy || self.kind == Kind::Path {
+                die("--tls is of rr and bulk, without --rx zc");
+            }
+            if self.segment.max(self.frame_len()) < TLS_SEGMENT_MIN {
+                die(format_args!(
+                    "--tls needs --segment {TLS_SEGMENT_MIN} at least"
+                ));
+            }
         }
         if self.header != 0 && self.kind != Kind::Path {
             die("--header is of path");
@@ -220,7 +241,11 @@ impl Opts {
     /// hold a third piece for each source: the one it moves a body to.
     pub(super) fn sizes(&self, connects: u32, accepts: u32) -> Sizes {
         let frame = self.frame_len();
-        let room = self.framing(true).lead() + frame;
+        let mut room = self.framing(true).lead() + frame;
+        if self.tls.is_some() {
+            // A record is opened whole into frame memory.
+            room = room.max(longshore::stream::RING_DST_MIN);
+        }
         let each = if self.header == 0 { 2 } else { 3 };
         let many = (2 * self.lines()).clamp(16, 8192);
         let zc = self.zc_room(accepts);
@@ -235,6 +260,7 @@ impl Opts {
             .with_zero_copy_min(self.zc_min)
             .with_zero_copy_sends(self.zc_sends, if self.zc_sends == 0 { 0 } else { 256 })
             .with_zc(zc.0, zc.1, zc.2)
+            .with_tls(self.tls.is_some())
     }
 
     /// Pages, frames and piece records for the peer of `--rx zc`: two
@@ -305,6 +331,16 @@ fn zc_queue(value: &str) -> (u32, u32) {
         die(format_args!("--zc-queue: no interface {name}"));
     }
     (index, queue)
+}
+
+/// The provider `--provider` names, if this build has it.
+fn provider(value: &str) -> Provider {
+    let named = Provider::ALL.into_iter().find(|p| p.feature() == value);
+    match named {
+        Some(p) if p.compiled() => p,
+        Some(_) => die(format_args!("--provider {value} is not in this build")),
+        None => die("--provider takes aws-lc, ring or rustls"),
+    }
 }
 
 /// Whether `value` is `yes` rather than `no`; anything else is refused.

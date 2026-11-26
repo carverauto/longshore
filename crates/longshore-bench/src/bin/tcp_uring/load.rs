@@ -176,11 +176,17 @@ fn open_lines<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> Vec<Li
     let replicas = o.lines() - o.conns;
     let mut lines: Vec<Line> = (0..o.lines())
         .map(|at| Line {
-            conn: side
-                .net
-                .connect(&mut side.io, addr, o.conn_opts())
-                .ok()
-                .or_die("connect"),
+            conn: if o.tls.is_some() {
+                side.net
+                    .connect_tls(&mut side.io, addr, super::tls::NAME, o.conn_opts())
+                    .ok()
+                    .or_die("connect over TLS")
+            } else {
+                side.net
+                    .connect(&mut side.io, addr, o.conn_opts())
+                    .ok()
+                    .or_die("connect")
+            },
             sent: None,
             waits: false,
             replica: at < replicas,
@@ -307,7 +313,7 @@ pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
     };
     let (path_header, body_at) = (o.header, body_at(o));
     println!(
-        "{{\"cmd\":\"{cmd}\",\"sync\":\"{sync}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"path_header\":{path_header},\"body_at\":\"{body_at}\",\"ring\":{},\"zc_min\":{},\"zc_sends\":{},\"frame_on_packet\":{},\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
+        "{{\"cmd\":\"{cmd}\",\"sync\":\"{sync}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"path_header\":{path_header},\"body_at\":\"{body_at}\",\"ring\":{},\"zc_min\":{},\"zc_sends\":{},\"frame_on_packet\":{},\"tls\":\"{}\",\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
         if o.epoll { "epoll" } else { "uring" },
         o.rx,
         if o.spin { "spin" } else { "sleep" },
@@ -316,6 +322,7 @@ pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
         o.zc_min,
         o.zc_sends,
         o.frame_on_packet,
+        super::tls::label(o),
         o.segment,
         count as f64 / secs,
         done.percentile(500),
@@ -335,7 +342,7 @@ pub(super) fn report_peer(o: &Opts, peer: &Peer) {
     let gb = peer.bytes as f64 / 1e9;
     let per = |n: f64, by: f64| if by > 0.0 { n / by } else { 0.0 };
     println!(
-        "{{\"cmd\":\"peer\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{},\"path_header\":{},\"body_at\":\"{}\",\"ring\":{},\"secs\":{:.2},\"frames\":{},\"per_s\":{:.0},\"gb_per_s\":{:.3},\"cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"kept\":{},\"moved\":{}}}",
+        "{{\"cmd\":\"peer\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{},\"path_header\":{},\"body_at\":\"{}\",\"ring\":{},\"tls\":\"{}\",\"secs\":{:.2},\"frames\":{},\"per_s\":{:.0},\"gb_per_s\":{:.3},\"cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"kept\":{},\"moved\":{}}}",
         if o.epoll { "epoll" } else { "uring" },
         o.rx,
         if o.spin { "spin" } else { "sleep" },
@@ -344,6 +351,7 @@ pub(super) fn report_peer(o: &Opts, peer: &Peer) {
         o.header,
         body_at(o),
         o.ring,
+        super::tls::label(o),
         peer.secs,
         peer.frames,
         per(peer.frames as f64, peer.secs),
