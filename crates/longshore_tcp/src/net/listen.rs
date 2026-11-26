@@ -36,7 +36,7 @@ impl<T: Transport> Net<T> {
     ) -> Result<Listener, NetError> {
         let addr: Addr = addr.into();
         self.now = self.t.now_ns(d);
-        if !self.fits(&cfg.conn) {
+        if !self.fits(&cfg.conn) || Self::zc_refuses(&cfg.conn, &addr, cfg.reuse_port) {
             return Err(NetError::Framing);
         }
         if cfg.tls {

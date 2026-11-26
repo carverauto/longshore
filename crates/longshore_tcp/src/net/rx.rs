@@ -65,8 +65,7 @@ impl<T: Transport> Net<T> {
                 }
             }
             Rx::Direct => self.read_direct(d, slot),
-            // Refused at `connect` and `listen` until the mode is built.
-            Rx::ZeroCopy => {}
+            Rx::ZeroCopy => self.read_zc(d, slot),
         }
     }
 
@@ -284,7 +283,9 @@ impl<T: Transport> Net<T> {
             return;
         }
         c.paused = true;
-        if c.armed && !c.cancelling {
+        // A receive of a connection that reads in pages runs on: its
+        // credit has a place for every byte it can bring.
+        if c.armed && !c.cancelling && c.opts.rx != Rx::ZeroCopy {
             // Once for an armed receive: a caller that pulls again and
             // again before the next turn stops reading each time. If the
             // driver has no room, the receive simply runs on until the
@@ -317,6 +318,7 @@ impl<T: Transport> Net<T> {
         (c.backlog_off, c.backlog_len, c.paused) = (0, 0, false);
         (c.unopened, c.cut_off, c.dry) = (false, false, false);
         c.cancelling = false;
+        self.drop_zc(slot);
         for ext in held.into_iter().flatten() {
             // Net's own hold; frames the caller pulled keep theirs.
             best_effort(self.extents.release(ext));

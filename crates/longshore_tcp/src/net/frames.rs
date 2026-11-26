@@ -5,6 +5,7 @@
 
 //! Frames as the caller sees them: lent, held and released.
 
+use super::runs::Run;
 use super::state::W_READ;
 use super::Net;
 use crate::event::NetError;
@@ -20,14 +21,18 @@ pub(super) enum Mem {
     Ring { buf: BufId, turn: u32 },
     /// In frame memory, under a hold of the caller's.
     Extent(Extent),
+    /// In pages of the receive area and a tail block, named by a run that
+    /// has the caller's hold.
+    Pages(Run),
 }
 
 /// A received frame, or with [`crate::Framing::Bytes`] a run of received
 /// bytes: lent to the caller where it was received.
 ///
-/// A frame in frame memory stays until [`Net::release`]. A frame lent from
-/// the buffer ring is gone at the next [`Net::poll`] unless [`Net::hold`]
-/// moves it into frame memory first.
+/// A frame in frame memory stays until [`Net::release`], and so does a
+/// frame in pages (`Rx::ZeroCopy`), which is read through [`Net::pages`].
+/// A frame lent from the buffer ring is gone at the next [`Net::poll`]
+/// unless [`Net::hold`] moves it into frame memory first.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Frame {
     pub(super) conn: Conn,
@@ -52,28 +57,39 @@ impl Frame {
         self.len == 0
     }
 
-    /// Whether it is in frame memory, and so stays until released.
+    /// Whether it stays until released: in frame memory, or in pages.
     pub const fn is_held(&self) -> bool {
-        matches!(self.mem, Mem::Extent(_))
+        matches!(self.mem, Mem::Extent(_) | Mem::Pages(_))
     }
 
     /// Its frame memory, for a hold by something outside the `Net` (a file
-    /// write); `None` for a frame lent from the buffer ring.
+    /// write); `None` for a frame lent from the buffer ring or in pages.
     pub const fn extent(&self) -> Option<Extent> {
         match self.mem {
             Mem::Extent(e) => Some(e),
-            Mem::Ring { .. } => None,
+            Mem::Ring { .. } | Mem::Pages(_) => None,
+        }
+    }
+
+    /// Its run, for a hold by a file write that reads its pages
+    /// (`Net::pages().hold`); `None` for a frame that is not in pages.
+    pub const fn run(&self) -> Option<Run> {
+        match self.mem {
+            Mem::Pages(run) => Some(run),
+            Mem::Ring { .. } | Mem::Extent(_) => None,
         }
     }
 
     /// Where its bytes lie in the pool, for a file write or a send from
-    /// the same memory.
-    pub const fn span(&self) -> Span {
+    /// the same memory; `None` for a frame in pages, which is not one run
+    /// of memory ([`Net::pages`] lists where it lies).
+    pub const fn span(&self) -> Option<Span> {
         let buf = match self.mem {
             Mem::Extent(e) => e.buf(),
             Mem::Ring { buf, .. } => buf,
+            Mem::Pages(_) => return None,
         };
-        Span::new(buf, self.off, self.len)
+        Some(Span::new(buf, self.off, self.len))
     }
 }
 
@@ -83,6 +99,7 @@ impl<T: Transport> Net<T> {
         match frame.mem {
             Mem::Ring { turn, .. } => turn == self.turn,
             Mem::Extent(e) => self.extents.is_live(e),
+            Mem::Pages(run) => self.held_run(run).is_some(),
         }
     }
 
@@ -92,17 +109,22 @@ impl<T: Transport> Net<T> {
         if !self.is_live(frame) {
             return None;
         }
-        let span = frame.span();
+        let span = frame.span()?;
         let all: &'d [u8] = self.t.bytes(d, span.buf());
         all.get(span.off() as usize..(span.off() + span.len()) as usize)
     }
 
     /// Keep `frame` past the next `poll`: a frame lent from the buffer
     /// ring is copied into frame memory and the new frame returned; one
-    /// already there is returned as it is. Release what is returned.
+    /// already there is returned as it is. A frame in pages is copied
+    /// into frame memory too, and its pages go back once no file write
+    /// holds them: it counts against `held_max` once all the same.
+    /// Release what is returned.
     pub fn hold(&mut self, d: &mut T::Driver, frame: Frame) -> Result<Frame, NetError> {
-        let Mem::Ring { buf, .. } = frame.mem else {
-            return Ok(frame);
+        let buf = match frame.mem {
+            Mem::Ring { buf, .. } => buf,
+            Mem::Extent(_) => return Ok(frame),
+            Mem::Pages(run) => return self.hold_pages(d, frame, run),
         };
         if !self.is_live(&frame) {
             return Err(NetError::Stale);
@@ -122,14 +144,23 @@ impl<T: Transport> Net<T> {
 
     /// Done with `frame`. For a frame in frame memory this drops the
     /// caller's hold: the memory is free again when every other hold (a
-    /// queued send, a file write) is gone too.
+    /// queued send, a file write) is gone too; so does it for a frame in
+    /// pages, whose pages go back when no file write holds them.
     pub fn release(&mut self, frame: Frame) {
-        let Mem::Extent(ext) = frame.mem else {
-            return;
+        let ext = match frame.mem {
+            Mem::Extent(ext) => ext,
+            Mem::Ring { .. } => return,
+            Mem::Pages(run) => return self.release_pages(&frame, run),
         };
         if self.extents.release(ext).is_err() {
             return;
         }
+        self.uncount_held(&frame);
+    }
+
+    /// The caller no longer holds `frame`: its length no longer counts
+    /// against its connection's `held_max`.
+    pub(super) fn uncount_held(&mut self, frame: &Frame) {
         let Some(slot) = self.gens.slot_of(frame.conn) else {
             return;
         };

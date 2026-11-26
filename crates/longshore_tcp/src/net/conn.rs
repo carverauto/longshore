@@ -23,7 +23,7 @@ use std::net::SocketAddr;
 impl<T: Transport> Net<T> {
     /// Whether `opts` fits the sizes this `Net` was built with.
     pub(super) fn fits(&self, opts: &ConnOpts) -> bool {
-        if opts.rx == Rx::ZeroCopy {
+        if !self.fits_zc(opts) {
             return false;
         }
         match opts.framing {
@@ -75,7 +75,7 @@ impl<T: Transport> Net<T> {
     ) -> Result<Conn, NetError> {
         // Deadlines count from now, not from the last `poll`.
         self.now = self.t.now_ns(d);
-        if !self.fits(&opts) {
+        if !self.fits(&opts) || Self::zc_refuses(&opts, &addr, false) {
             return Err(NetError::Framing);
         }
         let top = self.free_len.checked_sub(1).ok_or(NetError::NoSlots)?;

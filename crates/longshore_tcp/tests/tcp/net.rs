@@ -42,6 +42,21 @@ mod lifecycle;
 #[path = "net/listening.rs"]
 mod listening;
 #[cfg(test)]
+#[path = "net/paged.rs"]
+mod paged;
+#[cfg(test)]
+#[path = "net/paged_disk.rs"]
+mod paged_disk;
+#[cfg(test)]
+#[path = "net/paged_ends.rs"]
+mod paged_ends;
+#[cfg(test)]
+#[path = "net/paged_faults.rs"]
+mod paged_faults;
+#[cfg(test)]
+#[path = "net/paged_holds.rs"]
+mod paged_holds;
+#[cfg(test)]
 #[path = "net/pages.rs"]
 mod pages;
 #[cfg(test)]
@@ -65,6 +80,8 @@ type SimNet = Net<KernelTransport<SimIo>>;
 
 struct World {
     io: SimIo,
+    /// What the backend was built with.
+    limits: Limits,
     client: SimNet,
     server: SimNet,
     out: Completions,
@@ -96,6 +113,7 @@ impl World {
         let (limits, scfg) = Config::plan(l1, server).unwrap();
         World {
             io: SimIo::new(limits, seed, faults),
+            limits,
             client: Net::new(KernelTransport::new(&ccfg), ccfg, &limits),
             server: Net::new(KernelTransport::new(&scfg), scfg, &limits),
             out: Completions::new(64),

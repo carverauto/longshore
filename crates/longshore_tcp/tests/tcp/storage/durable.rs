@@ -145,7 +145,7 @@ impl Log {
             return;
         };
         assert!(self.logging.is_none(), "round {round}: two frames at once");
-        let (span, ext) = (frame.span(), frame.extent().unwrap());
+        let (span, ext) = (frame.span().unwrap(), frame.extent().unwrap());
         assert_eq!(
             span.off(),
             0,

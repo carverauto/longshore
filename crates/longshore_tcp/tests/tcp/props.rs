@@ -176,8 +176,12 @@ fn a_body_lies_at_a_block_in_direct_mode(tc: TestCase) {
         while world.client().0.next_event().is_some() {}
         while world.server().0.next_event().is_some() {}
         for (lent, bytes) in world.pull_all(s) {
-            assert_eq!(lent.span().off(), framing.lead(), "where the frame lies");
-            let body_at = lent.span().off() + packed[0];
+            assert_eq!(
+                lent.span().unwrap().off(),
+                framing.lead(),
+                "where the frame lies"
+            );
+            let body_at = lent.span().unwrap().off() + packed[0];
             assert_eq!(body_at % block, 0, "the body lies at {body_at}");
             into.push(bytes);
             world.server().0.release(lent);

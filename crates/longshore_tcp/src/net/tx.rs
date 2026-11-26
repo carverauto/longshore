@@ -176,7 +176,8 @@ impl<T: Transport> Net<T> {
             return Err(SendError::Full);
         }
         self.extents.hold(ext).map_err(|_| SendError::Stale)?;
-        self.push_span(slot, frame.span(), Keep::Extent(ext));
+        let span = frame.span().ok_or(SendError::NotHeld)?;
+        self.push_span(slot, span, Keep::Extent(ext));
         self.queued(slot);
         Ok(())
     }

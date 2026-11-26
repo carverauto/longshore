@@ -132,7 +132,11 @@ impl Node {
     /// A block arrived from `conn`: write it from where it lies, or
     /// from where it is moved to if it does not lie at a block boundary.
     fn log<IO: Io>(&mut self, side: &mut Side<IO>, conn: Conn, frame: Frame) {
-        let span = frame.span();
+        let Some(span) = frame.span() else {
+            die(format_args!(
+                "a frame in pages, which this path does not ask for"
+            ));
+        };
         let slot = conn.slot() as usize;
         if span.off() != self.lead || frame.len() != self.frame || self.pending[slot].is_some() {
             die(format_args!("not one frame where it was to lie, alone"));

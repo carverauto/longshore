@@ -3,11 +3,64 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-//! Receiving in pages (`Rx::ZeroCopy`): what the plan asks and refuses.
+//! Receiving in pages (`Rx::ZeroCopy`): what the plan asks and refuses,
+//! and what `connect` and `listen` refuse.
 
-use super::sizes;
-use longshore_common::io::Limits;
-use longshore_tcp::{Config, ConfigError};
+use super::paged::{paged, world, world_with, zc};
+use super::*;
+use longshore_tcp::{Addr, ConfigError, NetError, UnixPath};
+
+fn listens(w: &mut World, addr: impl Into<Addr>, cfg: ListenConfig) -> Result<Listener, NetError> {
+    w.server.listen(&mut w.io, addr, cfg)
+}
+
+#[test]
+fn connect_and_listen_refuse_what_the_mode_cannot_read() {
+    let mut w = world(0, Faults::NONE);
+    let framing = HeaderFraming::length_prefix(8192).unwrap();
+    let bytes = ConnOpts::new(Framing::Bytes).with_rx(Rx::ZeroCopy);
+    let at_block = ConnOpts::new(Framing::Header(framing.with_body_at_block(4096).unwrap()))
+        .with_rx(Rx::ZeroCopy);
+    let unix = Addr::Unix(UnixPath::new("/longshore/zc.sock").unwrap());
+    let refused = [
+        listens(&mut w, ADDR, ListenConfig::new(bytes)),
+        listens(&mut w, ADDR, ListenConfig::new(at_block)),
+        listens(&mut w, unix, ListenConfig::new(zc())),
+        listens(&mut w, ADDR, ListenConfig::new(zc()).with_reuse_port(true)),
+    ];
+    for r in refused {
+        assert_eq!(r, Err(NetError::Framing));
+    }
+    let tls = listens(&mut w, ADDR, ListenConfig::new(zc()).with_tls(true));
+    assert_eq!(tls, Err(NetError::NoTls));
+    assert_eq!(
+        w.server.connect(&mut w.io, unix, zc()),
+        Err(NetError::Framing)
+    );
+    // What the mode can read, it may.
+    assert!(listens(&mut w, ADDR, ListenConfig::new(zc())).is_ok());
+}
+
+#[test]
+fn a_set_without_pages_or_without_an_area_refuses_the_mode() {
+    // No pages in the sizes: the client's set.
+    let mut w = world(0, Faults::NONE);
+    assert_eq!(
+        w.client.connect(&mut w.io, ADDR, zc()),
+        Err(NetError::Framing)
+    );
+    // Pages in the sizes, and a backend built without an area.
+    let paged_world = world_with(0, Faults::NONE, paged(64, 8, 256));
+    let limits = paged_world.limits.with_area_pages(0);
+    let cfg = *paged_world.server.config();
+    let mut bare: SimNet = Net::new(KernelTransport::new(&cfg), cfg, &limits);
+    let mut io = SimIo::new(limits, 0, Faults::NONE);
+    assert_eq!(
+        bare.listen(&mut io, ADDR, ListenConfig::new(zc()))
+            .map(|_| ()),
+        Err(NetError::Framing)
+    );
+}
 
 #[test]
 fn pages_need_a_frame_buffer_for_every_connection() {

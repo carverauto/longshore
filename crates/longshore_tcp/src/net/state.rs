@@ -165,6 +165,15 @@ pub(super) struct ConnState {
     pub(super) asm_len: u32,
     /// A whole frame in frame memory, waiting to be pulled.
     pub(super) ready: Option<(Extent, u32)>,
+    /// Receiving in pages: bytes the armed receive may still bring; the
+    /// page of a header kept for the decision, the run of the frame that
+    /// is arriving in its pages, and the run of a whole frame waiting to
+    /// be pulled, each or `NONE`; and ends for want of a page in a row.
+    pub(super) zc_want: u32,
+    pub(super) hdr_page: u32,
+    pub(super) zc_run: u32,
+    pub(super) ready_run: u32,
+    pub(super) no_page: u8,
     /// Bytes moved out of ring buffers the caller did not pull in time.
     pub(super) backlog: Option<Extent>,
     pub(super) backlog_off: u32,
@@ -231,6 +240,11 @@ impl ConnState {
             asm_have: 0,
             asm_len: 0,
             ready: None,
+            zc_want: 0,
+            hdr_page: NONE,
+            zc_run: NONE,
+            ready_run: NONE,
+            no_page: 0,
             backlog: None,
             backlog_off: 0,
             backlog_len: 0,

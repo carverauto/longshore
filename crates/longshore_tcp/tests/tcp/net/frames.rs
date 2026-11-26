@@ -74,7 +74,7 @@ fn a_header_that_carries_the_frame_size_is_read_straight_into_frame_memory() {
                 assert_eq!(e, Event::Readable(s));
                 for (f, bytes) in w.pull_all(s) {
                     // Direct mode delivers every frame in frame memory.
-                    assert!(f.is_held() && f.span().off() == 0);
+                    assert!(f.is_held() && f.span().unwrap().off() == 0);
                     got.push(bytes);
                     w.server.release(f);
                 }

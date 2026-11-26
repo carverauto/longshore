@@ -272,8 +272,8 @@ fn a_body_lies_at_a_block_under_tls() {
         while w.client().0.next_event().is_some() {}
         while w.server().0.next_event().is_some() {}
         for (lent, bytes) in w.pull_all(s) {
-            assert_eq!(lent.span().off(), framing.lead());
-            assert_eq!((lent.span().off() + header) % block, 0);
+            assert_eq!(lent.span().unwrap().off(), framing.lead());
+            assert_eq!((lent.span().unwrap().off() + header) % block, 0);
             got.push(bytes);
             w.server().0.release(lent);
         }
