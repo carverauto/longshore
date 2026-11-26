@@ -4,9 +4,9 @@ Group 1 may end the change: if no host at hand takes the registration,
 its write-up is the result.
 
 ## 1. Spike on the Spark pair
-- [ ] 1.1 A standalone program in `longshore-bench`: register one receive queue for zero-copy receive, receive a stream from the other Spark, count bytes and CPU; the card settings it needed, written down
-- [ ] 1.2 The same stream with chunk lengths above the page size, if the driver grants them
-- [ ] 1.3 Result in `bench/results/`: taken or refused and why; CPU-seconds a GB against 0.13 to 0.16 of milestone 30; go or stop recorded in `design.md`
+- [x] 1.1 A standalone program (throwaway C in `bench/spikes/zcrx/`, not in `longshore-bench`: it was compiled on the host): register one receive queue for zero-copy receive, receive a stream from the other Spark, count bytes and CPU; the card settings it needed, written down
+- [ ] 1.2 The same stream with chunk lengths above the page size, if the driver grants them (not tried: needs huge pages set aside on the host)
+- [x] 1.3 Result in `bench/results/` (milestone 31): taken or refused and why; CPU-seconds a GB against 0.13 to 0.16 of milestone 30; go or stop recorded in `design.md`
 - [ ] 1.4 Review of group 1
 
 ## 2. The contract

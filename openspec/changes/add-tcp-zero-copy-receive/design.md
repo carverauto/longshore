@@ -89,9 +89,15 @@ into chunks of the page size unless a larger length is asked and granted.
 ## Migration Plan
 None: an added mode, off unless chosen. Rollback is not choosing it.
 
+## Spike result (milestone 31): go
+`mlx5_core` in 7.0 takes the registration once `ethtool -G IFACE
+tcp-data-split on` is set (refused with `EINVAL` before). One receiving
+thread: 0.036 CPU-seconds a GB without the copy against 0.125 with it,
+10.9 GB/s on one interface. A consumer that reads every byte gains
+nothing (0.120): the saving is for payload handed on unread. Completions
+carry one page at most.
+
 ## Open Questions
-- Does `mlx5_core` in 7.0 accept the registration, and with which card
-  settings (`rx-gro-hw` was the only related one found)?
 - Can memory of the area also be registered as fixed buffers, so that a
   frame is forwarded from where it lies with a zero-copy send?
 - Mixed completions (`IORING_SETUP_CQE_MIXED`) instead of 32-byte ones:
