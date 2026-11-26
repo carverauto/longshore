@@ -126,11 +126,16 @@ A log that wants a frame's body, not its header, at a block boundary asks
 for it in the framing: `HeaderFraming::with_body_at_block(4096)`. In
 direct mode the frame then starts `lead()` bytes into its memory (3,840
 for a 256-byte header), so that the body starts at a block and goes to a
-direct-I/O write from where it lies; `Frame::span` says where. Frame
-memory must hold the lead and the largest frame, and ring mode refuses
-the option: there a frame has no memory of its own. Measured between two
-machines, it saves the move a log would make, about 6 % of the receiving
-thread (`bench/results/m31-tcp-zero-copy-receive-spike-dgx-spark.md`).
+direct-I/O write from where it lies; `Frame::span` says where. Name the
+block of the file the body goes to. Frame memory must be whole blocks of
+it and hold the lead and the largest frame, and ring mode refuses the
+option: there a frame has no memory of its own. Under TLS the body lies
+at the block as well, but a record that carries the header with the body
+is opened in the connection's own memory and moved from there, as in
+direct mode without the option. Measured between two machines with
+`tcp_uring path`, it saves the move a log would make: about 5 % of the
+log node's CPU a block, three runs each, anywhere from 3 to 9 % by run
+(`bench/results/m31-tcp-zero-copy-receive-spike-dgx-spark.md`).
 
 ## Frame memory and holds
 

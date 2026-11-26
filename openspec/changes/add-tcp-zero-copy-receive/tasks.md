@@ -43,4 +43,4 @@ its write-up is the result.
 - [x] 6.3 Tests: the body's offset for any framing, block and cut of the stream (a property test, checked to fail without the lead), under TLS, and the two refusals
 - [x] 6.3a The model test runs with the option on half its direct connections, a thousand seeds of every campaign (the conformance suite is of transports, below where the option lives: nothing of it applies)
 - [x] 6.4 `tcp_uring path --header 256 --body-at block|frame`; measured on the Spark pair: about 5 % less CPU a block on the node, against the test program's 6 % (milestone 31)
-- [ ] 6.5 `docs/tcp.md`; review of group 6
+- [x] 6.5 `docs/tcp.md`; review of group 6 (findings fixed: the refusal asked whether there was a lead, not whether the option was asked for; its test could not fail; the claim that nothing is moved does not hold under TLS)

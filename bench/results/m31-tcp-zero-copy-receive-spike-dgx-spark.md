@@ -200,9 +200,12 @@ the other, a 4 KiB body logged, sent to three replicas and answered
 | `--body-at frame`: moved to a block, then written | 10,237, 11,816, 10,948 | 10.92, 11.16, 11.13 µs |
 | `--body-at block`: received at a block | 11,108, 10,813, 11,295 | 10.62, 10.16, 10.62 µs |
 
-About 5 % less CPU a block on the node (10.5 against 11.1 µs), in line
-with the 6 % of the test program. The rate does not move: it is the
-disk's, one durable write a block.
+About 5 % less CPU a block on the node (10.5 against 11.1 µs): every run
+with the body at a block is below every run without, by 3 %, 9 % and 5 %
+in the three rounds, so the sign is clear and the size is not. The test
+program's 6 % is within that. The rate does not move: it is the disk's,
+one durable write a block. The lines of these runs say `"rx":"Ring"`,
+which is the load's mode; the node receives direct.
 
 ## Go
 

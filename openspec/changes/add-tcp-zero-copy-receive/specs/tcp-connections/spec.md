@@ -14,12 +14,13 @@ of repeated runs.
 Header framing SHALL offer to receive a frame, in direct mode, so that its
 body, not its header, starts at a block boundary of the frame's memory,
 with and without TLS, so that the body can go to a direct-I/O write from
-where it lies.
+where it lies. Without TLS no byte of the body SHALL be moved after it is
+received.
 
 #### Scenario: Body written as it lies
 - **WHEN** a frame with a 256-byte header is received in direct mode with the body asked for at a block of 4,096 bytes
-- **THEN** the frame starts 3,840 bytes into its memory, its body at a multiple of the block, and no byte of it was moved after it was received
+- **THEN** the frame starts 3,840 bytes into its memory and its body at a multiple of the block
 
 #### Scenario: Where it cannot be given
-- **WHEN** a connection is opened with the option in ring mode, or with frame memory that cannot hold the lead and the largest frame
+- **WHEN** a connection is opened with the option in ring mode, or with frame memory that cannot hold the lead and the largest frame or is not whole blocks
 - **THEN** opening it fails

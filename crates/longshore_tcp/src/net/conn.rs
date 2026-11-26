@@ -27,11 +27,15 @@ impl<T: Transport> Net<T> {
             Framing::Bytes => true,
             Framing::Header(h) => {
                 // A body at a block is direct mode's: only there has
-                // every frame memory of its own.
-                let lead = h.lead() as usize;
+                // every frame memory of its own. That memory is whole
+                // blocks, so that a write padded to the block stays in it.
+                let (lead, size) = (h.lead() as usize, self.cfg.sizes.frame_size);
+                let at_block = h
+                    .body_block()
+                    .is_none_or(|block| opts.rx == Rx::Direct && size.is_multiple_of(block));
                 h.header_len() <= self.cfg.sizes.header_max as usize
-                    && lead + h.max_frame() <= self.cfg.sizes.frame_size as usize
-                    && (lead == 0 || opts.rx == Rx::Direct)
+                    && lead + h.max_frame() <= size as usize
+                    && at_block
             }
         }
     }

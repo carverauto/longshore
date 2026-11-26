@@ -95,14 +95,28 @@ impl HeaderFraming {
     /// that its body, not its header, starts at a multiple of `block` in
     /// the frame's memory: the frame starts [`HeaderFraming::lead`] bytes
     /// into it. For a body that goes to a direct-I/O write from where it
-    /// lies. `block` is a power of two; frame memory must hold the lead
-    /// and the largest frame.
+    /// lies. `block` is a power of two, the block of the file the body
+    /// goes to; frame memory must be whole blocks of it and hold the lead
+    /// and the largest frame. Under TLS the body lies at the block too,
+    /// though a record that also carries the header is opened in the
+    /// connection's own memory and moved there.
     pub const fn with_body_at_block(mut self, block: u32) -> Result<HeaderFraming, FramingError> {
         if !block.is_power_of_two() {
             return Err(FramingError::Block);
         }
         self.body_block = block;
         Ok(self)
+    }
+
+    /// The block the body is to start at a boundary of, when
+    /// [`HeaderFraming::with_body_at_block`] asked for one.
+    #[inline]
+    pub const fn body_block(&self) -> Option<u32> {
+        if self.body_block == 0 {
+            None
+        } else {
+            Some(self.body_block)
+        }
     }
 
     /// Bytes in front of a frame in its memory, so that its body starts

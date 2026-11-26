@@ -163,11 +163,10 @@ impl Opts {
         if body_at && self.header == 0 {
             die("--body-at is of a path with a header: --header 256");
         }
-        // The header holds its length field, and is less than a block:
-        // a body behind whole blocks would lie at a block boundary
-        // wherever its frame does.
-        if self.header != 0 && !(LEN_AT + 4..BLOCK).contains(&self.header) {
-            die("--header takes 0, or 44 to 4095");
+        // The header holds its length field, and fits the header area a
+        // connection set has unless it is asked for a larger one.
+        if self.header != 0 && !(LEN_AT + 4..=256).contains(&self.header) {
+            die("--header takes 0, or 44 to 256");
         }
     }
 

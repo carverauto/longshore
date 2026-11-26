@@ -246,13 +246,14 @@ fn a_body_lies_at_a_block_under_tls() {
     let certs = certs(NAME);
     let mut w = world(&certs, 1);
     let (header, block) = (16u32, 4096u32);
-    let framing = HeaderFraming::new(header, 4, 4, false, true, 12 << 10)
+    let framing = HeaderFraming::new(header, 4, 4, false, true, 24 << 10)
         .and_then(|f| f.with_body_at_block(block))
         .unwrap();
     let opts = ConnOpts::new(Framing::Header(framing)).with_rx(Rx::Direct);
     let (c, s) = w.pair(Addr::Ip(sim_addr()), opts);
-    // Header only, a body within one record, a body of several blocks.
-    let sent: Vec<Vec<u8>> = [0u32, 700, 9000]
+    // Header only, a body within one record, a body of several blocks,
+    // and one longer than a record, which comes in two.
+    let sent: Vec<Vec<u8>> = [0u32, 700, 9000, 20_000]
         .iter()
         .map(|body| {
             let mut f: Vec<u8> = (0..header + body).map(|i| (i % 251) as u8).collect();
@@ -271,6 +272,7 @@ fn a_body_lies_at_a_block_under_tls() {
         while w.client().0.next_event().is_some() {}
         while w.server().0.next_event().is_some() {}
         for (lent, bytes) in w.pull_all(s) {
+            assert_eq!(lent.span().off(), framing.lead());
             assert_eq!((lent.span().off() + header) % block, 0);
             got.push(bytes);
             w.server().0.release(lent);
