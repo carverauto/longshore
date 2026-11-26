@@ -10,6 +10,13 @@
 // zc writes the area's pages as they lie (a piece that is not a whole page at a
 // block of the stream ends that for its connection and is counted); copy writes
 // the buffer the kernel copied into.
+// copy only, a 1 MiB frame with a 256-byte header whose body a log wants at a block:
+//   logread   read every byte (a checksum's pass), write the frame as received
+//   logshift  read, move the body to a block-aligned buffer, write that (today)
+//   logpages  (zc only) write every whole page as it lies, whatever block of the
+//             stream it holds: shows that the write is accepted, and what it costs
+//   loglead   receive the frame 3,840 bytes into its buffer, so that the body lies
+//             at a block; read, write the body from where it lies
 // stall (zc only): after a second, return no chunk until nothing arrives for a
 // second, then return them all and go on. Shows what an empty area does.
 // Built with: gcc -O2 -Wall -o zcrecv zcrecv.c
@@ -42,7 +49,10 @@ static void die(const char *w) { printf("%s: %s\n", w, strerror(errno)); exit(1)
 int main(int argc, char **argv) {
     if (argc != 8 && argc != 9) return 2;
     const char *ifn = argv[1]; unsigned q = atoi(argv[2]); int port = atoi(argv[4]); int conns = atoi(argv[5]);
-    int zc = !strcmp(argv[6], "zc"), touch = !strcmp(argv[7], "read"), stall = !strcmp(argv[7], "stall"), logm = !strcmp(argv[7], "log");
+    int zc = !strcmp(argv[6], "zc"), touch = !strcmp(argv[7], "read"), stall = !strcmp(argv[7], "stall"), logm = !strncmp(argv[7], "log", 3);
+    int lpages = !strcmp(argv[7], "logpages"), lread = !strcmp(argv[7], "logread"), lshift = !strcmp(argv[7], "logshift"), llead = !strcmp(argv[7], "loglead");
+    if (logm && strcmp(argv[7], "log") && !(zc && lpages) && (zc || !(lread || lshift || llead))) return 2;
+    enum { HDR = 256, LEAD = 3840 };
     if ((!zc && strcmp(argv[6], "copy")) || (!touch && !stall && !logm && strcmp(argv[7], "count")) || (stall && !zc)) return 2;
     if (conns > 64) return 2;
     struct io_uring_params p; memset(&p, 0, sizeof p);
@@ -67,9 +77,11 @@ int main(int argc, char **argv) {
     struct ifq_reg reg = { .if_idx = if_nametoindex(ifn), .if_rxq = q, .rq_entries = rq_entries, .area_ptr = (uint64_t)&a, .region_ptr = (uint64_t)&r };
     if (zc && syscall(427, ring, 32, &reg, 1) < 0) die("register zcrx");
     /* The kernel's copy lands in a buffer a connection, as a program's would. */
-    size_t blen = 1u << 20; char *bufs = mmap(0, blen * 64, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
+    size_t blen = 1u << 20, bstep = blen + 8192; char *bufs = mmap(0, bstep * 64, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
     if (bufs == MAP_FAILED) die("buffers");
     int fds[64];
+    char *shifted = mmap(0, blen, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
+    size_t lead = llead ? LEAD : 0;
     /* log: a file a connection, and the pages (and their returns) of the write being gathered. */
     enum { GATHER = 256 }; int files[64]; uint64_t fpos[64] = {0}, unaligned = 0, written = 0; int ok[64], ngather[64] = {0};
     struct iovec (*iov)[GATHER] = logm ? calloc(64, sizeof *iov) : 0; struct rqe (*back)[8 * GATHER] = logm ? calloc(64, sizeof *back) : 0; int nback[64] = {0}; uint64_t block[64] = {0};
@@ -94,7 +106,7 @@ int main(int argc, char **argv) {
         struct io_uring_sqe *s = &sqes[stail & sq_mask]; memset(s, 0, sizeof *s);
         fds[i] = fd; s->fd = fd; s->user_data = i;
         if (zc) { s->opcode = OP_RECV_ZC; s->ioprio = IORING_RECV_MULTISHOT; s->file_index = reg.zcrx_id; /* zcrx_ifq_idx shares this union */ }
-        else { s->opcode = IORING_OP_RECV; s->addr = (uint64_t)(bufs + i * blen); s->len = blen; if (logm) s->msg_flags = MSG_WAITALL; }
+        else { s->opcode = IORING_OP_RECV; s->addr = (uint64_t)(bufs + i * bstep + lead); s->len = blen; if (logm) s->msg_flags = MSG_WAITALL; }
         sq_arr[stail & sq_mask] = stail & sq_mask; stail++;
     }
     __atomic_store_n(sq_tail, stail, __ATOMIC_RELEASE);
@@ -114,10 +126,18 @@ int main(int argc, char **argv) {
             if (!zc && c->res > 0) {
                 /* One receive done: count, read, ask for the next. */
                 if (!t0) { t0 = now(CLOCK_MONOTONIC); c0 = now(CLOCK_THREAD_CPUTIME_ID); }
-                char *b = bufs + c->user_data * blen;
+                char *b = bufs + c->user_data * bstep + lead;
                 bytes += c->res; cq_n++; if ((uint64_t)c->res > maxlen) maxlen = c->res;
                 if (touch) { int k = 0; for (; k + 8 <= c->res; k += 8) sum += *(uint64_t *)(b + k); for (; k < c->res; k++) sum += (unsigned char)b[k]; }
-                if (logm && (size_t)c->res == blen) { if (pwrite(files[c->user_data], b, blen, fpos[c->user_data]) != (ssize_t)blen) die("write"); fpos[c->user_data] += blen; written += blen; }
+                if (logm && (size_t)c->res == blen) {
+                    char *from = b;
+                    if (lread || lshift || llead) { for (size_t k = 0; k < blen; k += 8) sum += *(uint64_t *)(b + k); }
+                    /* The body, as a log wants it: at a block. Its last block is written whole. */
+                    if (lshift) { memcpy(shifted, b + HDR, blen - HDR); from = shifted; }
+                    if (llead) from = b + HDR;
+                    if (pwrite(files[c->user_data], from, blen, fpos[c->user_data]) != (ssize_t)blen) die("write");
+                    fpos[c->user_data] += blen; written += blen;
+                }
                 struct io_uring_sqe *s = &sqes[stail & sq_mask]; memset(s, 0, sizeof *s);
                 s->opcode = IORING_OP_RECV; s->fd = fds[c->user_data]; s->user_data = c->user_data; s->addr = (uint64_t)b; s->len = blen; if (logm) s->msg_flags = MSG_WAITALL;
                 sq_arr[stail & sq_mask] = stail & sq_mask; stail++; submit++;
@@ -136,7 +156,7 @@ int main(int argc, char **argv) {
                 /* A block of the stream may come as several pieces of one page (the kernel
                    counts a reference a piece): it is whole when they have filled the page. */
                 int i = c->user_data & 63; uint64_t in = off & 4095, base = (off & ~AREA_MASK) & ~4095ull, before = pos[i] - c->res;
-                if (ok[i] && (before & 4095) == in && (in == 0 || base == block[i]) && nback[i] < 8 * GATHER) {
+                if (ok[i] && ((lpages && in == 0 && c->res == 4096 && (pos[i] = 4096)) || (!lpages && (before & 4095) == in && (in == 0 || base == block[i]))) && nback[i] < 8 * GATHER) {
                     block[i] = base;
                     back[i][nback[i]].off = (off & ~AREA_MASK) | a.rq_area_token; back[i][nback[i]++].len = c->res;
                     if (!(pos[i] & 4095)) { int n = ngather[i]++; iov[i][n].iov_base = area + base; iov[i][n].iov_len = 4096; }
@@ -148,7 +168,8 @@ int main(int argc, char **argv) {
                     }
                     continue;
                 }
-                ok[i] = 0; unaligned += c->res;
+                if (!lpages) ok[i] = 0;
+                unaligned += c->res;
             }
             last = now(CLOCK_MONOTONIC);
             if (phase == 0 && stall && last - t0 > 1.0) phase = 1;

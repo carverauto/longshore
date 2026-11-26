@@ -108,18 +108,52 @@ file; four connections, 5 seconds, two runs each).
   connection (after about 62 KiB) shifted everything behind it: the
   pages are still whole, but a 4 KiB block of the stream then straddles
   two of them. The test program gives up on a connection at that point,
-  so in those runs it wrote nothing as it lay. No run yet wrote a file
-  from the area's pages; that the kernel accepts such a write is not
-  shown.
+  so in those runs it wrote nothing as it lay (the next table shows the
+  write itself).
 - **What a copy and a write cost, for comparison:** received with the
   kernel's copy into a 1 MiB buffer and written from it, the thread
   spends 0.151 CPU-seconds a GB (2.7 GB/s, the disk's pace, one write at
   a time). Received without a copy and not written, 0.038.
 
-So the pages come as a log would want them, and what is missing is
-keeping the stream in step with them (a sender that only sends whole
-packets, or a filler in the log's format after a short one) and the
-write itself.
+**The write is accepted, and what it saves.** `zcrecv ... zc logpages`
+writes every whole page as it lies, 256 pages a vectored direct-I/O
+write, whatever block of the stream each holds; `copy log` receives with
+the kernel's copy into a 1 MiB buffer and writes that. MTU 8244, three
+runs each, one synchronous write at a time, so the disk sets the pace
+(set `pages` in the raw file). Neither reads the payload.
+
+| Receive and write | GB/s | Thread, CPU-s a GB |
+|---|---|---|
+| Pages written as they lie | 3.82, 3.75, 3.79 | 0.066, 0.068, 0.065 |
+| Copied, then written | 2.72, 2.72, 2.72 | 0.154, 0.154, 0.155 |
+
+From the card to the disk without a copy the thread spends 0.066
+CPU-seconds a GB against 0.154, and carries 3.8 against 2.7 GB/s on
+this disk. A receiver that checks a checksum over every byte pays for
+that read on top, in both rows; the difference with it was not measured
+here (the earlier table has it for payload that is not written: 0.117
+against 0.159).
+
+What is still missing is keeping the stream in step with the pages: a
+frame lies in whole pages when it starts a packet.
+
+## The body of a frame at a block, with the kernel's copy
+
+UltraGraphDB's log takes a bulk load's body at a block boundary, while in
+its own frame the body starts 256 bytes into a block. `zcrecv ... copy`
+with a 1 MiB frame, every byte read once as a checksum would (set `lead`
+in the raw file, three runs each, MTU 9000):
+
+| | GB/s | Thread, CPU-s a GB |
+|---|---|---|
+| `logread`: written as received | 2.39, 2.26, 2.28 | 0.193, 0.201, 0.199 |
+| `logshift`: body moved to a block-aligned buffer, then written | 2.24, 2.21, 2.21 | 0.203, 0.208, 0.205 |
+| `loglead`: received 3,840 bytes into the buffer, so the body lies at a block | 2.39, 2.38, 2.37 | 0.192, 0.194, 0.190 |
+
+Receiving the frame so that its body already lies at a block saves the
+move: about 0.012 CPU-seconds a GB, 6 % of the thread, and about 7 %
+more carried. Small, because the bytes are in the cache when they are
+moved; but it costs one offset.
 
 ## Go
 
