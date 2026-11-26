@@ -42,6 +42,11 @@ impl Gather {
         !self.free.is_empty()
     }
 
+    /// How many more writes rows are free for.
+    pub(super) fn free_rows(&self) -> usize {
+        self.free.len()
+    }
+
     /// `row` is free again.
     pub(super) fn release(&mut self, row: u32) {
         self.free.push(row);

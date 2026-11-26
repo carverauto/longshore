@@ -8,6 +8,17 @@
 use super::*;
 
 impl<W: World> Engine<W> {
+    /// How many more gathered writes may be in flight: `Limits::gather_ops`
+    /// less those not yet completed.
+    pub(super) fn gather_rows(&self) -> usize {
+        let flying = self
+            .pending
+            .iter()
+            .filter(|p| matches!(p.op, Op::FileWriteSpans { .. }))
+            .count();
+        (self.limits.gather_ops as usize).saturating_sub(flying)
+    }
+
     /// Checks a socket operation's preconditions before it is queued. Returns
     /// the Unix-domain path it carries (empty for every other operation), or
     /// the errno it completes with at once.

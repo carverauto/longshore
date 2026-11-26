@@ -106,7 +106,15 @@ impl<W: World> Io for Engine<W> {
         }
         if op.is_file_op() {
             let pool = &self.bufs[self.pool_base..];
-            if let Err(errno) = self.files.check_op(&op, pool, &self.limits) {
+            // As many gathered writes in flight as the backend has room
+            // for, as on the ring, whose kernel reads a row of vectors.
+            let full = matches!(op, Op::FileWriteSpans { .. }) && self.gather_rows() == 0;
+            let checked = if full {
+                Err(-crate::io::ENOBUFS)
+            } else {
+                self.files.check_op(&op, pool, &self.limits)
+            };
+            if let Err(errno) = checked {
                 self.ready.push(Completion::new(token, errno));
                 return Ok(());
             }
@@ -153,8 +161,9 @@ impl<W: World> Io for Engine<W> {
         if self.pending.len() + self.ready.len() + ops.len() > self.limits.ops_max as usize {
             return Err(Busy);
         }
+        let rows = self.gather_rows();
         let pool = &self.bufs[self.pool_base..];
-        if let Err((bad_idx, errno)) = self.files.check_chain(ops, pool, &self.limits) {
+        if let Err((bad_idx, errno)) = self.files.check_chain(ops, pool, &self.limits, rows) {
             for (idx, &(token, _)) in ops.iter().enumerate() {
                 self.ready.push(Completion::new(
                     token,

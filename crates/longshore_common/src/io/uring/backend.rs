@@ -178,7 +178,8 @@ impl Io for UringIo {
             return Err(Busy);
         }
         let pool = &self.bufs[self.pool_base..];
-        if let Err((bad_idx, errno)) = self.files_table.check_chain(ops, pool, &self.limits) {
+        let rows = self.gather.free_rows();
+        if let Err((bad_idx, errno)) = self.files_table.check_chain(ops, pool, &self.limits, rows) {
             for (idx, &(token, _)) in ops.iter().enumerate() {
                 #[expect(clippy::expect_used, reason = "free.len() >= ops.len(), checked above")]
                 let i = self.free.pop().expect("checked free.len()");

@@ -5,7 +5,7 @@
 
 //! File slots, open flags, `statx` size decoding, and shared validation.
 
-use crate::io::{Limits, Op, Token, EBADF, EBUSY, EINVAL};
+use crate::io::{Limits, Op, Token, EBADF, EBUSY, EINVAL, ENOBUFS};
 
 mod open_flags;
 mod validate;
@@ -227,11 +227,15 @@ impl FileTable {
     }
 
     /// Validate an entire chain before any member reaches a kernel or world.
+    /// `rows` is how many more gathered writes the backend has room for in
+    /// flight: the member that would take one past them is refused with
+    /// `-ENOBUFS`, as a single submit of it would be.
     pub(crate) fn check_chain(
         &mut self,
         ops: &[(Token, Op)],
         pool: &[u8],
         limits: &Limits,
+        rows: usize,
     ) -> Result<(), (usize, i32)> {
         self.gen = self.gen.wrapping_add(1);
         if self.gen == 0 {
@@ -241,9 +245,16 @@ impl FileTable {
             self.gen = 1;
         }
         let g = self.gen;
+        let mut gathered = 0;
         for (idx, (_, op)) in ops.iter().enumerate() {
             if !op.is_file_op() {
                 return Err((idx, -EINVAL));
+            }
+            if matches!(op, Op::FileWriteSpans { .. }) {
+                gathered += 1;
+                if gathered > rows {
+                    return Err((idx, -ENOBUFS));
+                }
             }
             self.simulate_chain_op(op, pool, limits, g)
                 .map_err(|e| (idx, e))?;
