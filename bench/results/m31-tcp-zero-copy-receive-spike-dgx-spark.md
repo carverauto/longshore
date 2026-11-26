@@ -207,6 +207,60 @@ program's 6 % is within that. The rate does not move: it is the disk's,
 one durable write a block. The lines of these runs say `"rx":"Ring"`,
 which is the load's mode; the node receives direct.
 
+## A receive with a byte credit, a full completion ring, an area held whole
+
+`bench/spikes/zcrx/zccredit.c`, for three things the mode's contract rests
+on (set `credit` in the raw file; the last of two runs each is kept
+there, the figures of both are here).
+
+**A credit.** One connection of 1 MiB frames, each received as a receive
+armed with 256 bytes and then one armed with the rest, 4,000 frames:
+
+| | MTU 9000 | MTU 8244 |
+|---|---|---|
+| Frames whose first four bytes were the frame's length | 4,000 | 4,000 |
+| Armings that brought exactly their credit | 8,000 | 8,000 |
+| Last completions with result 0 and no flag | 8,000 | 8,000 |
+| Headers that came as one piece of 256 bytes | 4,000 | 4,000 |
+| Bodies that went on in the header's page, 256 bytes in | 4,000 | 4,000 |
+| Frames that started at the start of a page | 1,326 | 3,999 |
+
+The kernel ends a receive exactly at its credit, nothing is lost or
+doubled between one arming and the next, and a page is cut between two
+receives as the source says. With packets of two pages, 3,999 of 4,000
+frames of this sender started a page.
+
+**A full completion ring.** A ring of 64 entries, a sender that sends
+1 MiB and goes quiet, the receive armed for 1 MiB two seconds later:
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Bytes received of 1,048,576 | 904,004 | 812,824 |
+| Most completions in one turn | 64 | 64 |
+| A last completion | none | none |
+| Seconds without data at the end, the rest still in the socket | 6.0 | 6.0 |
+
+A receive whose turn ended with the ring full is left armed and silent:
+it goes on only when the socket is woken again, and a sender that waits
+for an answer never wakes it. The mode must not leave such a receive be.
+
+**An area held whole.** An area of 512 pages; a first connection sends
+8 MiB and none of its pieces is returned for four seconds; a second sends
+100 bytes five times a second. One run.
+
+| | |
+|---|---|
+| First connection, before its pieces went back | 1.85 MB in 518 pieces, then nothing |
+| Second connection, meanwhile | 100 bytes, then nothing |
+| Either, in the five seconds after all 518 pieces went back | nothing |
+| Receives ended with an error (`ENOMEM` or other) | none |
+
+With no page left the card takes nothing for any flow of the queue, small
+messages included; no receive is told. After the pages are back, nothing
+came for at least five seconds (5.4 in the earlier run). What ends the
+wait was not found; a queue with no buffer posted may wait for something
+else to wake it. The `ENOMEM` of the kernel's copy path did not show.
+
 ## Go
 
 The mode works on this card. It halves the CPU of receiving payload that
