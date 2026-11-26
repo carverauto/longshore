@@ -182,7 +182,7 @@ instead of being moved into frame memory.
 
 | Asked for | Answer | Where |
 |---|---|---|
-| A backend with a receive area on the portable backend, on a kernel below 7.0, without `CAP_NET_ADMIN`, on a queue without header and data split, or with an area the memory-lock limit does not allow | `BuildError` naming which (C2, K8) | `Builder::build` |
+| A backend with a receive area on the portable backend, on a kernel below 7.0 or without the flush of returns, without `CAP_NET_ADMIN`, on a queue without header and data split, or with an area the memory-lock limit does not allow | An `io::Error` naming which (C2, K8); no builder builds an area, so there is no `BuildError` | `UringIo::new`, `PosixIo::new` |
 | `Rx::ZeroCopy` on a `Net` whose backend has no receive area, or whose `Sizes` have no pages for it | `NetError::Framing`, as for any option the set was not sized for (`fits`) | `connect`, `listen` |
 | `Rx::ZeroCopy` with TLS | `NetError::NoTls` | `connect_tls`, `listen` with `with_tls` |
 | `Rx::ZeroCopy` on a Unix-domain address | `NetError::Framing` | `connect`, `listen` |
