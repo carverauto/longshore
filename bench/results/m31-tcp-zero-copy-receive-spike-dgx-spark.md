@@ -137,6 +137,28 @@ against 0.159).
 What is still missing is keeping the stream in step with the pages: a
 frame lies in whole pages when it starts a packet.
 
+**The disk alone.** `dd` with direct I/O of zeros to new files on the same
+disk (Samsung MZALC4T0HBL1, ext4, no I/O scheduler), 6 to 17 GB a run,
+one run each unless said; a second or two each, so a burst, not what the
+disk sustains:
+
+| Writers at once | Write size | GB/s |
+|---|---|---|
+| 1 | 1 MiB | 3.45, 3.25 |
+| 4 | 1 MiB | 10.0 |
+| 8 | 1 MiB | 12.5 |
+| 16 | 1 MiB | 13.0 |
+| 4 | 16 MiB | 13.1 |
+| 1 | 128 KiB | 0.57 |
+
+So the 3.8 GB/s of "pages written as they lie" is what one write at a
+time gets from this disk (3.3 to 3.5 with `dd`), not what the disk can
+take: with eight or more writes in flight it takes about 13 GB/s, which
+is also about what one interface of the port carries. The test program
+writes synchronously, one write after another; the limit in that table
+is the program's, and a version that keeps several writes in flight has
+not been run.
+
 ## The body of a frame at a block, with the kernel's copy
 
 UltraGraphDB's log takes a bulk load's body at a block boundary, while in
