@@ -36,6 +36,8 @@ pub struct Faults {
     pub(crate) delay: u32,
     pub(crate) udp_drop: u32,
     pub(crate) reorder: u32,
+    pub(crate) copied: u32,
+    pub(crate) ring_full: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -134,6 +136,8 @@ pub struct Virtual {
     pub(super) ring_in_free: Box<[bool]>,
     /// The receive area's pages and the pieces out of them.
     pub(super) area: area::Area,
+    /// A receive found no room to report in, this tick.
+    pub(super) ring_full: bool,
     pub(super) accept_start: u32,
     pub(super) accept_len: u32,
     pub(super) keep_timing: Option<crate::io::KeepAlive>,
@@ -181,7 +185,8 @@ impl Virtual {
             ring_free: (0..limits.ring_buffers as u16).rev().collect(),
             ring_free_len: ring_count,
             ring_in_free: vec![true; ring_count].into_boxed_slice(),
-            area: area::Area::new(&limits),
+            area: area::Area::new(&limits, seed),
+            ring_full: false,
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
             keep_timing: None,

@@ -146,7 +146,19 @@ impl World for Virtual {
         self.rng.chance(self.faults.reorder.min(REORDER_MOST))
     }
 
+    fn new_tick(&mut self) {
+        self.ring_full = false;
+    }
+
+    fn ring_was_full(&self) -> bool {
+        self.ring_full
+    }
+
     fn on_submit(&mut self, op: &Op) -> u64 {
+        if let Op::ArmedRecvZc { sock, .. } = *op {
+            // Armed anew: what a full ring silenced is over.
+            self.area.leave(sock.0, false);
+        }
         if op.is_file_op() {
             self.file_op_seq += 1;
             self.file_op_seq

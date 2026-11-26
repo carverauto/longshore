@@ -21,6 +21,10 @@ impl<W: World> Engine<W> {
             let buf = c.buf.map_or(u64::MAX, |b| u64::from(b.0));
             fold(&mut self.trace, &[u64::from(c.more), buf]);
         }
+        if c.off != 0 {
+            // A piece inside its page: traces without one stay as they were.
+            fold(&mut self.trace, &[u64::from(c.off)]);
+        }
     }
 
     /// Marks the pending operation `target` names as cancelled: 0, or

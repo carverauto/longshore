@@ -83,6 +83,12 @@ pub trait World {
     fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
         None
     }
+    /// A tick begins.
+    fn new_tick(&mut self) {}
+    /// Whether a receive found no room to report in since the tick began.
+    fn ring_was_full(&self) -> bool {
+        false
+    }
     /// Return a buffer-ring buffer back to the world's ring.
     fn give_back(&mut self, _id: BufId) {}
     /// Return a piece of the receive area, `len` bytes of `page` from

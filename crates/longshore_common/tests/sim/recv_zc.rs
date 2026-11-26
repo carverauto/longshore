@@ -17,6 +17,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
+mod faults;
+
 const PAGES: u32 = 8;
 const LIMITS: Limits = Limits::BASE
     .with_sockets_max(4)
@@ -290,16 +292,16 @@ fn nothing_is_delivered_while_no_page_is_free() {
         }
     }
     let (out_pieces, out_pages) = io.pieces_out();
-    assert_eq!(
-        (out_pieces, out_pages),
-        (count, PAGES as usize),
-        "every page is out"
-    );
+    // The pool is three quarters of the area: the rest is the kernel's
+    // own, for what it copies.
+    let pool = (PAGES - PAGES / 4) as usize;
+    assert_eq!((out_pieces, out_pages), (count, pool), "every page is out");
     for p in &pieces[..count] {
         io.give_back_piece(p.page, p.off, p.len);
     }
+    // A pool found empty is given nothing for a while after.
     let before = at;
-    for _ in 0..200 {
+    for _ in 0..2000 {
         io.tick(false, &mut out).unwrap();
         while let Some(c) = out.pop() {
             if c.token() == RECV && c.more() {
