@@ -153,6 +153,79 @@ fn frames_survive_any_framing_and_any_cut_of_the_stream(tc: TestCase) {
     );
 }
 
+/// Asked for, in direct mode: every frame lies so that its body starts at
+/// a block of its memory, whatever the framing, the block and the cut of
+/// the stream; and its bytes are the bytes sent.
+#[hegel::test]
+fn a_body_lies_at_a_block_in_direct_mode(tc: TestCase) {
+    let (plain, body_max, packed) = any_framing(&tc);
+    let block = tc.draw(gs::sampled_from(vec![8u32, 64, 512, 4096]));
+    let framing = must(plain.with_body_at_block(block), "a block");
+    let count = between(&tc, 1, 6);
+    let frames: Vec<Vec<u8>> = (0..count)
+        .map(|i| frame(packed, between(&tc, 0, body_max.min(700)), i as u8))
+        .collect();
+    let stream: Vec<u8> = frames.concat();
+    let server = ConnOpts::new(Framing::Header(framing)).with_rx(Rx::Direct);
+    let (mut w, c, s) = world(u64::from(count), ConnOpts::new(Framing::Bytes), server);
+    let (mut at, mut got) = (0, Vec::new());
+    let turn = |world: &mut World<SimIo>, into: &mut Vec<Vec<u8>>| {
+        world.turn();
+        while world.client().0.next_event().is_some() {}
+        while world.server().0.next_event().is_some() {}
+        for (lent, bytes) in world.pull_all(s) {
+            let body_at = lent.span().off() + packed[0];
+            assert_eq!(body_at % block, 0, "the body lies at {body_at}");
+            into.push(bytes);
+            world.server().0.release(lent);
+        }
+    };
+    while at < stream.len() {
+        let piece = (between(&tc, 1, 400) as usize).min(stream.len() - at);
+        let _waited: bool = send(&mut w, c, &stream[at..at + piece]);
+        at += piece;
+        for _ in 0..between(&tc, 0, 3) {
+            turn(&mut w, &mut got);
+        }
+    }
+    for _ in 0..200 {
+        if got.len() == frames.len() {
+            break;
+        }
+        turn(&mut w, &mut got);
+    }
+    assert!(got == frames, "{} of {} frames", got.len(), frames.len());
+}
+
+/// A body at a block is direct mode's: ring mode refuses it, and so does
+/// frame memory too small for the lead and the largest frame.
+#[test]
+fn a_body_at_a_block_is_refused_where_it_cannot_be_given() {
+    let header = must(HeaderFraming::new(256, 40, 4, false, true, 4096), "framing");
+    let at_block = must(header.with_body_at_block(4096), "a block");
+    assert_eq!((header.lead(), at_block.lead()), (0, 3840));
+    assert!(
+        header.with_body_at_block(3000).is_err(),
+        "not a power of two"
+    );
+    let quiet = ConnOpts::new(Framing::Bytes);
+    let (mut w, _c, _s) = world(1, quiet, quiet);
+    let (net, io) = w.client();
+    let ring = ConnOpts::new(Framing::Header(at_block)).with_rx(Rx::Ring);
+    assert!(net.connect(io, addr(), ring).is_err(), "ring mode took it");
+    // The largest frame alone fills frame memory: no room for the lead.
+    let full = must(
+        HeaderFraming::new(256, 40, 4, false, true, 1 << 20),
+        "framing",
+    );
+    let full = must(full.with_body_at_block(4096), "a block");
+    let direct = ConnOpts::new(Framing::Header(full)).with_rx(Rx::Direct);
+    assert!(
+        net.connect(io, addr(), direct).is_err(),
+        "no room for the lead"
+    );
+}
+
 /// Without framing a stream arrives as the bytes that were sent, in
 /// order, in whatever pieces.
 #[hegel::test]

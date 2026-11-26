@@ -238,6 +238,50 @@ fn an_end_without_a_close_alert_is_a_broken_connection() {
     }
 }
 
+/// Under TLS too, direct mode lays a frame so that its body starts at a
+/// block when asked: records are opened into the frame's memory behind
+/// the lead.
+#[test]
+fn a_body_lies_at_a_block_under_tls() {
+    let certs = certs(NAME);
+    let mut w = world(&certs, 1);
+    let (header, block) = (16u32, 4096u32);
+    let framing = HeaderFraming::new(header, 4, 4, false, true, 12 << 10)
+        .and_then(|f| f.with_body_at_block(block))
+        .unwrap();
+    let opts = ConnOpts::new(Framing::Header(framing)).with_rx(Rx::Direct);
+    let (c, s) = w.pair(Addr::Ip(sim_addr()), opts);
+    // Header only, a body within one record, a body of several blocks.
+    let sent: Vec<Vec<u8>> = [0u32, 700, 9000]
+        .iter()
+        .map(|body| {
+            let mut f: Vec<u8> = (0..header + body).map(|i| (i % 251) as u8).collect();
+            f[4..8].copy_from_slice(&(header + body).to_le_bytes());
+            f
+        })
+        .collect();
+    let mut got = Vec::new();
+    for frame in &sent {
+        while !w.send(c, frame) {
+            w.turn();
+        }
+    }
+    for _ in 0..400 {
+        w.turn();
+        while w.client().0.next_event().is_some() {}
+        while w.server().0.next_event().is_some() {}
+        for (lent, bytes) in w.pull_all(s) {
+            assert_eq!((lent.span().off() + header) % block, 0);
+            got.push(bytes);
+            w.server().0.release(lent);
+        }
+        if got.len() == sent.len() {
+            break;
+        }
+    }
+    assert!(got == sent, "{} of {} frames", got.len(), sent.len());
+}
+
 #[test]
 fn a_record_that_found_no_room_in_frame_memory_is_opened_once_there_is_room() {
     let certs = certs(NAME);

@@ -13,7 +13,7 @@ use super::state::{
 use super::Net;
 use crate::addr::{Addr, ServerName};
 use crate::backoff::Backoff;
-use crate::config::ConnOpts;
+use crate::config::{ConnOpts, Rx};
 use crate::event::{Event, NetError, Why};
 use crate::framing::Framing;
 use crate::handle::{Conn, Listener};
@@ -26,9 +26,23 @@ impl<T: Transport> Net<T> {
         match opts.framing {
             Framing::Bytes => true,
             Framing::Header(h) => {
+                // A body at a block is direct mode's: only there has
+                // every frame memory of its own.
+                let lead = h.lead() as usize;
                 h.header_len() <= self.cfg.sizes.header_max as usize
-                    && h.max_frame() <= self.cfg.sizes.frame_size as usize
+                    && lead + h.max_frame() <= self.cfg.sizes.frame_size as usize
+                    && (lead == 0 || opts.rx == Rx::Direct)
             }
+        }
+    }
+
+    /// Where a frame of `slot` starts in frame memory of its own: behind
+    /// the lead its framing asks for, in direct mode.
+    pub(super) fn lead(&self, slot: u32) -> u32 {
+        let opts = &self.conns[slot as usize].opts;
+        match opts.framing {
+            Framing::Header(h) if opts.rx == Rx::Direct => h.lead(),
+            Framing::Header(_) | Framing::Bytes => 0,
         }
     }
 

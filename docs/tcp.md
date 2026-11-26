@@ -122,6 +122,16 @@ connection:
   is copied, and the frame can go to a direct-I/O write as it is. This is
   the mode for large frames and for frames that are logged.
 
+A log that wants a frame's body, not its header, at a block boundary asks
+for it in the framing: `HeaderFraming::with_body_at_block(4096)`. In
+direct mode the frame then starts `lead()` bytes into its memory (3,840
+for a 256-byte header), so that the body starts at a block and goes to a
+direct-I/O write from where it lies; `Frame::span` says where. Frame
+memory must hold the lead and the largest frame, and ring mode refuses
+the option: there a frame has no memory of its own. Measured between two
+machines, it saves the move a log would make, about 6 % of the receiving
+thread (`bench/results/m31-tcp-zero-copy-receive-spike-dgx-spark.md`).
+
 ## Frame memory and holds
 
 Frame memory is a range of block-aligned buffers (`Extents`) with a hold

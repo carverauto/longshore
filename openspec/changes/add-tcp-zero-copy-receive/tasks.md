@@ -38,8 +38,9 @@ its write-up is the result.
 - [ ] 5.4 Review of group 5
 
 ## 6. The body at a block, in direct mode (first, by the owner's decision)
-- [ ] 6.1 `HeaderFraming` can ask for the body at a block: the frame is received with its header ending at a block boundary of its frame memory (for a 256-byte header, 3,840 bytes in); `Config::plan` refuses frame memory too small for the lead and the largest frame
-- [ ] 6.2 Ring mode and `hold` put a frame in frame memory at the same place, so a frame's span says where it lies whatever the mode
-- [ ] 6.3 Tests: the body's offset in every receive mode, with and without TLS; the model test and the conformance suite run with the option; a log write of the body as it lies
+- [x] 6.1 `HeaderFraming::with_body_at_block`: in direct mode the frame is received with its header ending at a block boundary of its frame memory (for a 256-byte header, 3,840 bytes in); opening a connection refuses frame memory too small for the lead and the largest frame
+- [x] 6.2 Ring mode refuses the option (a frame there is lent from memory it shares, at whatever offset it lies; only direct mode gives every frame memory of its own)
+- [x] 6.3 Tests: the body's offset for any framing, block and cut of the stream (a property test, checked to fail without the lead), under TLS, and the two refusals
+- [ ] 6.3a The model test and the conformance suite run with the option
 - [ ] 6.4 `tcp_uring path` with a 256-byte header and the body written from where it lies; the gain measured on the Spark pair against milestone 31's 6 %
 - [ ] 6.5 `docs/tcp.md`; review of group 6

@@ -11,16 +11,15 @@ of repeated runs.
 - **THEN** over five runs each, the median with zero-copy sends is no less than nine tenths of the median without
 
 ### Requirement: A frame's body at a block boundary
-Header framing SHALL offer to receive a frame so that its body, not its
-header, starts at a block boundary of the frame's memory, in every
-receive mode, so that the body can go to a direct-I/O write from where it
-lies.
+Header framing SHALL offer to receive a frame, in direct mode, so that its
+body, not its header, starts at a block boundary of the frame's memory,
+with and without TLS, so that the body can go to a direct-I/O write from
+where it lies.
 
 #### Scenario: Body written as it lies
-- **WHEN** a frame with a 256-byte header is received with the body asked for at a block, and its body is written to a file with direct I/O
-- **THEN** the body starts at a multiple of the block size in its buffer, and no byte of it was moved after it was received
+- **WHEN** a frame with a 256-byte header is received in direct mode with the body asked for at a block of 4,096 bytes
+- **THEN** the frame starts 3,840 bytes into its memory, its body at a multiple of the block, and no byte of it was moved after it was received
 
-#### Scenario: Frame memory too small
-- **WHEN** a plan's frame memory cannot hold the lead before the header and the largest frame
-- **THEN** planning fails with an error naming the frame size
-
+#### Scenario: Where it cannot be given
+- **WHEN** a connection is opened with the option in ring mode, or with frame memory that cannot hold the lead and the largest frame
+- **THEN** opening it fails

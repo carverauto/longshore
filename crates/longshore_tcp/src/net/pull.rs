@@ -58,7 +58,8 @@ impl<T: Transport> Net<T> {
     fn pull(&mut self, d: &mut T::Driver, slot: u32) -> Option<Frame> {
         loop {
             if let Some((ext, len)) = self.conns[slot as usize].ready.take() {
-                return Some(self.deliver(d, slot, Mem::Extent(ext), 0, len));
+                let lead = self.lead(slot);
+                return Some(self.deliver(d, slot, Mem::Extent(ext), lead, len));
             }
             let Some(src) = self.source(slot) else {
                 if self.header_whole(slot) {
