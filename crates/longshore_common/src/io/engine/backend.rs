@@ -62,6 +62,10 @@ impl<W: World> Io for Engine<W> {
         self.world.no_delay(on);
     }
 
+    fn end_sends(&mut self, sock: Sock, on: bool) {
+        self.world.end_sends(sock, on);
+    }
+
     fn keep_alive(&mut self, on: bool) {
         self.world.keep_alive(on);
     }

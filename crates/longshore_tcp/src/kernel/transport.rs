@@ -161,6 +161,10 @@ impl<IO: Io> Transport for KernelTransport<IO> {
         d.ring_was_full()
     }
 
+    fn end_sends(&mut self, d: &mut IO, slot: u32) {
+        d.end_sends(self.conn_sock(slot), true);
+    }
+
     fn cancel_recv(&mut self, d: &mut IO, slot: u32) -> Result<(), Refused> {
         let target = self.conn_token(slot, RECV);
         self.start(d, slot, CANCEL, Op::Cancel { target })

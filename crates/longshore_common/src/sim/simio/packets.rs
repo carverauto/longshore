@@ -33,7 +33,13 @@ pub(in crate::sim) struct Packets {
     /// ever sent.
     lens: Box<[u32]>,
     sent: u64,
+    /// For each socket, whether its sends each end a buffer: a packet that
+    /// follows one is never joined to it.
+    ends: Box<[bool]>,
 }
+
+/// The bit of a mark that says the packet before it ended a buffer.
+const FIRM: u32 = 1 << 31;
 
 impl Packets {
     pub(super) fn new(limits: &Limits) -> Packets {
@@ -44,6 +50,7 @@ impl Packets {
             len: vec![0; socks].into_boxed_slice(),
             lens: vec![0; LOG].into_boxed_slice(),
             sent: 0,
+            ends: vec![false; socks].into_boxed_slice(),
         }
     }
 
@@ -52,36 +59,52 @@ impl Packets {
         self.head.fill(0);
         self.len.fill(0);
         self.sent = 0;
+        self.ends.fill(false);
+    }
+
+    /// Every send of `sock` from now on ends a buffer, or not.
+    pub(super) fn end_sends(&mut self, sock: u32, on: bool) {
+        self.ends[sock as usize] = on;
     }
 
     /// No packet waits in `sock` any more: its connection is over.
     pub(super) fn forget(&mut self, sock: u32) {
         (self.head[sock as usize], self.len[sock as usize]) = (0, 0);
+        self.ends[sock as usize] = false;
     }
 
-    /// A packet of `n` bytes was queued in `sock`, its first byte at `at`
-    /// of the socket's queue.
-    pub(super) fn sent(&mut self, sock: u32, at: usize, n: usize) {
+    /// A packet of `n` bytes from `from` was queued in `sock`, its first
+    /// byte at `at` of the socket's queue.
+    pub(super) fn sent(&mut self, (from, sock): (u32, u32), at: usize, n: usize) {
+        let firm = if self.ends[from as usize] { FIRM } else { 0 };
         self.lens[(self.sent % LOG as u64) as usize] = n as u32;
         self.sent += 1;
         let s = sock as usize;
         if (self.len[s] as usize) < MARKS {
             let slot = (self.head[s] as usize + self.len[s] as usize) % MARKS;
-            self.marks[s * MARKS + slot] = at as u32;
+            self.marks[s * MARKS + slot] = at as u32 | firm;
             self.len[s] += 1;
         }
     }
 
     /// The `k`-th waiting mark of `sock`, as bytes ahead of `rx_head`.
     fn ahead_of(&self, sock: usize, k: usize, rx_head: usize) -> usize {
-        let mark = self.marks[sock * MARKS + (self.head[sock] as usize + k) % MARKS] as usize;
+        let mark =
+            (self.marks[sock * MARKS + (self.head[sock] as usize + k) % MARKS] & !FIRM) as usize;
         (mark + SOCK_BUF - rx_head) % SOCK_BUF
     }
 
     /// What lies ahead of a socket that has `rx_len` bytes waiting from
-    /// `rx_head`: whether a packet begins with the next byte, and how many
-    /// bytes come before the next packet begins.
-    pub(super) fn ahead(&mut self, sock: u32, rx_head: usize, rx_len: usize) -> (bool, usize) {
+    /// `rx_head`: whether a packet begins with the next byte, whether it
+    /// follows a send that ended a buffer (and so cannot have been joined
+    /// to the one before), and how many bytes come before the next packet
+    /// begins.
+    pub(super) fn ahead(
+        &mut self,
+        sock: u32,
+        rx_head: usize,
+        rx_len: usize,
+    ) -> (bool, bool, usize) {
         let s = sock as usize;
         // Marks of bytes that were taken already are behind.
         while self.len[s] > 0 && self.ahead_of(s, 0, rx_head) >= rx_len {
@@ -89,19 +112,20 @@ impl Packets {
             self.len[s] -= 1;
         }
         if self.len[s] == 0 {
-            return (false, rx_len);
+            return (false, false, rx_len);
         }
         let first = self.ahead_of(s, 0, rx_head);
         if first > 0 {
-            return (false, first);
+            return (false, false, first);
         }
+        let firm = self.marks[s * MARKS + self.head[s] as usize] & FIRM != 0;
         let next = if self.len[s] > 1 {
             self.ahead_of(s, 1, rx_head).min(rx_len)
         } else {
             rx_len
         };
         // Two marks at one place cannot be: a packet has a byte.
-        (true, next.max(1))
+        (true, firm, next.max(1))
     }
 
     /// The lengths of the last packets sent, oldest first, into `into`:

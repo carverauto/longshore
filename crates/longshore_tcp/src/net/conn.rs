@@ -133,6 +133,9 @@ impl<T: Transport> Net<T> {
 
     /// The connection in `slot` is ready for the caller.
     pub(super) fn connected(&mut self, d: &mut T::Driver, slot: u32) {
+        if self.conns[slot as usize].opts.frame_on_packet {
+            self.t.end_sends(d, slot);
+        }
         let c = &mut self.conns[slot as usize];
         c.st = St::Up;
         c.last_active = self.now;

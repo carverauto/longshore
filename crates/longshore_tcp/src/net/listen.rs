@@ -230,9 +230,12 @@ impl<T: Transport> Net<T> {
         c.copied = copied;
         c.sock = Socket::Open;
         c.last_active = self.now;
+        if cfg.conn.frame_on_packet {
+            self.t.end_sends(d, slot);
+        }
         if !listening {
             // Accepted while the listener was closing: not a connection.
-            c.st = St::Refused;
+            self.conns[slot as usize].st = St::Refused;
             self.gens.retire(slot);
             self.begin_close(slot, false);
             return;

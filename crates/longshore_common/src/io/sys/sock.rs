@@ -12,6 +12,8 @@ use core::mem::{offset_of, size_of};
 pub const MSG_WAITALL: u32 = 0x100;
 /// No `SIGPIPE` when the peer has closed.
 pub const MSG_NOSIGNAL: u32 = 0x4000;
+/// Linux `MSG_EOR`: the send ends a buffer of the kernel's.
+pub const MSG_EOR: u32 = 0x80;
 /// Never wait.
 pub const MSG_DONTWAIT: u32 = 0x40;
 /// Shut down both directions.

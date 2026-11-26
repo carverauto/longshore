@@ -314,8 +314,11 @@ impl Virtual {
             self.socks[sock.0 as usize].rx_head,
             self.socks[sock.0 as usize].rx_len,
         );
-        let (begins, within) = self.packets.ahead(sock.0, head, waiting);
-        let begun = begins && self.rng.below(8) != 0;
+        let (begins, firm, within) = self.packets.ahead(sock.0, head, waiting);
+        // A packet after a send that ended a buffer is never joined; the
+        // draw is made only for the others, so traces without stay as
+        // they were.
+        let begun = begins && (firm || self.rng.below(8) != 0);
         let (page, off) = if self.rng.chance(self.faults.copied) {
             let Some(page) = self.area.copy_page(self.now, wait) else {
                 return Some(Attempt::single(-ENOMEM));

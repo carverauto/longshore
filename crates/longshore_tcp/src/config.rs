@@ -152,10 +152,17 @@ impl ConnOpts {
     ///
     /// What it gives is a send a frame, in order, the next one following
     /// when the transport has taken the last, not when the peer has
-    /// acknowledged it. What it cannot give is the packet: TCP joins the
-    /// first bytes of a send to an unsent packet that has room, joins
-    /// packets it sends again, and cuts a packet short when its window
-    /// says so. A frame that did not start a packet costs its receiver a
+    /// acknowledged it, and each send marked as ending one of the kernel's
+    /// buffers (`MSG_EOR`, Linux), so that the next frame is not joined to
+    /// an unsent packet of this one and begins a packet of its own.
+    /// Measured between two machines (milestone 31): with packets of two
+    /// pages (MTU 8244) and frames of whole 4 KiB blocks, 99.8 to 100 % of
+    /// frames then began a page at a zero-copy receiver; a frame of any
+    /// other length leaves the next one mid-page, because the receiving
+    /// card lays payloads back to back. What it cannot give for certain
+    /// is the packet: TCP cuts a packet short when its window says so,
+    /// and a send that is taken short ends a buffer in the frame's
+    /// middle. A frame that did not start a packet costs its receiver a
     /// copy and nothing else. The backend should have `TCP_NODELAY` on
     /// (`Io::no_delay`), or the kernel holds a frame's last packet back
     /// to join the next frame to it. A frame takes a send segment of its

@@ -84,14 +84,14 @@ fn every_send_is_a_packet_of_its_length() {
     assert_eq!(&lens[..3], &PACKETS);
 }
 
-/// A receive into the area never delivers a piece that runs from one
-/// packet into the next, and a packet's first piece starts a page,
-/// but for the one in eight that was joined to the packet before.
-#[test]
-fn pieces_are_cut_from_packets_and_a_packet_starts_a_page() {
+/// What `runs` seeds of three packets show, the sender's sends ending a
+/// buffer or not: packets that began, and how many of them a page.
+#[cfg(test)]
+fn starts_of_pages(ends: bool) -> (u32, u32) {
     let (mut starts, mut at_page_start) = (0, 0);
     for seed in 0..80 {
         let (mut io, mut out) = connected(seed);
+        io.end_sends(A, ends);
         send_all(&mut io, &mut out);
         let all: u32 = PACKETS.iter().sum();
         io.submit(
@@ -138,6 +138,15 @@ fn pieces_are_cut_from_packets_and_a_packet_starts_a_page() {
         }
         assert_eq!(at, all);
     }
+    (starts, at_page_start)
+}
+
+/// A receive into the area never delivers a piece that runs from one
+/// packet into the next, and a packet's first piece starts a page,
+/// but for the one in eight that was joined to the packet before.
+#[test]
+fn pieces_are_cut_from_packets_and_a_packet_starts_a_page() {
+    let (starts, at_page_start) = starts_of_pages(false);
     // 240 packets: about seven in eight start a page by being a packet,
     // and one in four of the rest by chance.
     assert!(
@@ -145,4 +154,11 @@ fn pieces_are_cut_from_packets_and_a_packet_starts_a_page() {
         "{at_page_start} of {starts}"
     );
     assert!(at_page_start < 240, "none was joined to the packet before");
+}
+
+/// When the sender's sends each end a buffer, no packet is joined to the
+/// one before: every one starts a page.
+#[test]
+fn a_packet_after_a_send_that_ended_a_buffer_always_starts_a_page() {
+    assert_eq!(starts_of_pages(true), (240, 240));
 }

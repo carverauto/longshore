@@ -248,14 +248,15 @@ impl Posix {
         range: core::ops::Range<usize>,
     ) -> Option<i32> {
         let idx = sock.0 as usize;
-        let fd = self.socks[idx].fd;
+        let (fd, eor) = (self.socks[idx].fd, self.socks[idx].eor);
         if fd < 0 {
             return Some(-errno::linux::EPIPE);
         }
+        let flags = MSG_SEND_FLAGS | if eor { MSG_EOR } else { 0 };
         let ptr: *const c_void = pool[range.clone()].as_ptr().cast();
         let len = range.len();
         loop {
-            let n = unsafe { send(fd, ptr, len, MSG_SEND_FLAGS) };
+            let n = unsafe { send(fd, ptr, len, flags) };
             if n >= 0 {
                 return Some(n as i32);
             }

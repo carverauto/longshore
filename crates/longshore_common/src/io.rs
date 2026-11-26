@@ -251,6 +251,12 @@ pub trait Io {
     /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected
     /// from now on. Ignored for UDP and Unix-domain sockets.
     fn no_delay(&mut self, _on: bool) {}
+    /// Mark every send on the connected TCP socket `sock` from now on as
+    /// the end of what goes into one of the kernel's buffers (`MSG_EOR`):
+    /// nothing later is joined to it, so the next send begins a packet of
+    /// its own. Until the socket is closed. A backend that cannot does
+    /// nothing; so does the kernel of macOS.
+    fn end_sends(&mut self, _sock: Sock, _on: bool) {}
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected
     /// from now on. Ignored for UDP and Unix-domain sockets.
     fn keep_alive(&mut self, _on: bool) {}

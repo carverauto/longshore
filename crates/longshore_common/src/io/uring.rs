@@ -184,6 +184,8 @@ pub struct UringIo {
     cq_full: bool,
     slots: Box<[Slot]>,
     sock_stream: Box<[bool]>,
+    /// Per socket slot: every send ends a buffer (`Io::end_sends`).
+    sock_eor: Box<[bool]>,
     /// Per socket slot: the peer's address, for a socket accepted with a
     /// single accept.
     sock_peer: Box<[Option<SocketAddr>]>,

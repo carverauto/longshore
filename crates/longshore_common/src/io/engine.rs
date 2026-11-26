@@ -75,6 +75,8 @@ pub trait World {
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
     /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected from now on.
     fn no_delay(&mut self, _on: bool) {}
+    /// Mark every send on `sock` as ending a buffer, as `Io::end_sends`.
+    fn end_sends(&mut self, _sock: Sock, _on: bool) {}
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected from now on.
     fn keep_alive(&mut self, _on: bool) {}
     /// The probe timing that goes with `keep_alive`.

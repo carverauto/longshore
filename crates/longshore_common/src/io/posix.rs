@@ -56,6 +56,8 @@ struct SockSlot {
     armed_write: bool,
     want_read: bool,
     want_write: bool,
+    /// Every send ends a buffer (`Io::end_sends`).
+    eor: bool,
 }
 
 impl SockSlot {
@@ -69,6 +71,7 @@ impl SockSlot {
             armed_write: false,
             want_read: false,
             want_write: false,
+            eor: false,
         }
     }
 
@@ -235,6 +238,12 @@ impl World for Posix {
             return None;
         }
         sock::peer_of(s.fd)
+    }
+
+    fn end_sends(&mut self, sock: Sock, on: bool) {
+        if let Some(slot) = self.socks.get_mut(sock.0 as usize) {
+            slot.eor = on;
+        }
     }
 
     fn no_delay(&mut self, on: bool) {

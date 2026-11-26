@@ -223,6 +223,7 @@ impl UringIo {
             cq_full: false,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
             sock_stream: vec![false; limits.sockets_max as usize].into_boxed_slice(),
+            sock_eor: vec![false; limits.sockets_max as usize].into_boxed_slice(),
             sock_peer: vec![None; limits.sockets_max as usize].into_boxed_slice(),
             in_flight: 0,
             quiet_ts: Box::new(timespec {

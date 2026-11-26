@@ -49,6 +49,11 @@ impl Io for UringIo {
         self.sock_peer[sock.0 as usize]
     }
 
+    fn end_sends(&mut self, sock: Sock, on: bool) {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.sock_eor[sock.0 as usize] = on;
+    }
+
     fn no_delay(&mut self, on: bool) {
         self.no_delay = on;
     }

@@ -198,7 +198,7 @@ impl Virtual {
             p.rx[(tail + k) % SOCK_BUF] = byte;
         }
         p.rx_len += n;
-        self.packets.sent(peer as u32, tail, n);
+        self.packets.sent((sock.0, peer as u32), tail, n);
         self.area.wake(peer as u32);
         Some(count_result(n))
     }

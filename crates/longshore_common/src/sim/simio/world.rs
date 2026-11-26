@@ -90,6 +90,10 @@ impl World for Virtual {
         self.no_delay = on;
     }
 
+    fn end_sends(&mut self, sock: Sock, on: bool) {
+        self.packets.end_sends(sock.0, on);
+    }
+
     fn keep_alive(&mut self, on: bool) {
         self.keep_alive = on;
     }

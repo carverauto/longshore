@@ -266,6 +266,11 @@ pub trait Transport {
     /// turn: a zero-copy receive with credit left may then stay silent
     /// though bytes wait for it, until it is stopped and started again.
     fn ring_was_full(&self, d: &Self::Driver) -> bool;
+    /// Mark every send on `slot` from now on as the end of one of the
+    /// kernel's buffers (`MSG_EOR`), so that the next send begins a packet
+    /// of its own; until the slot's connection ends. A transport that has
+    /// no such thing does nothing.
+    fn end_sends(&mut self, _d: &mut Self::Driver, _slot: u32) {}
     /// Stop the receive in flight on `slot`; it reports its end as usual.
     fn cancel_recv(&mut self, d: &mut Self::Driver, slot: u32) -> Result<(), Refused>;
     /// Return a ring buffer named in [`Happened::RingData`].

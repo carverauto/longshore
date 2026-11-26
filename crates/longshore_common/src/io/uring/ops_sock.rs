@@ -150,7 +150,12 @@ impl UringIo {
         let mut sqe = self.fixed(sock);
         sqe.addr = self.buf_ptr(buf, off, len);
         sqe.len = len;
-        sqe.op_flags = MSG_NOSIGNAL;
+        sqe.op_flags = MSG_NOSIGNAL
+            | if self.sock_eor[sock.0 as usize] {
+                MSG_EOR
+            } else {
+                0
+            };
         if zero_copy {
             sqe.opcode = IORING_OP_SEND_ZC;
             sqe.ioprio = IORING_RECVSEND_FIXED_BUF;
@@ -228,6 +233,7 @@ impl UringIo {
             }
         }
         self.sock_peer[sock.0 as usize] = None;
+        self.sock_eor[sock.0 as usize] = false;
         if core::mem::replace(&mut self.sock_stream[sock.0 as usize], false) {
             self.push(io_uring_sqe {
                 opcode: IORING_OP_SHUTDOWN,
