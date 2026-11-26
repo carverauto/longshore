@@ -87,10 +87,6 @@ pub trait World {
     }
     /// A tick begins.
     fn new_tick(&mut self) {}
-    /// Whether the world writes an [`Op::FileWriteSpans`].
-    fn gathers(&self) -> bool {
-        false
-    }
     /// Whether a receive found no room to report in since the tick began.
     fn ring_was_full(&self) -> bool {
         false

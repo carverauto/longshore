@@ -6,7 +6,7 @@
 //! `Io` trait implementation for `Engine<W>`.
 
 use super::*;
-use crate::io::{BufId, Busy, Io, EOPNOTSUPP};
+use crate::io::{BufId, Busy, Io};
 
 impl<W: World> Io for Engine<W> {
     fn now_ns(&self) -> u64 {
@@ -106,11 +106,7 @@ impl<W: World> Io for Engine<W> {
         }
         if op.is_file_op() {
             let pool = &self.bufs[self.pool_base..];
-            let gathers = self.world.gathers() || !matches!(op, Op::FileWriteSpans { .. });
-            let checked = self.files.check_op(&op, pool, &self.limits);
-            // A world that does not gather refuses what was a good list.
-            let refused = checked.and(if gathers { Ok(()) } else { Err(-EOPNOTSUPP) });
-            if let Err(errno) = refused {
+            if let Err(errno) = self.files.check_op(&op, pool, &self.limits) {
                 self.ready.push(Completion::new(token, errno));
                 return Ok(());
             }

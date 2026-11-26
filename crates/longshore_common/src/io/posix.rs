@@ -258,10 +258,6 @@ impl World for Posix {
         self.give_back_ring(id);
     }
 
-    fn gathers(&self) -> bool {
-        true
-    }
-
     fn waker(&mut self, woken: Arc<AtomicBool>) -> Option<Arc<dyn Wake>> {
         self.poller.waker(woken)
     }
