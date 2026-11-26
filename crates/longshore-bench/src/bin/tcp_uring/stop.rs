@@ -5,7 +5,9 @@
 
 //! When the peer of a benchmark run stops.
 
+use crate::die::die;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 /// When a peer stops: when told, or when as many connections have closed
 /// as the run has.
@@ -13,6 +15,9 @@ pub(crate) struct Stop {
     told: AtomicBool,
     closed: AtomicU32,
     closes: u32,
+    /// When a peer alone gives up: its load never came, came with other
+    /// options, or died on the way.
+    patience: Option<Instant>,
 }
 
 impl Stop {
@@ -23,6 +28,16 @@ impl Stop {
             told: AtomicBool::new(false),
             closed: AtomicU32::new(0),
             closes,
+            patience: None,
+        }
+    }
+
+    /// The same, and the run ends as failed if it has not stopped
+    /// `within` this long.
+    pub(super) fn after_within(closes: u32, within: Duration) -> Stop {
+        Stop {
+            patience: Some(Instant::now() + within),
+            ..Stop::after(closes)
         }
     }
 
@@ -32,6 +47,13 @@ impl Stop {
     }
 
     pub(crate) fn now(&self) -> bool {
+        if self.patience.is_some_and(|end| Instant::now() > end) {
+            let closed = self.closed.load(Ordering::Acquire);
+            die(format_args!(
+                "the load did not finish: {closed} of {} connections came and closed",
+                self.closes
+            ));
+        }
         self.told.load(Ordering::Acquire)
     }
 

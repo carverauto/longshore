@@ -31,7 +31,9 @@
 //!   --connect ADDR:PORT     be the load alone, against a peer elsewhere
 //!
 //! With `--listen` and `--connect` the two ends run on two machines, with
-//! the same options otherwise: the peer first. Each prints a line of its
+//! the same options otherwise: the peer first, and a peer for every run.
+//! A peer whose load has not come and gone a minute after the run's time
+//! ends as failed. Each prints a line of its
 //! own; the load's has no figures of the peer, and counts as carried what
 //! it sent.
 //!
@@ -166,6 +168,9 @@ impl Opts {
                 }
                 other => die(format_args!("unknown flag {other}")),
             }
+        }
+        if o.listen.is_some() && o.connect.is_some() {
+            die("--listen and --connect are two processes, not one");
         }
         if o.kind == Kind::Path && o.conns > 500 {
             // A replica is sent every source's block; its queue of sends
@@ -355,7 +360,9 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
     if let Some(at) = o.listen {
         let (mut side, addr) = listening(o, make(), at);
         eprintln!("tcp_uring: listening at {addr}");
-        let seen = serve(&mut side, &Stop::after(o.lines()), o);
+        // The load has a minute to start and to end beside its run.
+        let patience = Duration::from_secs(o.secs + 60);
+        let seen = serve(&mut side, &Stop::after_within(o.lines(), patience), o);
         return load::report_peer(o, &seen);
     }
     if let Some(addr) = o.connect {
