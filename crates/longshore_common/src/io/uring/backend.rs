@@ -413,6 +413,17 @@ impl UringIo {
     /// Checks an operation's arguments before it takes a submission entry;
     /// `Err` carries the errno it completes with at once.
     #[inline]
+    /// A zero-copy receive has a credit; the ring registers no receive
+    /// area yet, and refuses it.
+    fn refuse_recv_zc(&self, sock: Sock, credit: u32) -> Result<(), i32> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        assert!(
+            credit != 0,
+            "a zero-copy receive is never armed with a credit of 0"
+        );
+        Err(-ENOBUFS)
+    }
+
     fn precheck(&mut self, op: &Op) -> Result<(), i32> {
         if op.is_file_op() {
             let pool = &self.bufs[self.pool_base..];
@@ -438,15 +449,7 @@ impl UringIo {
                     return Err(-ENOBUFS);
                 }
             }
-            Op::ArmedRecvZc { sock, credit } => {
-                assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-                assert!(
-                    credit != 0,
-                    "a zero-copy receive is never armed with a credit of 0"
-                );
-                // The ring registers no receive area yet.
-                return Err(-ENOBUFS);
-            }
+            Op::ArmedRecvZc { sock, credit } => return self.refuse_recv_zc(sock, credit),
             Op::Shutdown { sock, .. } => {
                 assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
                 // The same answer as the other backends for a slot that
