@@ -40,22 +40,37 @@ default it concerns was called provisional until measured on a card.
 - A frame is lent in pages when it starts a packet and its packets carry
   whole pages; its last, partial block goes to a block of its own. Any
   other frame is moved once into frame memory and is then exactly what
-  direct mode gives. The mode is never worse than direct mode by more
-  than the difference between the kernel's copy and ours.
+  direct mode gives, at the cost of our copy in place of the kernel's,
+  more completions and a dearer queue's core.
+- The sending side of it: a connection can be asked to start every frame
+  on a packet of its own, header and body in one send
+  (`ConnOpts::with_frame_on_packet`). Frames on the wire are not padded,
+  so without it almost no frame starts a page and the mode gains
+  nothing; with it TCP may still cut or join packets, and such a frame
+  is moved.
 - Only whole pages are held past a turn, and the kernel holds the bound:
   a receive is armed with a byte credit for exactly the rest of a header
   or a frame, for which the connection already has a place.
-- Frames in pages are read through `Net::pages`, held by count like frame
-  memory, and written with a new vectored file write of the backend
-  (`Op::FileWriteSpans`). `Net::bytes` is `None` for them, and sending
-  one is refused: a caller that relays a frame calls `hold` first.
+- Frames in pages are read through `Net::pages`, held by the caller and,
+  by count, by file writes, and written with a new vectored file write
+  of the backend (`Op::FileWriteSpans`). `Net::bytes` is `None` for
+  them, and sending one is refused: a caller that relays a frame calls
+  `hold` first.
+- **BREAKING**: `Frame::span` returns an `Option<Span>`, `None` for a
+  frame in pages (it returns a `Span` today; `Frame::extent` is an
+  `Option` already and is `None` for such a frame too). A program that
+  does not use the mode takes what is always there.
 - `Limits` and `Sizes` gain the area, its queue, the page budget, the
-  runs and their tail blocks; all of it is allocated at build. The ring
-  is set up with 32-byte completions only when the mode is asked for.
+  runs and their tail blocks; all of it is allocated at build. A set
+  with pages for the mode needs a frame buffer for every connection it
+  can have, so the connections of the mode get a set of their own. The
+  ring is set up with 32-byte completions only when the mode is asked
+  for.
 - Refusal, not fallback: on a kernel, driver, privilege or card setting
   that cannot do it, `Builder::build` fails with an error naming what is
-  missing; TLS, Unix sockets and a shared port are refused with the mode
-  when a connection or listener is made. longshore does not configure
+  missing; TLS, Unix sockets, a shared port and a body asked for at a
+  block are refused with the mode when a connection or listener is
+  made. longshore does not configure
   the card; `docs/tcp.md` says what to set (header and data split, the
   queue kept out of RSS, the flow rule, the packet size).
 - Simulation: `SimIo` delivers the mode's receives as pieces of pages,
@@ -76,10 +91,13 @@ default it concerns was called provisional until measured on a card.
 
 ## Impact
 - Affected specs: `tcp-zero-copy-receive` (ADDED), `tcp-connections`
-  (ADDED: zero-copy sends over a card; a frame's body at a block)
+  (ADDED: zero-copy sends over a card; a frame's body at a block; where
+  a frame's bytes lie, by its kind)
 - Affected code: `longshore_common` (`io::uring` registration, refill ring,
-  `Op::ArmedRecvZc`, `Op::FileWriteSpans`, `Completion::off`; `sim`),
-  `longshore_tcp` (`Rx::ZeroCopy`, frames in pages, runs, the credit),
+  `Op::ArmedRecvZc`, `Op::FileWriteSpans`, `Completion::off`,
+  `Io::give_back_piece`; `sim`), `longshore_tcp` (`Rx::ZeroCopy`, frames
+  in pages, runs, the credit, a frame on a packet of its own when
+  sending, `Frame::span`),
   `longshore-bench` (`tcp_uring`), `docs/tcp.md`
 - Kernel: the ring backend keeps Linux 6.1. This mode's floor is 7.0, the
   kernel it was read from and run on, and it refuses below it.

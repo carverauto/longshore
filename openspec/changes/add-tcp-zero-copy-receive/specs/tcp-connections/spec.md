@@ -24,3 +24,18 @@ received.
 #### Scenario: Where it cannot be given
 - **WHEN** a connection is opened with the option in ring mode, or with frame memory that cannot hold the lead and the largest frame or is not whole blocks
 - **THEN** opening it fails
+
+### Requirement: Where a frame's bytes lie, by its kind
+A received frame SHALL say where its bytes lie only when they lie in one
+run of memory: a frame in frame memory or lent from the buffer ring SHALL
+give its span, and a frame lent in pages of a receive area SHALL give
+none and be read through its pages. Likewise a frame SHALL give its frame
+memory only when it is in frame memory.
+
+#### Scenario: A frame in frame memory
+- **WHEN** a frame received in direct mode is asked for its span and its frame memory
+- **THEN** it gives both, as before
+
+#### Scenario: A frame in pages
+- **WHEN** a frame lent in pages is asked for its span or its frame memory
+- **THEN** it gives neither, and its pages give its bytes in order
