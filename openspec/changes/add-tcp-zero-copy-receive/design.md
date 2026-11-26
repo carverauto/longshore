@@ -667,7 +667,7 @@ counters.
 | Room in the refill ring | Returns wait in the backend's queue; `tick` writes what fits and asks the kernel to take them (K6), repeating until the queue is empty | the same `tick` |
 | Room in the completion ring, nothing delivered in the call | The receive ends with `-ENOSPC` (K3) and is armed again on the next `poll` for the rest of its credit; `Usage::rearmed` (*new*) counts it | the next `poll` |
 | Room in the completion ring, part-way through a call | The receive stays armed and may be silent (K3, not settled); on a turn the backend found the ring full, the set cancels and arms again every receive of the mode with credit left (C5) | the cancel's end |
-| Free pages for the kernel's copy | The receive ends with `-ENOMEM` (K4) and is armed again on the next `poll`; `Usage::area_short` counts it; sixteen in a row with nothing delivered end the connection (C5) | the copy path's list has a page again (when: task 2.0), or the connection ends |
+| Free pages for the kernel's copy | The receive ends with `-ENOMEM` (K4); the backend flushes the refill ring, and the receive is armed again on the next `poll`; `Usage::area_short` counts it; sixteen in a row with nothing delivered end the connection (C5) | the copy path's list has a page again (when: task 2.0), or the connection ends |
 | Pages in the area | The card drops and TCP repairs (K7); kept from happening by C7 as far as the program can; seen in the card's counters | pages are returned, and some time after |
 
 ### C12 The simulator's model
