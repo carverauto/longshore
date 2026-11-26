@@ -18,6 +18,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[path = "net/accepting.rs"]
 mod accepting;
 #[cfg(test)]
+#[path = "net/alone.rs"]
+mod alone;
+#[cfg(test)]
 #[path = "net/ending.rs"]
 mod ending;
 #[cfg(test)]

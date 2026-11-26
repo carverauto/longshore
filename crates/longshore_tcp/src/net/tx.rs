@@ -6,7 +6,9 @@
 //! Sending: each connection has a queue of spans of registered memory.
 //!
 //! A frame the caller builds is written straight into a send segment;
-//! frames queued back to back share a segment and go out in one send. A
+//! frames queued back to back share a segment and go out in one send,
+//! unless the connection sends each frame alone
+//! (`ConnOpts::with_frame_on_packet`). A
 //! frame the caller already holds in frame memory is queued where it lies
 //! (`send_lent`), under one more hold. One send is unreported per
 //! connection; its memory stays until the transport reports the send
@@ -61,8 +63,13 @@ impl<T: Transport> Net<T> {
         }
         let c = &self.conns[slot as usize];
         // The last span can grow if it is a segment the transport is not
-        // sending from right now.
-        let last = c.tx_len.checked_sub(1).filter(|i| *i > 0 || !c.sending);
+        // sending from right now; not for a connection whose frames each
+        // go out as a send of their own.
+        let alone = c.opts.frame_on_packet;
+        let last = c
+            .tx_len
+            .checked_sub(1)
+            .filter(|i| !alone && (*i > 0 || !c.sending));
         let grow = last.map(|i| self.span_at(slot, i)).filter(|at| {
             let s = &self.spans[*at];
             matches!(s.keep, Keep::Segment(_)) && s.off + s.len + len <= size

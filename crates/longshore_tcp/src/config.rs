@@ -61,6 +61,7 @@ pub struct ConnOpts {
     pub(crate) idle_timeout_ns: u64,
     pub(crate) reconnect: Option<Reconnect>,
     pub(crate) half_close: bool,
+    pub(crate) frame_on_packet: bool,
 }
 
 impl ConnOpts {
@@ -77,6 +78,7 @@ impl ConnOpts {
             idle_timeout_ns: 0,
             reconnect: None,
             half_close: false,
+            frame_on_packet: false,
         }
     }
 
@@ -128,6 +130,30 @@ impl ConnOpts {
     #[must_use]
     pub const fn with_half_close(mut self, on: bool) -> ConnOpts {
         self.half_close = on;
+        self
+    }
+
+    /// Send every frame as a send of its own, begun only when the one
+    /// before it was taken whole: a frame is then not put into a segment
+    /// behind another, and its header and body go out together. This is
+    /// for a peer that receives into pages (`Rx::ZeroCopy`), which can
+    /// lend a frame where it lies only if the frame starts a packet.
+    ///
+    /// What it gives is a send a frame, in order, the next one following
+    /// when the transport has taken the last, not when the peer has
+    /// acknowledged it. What it cannot give is the packet: TCP joins the
+    /// first bytes of a send to an unsent packet that has room, joins
+    /// packets it sends again, and cuts a packet short when its window
+    /// says so. A frame that did not start a packet costs its receiver a
+    /// copy and nothing else. The backend should have `TCP_NODELAY` on
+    /// (`Io::no_delay`), or the kernel holds a frame's last packet back
+    /// to join the next frame to it. A frame takes a send segment of its
+    /// own, however short it is: size `Sizes::with_segments` for frames,
+    /// not for bytes. Under TLS it is a frame's records that go out
+    /// together, and nothing is said of packets.
+    #[must_use]
+    pub const fn with_frame_on_packet(mut self, on: bool) -> ConnOpts {
+        self.frame_on_packet = on;
         self
     }
 

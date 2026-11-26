@@ -181,6 +181,27 @@ machines, 64 KiB sends then carried about 1 GB/s where copied ones
 carried 6, and 5.6 to 6.1 with the default
 (`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`).
 
+A connection with `ConnOpts::with_frame_on_packet` sends every frame as
+a send of its own: a frame is not put into a segment behind another, and
+the next frame's send begins when the transport has taken the last
+frame whole, which for a zero-copy send is its first report, not the
+return of its memory. It is for a peer that receives into pages
+(`Rx::ZeroCopy`), which can lend a frame where it lies only when the
+frame starts a packet. A frame then takes a segment however short it is,
+so segments are counted in frames. What the option cannot give is the
+packet itself. TCP still does these to it:
+
+- it puts the first bytes of a send into an unsent packet that has room,
+  so a frame sent while bytes of the one before wait in the socket may
+  not start a packet;
+- with Nagle's algorithm it holds a short last packet back to do just
+  that: switch it off on the backend (`Io::no_delay(true)`);
+- it joins packets that it sends again, and cuts a packet short when the
+  peer's window or its own congestion state says so.
+
+A frame that did not start a packet is moved by its receiver once, as in
+direct mode; nothing else follows from it.
+
 ## TLS
 
 `Sizes::with_tls(true)` reserves two buffers of the segment size per

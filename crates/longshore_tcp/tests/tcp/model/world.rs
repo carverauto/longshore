@@ -182,6 +182,8 @@ pub(crate) fn opts_with(bits: u32, reconnect: bool, tls: bool) -> Result<(ConnOp
     let opts = ConnOpts::new(Framing::Header(framing))
         .with_rx(rx)
         .with_half_close(half_close)
+        // Half the connections send each frame as a send of its own.
+        .with_frame_on_packet(bits & 0x200 != 0)
         .with_idle_timeout_ns(idle)
         .with_reconnect(reconnect.then(|| Reconnect::new(1_000_000, 8_000_000, 100)))
         .with_connect_timeout_ns(50_000_000);
