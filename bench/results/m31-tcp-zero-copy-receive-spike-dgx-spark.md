@@ -189,6 +189,21 @@ move: about 0.012 CPU-seconds a GB, 6 % of the thread, and about 7 %
 more carried. Small, because the bytes are in the cache when they are
 moved; but it costs one offset.
 
+The same with `longshore_tcp` itself, once it had the option
+(`HeaderFraming::with_body_at_block`): `tcp_uring path --header 256
+--sync dsync --conns 64`, the log node on one Spark and its sources on
+the other, a 4 KiB body logged, sent to three replicas and answered
+(set `path` in the raw file; three runs each, in turn):
+
+| The body | Blocks a second | Node's CPU a block |
+|---|---|---|
+| `--body-at frame`: moved to a block, then written | 10,237, 11,816, 10,948 | 10.92, 11.16, 11.13 µs |
+| `--body-at block`: received at a block | 11,108, 10,813, 11,295 | 10.62, 10.16, 10.62 µs |
+
+About 5 % less CPU a block on the node (10.5 against 11.1 µs), in line
+with the 6 % of the test program. The rate does not move: it is the
+disk's, one durable write a block.
+
 ## Go
 
 The mode works on this card. It halves the CPU of receiving payload that

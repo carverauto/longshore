@@ -9,7 +9,7 @@ kernel's copy of every received byte into our buffer. The link itself is
 filled without bypass, by four to eight receiving cores of twenty, so what
 is left to win on these machines is those cores.
 
-io_uring zero-copy receive (`zcrx`, Linux 6.15 and later) removes that copy
+io_uring zero-copy receive (`zcrx`; Linux 7.0 for what this change uses) removes that copy
 and keeps the kernel's TCP: the card writes payload straight into memory
 the program registered, and the kernel processes only the headers. It is
 an addition to the ring backend, not a second TCP stack to write and
@@ -32,33 +32,36 @@ default it concerns was called provisional until measured on a card.
   quarters of it. Chunks are one page of 4 KiB; the driver grants nothing
   larger.
 - `Rx::ZeroCopy`, a third receive mode beside `Ring` and `Direct`, on the
-  ring backend only. Payload arrives in chunks of a memory area the
-  backend registers at build for one receive queue of one card.
-- A frame forwarded from where it lies. The largest saving is for
-  payload handed on unread, so a frame in chunks must be sendable without
-  a copy of ours: `send_lent` takes it as it takes a frame in frame
-  memory, by whichever of registering the area as fixed buffers or
-  sending its pieces the spike of task 3.5 shows to work.
-- Frames read in pieces. A frame that lies in one chunk is lent in place,
-  as in ring mode. A frame that spans chunks is lent as its pieces, in
-  order, with no copy (`Net::pieces`); a caller that needs it in one
-  block-aligned run (a direct-I/O write) calls `hold`, which moves it once
-  into frame memory, as today. `Net::bytes` keeps returning one slice and
-  is `None` for a frame in pieces.
-- Chunks are owned and accounted like ring buffers: lent with a frame,
-  returned to the kernel through the refill ring on `release`, and an area
-  with no free chunk stops the card's queue, not the program.
-- `Limits` and `Sizes` gain the area (chunks and their length) and the
-  queue it is for; all of it is allocated at build. The ring is set up
-  with 32-byte completions only when the mode is asked for.
+  ring backend, for plain TCP. It is direct mode with one difference: a
+  frame whose blocks arrive lying in whole pages of a receive area the
+  backend registers at build is lent as those pages, and goes to a
+  direct-I/O write without a copy. It is built for the frames a replica
+  logs as received (UltraGraphDB's stage 8).
+- A frame is lent in pages when it starts a packet and its packets carry
+  whole pages; its last, partial block goes to a block of its own. Any
+  other frame is moved once into frame memory and is then exactly what
+  direct mode gives. The mode is never worse than direct mode by more
+  than the difference between the kernel's copy and ours.
+- Only whole pages are held past a turn, and the kernel holds the bound:
+  a receive is armed with a byte credit for exactly the rest of a header
+  or a frame, for which the connection already has a place.
+- Frames in pages are read through `Net::pages`, held by count like frame
+  memory, and written with a new vectored file write of the backend
+  (`Op::FileWriteSpans`). `Net::bytes` is `None` for them, and sending
+  one is refused: a caller that relays a frame calls `hold` first.
+- `Limits` and `Sizes` gain the area, its queue, the page budget, the
+  runs and their tail blocks; all of it is allocated at build. The ring
+  is set up with 32-byte completions only when the mode is asked for.
 - Refusal, not fallback: on a kernel, driver, privilege or card setting
   that cannot do it, `Builder::build` fails with an error naming what is
-  missing. longshore does not configure the card; `docs/tcp.md` says what
-  to set (header and data split, the queue kept out of RSS, the flow rule
-  that steers the listener's port to it).
-- Simulation: `SimIo` delivers `Rx::ZeroCopy` receives in chunks of the
-  same area model, with seeded chunk boundaries and exhaustion, so the
-  model test and the conformance suite cover the mode on every host.
+  missing; TLS, Unix sockets and a shared port are refused with the mode
+  when a connection or listener is made. longshore does not configure
+  the card; `docs/tcp.md` says what to set (header and data split, the
+  queue kept out of RSS, the flow rule, the packet size).
+- Simulation: `SimIo` delivers the mode's receives as pieces of pages,
+  with seeded lengths, split pages, frames in and out of step, the
+  kernel's copy path and every shortage, so the model test and the
+  conformance suite cover the mode on every host.
 - The body at a block, in direct mode: header framing can ask for a
   frame's body, not its header, at a block boundary of its memory.
   UltraGraphDB's log takes a bulk load's body that way; measured, it
@@ -75,9 +78,10 @@ default it concerns was called provisional until measured on a card.
 - Affected specs: `tcp-zero-copy-receive` (ADDED), `tcp-connections`
   (ADDED: zero-copy sends over a card; a frame's body at a block)
 - Affected code: `longshore_common` (`io::uring` registration, refill ring,
-  `Op::ArmedRecvZc`; `sim`), `longshore_tcp` (`Rx::ZeroCopy`, pieces,
-  chunk accounting), `longshore-bench` (`tcp_uring`), `docs/tcp.md`
-- Kernel: the ring backend keeps Linux 6.1. This mode states its own floor
-  (6.15, and the driver's support) and refuses below it.
+  `Op::ArmedRecvZc`, `Op::FileWriteSpans`, `Completion::off`; `sim`),
+  `longshore_tcp` (`Rx::ZeroCopy`, frames in pages, runs, the credit),
+  `longshore-bench` (`tcp_uring`), `docs/tcp.md`
+- Kernel: the ring backend keeps Linux 6.1. This mode's floor is 7.0, the
+  kernel it was read from and run on, and it refuses below it.
 - Depends on `add-tcp-crate` and `add-tcp-simulation-and-benchmarks`.
   `add-tcp-af-xdp-backend` now depends on this change.
