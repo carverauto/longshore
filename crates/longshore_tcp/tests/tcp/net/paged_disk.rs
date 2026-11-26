@@ -21,7 +21,8 @@ const MINE: Token = Token::new(1 << 41);
 /// A world whose backend has a disk with room for one file.
 fn with_disk(seed: u64) -> World {
     let w = world(seed, Faults::NONE);
-    let limits = w.limits.with_files_max(1);
+    // One file, and one gathered write of a frame's pages in flight.
+    let limits = w.limits.with_files_max(1).with_gather(1, 64);
     let mut io = SimIo::new(limits, seed, Faults::NONE);
     io.setup_disk(
         DiskConfig::BASE
