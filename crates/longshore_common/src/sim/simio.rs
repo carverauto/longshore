@@ -23,6 +23,7 @@ pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
 mod ops;
 mod ops_armed;
 mod ops_net;
+mod packets;
 mod world;
 
 /// Fault probabilities, in parts per million, evaluated per attempt.
@@ -136,6 +137,8 @@ pub struct Virtual {
     pub(super) ring_in_free: Box<[bool]>,
     /// The receive area's pages and the pieces out of them.
     pub(super) area: area::Area,
+    /// Where the packets waiting in each socket begin.
+    pub(super) packets: packets::Packets,
     /// A receive found no room to report in, this tick.
     pub(super) ring_full: bool,
     pub(super) accept_start: u32,
@@ -186,6 +189,7 @@ impl Virtual {
             ring_free_len: ring_count,
             ring_in_free: vec![true; ring_count].into_boxed_slice(),
             area: area::Area::new(&limits, seed),
+            packets: packets::Packets::new(&limits),
             ring_full: false,
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
@@ -215,6 +219,7 @@ impl Virtual {
         self.ring_free_len = n;
         self.ring_in_free.fill(true);
         self.area.reset();
+        self.packets.reset();
         if let Some(disk) = self.disk.as_mut() {
             disk.power_loss(&mut self.rng);
         }
@@ -237,6 +242,13 @@ impl SimIo {
     /// the counters of the code it tests.
     pub fn pieces_out(&mut self) -> (usize, usize) {
         self.world_mut().area.out()
+    }
+
+    /// The lengths of the last stream packets sent, oldest first, into
+    /// `into` (at most 256 are kept): how many were written there, and how
+    /// many were ever sent. Every send on a stream socket is one packet.
+    pub fn last_packets(&mut self, into: &mut [u32]) -> (usize, u64) {
+        self.world_mut().packets.last(into)
     }
 
     /// Preallocate the virtual disk tables. Test setup, so it allocates once.

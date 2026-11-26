@@ -125,6 +125,10 @@ name = "sim_recv_zc"
 path = "tests/sim/recv_zc.rs"
 
 [[test]]
+name = "sim_packets"
+path = "tests/sim/packets.rs"
+
+[[test]]
 name = "sim_write_spans"
 path = "tests/sim/write_spans.rs"
 

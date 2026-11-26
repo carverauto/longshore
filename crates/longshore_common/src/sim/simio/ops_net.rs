@@ -198,6 +198,7 @@ impl Virtual {
             p.rx[(tail + k) % SOCK_BUF] = byte;
         }
         p.rx_len += n;
+        self.packets.sent(peer as u32, tail, n);
         self.area.wake(peer as u32);
         Some(count_result(n))
     }
@@ -279,6 +280,7 @@ impl Virtual {
         let s = sock.0 as usize;
         // The page it filled is no longer filled for it.
         self.area.leave(sock.0, true);
+        self.packets.forget(sock.0);
         if self.socks[s].state == SockState::Open {
             let peer = self.socks[s].peer as usize;
             // Only if the peer is still our peer: its slot may have

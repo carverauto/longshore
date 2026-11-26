@@ -307,6 +307,15 @@ impl Virtual {
         // A wait some steps long, and now and then much longer.
         let most = if self.rng.below(8) == 0 { 400 } else { 48 };
         let wait = STEP_NS * (16 + self.rng.below(most));
+        // A packet that begins here starts a page, unless, one time in
+        // eight, it was joined to the one before; no piece runs from one
+        // packet into the next.
+        let (head, waiting) = (
+            self.socks[sock.0 as usize].rx_head,
+            self.socks[sock.0 as usize].rx_len,
+        );
+        let (begins, within) = self.packets.ahead(sock.0, head, waiting);
+        let begun = begins && self.rng.below(8) != 0;
         let (page, off) = if self.rng.chance(self.faults.copied) {
             let Some(page) = self.area.copy_page(self.now, wait) else {
                 return Some(Attempt::single(-ENOMEM));
@@ -314,10 +323,13 @@ impl Virtual {
             (page, 0)
         } else {
             // One packet in four starts a page, whatever room the last left.
-            let fresh = self.rng.below(4) == 0;
+            let fresh = self.rng.below(4) == 0 || begun;
             self.area.place(sock.0, fresh, self.now, wait)?
         };
-        let mut n = (Limits::PAGE - off).min(credit).min(avail);
+        let mut n = (Limits::PAGE - off)
+            .min(credit)
+            .min(avail)
+            .min(within as u32);
         if self.rng.chance(self.faults.partial_recv) {
             n = 1 + self.rng.below(u64::from(n)) as u32;
         }
