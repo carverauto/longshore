@@ -296,7 +296,7 @@ pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
     };
     let (path_header, body_at) = (o.header, body_at(o));
     println!(
-        "{{\"cmd\":\"{cmd}\",\"sync\":\"{sync}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"path_header\":{path_header},\"body_at\":\"{body_at}\",\"ring\":{},\"zc_min\":{},\"zc_sends\":{},\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
+        "{{\"cmd\":\"{cmd}\",\"sync\":\"{sync}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"path_header\":{path_header},\"body_at\":\"{body_at}\",\"ring\":{},\"zc_min\":{},\"zc_sends\":{},\"frame_on_packet\":{},\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
         if o.epoll { "epoll" } else { "uring" },
         o.rx,
         if o.spin { "spin" } else { "sleep" },
@@ -304,6 +304,7 @@ pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
         o.ring,
         o.zc_min,
         o.zc_sends,
+        o.frame_on_packet,
         o.segment,
         count as f64 / secs,
         done.percentile(500),

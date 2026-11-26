@@ -32,6 +32,8 @@ pub(crate) struct Opts {
     pub(crate) zc_min: u32,
     /// Zero-copy sends a connection may have with their memory still out.
     pub(crate) zc_sends: u32,
+    /// Each frame a send of its own, with `TCP_NODELAY` on both ends.
+    pub(crate) frame_on_packet: bool,
     pub(crate) segment: u32,
     pub(crate) spin: bool,
     /// path: bytes of the header in front of a block, or zero for a
@@ -61,6 +63,7 @@ impl Opts {
             ring: 4096,
             zc_min: 16_384,
             zc_sends: 4,
+            frame_on_packet: false,
             segment: 65_536,
             spin: false,
             header: 0,
@@ -132,6 +135,7 @@ impl Opts {
                 "--ring" => o.ring = number().max(64),
                 "--zc-min" => o.zc_min = number(),
                 "--zc-sends" => o.zc_sends = number(),
+                "--frame-on-packet" => o.frame_on_packet = pick(&flag, &value, "off", "on"),
                 "--segment" => o.segment = number(),
                 "--wait" => o.spin = pick(&flag, &value, "sleep", "spin"),
                 "--sync" => o.dsync = pick(&flag, &value, "fsync", "dsync"),
@@ -231,7 +235,9 @@ impl Opts {
     }
 
     pub(crate) fn conn_opts(&self) -> ConnOpts {
-        ConnOpts::new(Framing::Header(self.framing(false))).with_rx(self.rx)
+        ConnOpts::new(Framing::Header(self.framing(false)))
+            .with_rx(self.rx)
+            .with_frame_on_packet(self.frame_on_packet)
     }
 
     /// The options of the peer's ends. A log node receives each block in

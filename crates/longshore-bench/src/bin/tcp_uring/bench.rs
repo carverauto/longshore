@@ -22,6 +22,8 @@
 //!   --zc-sends N            zero-copy sends a connection may have with their
 //!                           memory still out, 256 in all; 0: the next send
 //!                           waits for the last one's memory (4)
+//!   --frame-on-packet on|off  each frame a send of its own, TCP_NODELAY on
+//!                           (off)
 //!   --segment N             bytes a send segment (65536)
 //!   --wait sleep|spin       wait for completions, or turn without waiting
 //!   --sync fsync|dsync      path: sync after each write, or open the log
@@ -110,10 +112,17 @@ pub(crate) struct Side<IO: Io> {
 impl<IO: Io> Side<IO> {
     /// A side with room for a file and `files` file operations at once
     /// beside the set's own, if `files` is not zero.
-    fn new(make: impl FnOnce(Limits) -> IO, sizes: Sizes, spin: bool, files: u32) -> Side<IO> {
+    fn new(
+        make: impl FnOnce(Limits) -> IO,
+        sizes: Sizes,
+        (spin, no_delay): (bool, bool),
+        files: u32,
+    ) -> Side<IO> {
         let base = Limits::BASE.with_files_max(u32::from(files > 0));
         let (limits, config) = Config::plan(base, sizes).ok().or_die("plan");
-        let io = make(limits.with_ops_max(limits.ops_max() + 2 + files));
+        let mut io = make(limits.with_ops_max(limits.ops_max() + 2 + files));
+        // A frame on a packet of its own: no short packet held back.
+        io.no_delay(no_delay);
         let net = Net::new(KernelTransport::new(&config), config, &limits);
         Side {
             io,
@@ -190,7 +199,12 @@ fn listening<IO: Io>(
     at: SocketAddr,
 ) -> (Side<IO>, SocketAddr) {
     let files = if o.kind == Kind::Path { o.lines() } else { 0 };
-    let mut side = Side::new(make, o.sizes(0, o.lines()), o.spin, files);
+    let mut side = Side::new(
+        make,
+        o.sizes(0, o.lines()),
+        (o.spin, o.frame_on_packet),
+        files,
+    );
     // Every connection of the run is opened at once.
     let how = ListenConfig::new(o.peer_opts()).with_backlog(o.lines().max(128));
     let listener = side.net.listen(&mut side.io, at, how).ok().or_die("listen");
@@ -222,7 +236,12 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
         return load::report_peer(o, &seen);
     }
     if let Some(addr) = o.connect {
-        let mut side = Side::new(make(), o.sizes(o.lines(), 0), o.spin, 0);
+        let mut side = Side::new(
+            make(),
+            o.sizes(o.lines(), 0),
+            (o.spin, o.frame_on_packet),
+            0,
+        );
         let done = load::drive(&mut side, o, addr);
         return load::report(o, &done, &Peer::default());
     }
@@ -239,7 +258,12 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
         .recv_timeout(Duration::from_secs(10))
         .ok()
         .or_die("the peer");
-    let mut side = Side::new(make(), o.sizes(o.lines(), 0), o.spin, 0);
+    let mut side = Side::new(
+        make(),
+        o.sizes(o.lines(), 0),
+        (o.spin, o.frame_on_packet),
+        0,
+    );
     let done = load::drive(&mut side, o, addr);
     stop.tell();
     let seen = peer.join().ok().or_die("the peer thread");
