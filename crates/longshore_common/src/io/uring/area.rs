@@ -36,6 +36,34 @@ pub(super) struct Area {
     _region: Mapped,
 }
 
+extern "C" {
+    fn getpagesize() -> core::ffi::c_int;
+}
+
+/// Whether this kernel can take a receive area as the backend lays it out.
+fn can_register(ring: &mut Ring) -> io::Result<()> {
+    if !ring.has_op(IORING_OP_RECV_ZC)? {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this kernel has no io_uring zero-copy receive (IORING_OP_RECV_ZC, Linux 6.15; \
+             this backend is tested from 7.0)",
+        ));
+    }
+    // The kernel cuts an area into pages of its own size, and delivers no
+    // piece across one: the backend's pages are 4 KiB.
+    let size = unsafe { getpagesize() };
+    if u32::try_from(size).ok() != Some(Limits::PAGE) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "this kernel's pages are {size} bytes; a receive area is laid out in pages of {}",
+                Limits::PAGE
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// What an `EINVAL` was for, as far as the card says. A card that does not
 /// say may not split: the Sparks' does not report the setting while it is
 /// off.
@@ -112,13 +140,7 @@ impl Area {
         if limits.area_pages == 0 {
             return Ok(None);
         }
-        if !ring.has_op(IORING_OP_RECV_ZC)? {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "this kernel has no io_uring zero-copy receive (IORING_OP_RECV_ZC, Linux 6.15; \
-                 this backend is tested from 7.0)",
-            ));
-        }
+        can_register(ring)?;
         let entries = limits.area_returns();
         let page = Limits::PAGE as usize;
         let region_len =
