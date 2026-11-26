@@ -61,6 +61,10 @@ name = "io_posix_files"
 path = "tests/io/posix_files.rs"
 
 [[test]]
+name = "io_area_refused"
+path = "tests/io/area_refused.rs"
+
+[[test]]
 name = "guard_death"
 path = "tests/guard/death.rs"
 

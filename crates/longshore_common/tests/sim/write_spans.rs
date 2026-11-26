@@ -25,6 +25,7 @@ const LIMITS: Limits = Limits::BASE
     .with_aligned_buffer_size(4 * BLOCK)
     .with_area_pages(4)
     .with_files_max(1)
+    .with_gather(2, 8)
     .with_ops_max(8);
 const FILE: FileSlot = FileSlot::new(0);
 /// Buffer 0 holds the path, buffer 1 the list of spans.

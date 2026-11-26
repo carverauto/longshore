@@ -105,8 +105,7 @@ impl Posix {
                 len,
                 file_off,
             } => Some(self.file_write(slot, pool, limits.range(buf, off, len), file_off)),
-            // Refused when it was checked: this backend does not gather yet.
-            Op::FileWriteSpans { .. } => unreachable!("refused at submit"),
+            Op::FileWriteSpans { .. } => Some(self.file_write_spans(op, pool, limits)),
             Op::FileSync { slot, datasync } => Some(self.file_sync(slot, datasync)),
             Op::FileReserve {
                 slot,

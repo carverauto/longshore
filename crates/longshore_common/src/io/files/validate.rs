@@ -214,6 +214,10 @@ fn check_spans(
     len: u32,
     file_off: u64,
 ) -> Result<(), i32> {
+    if count > limits.gather_spans {
+        // More spans than a gathered write was given room for at build.
+        return Err(-EINVAL);
+    }
     let bytes = count.checked_mul(12).filter(|n| *n != 0).ok_or(-EINVAL)?;
     check_buf_range(limits, list, list_off, bytes)?;
     let at = limits.range(list, list_off, bytes).start;

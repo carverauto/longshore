@@ -26,6 +26,11 @@ pub struct Limits {
     pub(crate) ring_buffers: u32,
     pub(crate) ring_buffer_size: u32,
     pub(crate) area_pages: u32,
+    pub(crate) area_pieces: u32,
+    pub(crate) area_interface: u32,
+    pub(crate) area_queue: u32,
+    pub(crate) gather_ops: u32,
+    pub(crate) gather_spans: u32,
     pub(crate) ops_max: u32,
 }
 
@@ -47,12 +52,25 @@ impl Limits {
         ring_buffers: 0,
         ring_buffer_size: 0,
         area_pages: 0,
+        area_pieces: 0,
+        area_interface: 0,
+        area_queue: 0,
+        gather_ops: 0,
+        gather_spans: 0,
         ops_max: 0,
     };
 
     /// Bytes in a page of the receive area: what a network card that
     /// writes into it grants, and no other size.
     pub const PAGE: u32 = 4096;
+
+    /// The most pieces of the receive area that can be out at once: what
+    /// a kernel's ring of returns holds.
+    pub const AREA_PIECES_MOST: u32 = 32_768;
+
+    /// The most spans one gathered write can have: what a kernel takes in
+    /// one vector.
+    pub const GATHER_SPANS_MOST: u32 = 1024;
 
     /// Validate alignment, buffer-ring, and accept-range invariants.
     pub fn validate(&self) {
@@ -82,6 +100,18 @@ impl Limits {
                 "ring_buffer_size must be > 0 when ring_buffers > 0"
             );
         }
+        assert!(
+            self.area_pieces <= Self::AREA_PIECES_MOST,
+            "area_pieces must be <= 32_768"
+        );
+        assert!(
+            (self.gather_ops == 0) == (self.gather_spans == 0),
+            "gather_ops and gather_spans are both zero or neither"
+        );
+        assert!(
+            self.gather_spans <= Self::GATHER_SPANS_MOST,
+            "gather_spans must be <= 1024"
+        );
         if self.accept_range_len > 0 {
             assert!(
                 self.accept_range_start
@@ -104,6 +134,19 @@ impl Limits {
     /// First buffer id of the buffer-ring class.
     pub fn ring_base(&self) -> u32 {
         self.buffers + self.small_buffers + self.aligned_buffers
+    }
+
+    /// The pieces of the receive area a backend makes room to have
+    /// returned at once: [`Limits::area_pieces`], or, when that was left
+    /// at zero, a piece a page up to [`Limits::AREA_PIECES_MOST`]; a power
+    /// of two, as a kernel's ring of returns is.
+    pub fn area_returns(&self) -> u32 {
+        let asked = if self.area_pieces == 0 {
+            self.area_pages
+        } else {
+            self.area_pieces
+        };
+        asked.clamp(64, Self::AREA_PIECES_MOST).next_power_of_two()
     }
 
     /// First buffer id of the receive area's pages.

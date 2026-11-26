@@ -57,8 +57,10 @@ fn register_pool_ranges(
     bufs: &mut [u8],
     pool_base: usize,
 ) -> io::Result<Box<[u16]>> {
-    let count = limits.buffer_count() as usize;
-    let mut buf_range = vec![0u16; count].into_boxed_slice();
+    // The area's pages are the kernel's by their own registration, not
+    // fixed buffers: nothing reads or writes them as such.
+    let count = limits.area_base() as usize;
+    let mut buf_range = vec![0u16; limits.buffer_count() as usize].into_boxed_slice();
     if count == 0 {
         return Ok(buf_range);
     }
@@ -156,7 +158,30 @@ fn idle_slot() -> Slot {
         probe_fd: -1,
         ts: timespec::default(),
         wake_count: 0,
+        row: super::gather::NO_ROW,
     }
+}
+
+/// The ring `limits` asks for: entries of 32 bytes when there is an area.
+fn open_ring(limits: &Limits) -> io::Result<Ring> {
+    // Room for one SQE + one internal cancel SQE per operation, and `quiesce`'s two SQEs.
+    let entries = (limits.ops_max * 2 + 2).next_power_of_two().max(8);
+    // A piece is a completion: room for as many as can be out.
+    let (pieces, wide) = if limits.area_pages > 0 {
+        (limits.area_returns(), IORING_SETUP_CQE32)
+    } else {
+        (0, 0)
+    };
+    let cq_entries = cq_size(
+        entries,
+        limits.ops_max,
+        limits.ring_buffers.saturating_add(pieces),
+        limits.accept_range_len,
+    )?;
+    let flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_SUBMIT_ALL;
+    let ring = Ring::with_cq(entries, cq_entries, flags | wide)?;
+    check_features(ring.params().features)?;
+    Ok(ring)
 }
 
 impl UringIo {
@@ -164,20 +189,7 @@ impl UringIo {
     pub fn new(limits: Limits) -> io::Result<UringIo> {
         limits.validate();
         let table_len = check_nofile_limit(&limits)?;
-        // Room for one SQE + one internal cancel SQE per operation, and `quiesce`'s two SQEs.
-        let entries = (limits.ops_max * 2 + 2).next_power_of_two().max(8);
-        let cq_entries = cq_size(
-            entries,
-            limits.ops_max,
-            limits.ring_buffers,
-            limits.accept_range_len,
-        )?;
-        let mut ring = Ring::with_cq(
-            entries,
-            cq_entries,
-            IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_SUBMIT_ALL,
-        )?;
-        check_features(ring.params().features)?;
+        let mut ring = open_ring(&limits)?;
         let mut bufs = vec![0u8; limits.pool_bytes()].into_boxed_slice();
         let pool_base = limits.pool_base(bufs.as_ptr() as usize);
         let buf_range = register_pool_ranges(&mut ring, &limits, &mut bufs, pool_base)?;
@@ -196,6 +208,7 @@ impl UringIo {
             None
         };
         let ring_in_ring = vec![true; limits.ring_buffers as usize].into_boxed_slice();
+        let area = super::area::Area::register(&mut ring, &limits, &mut bufs, pool_base)?;
         let slot = idle_slot();
         Ok(UringIo {
             ring: ManuallyDrop::new(ring),
@@ -205,6 +218,9 @@ impl UringIo {
             buf_range,
             buf_ring,
             ring_in_ring,
+            area,
+            gather: super::gather::Gather::new(&limits),
+            cq_full: false,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
             sock_stream: vec![false; limits.sockets_max as usize].into_boxed_slice(),
             sock_peer: vec![None; limits.sockets_max as usize].into_boxed_slice(),

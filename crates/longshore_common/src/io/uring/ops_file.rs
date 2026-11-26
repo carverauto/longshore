@@ -34,8 +34,7 @@ impl UringIo {
                 len,
                 file_off,
             } => self.prep_file_rw(i, slot, IORING_OP_WRITE_FIXED, (buf, off, len), file_off),
-            // Refused when it was checked: the ring does not gather yet.
-            Op::FileWriteSpans { .. } => unreachable!("refused at submit"),
+            Op::FileWriteSpans { .. } => self.prep_file_write_spans(i, op),
             Op::FileSync { slot, datasync } => {
                 let mut sqe = self.slot_sqe(i, slot, IORING_OP_FSYNC);
                 sqe.op_flags = if datasync { IORING_FSYNC_DATASYNC } else { 0 };

@@ -18,11 +18,13 @@ use std::io;
 use std::net::{SocketAddr, TcpListener};
 use std::os::fd::IntoRawFd;
 
+mod area;
 mod backend;
 mod completions;
 mod completions_steps;
 #[cfg(feature = "fault-injection")]
 mod fault;
+mod gather;
 mod listen;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
@@ -51,6 +53,8 @@ enum State {
     ArmedAccept,
     /// Armed multishot receive in flight.
     ArmedRecv,
+    /// Armed zero-copy receive in flight.
+    ArmedRecvZc,
     /// Zero-copy send in flight (waiting for send result and/or notif).
     SendZc,
     /// A timer. Its normal expiry arrives as `-ETIME`.
@@ -108,6 +112,9 @@ struct Slot {
     ts: timespec,
     /// Where the kernel puts the eventfd's counter.
     wake_count: u64,
+    /// The row of the table of vectors a gathered write reads, or
+    /// [`gather::NO_ROW`].
+    row: u32,
 }
 
 pub(super) struct ReadyQueue {
@@ -169,6 +176,12 @@ pub struct UringIo {
     buf_range: Box<[u16]>,
     buf_ring: Option<BufRing>,
     ring_in_ring: Box<[bool]>,
+    /// The receive area registered with the kernel, if one was asked for.
+    area: Option<area::Area>,
+    /// The vectors of gathered writes.
+    gather: gather::Gather,
+    /// The completion queue was found full in this tick.
+    cq_full: bool,
     slots: Box<[Slot]>,
     sock_stream: Box<[bool]>,
     /// Per socket slot: the peer's address, for a socket accepted with a
@@ -251,6 +264,8 @@ impl UringIo {
         let _: &mut [u16] = Box::leak(core::mem::take(&mut self.buf_range));
         core::mem::forget(self.buf_ring.take());
         let _: &mut [bool] = Box::leak(core::mem::take(&mut self.ring_in_ring));
+        core::mem::forget(self.area.take());
+        let _: &mut [iovec] = Box::leak(core::mem::take(&mut self.gather.vectors));
         let _: &mut [(u32, Completion)] = Box::leak(core::mem::take(&mut self.ready.items));
         core::mem::forget(core::mem::take(&mut self.files));
     }

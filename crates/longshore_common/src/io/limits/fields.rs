@@ -186,6 +186,65 @@ impl Limits {
         self
     }
 
+    /// The most pieces of the receive area the caller has out at once:
+    /// what an [`crate::io::Op::ArmedRecvZc`] delivered and
+    /// [`crate::io::Io::give_back_piece`] has not returned. A backend
+    /// sizes its ring of returns and the queue behind it by this
+    /// ([`Limits::area_returns`]); a caller with more out still loses
+    /// nothing, the backend then asks the kernel to take returns at once.
+    /// At most [`Limits::AREA_PIECES_MOST`]; zero for a piece a page.
+    #[inline]
+    pub const fn area_pieces(self) -> u32 {
+        self.area_pieces
+    }
+
+    /// This value with [`Limits::area_pieces`] set to `area_pieces`.
+    #[inline]
+    pub const fn with_area_pieces(mut self, area_pieces: u32) -> Self {
+        self.area_pieces = area_pieces;
+        self
+    }
+
+    /// The network interface, by its index, and the receive queue of it
+    /// that a kernel backend registers the receive area for. The operator
+    /// steers the flows meant for the area to that queue and keeps every
+    /// other flow from it. Ignored by a backend without a kernel's area.
+    #[inline]
+    pub const fn area_queue(self) -> (u32, u32) {
+        (self.area_interface, self.area_queue)
+    }
+
+    /// This value with [`Limits::area_queue`] set to queue `queue` of the
+    /// interface with index `interface`.
+    #[inline]
+    pub const fn with_area_queue(mut self, interface: u32, queue: u32) -> Self {
+        (self.area_interface, self.area_queue) = (interface, queue);
+        self
+    }
+
+    /// How many gathered writes ([`crate::io::Op::FileWriteSpans`]) can be
+    /// in flight at once; one more is refused with `-ENOBUFS`. Zero when
+    /// none is ever submitted.
+    #[inline]
+    pub const fn gather_ops(self) -> u32 {
+        self.gather_ops
+    }
+
+    /// The most spans one gathered write has; a longer list is refused
+    /// with `-EINVAL`. At most [`Limits::GATHER_SPANS_MOST`].
+    #[inline]
+    pub const fn gather_spans(self) -> u32 {
+        self.gather_spans
+    }
+
+    /// This value with room for `ops` gathered writes in flight of up to
+    /// `spans` spans each.
+    #[inline]
+    pub const fn with_gather(mut self, ops: u32, spans: u32) -> Self {
+        (self.gather_ops, self.gather_spans) = (ops, spans);
+        self
+    }
+
     /// Size in bytes of each buffer-ring buffer. Must be `> 0` when
     /// `ring_buffers > 0`.
     #[inline]

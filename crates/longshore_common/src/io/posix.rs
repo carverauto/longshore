@@ -13,6 +13,7 @@ mod abi_macos;
 mod epoll;
 pub mod errno;
 mod files;
+mod gather;
 #[cfg(target_os = "macos")]
 mod kqueue;
 mod ops;
@@ -92,6 +93,8 @@ pub struct Posix {
     keep_timing: Option<crate::io::KeepAlive>,
     no_delay: bool,
     keep_alive: bool,
+    /// The vector of a gathered write.
+    gather: Box<[gather::Iov]>,
     #[cfg(feature = "fault-injection")]
     stale: [(Sock, bool); 64],
     #[cfg(feature = "fault-injection")]
@@ -118,29 +121,12 @@ impl Posix {
             keep_timing: None,
             no_delay: false,
             keep_alive: false,
+            gather: gather::vector(&limits),
             #[cfg(feature = "fault-injection")]
             stale: [(Sock(0), false); 64],
             #[cfg(feature = "fault-injection")]
             stale_len: 0,
         })
-    }
-}
-
-impl Drop for Posix {
-    fn drop(&mut self) {
-        for s in self.socks.iter_mut() {
-            if s.fd >= 0 {
-                self.poller.before_close(s);
-                let _: i32 = unsafe { close(s.fd) };
-                s.reset();
-            }
-        }
-        for fd in self.file_fds.iter_mut() {
-            if *fd >= 0 {
-                let _: i32 = unsafe { close(*fd) };
-                *fd = -1;
-            }
-        }
     }
 }
 
@@ -150,6 +136,13 @@ pub type PosixIo = Engine<Posix>;
 impl PosixIo {
     /// Allocate the buffer pool, socket table, and kernel poller (`kqueue`/`epoll`).
     pub fn new(limits: Limits) -> io::Result<PosixIo> {
+        if limits.area_pages() > 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the portable backend has no zero-copy receive: an area of pages \
+                 (Limits::area_pages) needs the io_uring backend on Linux",
+            ));
+        }
         Ok(Engine::with_world(limits, Posix::new(limits)?))
     }
 
@@ -254,6 +247,10 @@ impl World for Posix {
 
     fn give_back(&mut self, id: BufId) {
         self.give_back_ring(id);
+    }
+
+    fn gathers(&self) -> bool {
+        true
     }
 
     fn waker(&mut self, woken: Arc<AtomicBool>) -> Option<Arc<dyn Wake>> {

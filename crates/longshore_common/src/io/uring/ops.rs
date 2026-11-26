@@ -22,8 +22,7 @@ impl UringIo {
             Op::Accept { listener, sock } => self.prep_accept(i, listener, sock),
             Op::ArmedAccept { listener } => self.prep_armed_accept(i, listener),
             Op::ArmedRecv { sock } => self.prep_armed_recv(i, sock),
-            // Refused before it gets here, until the ring has an area.
-            Op::ArmedRecvZc { .. } => unreachable!("refused at submit"),
+            Op::ArmedRecvZc { sock, credit } => self.prep_armed_recv_zc(i, sock, credit),
             Op::Send {
                 sock,
                 buf,

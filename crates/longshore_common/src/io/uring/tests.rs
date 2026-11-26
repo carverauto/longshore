@@ -48,6 +48,11 @@ fn cqe_dispatch_uses_slot_state_before_cqe_more_flag() {
             read_buf: true,
         }
     );
+    // A zero-copy receive's pieces and its end both go to its own path,
+    // which reads where the bytes lie from the entry's second half.
+    for flags in [IORING_CQE_F_MORE, 0] {
+        assert_eq!(dispatch_cqe(State::ArmedRecvZc, flags), CqeDispatch::RecvZc);
+    }
 }
 
 #[test]

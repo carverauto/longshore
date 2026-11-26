@@ -134,6 +134,11 @@ impl UringIo {
         let s = &mut self.slots[i as usize];
         out.push(Completion::new(Token(s.token), result));
         s.state = State::Free;
+        let row = core::mem::replace(&mut s.row, super::gather::NO_ROW);
+        if row != super::gather::NO_ROW {
+            // A gathered write is done with its vectors.
+            self.gather.release(row);
+        }
         self.free.push(i);
     }
 
@@ -189,6 +194,7 @@ impl UringIo {
         let state = self.slots[i as usize].state;
         match dispatch_cqe(state, c.flags) {
             CqeDispatch::SendZc => self.on_send_zc_cqe(i, state, &c, out),
+            CqeDispatch::RecvZc => self.on_recv_zc_cqe(i, &c, out),
             CqeDispatch::Armed { more, read_buf } => self.on_armed_cqe(i, &c, more, read_buf, out),
             CqeDispatch::Single => self.on_single_cqe(i, state, &c, out),
         }
@@ -307,6 +313,7 @@ impl UringIo {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum CqeDispatch {
     SendZc,
+    RecvZc,
     Armed { more: bool, read_buf: bool },
     Single,
 }
@@ -314,6 +321,7 @@ pub(super) enum CqeDispatch {
 pub(super) fn dispatch_cqe(state: State, flags: u32) -> CqeDispatch {
     match state {
         State::SendZc | State::AwaitNotif | State::AwaitResult => CqeDispatch::SendZc,
+        State::ArmedRecvZc => CqeDispatch::RecvZc,
         State::ArmedAccept => CqeDispatch::Armed {
             more: flags & IORING_CQE_F_MORE != 0,
             read_buf: false,

@@ -13,8 +13,10 @@ use core::ffi::{c_int, c_long, c_uint, c_void};
 
 mod layout;
 mod sock;
+mod zcrx;
 pub use layout::*;
 pub use sock::*;
+pub use zcrx::*;
 
 /// System call number of `io_uring_setup`.
 pub const SYS_IO_URING_SETUP: c_long = 425;

@@ -37,6 +37,8 @@ pub use limits::Limits;
 pub use op::Op;
 #[cfg(unix)]
 pub mod posix;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod refill;
 pub mod scenario;
 pub mod segment;
 pub use segment::Segment;

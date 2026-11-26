@@ -67,6 +67,14 @@ impl Io for UringIo {
         self.return_ring_buf(ring_id as u16);
     }
 
+    fn give_back_piece(&mut self, page: BufId, off: u32, len: u32) {
+        self.return_piece(page, off, len);
+    }
+
+    fn ring_was_full(&self) -> bool {
+        self.cq_full
+    }
+
     fn waker(&mut self) -> Option<std::sync::Arc<dyn crate::io::Wake>> {
         if self.wake_fd < 0 {
             self.wake_fd = unsafe { eventfd(0, EFD_CLOEXEC) };
@@ -198,6 +206,7 @@ impl Io for UringIo {
         if core::mem::take(&mut self.fail_tick) {
             return Err(io::Error::other("injected: tick fails"));
         }
+        self.begin_tick();
         loop {
             while !out.is_full() {
                 let Some((slot_i, c)) = self.ready.pop() else {
@@ -222,6 +231,7 @@ impl Io for UringIo {
             let min_complete = if wait && out.is_empty() { 1 } else { 0 };
             let to_submit = self.ring.pending();
             let consumed = self.ring.enter(min_complete)?;
+            self.cq_full |= self.ring.cq_is_full();
             if consumed != to_submit {
                 return Err(io::Error::other(format!(
                     "io_uring_enter consumed {consumed} of {to_submit} queued submissions"
@@ -249,6 +259,7 @@ impl UringIo {
         s.sock_closed = false;
         s.cancel_requested = false;
         s.reports_taken = false;
+        s.row = super::gather::NO_ROW;
     }
 
     /// Keepalive `(idle, interval, count)` read from the most recent `listen` descriptor.
@@ -413,24 +424,13 @@ impl UringIo {
     /// Checks an operation's arguments before it takes a submission entry;
     /// `Err` carries the errno it completes with at once.
     #[inline]
-    /// A zero-copy receive has a credit; the ring registers no receive
-    /// area yet, and refuses it.
-    fn refuse_recv_zc(&self, sock: Sock, credit: u32) -> Result<(), i32> {
-        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-        assert!(
-            credit != 0,
-            "a zero-copy receive is never armed with a credit of 0"
-        );
-        Err(-ENOBUFS)
-    }
-
     fn precheck(&mut self, op: &Op) -> Result<(), i32> {
         if op.is_file_op() {
             let pool = &self.bufs[self.pool_base..];
             self.files_table.check_op(op, pool, &self.limits)?;
-            if matches!(op, Op::FileWriteSpans { .. }) {
-                // The ring does not gather yet.
-                return Err(-crate::io::EOPNOTSUPP);
+            if matches!(op, Op::FileWriteSpans { .. }) && !self.gather.has_row() {
+                // As many gathered writes in flight as were given room.
+                return Err(-ENOBUFS);
             }
         }
         match *op {
@@ -449,7 +449,7 @@ impl UringIo {
                     return Err(-ENOBUFS);
                 }
             }
-            Op::ArmedRecvZc { sock, credit } => return self.refuse_recv_zc(sock, credit),
+            Op::ArmedRecvZc { sock, credit } => self.precheck_recv_zc(sock, credit)?,
             Op::Shutdown { sock, .. } => {
                 assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
                 // The same answer as the other backends for a slot that
