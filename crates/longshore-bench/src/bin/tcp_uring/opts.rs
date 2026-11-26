@@ -260,6 +260,9 @@ impl Opts {
             .with_zero_copy_min(self.zc_min)
             .with_zero_copy_sends(self.zc_sends, if self.zc_sends == 0 { 0 } else { 256 })
             .with_zc(zc.0, zc.1, zc.2)
+            // What the card's ring and the sockets hold, which nothing counts:
+            // 64 MiB, as zc_uring's area, so that the area never runs dry.
+            .with_zc_spare(if zc.0 == 0 { 0 } else { 16_384 })
             .with_tls(self.tls.is_some())
     }
 

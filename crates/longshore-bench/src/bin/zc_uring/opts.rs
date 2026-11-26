@@ -79,8 +79,8 @@ pub(super) fn parse() -> Opts {
         frame: 65_536,
         pages: 16_384,
         file: None,
-        writes: 8,
-        spans: 64,
+        writes: 4,
+        spans: 256,
     };
     while let Some(flag) = args.next() {
         let value = args.next().or_die(&format!("{flag} needs a value"));

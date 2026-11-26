@@ -347,3 +347,70 @@ this:
   queue's core, not the thread alone.
 - A completion a page is a cost of its own, and this card grants nothing
   larger: the mode must take many completions a turn.
+
+## Through longshore (2026-11-26)
+
+The runs above used test programs; these are of `longshore` itself, on
+the same pair: `donbot` receiving on queue 19 of `enP2p1s0f0np0` on core
+19, `roberto` sending one connection of 64 KiB frames with `tcp_uring
+bulk --connect`. Raw lines at the end of the `.jsonl`, dated.
+
+**A frame on a packet, with `MSG_EOR`.** `tcp_uring --frame-on-packet`
+now marks every send of the connection as the end of one of the kernel's
+buffers (`Io::end_sends`). Share of frames whose header starts a page,
+`zccredit` (fixed: a header's length is read across pieces, so no frame
+is counted wrong for being cut inside its first four bytes; none was, in
+any run), 4,000 frames, three runs each:
+
+| MTU | Option off | Option on |
+|---|---|---|
+| 9000 | 1.2 to 2.7 % | 14.3 to 14.7 % |
+| 8244 | 89 to 98 % | 99.3 to 99.4 % |
+
+Through `longshore` the option comes to 99.3 % or more at MTU 8244,
+against 99.8 to 100 % from the test sender with `MSG_EOR`; without it
+the share is high but changes from run to run, as a short packet shifts
+every frame behind it.
+
+**The mode end to end.** `tcp_uring bulk --listen --rx zc --zc-queue
+enP2p1s0f0np0:19` (64 MiB of spare area) against `--rx direct`, MTU
+8244, three runs each (the second run with the option off was lost to a
+refused login):
+
+| Receive | Sender's option | GB/s | Thread, CPU-s a GB | Kept in pages |
+|---|---|---|---|---|
+| `ZeroCopy` | on | 6.06, 6.62, 6.43 | 0.108, 0.113, 0.113 | 99.0 to 99.6 % |
+| `ZeroCopy` | off | 4.65, 5.10 | 0.132, 0.120 | 67, 85 % |
+| `Direct` | on | 4.07, 3.98, 4.51 | 0.210, 0.209, 0.208 | (all moved) |
+
+With the sender's option the mode carries about 1.5 times direct mode's
+rate at about half its CPU a GB; a moved frame costs what direct mode
+does, so without the option it lies between. One connection: neither
+side was at the link (`zc_uring check` took 9.0 GB/s from the same
+sender at MTU 9000, 72 GB with no frame wrong). The CPU is the receiving
+thread's; the kernel's work on the queue's core is counted in group 5.
+
+**From pages to the disk, `zc_uring log`.** Earlier figures of this
+program (about five times the test program's CPU a GB, not recorded
+here) came from its own check, which read every byte of every frame to
+keep the first four; it now reads the four. MTU 8244, the sender's
+option on, direct I/O to ext4 on the NVMe disk:
+
+| Pages a write | Writes in flight | GB/s | Thread, CPU-s a GB |
+|---|---|---|---|
+| 64 | 8 | 1.40, 1.33, 1.31 | 0.087, 0.102, 0.108 |
+| 256 | 1 | 2.79 | 0.091 |
+| 256 | 4 | 4.12 | 0.092 |
+| 1,024 | 2 | 5.44 | 0.105 |
+
+The size of a write sets the rate, not the receive: with writes of
+4 MiB the log from pages carries 5.4 GB/s, past the test program's
+3.8 GB/s (one write of 1 MiB at a time), at 0.09 to 0.11 CPU-seconds a
+GB against its 0.066. The last three are one run each. `zc_uring` now
+writes 256 pages a write, four in flight, by default.
+
+**The refusals on the card.** A refused registration now says what the
+card reports of its split, asked over ethtool netlink: on for
+`enP2p1s0f0np0` with split on, not reported for `enp1s0f0np0`, where it
+is off (as `ethtool -g` shows `n/a`). A queue past the interface's last
+is refused with `EOPNOTSUPP`, not `EINVAL`.
