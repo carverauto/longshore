@@ -173,3 +173,18 @@ fn a_flush_asked_for_is_wanted_until_it_is_done() {
     refill.flushed();
     assert!(!refill.wants_flush());
 }
+
+#[test]
+fn unread_counts_what_the_kernel_has_not_read_yet() {
+    let mut kernel = Kernel::new();
+    let mut refill = kernel.refill(4);
+    assert_eq!(refill.unread(), 0);
+    for off in pages(0, 5) {
+        assert!(refill.give(off, 4096), "the queue was full");
+    }
+    assert_eq!(refill.unread(), 5);
+    kernel.take(3);
+    assert_eq!(refill.unread(), 2);
+    kernel.take(2);
+    assert_eq!(refill.unread(), 0);
+}
