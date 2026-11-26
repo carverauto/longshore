@@ -3,8 +3,10 @@
 // Licensed under the Apache License, Version 2.0 (the "License").
 // SPDX-License-Identifier: Apache-2.0
 
-// Throwaway spike: receive TCP streams with io_uring zero-copy receive and count.
-//   zcrecv IFACE QUEUE ADDR PORT CONNS [touch]
+// Throwaway spike: receive TCP streams on one ring and count, with io_uring
+// zero-copy receive or with the kernel's copy, reading every byte or none.
+//   zcrecv IFACE QUEUE ADDR PORT CONNS zc|copy read|count
+// Built with: gcc -O2 -Wall -o zcrecv zcrecv.c
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -30,9 +32,11 @@ struct rqe { uint64_t off; uint32_t len, pad; };
 static double now(clockid_t c) { struct timespec t; clock_gettime(c, &t); return t.tv_sec + t.tv_nsec / 1e9; }
 static void die(const char *w) { printf("%s: %s\n", w, strerror(errno)); exit(1); }
 int main(int argc, char **argv) {
-    if (argc < 6) return 2;
+    if (argc != 8) return 2;
     const char *ifn = argv[1]; unsigned q = atoi(argv[2]); int port = atoi(argv[4]); int conns = atoi(argv[5]);
-    int touch = argc > 6;
+    int zc = !strcmp(argv[6], "zc"), touch = !strcmp(argv[7], "read");
+    if ((!zc && strcmp(argv[6], "copy")) || (!touch && strcmp(argv[7], "count"))) return 2;
+    if (conns > 64) return 2;
     struct io_uring_params p; memset(&p, 0, sizeof p);
     p.cq_entries = 32768;
     p.flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_CQE32 | IORING_SETUP_CQSIZE;
@@ -53,7 +57,11 @@ int main(int argc, char **argv) {
     struct area_reg a = { .addr = (uint64_t)area, .len = alen };
     struct region r = { .user_addr = (uint64_t)rq, .size = rlen, .flags = 1 };
     struct ifq_reg reg = { .if_idx = if_nametoindex(ifn), .if_rxq = q, .rq_entries = rq_entries, .area_ptr = (uint64_t)&a, .region_ptr = (uint64_t)&r };
-    if (syscall(427, ring, 32, &reg, 1) < 0) die("register zcrx");
+    if (zc && syscall(427, ring, 32, &reg, 1) < 0) die("register zcrx");
+    /* The kernel's copy lands in a buffer a connection, as a program's would. */
+    size_t blen = 1u << 20; char *bufs = mmap(0, blen * 64, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
+    if (bufs == MAP_FAILED) die("buffers");
+    int fds[64];
     unsigned *rq_tail = (unsigned *)(rq + reg.offsets.tail); struct rqe *rqes = (struct rqe *)(rq + reg.offsets.rqes);
     unsigned rtail = 0, rmask = rq_entries - 1;
 
@@ -66,8 +74,9 @@ int main(int argc, char **argv) {
     for (int i = 0; i < conns; i++) {
         int fd = accept(ls, 0, 0); if (fd < 0) die("accept");
         struct io_uring_sqe *s = &sqes[stail & sq_mask]; memset(s, 0, sizeof *s);
-        s->opcode = OP_RECV_ZC; s->fd = fd; s->ioprio = IORING_RECV_MULTISHOT; s->user_data = fd;
-        s->file_index = reg.zcrx_id; /* zcrx_ifq_idx shares this union */
+        fds[i] = fd; s->fd = fd; s->user_data = i;
+        if (zc) { s->opcode = OP_RECV_ZC; s->ioprio = IORING_RECV_MULTISHOT; s->file_index = reg.zcrx_id; /* zcrx_ifq_idx shares this union */ }
+        else { s->opcode = IORING_OP_RECV; s->addr = (uint64_t)(bufs + i * blen); s->len = blen; }
         sq_arr[stail & sq_mask] = stail & sq_mask; stail++;
     }
     __atomic_store_n(sq_tail, stail, __ATOMIC_RELEASE);
@@ -81,6 +90,17 @@ int main(int argc, char **argv) {
         for (; head != tail; head++) {
             struct io_uring_cqe *c = (void *)(cqes + (size_t)(head & cq_mask) * 32);
             uint64_t off = *(uint64_t *)(c + 1);
+            if (!zc && c->res > 0) {
+                /* One receive done: count, read, ask for the next. */
+                if (!t0) { t0 = now(CLOCK_MONOTONIC); c0 = now(CLOCK_THREAD_CPUTIME_ID); }
+                char *b = bufs + c->user_data * blen;
+                bytes += c->res; cq_n++; if ((uint64_t)c->res > maxlen) maxlen = c->res;
+                if (touch) { int k = 0; for (; k + 8 <= c->res; k += 8) sum += *(uint64_t *)(b + k); for (; k < c->res; k++) sum += (unsigned char)b[k]; }
+                struct io_uring_sqe *s = &sqes[stail & sq_mask]; memset(s, 0, sizeof *s);
+                s->opcode = IORING_OP_RECV; s->fd = fds[c->user_data]; s->user_data = c->user_data; s->addr = (uint64_t)b; s->len = blen;
+                sq_arr[stail & sq_mask] = stail & sq_mask; stail++; submit++;
+                continue;
+            }
             if (c->res <= 0 && !(c->flags & IORING_CQE_F_MORE)) {
                 if (c->res < 0) printf("conn ended: %s\n", strerror(-c->res));
                 open--; continue;
@@ -88,15 +108,16 @@ int main(int argc, char **argv) {
             if (c->res <= 0) continue;
             if (!t0) { t0 = now(CLOCK_MONOTONIC); c0 = now(CLOCK_THREAD_CPUTIME_ID); }
             bytes += c->res; cq_n++; if ((uint64_t)c->res > maxlen) maxlen = c->res;
-            if (touch) { uint64_t *w = (uint64_t *)(area + (off & ~AREA_MASK)); for (int k = 0; k + 8 <= c->res; k += 8) sum += w[k / 8]; }
+            if (touch) { char *b = area + (off & ~AREA_MASK); int k = 0; for (; k + 8 <= c->res; k += 8) sum += *(uint64_t *)(b + k); for (; k < c->res; k++) sum += (unsigned char)b[k]; }
             struct rqe *e = &rqes[rtail & rmask];
             e->off = (off & ~AREA_MASK) | a.rq_area_token; e->len = c->res; rtail++;
         }
-        __atomic_store_n(rq_tail, rtail, __ATOMIC_RELEASE);
+        if (zc) __atomic_store_n(rq_tail, rtail, __ATOMIC_RELEASE);
+        __atomic_store_n(sq_tail, stail, __ATOMIC_RELEASE);
         __atomic_store_n(cq_head, head, __ATOMIC_RELEASE);
     }
     double secs = now(CLOCK_MONOTONIC) - t0, cpu = now(CLOCK_THREAD_CPUTIME_ID) - c0, gb = bytes / 1e9;
-    printf("{\"cmd\":\"zcrecv\",\"touch\":%d,\"conns\":%d,\"secs\":%.2f,\"gb_per_s\":%.3f,\"cpu\":%.2f,\"cpu_s_per_gb\":%.3f,\"completions\":%llu,\"mean_len\":%.0f,\"max_len\":%llu,\"enters\":%llu,\"sum\":%llu}\n",
-        touch, conns, secs, gb / secs, cpu, cpu / gb, (unsigned long long)cq_n, (double)bytes / cq_n, (unsigned long long)maxlen, (unsigned long long)enters, (unsigned long long)(sum & 0xff));
+    printf("{\"cmd\":\"zcrecv\",\"mode\":\"%s\",\"read\":%d,\"conns\":%d,\"secs\":%.2f,\"gb_per_s\":%.3f,\"cpu\":%.2f,\"cpu_s_per_gb\":%.3f,\"completions\":%llu,\"mean_len\":%.0f,\"max_len\":%llu,\"enters\":%llu,\"sum\":%llu}\n",
+        argv[6], touch, conns, secs, gb / secs, cpu, cpu / gb, (unsigned long long)cq_n, (double)bytes / cq_n, (unsigned long long)maxlen, (unsigned long long)enters, (unsigned long long)(sum & 0xff));
     return 0;
 }
