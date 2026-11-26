@@ -18,8 +18,7 @@ Cortex-X925 core, 5 seconds, one run each. Card queues, interrupt placement
 and coalescing were left as found.
 
 **What this can tell:** what one thread sends and receives over a real card
-with kernel TCP, and what that costs in CPU. **What it cannot:** the limit of
-the link (one thread a side never came near 200 Gb/s), or anything precise:
+with kernel TCP, and what that costs in CPU. **What it cannot:** anything precise:
 the wire runs were made once each on machines that do other work.
 
 ## What it shows
@@ -53,10 +52,40 @@ the wire runs were made once each on machines that do other work.
   pinned and the machine has slow cores and a system-call monitor; which of
   these it is was not measured. The wire runs, pinned, are the ones to read.
 
+## Several receiving threads
+
+As many receiving processes as the row says on one machine, each on a
+Cortex-X925 core of its own, each with a sender of its own on the other:
+`bulk --conns 4 --frame 1048576 --segment 1048576 --rx direct`, 5 seconds,
+one run each. The lines are in the raw file with `cmd` `peer`, `receivers`
+and `links`. A Spark shows its 200 Gb/s port as two interfaces
+(`enp1s0f0np0` and `enP2p1s0f0np0`); "both" spreads the pairs over the two.
+
+| Receivers | Interfaces | Total | Each receiver's core |
+|---|---|---|---|
+| 1 | first | 5.4 GB/s (43 Gb/s) | 88 % |
+| 2 | first | 10.9 GB/s (88 Gb/s) | 99 % |
+| 4 | first | 13.8 GB/s (111 Gb/s) | 75 % |
+| 8 | first | 13.8 GB/s (110 Gb/s) | 51 % |
+| 4 | second | 13.8 GB/s (110 Gb/s) | 58 % |
+| 2 | both | 14.5 GB/s (116 Gb/s) | 98 % |
+| 4 | both | 22.4 GB/s (179 Gb/s) | 96 % |
+| 8 | both | 24.7 GB/s (198 Gb/s) | 77 % |
+| 10 | both | 24.7 GB/s (198 Gb/s) | 67 % |
+
+- **Receiving scales with cores until the interface is full.** One interface
+  carries about 110 Gb/s whatever the number of receivers; the two together
+  carry 198 Gb/s, the link. Kernel TCP fills the link with four to eight
+  receiving cores, and the senders at 7 to 21 % of a core each.
+- **A receiver's core is the limit below that**: two receivers, one an
+  interface, are full at 7.3 GB/s each (0.136 CPU-seconds a GB).
+
 ## What it means for kernel bypass
 
-Receive is where the CPU goes: one core takes a quarter of the link, and
-sending the same bytes costs a sixth of it. Both ways around the kernel's
+Receive is where the CPU goes: a core takes 43 to 58 Gb/s, and sending the
+same bytes costs a sixth of it. The link itself is filled without bypass,
+so on these machines bypass can only save receiving cores (four to eight
+of twenty at the full link), not carry more. Both ways around the kernel's
 receive copy are in this kernel (`CONFIG_XDP_SOCKETS`,
 `CONFIG_IO_URING_ZCRX`), and the card's header and data split
 (`rx-gro-hw`) can be turned on. Neither was measured: longshore has no
@@ -67,5 +96,5 @@ code for either yet.
 - Zero-copy sends: either raise the default segment for bulk senders, or
   let a connection have more zero-copy sends in flight, and find where the
   notification waits.
-- Repeat the wire runs with several receiving threads and with interrupts
-  placed, to reach the link's limit.
+- Why one interface stops at about 110 Gb/s was not looked into; it is
+  taken to be half the port.
