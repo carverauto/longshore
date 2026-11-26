@@ -67,6 +67,25 @@ What the program cannot show: that payload really came without a copy. It
 relies on the flow rule above; a flow on another queue is, as far as the
 kernel's documentation says, delivered by copying.
 
+## An empty area
+
+`zcrecv ... zc stall`: after a second the program returns no chunk until
+nothing has arrived for a second, then returns everything and goes on.
+One run, eight seconds, the same sender.
+
+| | |
+|---|---|
+| Completions held when nothing more came | 72,750, on an area of 65,536 chunks |
+| Dropped at the card meanwhile | 365 `rx_out_of_buffer`, 64 `rx19_buff_alloc_err` |
+| Segments the sender sent again | 377 |
+| From returning every chunk to the next byte | 5.4 seconds |
+| Bytes received against bytes sent | 14.461 GB of 14.473 GB (the 12 frames short are the sender's, queued when it closed) |
+| Most entries the refill ring ever held, in the other runs | 1,219 of 32,768 |
+
+So a chunk backs more than one completion, an empty area makes the card
+drop packets and TCP repair it, and the repair takes seconds. The mode
+must stop receiving before the area is empty; `design.md` says how.
+
 ## Go
 
 The mode works on this card. It halves the CPU of receiving payload that

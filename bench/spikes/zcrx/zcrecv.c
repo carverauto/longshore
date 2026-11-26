@@ -5,7 +5,9 @@
 
 // Throwaway spike: receive TCP streams on one ring and count, with io_uring
 // zero-copy receive or with the kernel's copy, reading every byte or none.
-//   zcrecv IFACE QUEUE ADDR PORT CONNS zc|copy read|count
+//   zcrecv IFACE QUEUE ADDR PORT CONNS zc|copy read|count|stall
+// stall (zc only): after a second, return no chunk until nothing arrives for a
+// second, then return them all and go on. Shows what an empty area does.
 // Built with: gcc -O2 -Wall -o zcrecv zcrecv.c
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -34,8 +36,8 @@ static void die(const char *w) { printf("%s: %s\n", w, strerror(errno)); exit(1)
 int main(int argc, char **argv) {
     if (argc != 8) return 2;
     const char *ifn = argv[1]; unsigned q = atoi(argv[2]); int port = atoi(argv[4]); int conns = atoi(argv[5]);
-    int zc = !strcmp(argv[6], "zc"), touch = !strcmp(argv[7], "read");
-    if ((!zc && strcmp(argv[6], "copy")) || (!touch && strcmp(argv[7], "count"))) return 2;
+    int zc = !strcmp(argv[6], "zc"), touch = !strcmp(argv[7], "read"), stall = !strcmp(argv[7], "stall");
+    if ((!zc && strcmp(argv[6], "copy")) || (!touch && !stall && strcmp(argv[7], "count")) || (stall && !zc)) return 2;
     if (conns > 64) return 2;
     struct io_uring_params p; memset(&p, 0, sizeof p);
     p.cq_entries = 32768;
@@ -63,7 +65,12 @@ int main(int argc, char **argv) {
     if (bufs == MAP_FAILED) die("buffers");
     int fds[64];
     unsigned *rq_tail = (unsigned *)(rq + reg.offsets.tail); struct rqe *rqes = (struct rqe *)(rq + reg.offsets.rqes);
-    unsigned rtail = 0, rmask = rq_entries - 1;
+    unsigned *rq_head = (unsigned *)(rq + reg.offsets.head);
+    unsigned rtail = 0, rmask = rq_entries - 1, max_pending = 0;
+    /* stall: what was kept back, and where the run is. */
+    enum { HELD = 1 << 20 }; struct rqe *held = stall ? calloc(HELD, sizeof *held) : 0; unsigned nheld = 0, given = 0;
+    int phase = 0; double last = 0, stalled_at = 0, resumed_at = 0; uint64_t bytes_at_stall = 0; unsigned held_at_stall = 0;
+    struct { uint32_t zcrx_id, op; uint64_t resv[2], body[6]; } flush = { .zcrx_id = reg.zcrx_id };
 
     int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1;
     setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
@@ -83,7 +90,7 @@ int main(int argc, char **argv) {
     unsigned submit = conns; int open = conns;
     uint64_t bytes = 0, cq_n = 0, sum = 0, maxlen = 0, enters = 0; double t0 = 0, c0 = 0;
     while (open > 0) {
-        long rc = syscall(426, ring, submit, 1, IORING_ENTER_GETEVENTS, 0, 0);
+        long rc = syscall(426, ring, submit, (phase == 1 || phase == 2) ? 0 : 1, IORING_ENTER_GETEVENTS, 0, 0);
         if (rc < 0 && errno != EINTR) die("enter");
         submit = 0; enters++;
         unsigned head = *cq_head, tail = __atomic_load_n(cq_tail, __ATOMIC_ACQUIRE);
@@ -109,15 +116,32 @@ int main(int argc, char **argv) {
             if (!t0) { t0 = now(CLOCK_MONOTONIC); c0 = now(CLOCK_THREAD_CPUTIME_ID); }
             bytes += c->res; cq_n++; if ((uint64_t)c->res > maxlen) maxlen = c->res;
             if (touch) { char *b = area + (off & ~AREA_MASK); int k = 0; for (; k + 8 <= c->res; k += 8) sum += *(uint64_t *)(b + k); for (; k < c->res; k++) sum += (unsigned char)b[k]; }
+            last = now(CLOCK_MONOTONIC);
+            if (phase == 0 && stall && last - t0 > 1.0) phase = 1;
+            if (phase == 3 && !resumed_at) resumed_at = last;
+            if (phase == 1 && nheld < HELD) { held[nheld].off = (off & ~AREA_MASK) | a.rq_area_token; held[nheld++].len = c->res; continue; }
             struct rqe *e = &rqes[rtail & rmask];
             e->off = (off & ~AREA_MASK) | a.rq_area_token; e->len = c->res; rtail++;
         }
+        if (phase == 1 && now(CLOCK_MONOTONIC) - last > 1.0) {
+            phase = 2; stalled_at = last; bytes_at_stall = bytes; held_at_stall = nheld;
+        }
+        if (phase == 2) {
+            /* No more in the ring than it has entries; the kernel is asked to take them. */
+            while (given < nheld && rtail - __atomic_load_n(rq_head, __ATOMIC_ACQUIRE) < rq_entries) rqes[rtail++ & rmask] = held[given++];
+            __atomic_store_n(rq_tail, rtail, __ATOMIC_RELEASE);
+            if (syscall(427, ring, 36, &flush, 0) < 0) die("flush");
+            if (given == nheld) phase = 3;
+        }
+        if (zc) { unsigned pending = rtail - __atomic_load_n(rq_head, __ATOMIC_ACQUIRE); if (pending > max_pending) max_pending = pending; }
         if (zc) __atomic_store_n(rq_tail, rtail, __ATOMIC_RELEASE);
         __atomic_store_n(sq_tail, stail, __ATOMIC_RELEASE);
         __atomic_store_n(cq_head, head, __ATOMIC_RELEASE);
     }
     double secs = now(CLOCK_MONOTONIC) - t0, cpu = now(CLOCK_THREAD_CPUTIME_ID) - c0, gb = bytes / 1e9;
-    printf("{\"cmd\":\"zcrecv\",\"mode\":\"%s\",\"read\":%d,\"conns\":%d,\"secs\":%.2f,\"gb_per_s\":%.3f,\"cpu\":%.2f,\"cpu_s_per_gb\":%.3f,\"completions\":%llu,\"mean_len\":%.0f,\"max_len\":%llu,\"enters\":%llu,\"sum\":%llu}\n",
-        argv[6], touch, conns, secs, gb / secs, cpu, cpu / gb, (unsigned long long)cq_n, (double)bytes / cq_n, (unsigned long long)maxlen, (unsigned long long)enters, (unsigned long long)(sum & 0xff));
+    printf("{\"cmd\":\"zcrecv\",\"mode\":\"%s\",\"read\":%d,\"conns\":%d,\"secs\":%.2f,\"gb_per_s\":%.3f,\"cpu\":%.2f,\"cpu_s_per_gb\":%.3f,\"completions\":%llu,\"mean_len\":%.0f,\"max_len\":%llu,\"enters\":%llu,\"max_pending_returns\":%u,\"sum\":%llu}\n",
+        argv[6], touch, conns, secs, gb / secs, cpu, cpu / gb, (unsigned long long)cq_n, (double)bytes / cq_n, (unsigned long long)maxlen, (unsigned long long)enters, max_pending, (unsigned long long)(sum & 0xff));
+    if (stall) printf("{\"cmd\":\"zcstall\",\"area_chunks\":%zu,\"held_completions\":%u,\"bytes_before_stall\":%llu,\"secs_to_resume\":%.3f,\"bytes_total\":%llu,\"phase\":%d}\n",
+        alen / 4096, held_at_stall, (unsigned long long)bytes_at_stall, resumed_at - stalled_at - 1.0 > 0 ? resumed_at - stalled_at - 1.0 : 0.0, (unsigned long long)bytes, phase);
     return 0;
 }

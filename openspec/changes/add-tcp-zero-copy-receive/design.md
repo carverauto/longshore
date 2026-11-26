@@ -59,18 +59,13 @@ into chunks of the page size unless a larger length is asked and granted.
   through that queue: the operator steers the listener's port (or the
   thread's address) to it. With the Spark's two interfaces a thread
   serves one of them.
-- **Accounting as one structure**, as for chunks of the buffer ring: every
-  chunk is in exactly one of kernel, lent with a frame, or queued for
-  refill; checked after every step of the model test.
-- **Exhaustion.** No free chunk: the card has nowhere to put payload for
-  that queue. Nothing is lost for the program: the stream continues in
-  order once frames are released. How the kernel gets there (a closed
-  window, or packets dropped at the card and sent again, which would
-  stall every flow of the queue) is not known and is established in
-  task 2.1 before the exhaustion rows are written. The refill ring is
-  sized for the worst case of returns outstanding, which is also
-  established there: a page can back more than one completion, so the
-  number of chunks is not the bound it was taken for.
+- **Accounting as one structure**, by piece, not by chunk (see "What the
+  kernel does" and the tables below); checked after every step of the
+  model test.
+- **Exhaustion is answered before the area is empty.** An empty area
+  costs seconds (below), so the mode never relies on it: the pieces a
+  backend may have out are bounded at build, receiving stops at that
+  bound, and the area is sized so that the bound is reached first.
 - **TLS.** Records are opened from pieces into frame memory, as from ring
   buffers today; the mode saves the kernel's copy, not the decryption's.
 - **Zero-copy sends.** The measured case fits sixteen sends in flight a
@@ -79,6 +74,116 @@ into chunks of the page size unless a larger length is asked and granted.
   candidates are a larger default segment for bulk senders and counting a
   zero-copy send as done for the queue when its first completion comes,
   holding only its memory until the notification.
+
+## What the kernel does (Linux 7.0, `io_uring/zcrx.c`, and a run)
+Read from the source of the kernel the Sparks run, and checked by the
+`stall` run of `bench/spikes/zcrx/zcrecv.c` (milestone 31).
+
+- **K1 A reference a completion, not a chunk.** Every completion takes one
+  user reference on the chunk its bytes lie in, and one entry in the
+  refill ring gives one back. A chunk can back several completions (the
+  run held 72,750 completions on an area of 65,536 chunks). An entry for
+  a chunk with no reference is ignored; one entry too many for a chunk
+  that still has a reference takes away another completion's.
+- **K2 The refill ring is bounded and read lazily.** At most 32,768
+  entries; the kernel takes up to 64 when the card's pool wants pages and
+  reads no more than the ring's size, so entries written past a full ring
+  are lost. `IORING_REGISTER_ZCRX_CTRL` with `ZCRX_CTRL_FLUSH_RQ` makes it
+  take them all, in one system call. In the runs the ring never held more
+  than 1,219.
+- **K3 An empty area drops packets.** The pool hands the card nothing, the
+  card drops (365 `rx_out_of_buffer`, 64 `buff_alloc_err` in the run),
+  TCP sends again (377 segments). The stream stayed whole and in order,
+  but after every chunk was returned it took 5.4 seconds to carry data
+  again, and every flow of the queue waits with it. Bytes waiting in a
+  socket's receive queue lie in chunks too.
+- **K4 Copying behind the same face.** Payload that did not arrive in the
+  area (a flow on another queue, bytes in a packet's header part) is
+  copied by the kernel into a free chunk and completed like any other. A
+  program cannot tell; with no free chunk the receive ends with `ENOMEM`.
+- **K5 A full completion ring** makes the kernel try the receive again
+  later; nothing is dropped.
+- **K6 TCP only** (`EPROTONOSUPPORT` otherwise), `CAP_NET_ADMIN` to
+  register (`EPERM`), deferred task work and 32-byte or mixed completions
+  (`EINVAL`), header and data split on the card (`EINVAL`), chunk lengths
+  above a page refused by this driver (`EOPNOTSUPP`).
+- **K7 Dropping the ring** takes every chunk back, whoever holds it.
+
+## A piece and its chunk
+A **piece** is what one completion delivers: a run of bytes in one chunk.
+The backend keeps a table of pieces out, sized at build (`pieces_max`).
+
+| Where a piece is | Who may read it | Leaves by |
+|---|---|---|
+| Delivered: in a connection's input, not yet a frame | the set | becoming part of a frame; the connection closing (returned) |
+| Lent: part of a frame the caller holds | the caller, through `pieces` or `bytes` | `release` (returned); `hold` (moved once, then returned) |
+| Sending: part of a frame being sent on | the kernel | the send's last completion (returned) |
+| Returned, waiting: in the backend's own queue of returns | nobody | room in the refill ring |
+| Returned: in the refill ring | nobody | the kernel taking it |
+
+A chunk is with the kernel while no piece of it is in the first three
+rows. The simulator fills a chunk with a marker when its last piece is
+returned, so a read after return is seen.
+
+## A queue's registration
+| State | Entered | Left |
+|---|---|---|
+| None | a backend built without the mode | never |
+| Registered | at build; refusals are build errors (K6) | the backend dropped (K7) |
+| Lost | the operator reconfigures or takes down the interface | never: armed receives of the mode end with an error and their connections close with `Closed { why: Io }`; nothing registers again at run time |
+
+Whether the kernel tells a ring that its registration was taken away, and
+how, is established in task 3.1 before `Lost` is implemented.
+
+## Invariants
+Checked after every step of the model test, on the simulator's area.
+
+- **Z1 Once.** Every piece delivered is returned exactly once. (K1: a
+  second return would free memory another piece is read through.)
+- **Z2 Not after.** No byte of a piece is read after its return.
+- **Z3 In order.** A connection's pieces are consumed in the order
+  delivered; a frame's pieces are consecutive pieces of one connection.
+- **Z4 Bounded out.** Pieces in the first three rows never exceed
+  `pieces_max`.
+- **Z5 Bounded ring.** The refill ring never holds more entries than it
+  has; what does not fit waits in the backend's queue, which has
+  `pieces_max` places and so cannot be full.
+- **Z6 Nothing kept at rest.** With every frame released and every
+  connection closed, no piece is out and both queues of returns drain.
+- **Z7 After close.** Frames of a closed connection stay readable until
+  released; their pieces are returned then.
+- **Z8 One move.** `hold` copies a frame's bytes once into frame memory
+  and returns its pieces; nothing else in the mode copies payload.
+- **Z9 At build.** The area, the refill ring, the piece table and the
+  queue of returns are allocated at build; nothing afterwards.
+- **Z10 The same events.** The mode changes no state, event or their
+  order against ring mode for the same bytes.
+
+## What runs out, and what then
+| Runs out | What happens | Ends when |
+|---|---|---|
+| Places in the piece table (`pieces_max`) | The set cancels its armed receives of the mode, as it does when the buffer ring runs dry; input waits in the kernel and TCP's window closes. No event; `Usage` counts it. | Frames are released: the receives are armed again |
+| Room in the refill ring | Returns wait in the backend's queue; the next `tick` writes what fits and asks the kernel to take them (K2), one system call | The same tick |
+| Frame memory for `hold` or a TLS record | As in ring mode today: the frame stays in its pieces, the call says `Full` | Frame memory is released |
+| Room in the completion ring | The kernel delivers later (K5) | The next `tick` |
+| Chunks in the area | Packets dropped, sent again, seconds lost (K3). Not a state the set handles: it is kept from happening by sizing | See the sizing rule |
+
+**The sizing rule.** `Config::plan` refuses a plan in which the area can
+empty before the piece table is full: chunks at least `pieces_max`, plus
+every connection's socket receive buffer (which the transport sets in
+this mode, so that it is known), plus the card's receive ring and its
+pool's cache. A chunk can back more than one piece, so `pieces_max`
+chunks is the worst case, not the usual one.
+
+## The simulator's model of the mode
+`SimIo` gets an area of chunks and delivers an armed receive of the mode
+as pieces: seeded lengths from one byte to a chunk, seeded sharing of a
+chunk by consecutive pieces, up to twenty pieces a turn, the bytes copied
+in behind the same face now and then (K4). It keeps the reference count
+of K1, marks returned chunks (Z2), refuses a second return of a piece and
+a return of one never delivered (Z1), holds a refill ring of seeded,
+small size that it reads lazily (K2, Z5), and delivers nothing while no
+chunk is free, for a seeded time longer than the usual delays (K3).
 
 ## Risks / Trade-offs
 - The driver may not support it on the Sparks → the spike of group 1 is
