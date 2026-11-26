@@ -12,13 +12,25 @@ use super::path::{LOG, REPLICA};
 use super::{queued, thread_cpu, unexpected, Kind, Opts, Peer, Side, Stop, HEADER};
 use crate::die::OrDie;
 use longshore::io::Io;
-use longshore::tcp::{Conn, Event, SendError, Why};
+use longshore::tcp::{Conn, Event, Frame, SendError, Why};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 /// The byte of a frame that says what it is, behind a length prefix or
 /// in a header: 1 asks for the frame to be sent back.
 pub(super) const ASKS: usize = 4;
+
+/// The byte at `ASKS` of `frame`: in its memory, or in its first page.
+fn marker<IO: Io>(side: &mut Side<IO>, frame: &Frame) -> Option<u8> {
+    if let Some(bytes) = side.net.bytes(&mut side.io, frame) {
+        return bytes.get(ASKS).copied();
+    }
+    let first = side.net.pages(frame)?.next()?;
+    let at = (first.off() + first.len().min(ASKS as u32 + 1)) as usize;
+    let page = side.io.buf(first.buf());
+    page.get(first.off() as usize..at)
+        .and_then(|b| b.get(ASKS).copied())
+}
 
 /// Accept, count, and send back what asks for it, until told to stop.
 pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
@@ -51,10 +63,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
                 first = first.or_else(|| Some((Instant::now(), thread_cpu())));
                 seen.frames += 1;
                 seen.bytes += u64::from(frame.len());
-                let asks = side
-                    .net
-                    .bytes(&mut side.io, &frame)
-                    .is_some_and(|b| b.get(ASKS) == Some(&1));
+                let asks = marker(side, &frame) == Some(1);
                 if !asks {
                     side.net.release(frame);
                     continue;
@@ -80,6 +89,8 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
     }
     if let Some((at, cpu0)) = first {
         (seen.secs, seen.cpu) = (at.elapsed().as_secs_f64(), thread_cpu() - cpu0);
+        let paged = side.net.usage().pages();
+        (seen.kept, seen.moved) = (paged.frames_kept(), paged.frames_moved());
     }
     seen
 }
@@ -324,7 +335,7 @@ pub(super) fn report_peer(o: &Opts, peer: &Peer) {
     let gb = peer.bytes as f64 / 1e9;
     let per = |n: f64, by: f64| if by > 0.0 { n / by } else { 0.0 };
     println!(
-        "{{\"cmd\":\"peer\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{},\"path_header\":{},\"body_at\":\"{}\",\"ring\":{},\"secs\":{:.2},\"frames\":{},\"per_s\":{:.0},\"gb_per_s\":{:.3},\"cpu\":{:.2},\"cpu_s_per_gb\":{:.3}}}",
+        "{{\"cmd\":\"peer\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{},\"path_header\":{},\"body_at\":\"{}\",\"ring\":{},\"secs\":{:.2},\"frames\":{},\"per_s\":{:.0},\"gb_per_s\":{:.3},\"cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"kept\":{},\"moved\":{}}}",
         if o.epoll { "epoll" } else { "uring" },
         o.rx,
         if o.spin { "spin" } else { "sleep" },
@@ -339,5 +350,7 @@ pub(super) fn report_peer(o: &Opts, peer: &Peer) {
         per(gb, peer.secs),
         peer.cpu,
         per(peer.cpu, gb),
+        peer.kept,
+        peer.moved,
     );
 }

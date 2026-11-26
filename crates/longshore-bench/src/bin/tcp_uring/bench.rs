@@ -16,7 +16,10 @@
 //!   --conns N               connections (1)
 //!   --body N                rr: bytes behind the 256-byte header (64)
 //!   --frame N               bulk: bytes a frame (65536)
-//!   --rx ring|direct        receive mode of both ends (ring)
+//!   --rx ring|direct|zc     receive mode of both ends (ring); zc is the
+//!                           peer's alone (--listen), in pages of a card's
+//!                           queue, the load then receiving direct
+//!   --zc-queue IFACE:QUEUE  zc: the interface and receive queue to register
 //!   --ring N                bytes a ring buffer (4096)
 //!   --zc-min N              sends at least this long are zero-copy (16384)
 //!   --zc-sends N            zero-copy sends a connection may have with their
@@ -116,9 +119,12 @@ impl<IO: Io> Side<IO> {
         make: impl FnOnce(Limits) -> IO,
         sizes: Sizes,
         (spin, no_delay): (bool, bool),
-        files: u32,
+        (files, area): (u32, Option<(u32, u32)>),
     ) -> Side<IO> {
-        let base = Limits::BASE.with_files_max(u32::from(files > 0));
+        let mut base = Limits::BASE.with_files_max(u32::from(files > 0));
+        if let Some((interface, queue)) = area {
+            base = base.with_area_queue(interface, queue);
+        }
         let (limits, config) = Config::plan(base, sizes).ok().or_die("plan");
         let mut io = make(limits.with_ops_max(limits.ops_max() + 2 + files));
         // A frame on a packet of its own: no short packet held back.
@@ -165,6 +171,9 @@ pub(crate) struct Peer {
     pub(crate) cpu: f64,
     /// From the first frame to the stop.
     pub(crate) secs: f64,
+    /// With `--rx zc`: frames lent in their pages, and moved.
+    pub(crate) kept: u64,
+    pub(crate) moved: u64,
 }
 
 /// CPU time of the calling thread, in seconds.
@@ -203,7 +212,7 @@ fn listening<IO: Io>(
         make,
         o.sizes(0, o.lines()),
         (o.spin, o.frame_on_packet),
-        files,
+        (files, o.zc_queue),
     );
     // Every connection of the run is opened at once.
     let how = ListenConfig::new(o.peer_opts()).with_backlog(o.lines().max(128));
@@ -240,7 +249,7 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
             make(),
             o.sizes(o.lines(), 0),
             (o.spin, o.frame_on_packet),
-            0,
+            (0, None),
         );
         let done = load::drive(&mut side, o, addr);
         return load::report(o, &done, &Peer::default());
@@ -262,7 +271,7 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
         make(),
         o.sizes(o.lines(), 0),
         (o.spin, o.frame_on_packet),
-        0,
+        (0, None),
     );
     let done = load::drive(&mut side, o, addr);
     stop.tell();

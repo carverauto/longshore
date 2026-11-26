@@ -34,6 +34,9 @@ pub(crate) struct Opts {
     pub(crate) zc_sends: u32,
     /// Each frame a send of its own, with `TCP_NODELAY` on both ends.
     pub(crate) frame_on_packet: bool,
+    /// With `--rx zc`: the interface's index and the receive queue the
+    /// peer's area is registered for.
+    pub(crate) zc_queue: Option<(u32, u32)>,
     pub(crate) segment: u32,
     pub(crate) spin: bool,
     /// path: bytes of the header in front of a block, or zero for a
@@ -64,6 +67,7 @@ impl Opts {
             zc_min: 16_384,
             zc_sends: 4,
             frame_on_packet: false,
+            zc_queue: None,
             segment: 65_536,
             spin: false,
             header: 0,
@@ -130,8 +134,15 @@ impl Opts {
                 "--conns" => o.conns = number().max(1),
                 "--body" => o.body = number(),
                 "--frame" => o.frame = number().max(8),
-                "--rx" if pick(&flag, &value, "ring", "direct") => o.rx = Rx::Direct,
-                "--rx" => o.rx = Rx::Ring,
+                "--rx" => {
+                    o.rx = match value.as_str() {
+                        "ring" => Rx::Ring,
+                        "direct" => Rx::Direct,
+                        "zc" => Rx::ZeroCopy,
+                        _ => die("--rx takes ring, direct or zc"),
+                    }
+                }
+                "--zc-queue" => o.zc_queue = Some(zc_queue(&value)),
                 "--ring" => o.ring = number().max(64),
                 "--zc-min" => o.zc_min = number(),
                 "--zc-sends" => o.zc_sends = number(),
@@ -164,6 +175,14 @@ impl Opts {
             // A replica is sent every source's block; its queue of sends
             // holds two for each, up to the thousand a connection can.
             die("path takes up to 500 connections");
+        }
+        if self.rx == Rx::ZeroCopy
+            && (self.listen.is_none() || self.zc_queue.is_none() || self.kind == Kind::Path)
+        {
+            // A queue of a card is registered, which loopback is not; a log
+            // node forwards what it receives, which a frame in pages cannot
+            // be (zc_uring log writes from pages).
+            die("--rx zc is of a peer alone (--listen) of rr or bulk, with --zc-queue IFACE:QUEUE");
         }
         if self.header != 0 && self.kind != Kind::Path {
             die("--header is of path");
@@ -204,6 +223,7 @@ impl Opts {
         let room = self.framing(true).lead() + frame;
         let each = if self.header == 0 { 2 } else { 3 };
         let many = (2 * self.lines()).clamp(16, 8192);
+        let zc = self.zc_room(accepts);
         Sizes::new(connects, accepts, u32::from(accepts > 0))
             .with_frames(
                 (each * self.lines()).clamp(16, 8192),
@@ -214,6 +234,19 @@ impl Opts {
             .with_spans(self.spans())
             .with_zero_copy_min(self.zc_min)
             .with_zero_copy_sends(self.zc_sends, if self.zc_sends == 0 { 0 } else { 256 })
+            .with_zc(zc.0, zc.1, zc.2)
+    }
+
+    /// Pages, frames and piece records for the peer of `--rx zc`: two
+    /// frames a connection in pages at once, each of whole pages and a
+    /// record a page and two more; none for any other run, or the load.
+    fn zc_room(&self, accepts: u32) -> (u32, u32, u32) {
+        if self.rx != Rx::ZeroCopy || accepts == 0 {
+            return (0, 0, 0);
+        }
+        let frames = 2 * self.lines();
+        let pages = self.frame_len().div_ceil(4096);
+        (frames * pages, frames, (frames * (pages + 2)).min(32_000))
     }
 
     /// How the run's frames are cut from the stream: behind a four-byte
@@ -235,8 +268,14 @@ impl Opts {
     }
 
     pub(crate) fn conn_opts(&self) -> ConnOpts {
+        // The load receives direct when its peer receives in pages.
+        let rx = if self.rx == Rx::ZeroCopy {
+            Rx::Direct
+        } else {
+            self.rx
+        };
         ConnOpts::new(Framing::Header(self.framing(false)))
-            .with_rx(self.rx)
+            .with_rx(rx)
             .with_frame_on_packet(self.frame_on_packet)
     }
 
@@ -246,9 +285,26 @@ impl Opts {
         if self.kind == Kind::Path {
             ConnOpts::new(Framing::Header(self.framing(true))).with_rx(Rx::Direct)
         } else {
-            self.conn_opts()
+            self.conn_opts().with_rx(self.rx)
         }
     }
+}
+
+/// `IFACE:QUEUE`, the interface by its name, as its index.
+fn zc_queue(value: &str) -> (u32, u32) {
+    extern "C" {
+        fn if_nametoindex(name: *const core::ffi::c_char) -> u32;
+    }
+    let (name, queue) = value.split_once(':').or_die("--zc-queue takes IFACE:QUEUE");
+    let queue = queue.parse().ok().or_die("--zc-queue: the queue, a number");
+    let c = std::ffi::CString::new(name)
+        .ok()
+        .or_die("--zc-queue: the interface");
+    let index = unsafe { if_nametoindex(c.as_ptr()) };
+    if index == 0 {
+        die(format_args!("--zc-queue: no interface {name}"));
+    }
+    (index, queue)
 }
 
 /// Whether `value` is `yes` rather than `no`; anything else is refused.
