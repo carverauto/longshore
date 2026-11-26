@@ -263,8 +263,14 @@ that settles it.
   cache, not to it. The source shows the list getting pages back only
   from the copy path's own returns and from the pool releasing a page.
   So a receive that ends with `-ENOMEM` may meet the same on being armed
-  again, for as long as the pool keeps what it has: when the list fills
-  again is settled by a run (task 2.0), and C5 bounds the retries. A
+  again, for as long as the pool keeps what it has. Run (milestone 31,
+  task 2.0): with an area of 512 pages the copy path found no page at
+  once and on each of 4,000 armings after; with 16,384 pages it brought
+  12,352 pieces and then none; pieces returned through the refill ring
+  were free for it again only after a flush (K6), and never without one
+  while the registered queue was idle. So the backend flushes the refill
+  ring before a receive that ended with `-ENOMEM` is armed again (C5),
+  and C5 bounds the retries for the area that is simply too small. A
   program cannot tell a copied piece from another.
 - **K5 Pages of another registration.** A fragment that lies in a page of
   another registration (another ring's, or a second one of the same ring)
@@ -757,9 +763,8 @@ refused by the driver.
   from its pages (task 3.5; a later change if so).
 - What sets the delay after an empty area, and what ends it (K7): two
   runs show seconds; neither shows the cause.
-- When the copy path's free list fills again (K4): the run meant for it
-  emptied the area instead and showed no `-ENOMEM`; C5's bound stands
-  without it. The rest of task 2.0.
+- What the first call returns when nothing at all fits the completion
+  ring (`-ENOSPC` by the source): not run.
 - How often frames of a real replication stream start a packet, and so
   how many are lent in pages (task 5.1).
 - Mixed completions (`IORING_SETUP_CQE_MIXED`) instead of 32-byte ones.

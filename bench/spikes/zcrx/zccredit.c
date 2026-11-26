@@ -13,6 +13,14 @@
 //       and goes quiet; a completion ring of 64 entries
 //   zccredit IFACE QUEUE ADDR PORT nomem           two connections: the first sends
 //       much and is never returned, the second sends a little now and then
+//   zccredit IFACE QUEUE ADDR PORT cancel BYTES    one connection of BYTES bytes, byte
+//       i being i % 251, with a pause in them; the receive is cancelled in the
+//       pause and armed again for the rest
+//   zccredit IFACE QUEUE ADDR PORT copy PAGES      one connection on a port that is not
+//       steered to the queue, an area of PAGES pages, no piece returned until a
+//       receive has ended for want of a page; then all returned, and armed again
+// credit also keeps the first frame's first page behind one of its two pieces,
+// and says whether the page's bytes changed while 300 frames went by.
 // Built with: gcc -O2 -Wall -o zccredit zccredit.c
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -119,8 +127,15 @@ static uint64_t one_arming(int fd, unsigned credit, struct got *g, int keep_firs
 
 static int run_credit(int fd, unsigned frame) {
     unsigned frames = 0, bad_prefix = 0, hdr_one_piece = 0, hdr_at_page_start = 0, body_same_page = 0, body_wrong = 0, hdr_wrong = 0;
-    unsigned ends[4] = {0}; struct got h, b;
+    unsigned ends[4] = {0}; struct got h, b; uint64_t kept = 0; unsigned kept_len = 0; int page_changed = -1, reused_after = -1;
+    static unsigned char was[4096];
     for (; frames < 4000; frames++) {
+        if (frames == 300 && kept_len) {
+            // 300 MiB went through an area of 64: the page was not handed out again.
+            page_changed = memcmp(was, area + (kept & ~4095ull), 4096) != 0;
+            give_back(kept, kept_len);
+        }
+        if (frames == 1500 && kept_len) reused_after = memcmp(was, area + (kept & ~4095ull), 4096) != 0;
         uint64_t n = one_arming(fd, 256, &h, 1);
         if (n < 256) { printf("stream ended in a header: %llu of 256 bytes, last completion res %d flags %#x\n", (unsigned long long)n, h.res, h.flags); break; }
         if (n != 256) hdr_wrong++;
@@ -130,37 +145,41 @@ static int run_credit(int fd, unsigned frame) {
         if (said != frame - 4) bad_prefix++;
         if (h.pieces == 1 && h.first_len == 256) hdr_one_piece++;
         if (!(h.first_off & 4095)) hdr_at_page_start++;
-        n = one_arming(fd, frame - 256, &b, 0);
+        n = one_arming(fd, frame - 256, &b, frames == 0);
+        if (frames == 0 && b.first_off == h.first_off + 256 && !(h.first_off & 4095)) {
+            kept = b.first_off; kept_len = b.first_len; memcpy(was, area + h.first_off, 4096);
+        } else if (frames == 0) give_back(b.first_off, b.first_len);
         if (n != frame - 256) { body_wrong++; if (n < frame - 256) { printf("stream ended in a body: %llu of %u\n", (unsigned long long)n, frame - 256); break; } }
         ends[(b.res != 0) * 2 + (b.flags != 0)]++;
         // The body goes on where the header stopped, in the same page: a second reference on it.
         if (b.first_off == h.first_off + 256) body_same_page++;
         give_back(h.first_off, 256);
     }
-    printf("{\"cmd\":\"zccredit\",\"frames\":%u,\"prefix_wrong\":%u,\"header_bytes_wrong\":%u,\"body_bytes_wrong\":%u,\"header_in_one_piece\":%u,\"header_at_page_start\":%u,\"body_goes_on_in_the_header's_page\":%u,\"last_completions_res0_flags0\":%u,\"last_completions_other\":%u}\n",
-        frames, bad_prefix, hdr_wrong, body_wrong, hdr_one_piece, hdr_at_page_start, body_same_page, ends[0], ends[1] + ends[2] + ends[3]);
+    printf("{\"cmd\":\"zccredit\",\"frames\":%u,\"prefix_wrong\":%u,\"header_bytes_wrong\":%u,\"body_bytes_wrong\":%u,\"header_in_one_piece\":%u,\"header_at_page_start\":%u,\"body_goes_on_in_the_header's_page\":%u,\"last_completions_res0_flags0\":%u,\"last_completions_other\":%u,\"page_kept_by_one_piece\":%d,\"its_bytes_changed_while_kept\":%d,\"its_bytes_changed_after_return\":%d}\n",
+        frames, bad_prefix, hdr_wrong, body_wrong, hdr_one_piece, hdr_at_page_start, body_same_page, ends[0], ends[1] + ends[2] + ends[3], kept_len != 0, page_changed, reused_after);
     return 0;
 }
 
 static int run_fullring(int fd, unsigned want) {
     sleep(2); // everything the sender sends is in the socket's queue, and the sender is quiet
     arm(fd, want, 1);
-    uint64_t bytes = 0; unsigned submit = 1, enters = 0, most = 0, ends = 0; int last = 1, quiet_after = -1; double t0 = now(), last_data = t0;
-    while (now() - t0 < 6 && bytes < want) {
+    uint64_t bytes = 0, at_gap = 0; unsigned submit = 1, enters = 0, most = 0, ends = 0; int last = 1, quiet_after = -1; double t0 = now(), last_data = t0, gap = 0, resumed = 0;
+    while (now() - t0 < 14 && bytes < want) {
         enter(submit, 0); submit = 0; enters++;
         unsigned head = *cq_head, tail = __atomic_load_n(cq_tail, __ATOMIC_ACQUIRE), n = tail - head;
         if (n > most) most = n;
         for (; head != tail; head++) {
             struct io_uring_cqe *c = (void *)(cqes + (size_t)(head & cq_mask) * 32);
             if (!(c->flags & IORING_CQE_F_MORE)) { ends++; last = c->res; printf("last completion: res %d (%s) flags %#x after %llu bytes\n", c->res, c->res < 0 ? strerror(-c->res) : "-", c->flags, (unsigned long long)bytes); continue; }
+            if (now() - last_data > 2 && !resumed) { gap = now() - last_data; resumed = now() - t0; at_gap = bytes; }
             bytes += c->res; give_back(*(uint64_t *)(c + 1), c->res); last_data = now();
         }
         __atomic_store_n(cq_head, head, __ATOMIC_RELEASE);
         if (!n) usleep(1000);
         if (ends && bytes < want && quiet_after < 0) quiet_after = 0;
     }
-    printf("{\"cmd\":\"zcfullring\",\"wanted\":%u,\"got\":%llu,\"most_completions_a_turn\":%u,\"enters\":%u,\"last_completions\":%u,\"last_res\":%d,\"secs_since_last_data\":%.2f}\n",
-        want, (unsigned long long)bytes, most, enters, ends, last, now() - last_data);
+    printf("{\"cmd\":\"zcfullring\",\"wanted\":%u,\"got\":%llu,\"most_completions_a_turn\":%u,\"enters\":%u,\"last_completions\":%u,\"last_res\":%d,\"secs_since_last_data\":%.2f,\"stalled_at_bytes\":%llu,\"stalled_secs\":%.2f,\"went_on_at_sec\":%.2f}\n",
+        want, (unsigned long long)bytes, most, enters, ends, last, now() - last_data, (unsigned long long)at_gap, gap, resumed);
     return 0;
 }
 
@@ -200,14 +219,93 @@ static int run_nomem(int fa, int fb) {
     return 0;
 }
 
+// The bytes of one connection, byte i being i % 251: a receive cancelled part-way and
+// armed again for the rest goes on at the next byte.
+static int run_cancel(int fd, unsigned want) {
+    uint64_t pos = 0, wrong = 0, at_cancel = 0; unsigned submit = 1, armed = 1; int cancelled = 0, recv_end = 1, cancel_res = 1, ends = 0; double t0 = now();
+    arm(fd, want, 1);
+    while (now() - t0 < 10 && pos < want) {
+        enter(submit, 0); submit = 0;
+        unsigned head = *cq_head, tail = __atomic_load_n(cq_tail, __ATOMIC_ACQUIRE), n = tail - head;
+        for (; head != tail; head++) {
+            struct io_uring_cqe *c = (void *)(cqes + (size_t)(head & cq_mask) * 32);
+            if (c->user_data == 9) { cancel_res = c->res; continue; }
+            if (!(c->flags & IORING_CQE_F_MORE)) {
+                ends++; recv_end = c->res; armed = 0;
+                if (c->res == -ECANCELED && pos < want) { arm(fd, want - (unsigned)pos, 1); submit++; armed = 1; }
+                continue;
+            }
+            uint64_t off = *(uint64_t *)(c + 1); unsigned char *b = (unsigned char *)area + (off & ~AREA_MASK);
+            for (int k = 0; k < c->res; k++) wrong += b[k] != (pos + k) % 251;
+            pos += c->res; give_back(off, c->res);
+        }
+        __atomic_store_n(cq_head, head, __ATOMIC_RELEASE);
+        if (!cancelled && pos > 0 && !n && now() - t0 > 1.0 && armed) {
+            // In the sender's pause: cancel the receive by its tag.
+            struct io_uring_sqe *s = &sqes[stail & sq_mask]; memset(s, 0, sizeof *s);
+            s->opcode = IORING_OP_ASYNC_CANCEL; s->fd = -1; s->addr = 1; s->user_data = 9;
+            sq_arr[stail & sq_mask] = stail & sq_mask; stail++; __atomic_store_n(sq_tail, stail, __ATOMIC_RELEASE);
+            submit++; cancelled = 1; at_cancel = pos;
+        }
+        if (!n) usleep(1000);
+    }
+    printf("{\"cmd\":\"zccancel\",\"wanted\":%u,\"got\":%llu,\"bytes_wrong\":%llu,\"cancelled_at\":%llu,\"cancel_result\":%d,\"receive_ends\":%d,\"last_receive_result\":%d}\n",
+        want, (unsigned long long)pos, (unsigned long long)wrong, (unsigned long long)at_cancel, cancel_res, ends, recv_end);
+    return 0;
+}
+
+// A flow that does not reach the registered queue is copied by the kernel into pages
+// of the area's free list. No piece is returned until a receive has ended for want of
+// a page; then all are, and the receive is armed again and again.
+static int run_copy(int fd) {
+    enum { HELD = 1 << 16 }; static struct rqe held[HELD]; unsigned nheld = 0, submit = 1, rearms = 0, nomem[2] = {0}, other = 0, maxlen = 0, at_start = 0, pieces = 0;
+    uint64_t bytes[2] = {0}; int phase = 0, last = 1; double t0 = now(), t_nomem = 0, t_again = 0;
+    arm(fd, 0, 1);
+    while (now() - t0 < 9) {
+        enter(submit, 0); submit = 0;
+        unsigned head = *cq_head, tail = __atomic_load_n(cq_tail, __ATOMIC_ACQUIRE), n = tail - head;
+        for (; head != tail; head++) {
+            struct io_uring_cqe *c = (void *)(cqes + (size_t)(head & cq_mask) * 32);
+            uint64_t off = *(uint64_t *)(c + 1);
+            if (!(c->flags & IORING_CQE_F_MORE)) {
+                last = c->res;
+                if (c->res == -ENOMEM) {
+                    nomem[phase]++;
+                    if (!phase) {
+                        phase = 1; t_nomem = now() - t0;
+                        for (unsigned i = 0; i < nheld; i++) { rqes[rtail++ & rmask] = held[i]; if (!((i + 1) % 2048)) { __atomic_store_n(rq_tail, rtail, __ATOMIC_RELEASE); flush(); } }
+                        __atomic_store_n(rq_tail, rtail, __ATOMIC_RELEASE); flush();
+                    }
+                } else if (c->res < 0) other++;
+                if (c->res < 0 && rearms < 4000) { arm(fd, 0, 1); submit++; rearms++; }
+                continue;
+            }
+            pieces++; if ((unsigned)c->res > maxlen) maxlen = c->res; if (!(off & 4095)) at_start++;
+            if (phase && !bytes[1]) t_again = now() - t0;
+            bytes[phase] += c->res;
+            if (!phase && nheld < HELD) { held[nheld].off = (off & ~AREA_MASK) | a.rq_area_token; held[nheld].len = c->res; held[nheld++].pad = 0; }
+            else give_back(off, c->res);
+        }
+        __atomic_store_n(cq_head, head, __ATOMIC_RELEASE);
+        if (!n) usleep(2000);
+    }
+    printf("{\"cmd\":\"zccopy\",\"bytes_before_no_page\":%llu,\"pieces_held_then\":%u,\"no_page_at_sec\":%.2f,\"bytes_after_return\":%llu,\"first_bytes_again_at_sec\":%.2f,\"enomem_before\":%u,\"enomem_after_return\":%u,\"other_errors\":%u,\"armed_again\":%u,\"last_result\":%d,\"pieces\":%u,\"longest_piece\":%u,\"pieces_at_page_start\":%u}\n",
+        (unsigned long long)bytes[0], nheld, t_nomem, (unsigned long long)bytes[1], t_again, nomem[0], nomem[1], other, rearms, last, pieces, maxlen, at_start);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 6) return 2;
     const char *mode = argv[5]; int nomem = !strcmp(mode, "nomem"), full = !strcmp(mode, "fullring");
     if (!nomem && argc < 7) return 2;
-    setup(argv[1], atoi(argv[2]), full ? 64 : 32768, nomem ? (size_t)512 * 4096 : (size_t)64 << 20);
+    int cancel = !strcmp(mode, "cancel"), copy = !strcmp(mode, "copy");
+    size_t pages = nomem ? 512 : copy ? (size_t)atoi(argv[6]) : (size_t)16384;
+    setup(argv[1], atoi(argv[2]), full ? 64 : 32768, pages * 4096);
     int ls = listener(argv[3], atoi(argv[4]));
     int fd = accept(ls, 0, 0); if (fd < 0) die("accept");
     if (nomem) { int fb = accept(ls, 0, 0); if (fb < 0) die("accept"); return run_nomem(fd, fb); }
     if (full) return run_fullring(fd, atoi(argv[6]));
+    if (cancel) return run_cancel(fd, atoi(argv[6]));
+    if (copy) return run_copy(fd);
     return run_credit(fd, atoi(argv[6]));
 }

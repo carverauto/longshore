@@ -261,6 +261,30 @@ came for at least five seconds (5.4 in the earlier run). What ends the
 wait was not found; a queue with no buffer posted may wait for something
 else to wake it. The `ENOMEM` of the kernel's copy path did not show.
 
+**The rest of the contract's questions** (set `credit2` in the raw file,
+one run each):
+
+| Question | What the run showed |
+|---|---|
+| A page behind two pieces, one returned | Its bytes stayed the frame's while 300 MiB went through an area of 64 MiB, and changed once the second piece was returned too |
+| The stream ends inside a frame | The body's receive brought 1,000 of 1,048,320 bytes and ended with 0: fewer bytes than the credit |
+| The stream ends between frames | The next header's receive brought 0 of 256 bytes and ended with 0 |
+| A receive cancelled part-way and armed again for the rest | Cancelled at 300,000 of 1,000,000 bytes; all 1,000,000 arrived, none wrong or out of place |
+| What ends the stall after a full completion ring | Nothing, for the eight seconds the sender was quiet; it went on the moment the sender's next byte came |
+| The kernel's copy path, area of 512 pages (a port not steered to the queue) | `ENOMEM` at once, no byte; armed again 4,000 times, `ENOMEM` every time |
+| The same, area of 16,384 pages, nothing returned | 44.6 MB in 12,352 pieces, each at most a page and at a page's start, then `ENOMEM` |
+| ... every piece then returned and the refill ring flushed | another 45.5 MB, the same number of pieces again |
+| ... pieces returned from then on without a flush | `ENOMEM` on all 4,000 armings that followed |
+
+So a page lives until its last piece is back; the count tells the end of
+a stream from the end of a credit; a cancel loses nothing; a receive left
+on a full ring waits for the socket's next packet, however long. And the
+copy path draws on what the card's pool has not taken: with a small area
+that is nothing, and pages returned through the refill ring come back to
+it only when the kernel reads that ring, which an idle queue never does
+unless it is asked to with a flush. Not tried: the `ENOSPC` of a call in
+which nothing at all fitted the completion ring.
+
 ## Go
 
 The mode works on this card. It halves the CPU of receiving payload that
