@@ -19,6 +19,9 @@
 //!   --rx ring|direct        receive mode of both ends (ring)
 //!   --ring N                bytes a ring buffer (4096)
 //!   --zc-min N              sends at least this long are zero-copy (16384)
+//!   --zc-sends N            zero-copy sends a connection may have with their
+//!                           memory still out, 256 in all; 0: the next send
+//!                           waits for the last one's memory (1)
 //!   --segment N             bytes a send segment (65536)
 //!   --wait sleep|spin       wait for completions, or turn without waiting
 //!   --sync fsync|dsync      path: sync after each write, or open the log

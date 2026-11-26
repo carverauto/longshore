@@ -30,6 +30,8 @@ pub(crate) struct Opts {
     pub(crate) rx: Rx,
     pub(crate) ring: u32,
     pub(crate) zc_min: u32,
+    /// Zero-copy sends a connection may have with their memory still out.
+    pub(crate) zc_sends: u32,
     pub(crate) segment: u32,
     pub(crate) spin: bool,
     /// path: bytes of the header in front of a block, or zero for a
@@ -58,6 +60,7 @@ impl Opts {
             rx: Rx::Ring,
             ring: 4096,
             zc_min: 16_384,
+            zc_sends: 1,
             segment: 65_536,
             spin: false,
             header: 0,
@@ -128,6 +131,7 @@ impl Opts {
                 "--rx" => o.rx = Rx::Ring,
                 "--ring" => o.ring = number().max(64),
                 "--zc-min" => o.zc_min = number(),
+                "--zc-sends" => o.zc_sends = number(),
                 "--segment" => o.segment = number(),
                 "--wait" => o.spin = pick(&flag, &value, "sleep", "spin"),
                 "--sync" => o.dsync = pick(&flag, &value, "fsync", "dsync"),
@@ -205,6 +209,7 @@ impl Opts {
             .with_ring((4 * self.lines()).clamp(64, 16_384), self.ring)
             .with_spans(self.spans())
             .with_zero_copy_min(self.zc_min)
+            .with_zero_copy_sends(self.zc_sends, if self.zc_sends == 0 { 0 } else { 256 })
     }
 
     /// How the run's frames are cut from the stream: behind a four-byte
