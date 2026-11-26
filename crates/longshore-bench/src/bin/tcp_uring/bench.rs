@@ -20,6 +20,7 @@
 //!                           peer's alone (--listen), in pages of a card's
 //!                           queue, the load then receiving direct
 //!   --zc-queue IFACE:QUEUE  zc: the interface and receive queue to register
+//!   --zc-spare PAGES        zc: area pages beyond what the set counts (16384)
 //!   --ring N                bytes a ring buffer (4096)
 //!   --zc-min N              sends at least this long are zero-copy (16384)
 //!   --zc-sends N            zero-copy sends a connection may have with their

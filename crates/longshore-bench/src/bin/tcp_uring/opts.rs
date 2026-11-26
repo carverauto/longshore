@@ -38,6 +38,8 @@ pub(crate) struct Opts {
     /// With `--rx zc`: the interface's index and the receive queue the
     /// peer's area is registered for.
     pub(crate) zc_queue: Option<(u32, u32)>,
+    /// With `--rx zc`: pages of the area beyond what the set counts.
+    pub(crate) zc_spare: u32,
     pub(crate) segment: u32,
     pub(crate) spin: bool,
     /// path: bytes of the header in front of a block, or zero for a
@@ -73,6 +75,7 @@ impl Opts {
             zc_sends: 4,
             frame_on_packet: false,
             zc_queue: None,
+            zc_spare: 16_384,
             segment: 65_536,
             spin: false,
             header: 0,
@@ -150,6 +153,7 @@ impl Opts {
                     }
                 }
                 "--zc-queue" => o.zc_queue = Some(zc_queue(&value)),
+                "--zc-spare" => o.zc_spare = value.parse().ok().or_die("--zc-spare, pages"),
                 "--ring" => o.ring = number().max(64),
                 "--zc-min" => o.zc_min = number(),
                 "--zc-sends" => o.zc_sends = number(),
@@ -261,8 +265,8 @@ impl Opts {
             .with_zero_copy_sends(self.zc_sends, if self.zc_sends == 0 { 0 } else { 256 })
             .with_zc(zc.0, zc.1, zc.2)
             // What the card's ring and the sockets hold, which nothing counts:
-            // 64 MiB, as zc_uring's area, so that the area never runs dry.
-            .with_zc_spare(if zc.0 == 0 { 0 } else { 16_384 })
+            // 64 MiB by default, as zc_uring's area, so that it never runs dry.
+            .with_zc_spare(if zc.0 == 0 { 0 } else { self.zc_spare })
             .with_tls(self.tls.is_some())
     }
 
