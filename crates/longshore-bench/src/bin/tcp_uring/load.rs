@@ -16,8 +16,9 @@ use longshore::tcp::{Conn, Event, SendError};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-/// The byte behind the length prefix: 1 asks for the frame to be sent back.
-const ASKS: usize = 4;
+/// The byte of a frame that says what it is, behind a length prefix or
+/// in a header: 1 asks for the frame to be sent back.
+pub(super) const ASKS: usize = 4;
 
 /// Accept, count, and send back what asks for it, until told to stop.
 pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
@@ -134,15 +135,15 @@ struct Line {
 
 /// Send one frame of the run on `line`; whether it was queued.
 fn send<IO: Io>(side: &mut Side<IO>, o: &Opts, line: &mut Line) -> bool {
-    // A replica says once what it is, in a frame of eight bytes.
+    // A replica says once what it is, in a frame of its own.
     let (len, asks) = match o.kind {
-        _ if line.replica => (8, REPLICA),
+        _ if line.replica => (o.hello_len(), REPLICA),
         Kind::Rr => (o.frame_len(), 1),
         Kind::Bulk => (o.frame_len(), 0),
         Kind::Path => (o.frame_len(), LOG),
     };
     let sent = side.net.send_frame(&mut side.io, line.conn, len, |to| {
-        to[..4].copy_from_slice(&(len - 4).to_be_bytes());
+        o.write_len(to, len);
         to[ASKS] = asks;
     });
     line.waits = !queued(sent, line.conn);
@@ -260,6 +261,16 @@ pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> 
     done
 }
 
+/// Where a log node has the body of a frame with a header when it
+/// writes it, for a line of the run.
+fn body_at(o: &Opts) -> &'static str {
+    match (o.header, o.body_at_block) {
+        (0, _) => "-",
+        (_, true) => "block",
+        (_, false) => "frame",
+    }
+}
+
 /// One JSON line for the run.
 pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
     let (secs, cpu) = (done.secs, done.cpu);
@@ -279,8 +290,9 @@ pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
         Kind::Path if o.dsync => ("path", "dsync"),
         Kind::Path => ("path", "fsync"),
     };
+    let (path_header, body_at) = (o.header, body_at(o));
     println!(
-        "{{\"cmd\":\"{cmd}\",\"sync\":\"{sync}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"ring\":{},\"zc_min\":{},\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
+        "{{\"cmd\":\"{cmd}\",\"sync\":\"{sync}\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{frame},\"header\":{HEADER},\"path_header\":{path_header},\"body_at\":\"{body_at}\",\"ring\":{},\"zc_min\":{},\"segment\":{},\"secs\":{secs:.2},\"count\":{count},\"per_s\":{:.0},\"p50_us\":{:.1},\"p99_us\":{:.1},\"p999_us\":{:.1},\"gb_per_s\":{:.3},\"cpu\":{cpu:.2},\"peer_cpu\":{:.2},\"cpu_s_per_gb\":{:.3},\"peer_cpu_s_per_gb\":{:.3},\"arch\":\"{}\",\"kernel\":\"{}\"}}",
         if o.epoll { "epoll" } else { "uring" },
         o.rx,
         if o.spin { "spin" } else { "sleep" },
@@ -306,12 +318,14 @@ pub(super) fn report_peer(o: &Opts, peer: &Peer) {
     let gb = peer.bytes as f64 / 1e9;
     let per = |n: f64, by: f64| if by > 0.0 { n / by } else { 0.0 };
     println!(
-        "{{\"cmd\":\"peer\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{},\"ring\":{},\"secs\":{:.2},\"frames\":{},\"per_s\":{:.0},\"gb_per_s\":{:.3},\"cpu\":{:.2},\"cpu_s_per_gb\":{:.3}}}",
+        "{{\"cmd\":\"peer\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{},\"path_header\":{},\"body_at\":\"{}\",\"ring\":{},\"secs\":{:.2},\"frames\":{},\"per_s\":{:.0},\"gb_per_s\":{:.3},\"cpu\":{:.2},\"cpu_s_per_gb\":{:.3}}}",
         if o.epoll { "epoll" } else { "uring" },
         o.rx,
         if o.spin { "spin" } else { "sleep" },
         o.conns,
         o.frame_len(),
+        o.header,
+        body_at(o),
         o.ring,
         peer.secs,
         peer.frames,

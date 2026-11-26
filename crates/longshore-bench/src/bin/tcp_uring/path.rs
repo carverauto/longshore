@@ -9,9 +9,18 @@
 //! replicas and back to its source as the answer, all from the same
 //! memory. The time the load measures is the whole path: wire, durable,
 //! replicated, answered.
+//!
+//! With `--header` the block is the body of a frame, behind a header, as
+//! in UltraGraphDB's bulk load. Direct I/O writes from a block boundary:
+//! either the frame was received so that its body lies at one
+//! (`--body-at block`), or the node moves the body to a second piece of
+//! frame memory first and writes that (`--body-at frame`), the move the
+//! other saves. What is sent on and back is the whole frame either way.
 
+use super::load::ASKS;
 use super::{thread_cpu, unexpected, Opts, Peer, Side, Stop, BLOCK};
 use crate::die::{die, OrDie};
+use longshore::io::extents::Extent;
 use longshore::io::{FileSlot, Io, Op, OpenFlags, Token};
 use longshore::tcp::{Conn, Event, Frame, SendError};
 
@@ -25,16 +34,24 @@ const OPEN: u64 = STORAGE;
 const RESERVE: u64 = STORAGE + 1;
 const WRITE: u64 = STORAGE + (1 << 20);
 const SYNC: u64 = STORAGE + (2 << 20);
-/// What the byte behind a frame's length prefix says of it.
+/// What the byte of a frame at `ASKS` says of it.
 pub(super) const LOG: u8 = 2;
 pub(super) const REPLICA: u8 = 3;
 
 struct Node {
-    /// The block each source connection has in flight, by its slot.
-    pending: Vec<Option<(Frame, Conn)>>,
+    /// The block each source connection has in flight, by its slot, and
+    /// the memory its body was moved to, if it was.
+    pending: Vec<Option<(Frame, Conn, Option<Extent>)>>,
     replicas: Vec<Conn>,
     next_block: u64,
     dsync: bool,
+    /// Bytes of a frame, of the header in front of its block, and in
+    /// front of the frame in its memory.
+    frame: u32,
+    header: u32,
+    lead: u32,
+    /// Whether the block lies at a block boundary as it was received.
+    in_place: bool,
     seen: Peer,
 }
 
@@ -112,26 +129,44 @@ fn forward<IO: Io>(side: &mut Side<IO>, conn: Conn, frame: &Frame) {
 }
 
 impl Node {
-    /// A block arrived from `conn`: write it from where it lies.
+    /// A block arrived from `conn`: write it from where it lies, or
+    /// from where it is moved to if it does not lie at a block boundary.
     fn log<IO: Io>(&mut self, side: &mut Side<IO>, conn: Conn, frame: Frame) {
         let span = frame.span();
         let slot = conn.slot() as usize;
-        if span.off() != 0 || frame.len() != BLOCK || self.pending[slot].is_some() {
-            die(format_args!(
-                "not one block at the start of an extent, alone"
-            ));
+        if span.off() != self.lead || frame.len() != self.frame || self.pending[slot].is_some() {
+            die(format_args!("not one frame where it was to lie, alone"));
         }
+        let body = span.off() + self.header;
+        // Each way is measured against the other: neither may be taken
+        // for the other.
+        if body.is_multiple_of(BLOCK) != self.in_place {
+            die(format_args!("a body at {body} of its memory"));
+        }
+        let (buf, off, moved) = if self.in_place {
+            (span.buf(), body, None)
+        } else {
+            let to = side
+                .net
+                .extents()
+                .take()
+                .or_die("frame memory to move a body to");
+            let (from, into) = side.io.buf_pair(span.buf(), to.buf());
+            let (start, len) = (body as usize, BLOCK as usize);
+            into[..len].copy_from_slice(&from[start..start + len]);
+            (to.buf(), 0, Some(to))
+        };
         let write = Op::FileWrite {
             slot: FILE,
-            buf: span.buf(),
-            off: 0,
+            buf,
+            off,
             len: BLOCK,
             file_off: (self.next_block % BLOCKS) * u64::from(BLOCK),
         };
         self.next_block += 1;
         let token = Token::new(WRITE + slot as u64);
         side.io.submit(token, write).ok().or_die("write");
-        self.pending[slot] = Some((frame, conn));
+        self.pending[slot] = Some((frame, conn, moved));
     }
 
     /// A file operation completed: sync what was written, unless writes
@@ -153,9 +188,12 @@ impl Node {
             let asked = side.io.submit(Token::new(SYNC + slot as u64), sync);
             return asked.ok().or_die("sync");
         }
-        let Some((frame, conn)) = self.pending[slot].take() else {
+        let Some((frame, conn, moved)) = self.pending[slot].take() else {
             die(format_args!("a file operation for no block: {token}"));
         };
+        if let Some(to) = moved {
+            let _freed = side.net.extents().release(to);
+        }
         // Durable: to the replicas and back to its source, from its memory.
         for replica in &self.replicas {
             forward(side, *replica, &frame);
@@ -163,7 +201,7 @@ impl Node {
         forward(side, conn, &frame);
         side.net.release(frame);
         self.seen.frames += 1;
-        self.seen.bytes += u64::from(BLOCK);
+        self.seen.bytes += u64::from(self.frame);
     }
 }
 
@@ -175,6 +213,10 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer 
         replicas: Vec::with_capacity(3),
         next_block: 0,
         dsync: o.dsync,
+        frame: o.frame_len(),
+        header: o.header,
+        lead: o.framing(true).lead(),
+        in_place: o.header == 0 || o.body_at_block,
         seen: Peer::default(),
     };
     let mut first = None;
@@ -203,7 +245,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer 
                 let says = side
                     .net
                     .bytes(&mut side.io, &frame)
-                    .and_then(|b| b.get(4).copied());
+                    .and_then(|b| b.get(ASKS).copied());
                 match says {
                     Some(LOG) => node.log(side, conn, frame),
                     Some(REPLICA) => {

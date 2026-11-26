@@ -25,6 +25,16 @@
 //!                           so that a write is durable when it completes
 //!   --dir PATH              path: where the log goes (a file system with
 //!                           direct I/O; the temporary directory)
+//!   --header N              path: a block is the body of a frame, behind
+//!                           a header of N bytes with the frame's length
+//!                           at 40, as UltraGraphDB's (0: a block is the
+//!                           whole frame, behind a four-byte prefix)
+//!   --body-at block|frame   path, with a header: the node receives a
+//!                           frame so that its body lies at a block
+//!                           boundary and writes it from there, or
+//!                           receives it at the start of its memory and
+//!                           moves the body to a block before the write
+//!                           (frame)
 //!
 //!   --listen ADDR:PORT      be the peer alone, at this address, until every
 //!                           connection of the run has come and closed
@@ -49,19 +59,18 @@
 
 use crate::die::{die, OrDie};
 use longshore::io::{Completion, Completions, Io, Limits, Op, Token};
-use longshore::tcp::{
-    Config, Conn, ConnOpts, Event, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, Rx,
-    SendError, Sizes,
-};
+use longshore::tcp::{Config, Conn, Event, KernelTransport, ListenConfig, Net, SendError, Sizes};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
 mod load;
+mod opts;
 mod path;
 mod stop;
 
+pub(crate) use opts::Opts;
 pub(crate) use stop::Stop;
 
 /// What a run measures.
@@ -75,165 +84,9 @@ pub(crate) enum Kind {
     Path,
 }
 
-/// The block a log node writes: a frame of `path`, prefix included.
+/// The block a log node writes: a frame of `path`, prefix included, or
+/// the body behind its header.
 pub(crate) const BLOCK: u32 = 4096;
-
-/// What a run is asked to be.
-#[derive(Clone)]
-pub(crate) struct Opts {
-    pub(crate) kind: Kind,
-    pub(crate) dsync: bool,
-    pub(crate) dir: String,
-    pub(crate) epoll: bool,
-    pub(crate) secs: u64,
-    pub(crate) conns: u32,
-    pub(crate) body: u32,
-    pub(crate) frame: u32,
-    pub(crate) rx: Rx,
-    pub(crate) ring: u32,
-    pub(crate) zc_min: u32,
-    pub(crate) segment: u32,
-    pub(crate) spin: bool,
-    /// The peer alone, at this address.
-    listen: Option<SocketAddr>,
-    /// The load alone, against a peer at this address.
-    pub(crate) connect: Option<SocketAddr>,
-}
-
-impl Opts {
-    /// The length of every frame of the run, its four-byte prefix included.
-    pub(crate) const fn frame_len(&self) -> u32 {
-        match self.kind {
-            Kind::Rr => 4 + HEADER + self.body,
-            Kind::Bulk => self.frame,
-            Kind::Path => BLOCK,
-        }
-    }
-
-    fn parse(cmd: &str, mut args: impl Iterator<Item = String>) -> Opts {
-        let kind = match cmd {
-            "bulk" => Kind::Bulk,
-            "path" => Kind::Path,
-            _ => Kind::Rr,
-        };
-        let mut o = Opts {
-            kind,
-            dsync: false,
-            dir: std::env::temp_dir().to_string_lossy().into_owned(),
-            epoll: false,
-            secs: 3,
-            conns: 1,
-            body: 64,
-            frame: 65_536,
-            rx: Rx::Ring,
-            ring: 4096,
-            zc_min: 16_384,
-            segment: 65_536,
-            spin: false,
-            listen: None,
-            connect: None,
-        };
-        while let Some(flag) = args.next() {
-            let value = args.next().or_die(&format!("{flag} needs a value"));
-            let number = || {
-                value
-                    .parse::<u32>()
-                    .ok()
-                    .or_die(&format!("{flag} takes a number"))
-            };
-            match flag.as_str() {
-                "--backend" => o.epoll = pick(&flag, &value, "uring", "epoll"),
-                "--secs" => o.secs = u64::from(number()),
-                "--conns" => o.conns = number().max(1),
-                "--body" => o.body = number(),
-                "--frame" => o.frame = number().max(8),
-                "--rx" if pick(&flag, &value, "ring", "direct") => o.rx = Rx::Direct,
-                "--rx" => o.rx = Rx::Ring,
-                "--ring" => o.ring = number().max(64),
-                "--zc-min" => o.zc_min = number(),
-                "--segment" => o.segment = number(),
-                "--wait" => o.spin = pick(&flag, &value, "sleep", "spin"),
-                "--sync" => o.dsync = pick(&flag, &value, "fsync", "dsync"),
-                "--dir" => o.dir.clone_from(&value),
-                "--listen" | "--connect" => {
-                    let addr = value
-                        .parse()
-                        .ok()
-                        .or_die(&format!("{flag} takes an address and a port"));
-                    if flag == "--listen" {
-                        o.listen = Some(addr);
-                    } else {
-                        o.connect = Some(addr);
-                    }
-                }
-                other => die(format_args!("unknown flag {other}")),
-            }
-        }
-        if o.listen.is_some() && o.connect.is_some() {
-            die("--listen and --connect are two processes, not one");
-        }
-        if o.kind == Kind::Path && o.conns > 500 {
-            // A replica is sent every source's block; its queue of sends
-            // holds two for each, up to the thousand a connection can.
-            die("path takes up to 500 connections");
-        }
-        o
-    }
-
-    /// Connections of a run: with `path`, three replicas beside the
-    /// sources.
-    pub(crate) fn lines(&self) -> u32 {
-        self.conns + if self.kind == Kind::Path { 3 } else { 0 }
-    }
-
-    /// Sends a connection can have queued. A replica of a log node is
-    /// sent every source's block, all of them at once when their writes
-    /// complete together: its queue holds two for each source.
-    fn spans(&self) -> u32 {
-        if self.kind == Kind::Path {
-            (2 * self.conns + 8).clamp(16, 1024)
-        } else {
-            16
-        }
-    }
-
-    /// The pools of one end: `connects` it opens, `accepts` it takes.
-    fn sizes(&self, connects: u32, accepts: u32) -> Sizes {
-        let frame = self.frame_len();
-        let many = (2 * self.lines()).clamp(16, 8192);
-        Sizes::new(connects, accepts, u32::from(accepts > 0))
-            .with_frames(many, frame.next_multiple_of(4096))
-            .with_segments(many, self.segment.max(frame))
-            .with_ring((4 * self.lines()).clamp(64, 16_384), self.ring)
-            .with_spans(self.spans())
-            .with_zero_copy_min(self.zc_min)
-    }
-
-    pub(crate) fn conn_opts(&self) -> ConnOpts {
-        let framing = HeaderFraming::length_prefix(self.frame_len())
-            .ok()
-            .or_die("framing");
-        ConnOpts::new(Framing::Header(framing)).with_rx(self.rx)
-    }
-
-    /// The options of the peer's ends. A log node receives each block at
-    /// the start of frame memory of its own, to write it from there.
-    fn peer_opts(&self) -> ConnOpts {
-        if self.kind == Kind::Path {
-            self.conn_opts().with_rx(Rx::Direct)
-        } else {
-            self.conn_opts()
-        }
-    }
-}
-
-/// Whether `value` is `yes` rather than `no`; anything else is refused.
-fn pick(flag: &str, value: &str, no: &str, yes: &str) -> bool {
-    if value != no && value != yes {
-        die(format_args!("{flag} takes {no} or {yes}"));
-    }
-    value == yes
-}
 
 /// The header a request carries behind its length prefix, as UltraGraphDB's.
 pub(crate) const HEADER: u32 = 256;
