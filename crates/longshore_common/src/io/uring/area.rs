@@ -60,8 +60,6 @@ pub(super) struct Area {
     /// What names the registration in a receive and in a flush.
     id: u32,
     refill: Refill,
-    /// The kernel has no call to make it read the returns (before 6.19).
-    no_flush: bool,
     /// Keeps the ring of returns mapped; the kernel reads it.
     _region: Region,
 }
@@ -148,6 +146,14 @@ impl Area {
         };
         ring.register_zcrx(&mut reg)
             .map_err(|errno| refusal(errno, limits))?;
+        // A kernel that cannot be asked to read the returns would leave a
+        // backend with a full queue of them no way on: refused here.
+        if ring.flush_zcrx(reg.zcrx_id).is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the kernel cannot be asked to read a receive area's returns (needs Linux 7.0)",
+            ));
+        }
         let at = |off: u32| unsafe { region.ptr.cast::<u8>().add(off as usize) };
         let counters: (*const AtomicU32, *const AtomicU32) =
             (at(reg.offsets.head).cast(), at(reg.offsets.tail).cast());
@@ -166,18 +172,16 @@ impl Area {
         Ok(Some(Area {
             id: reg.zcrx_id,
             refill,
-            no_flush: false,
             _region: region,
         }))
     }
 
-    /// Ask the kernel to read the returns, where it can be asked.
+    /// Ask the kernel to read the returns. It can be asked: the area was
+    /// refused at build where it could not.
     fn flush(&mut self, ring: &mut Ring) {
-        if !self.no_flush && ring.flush_zcrx(self.id).is_err() {
-            // An older kernel: the returns are read when the card wants
-            // pages, and not sooner.
-            self.no_flush = true;
-        }
+        // A refusal now is a ring being torn down: what it holds goes back
+        // with it.
+        let _read: Result<(), i32> = ring.flush_zcrx(self.id);
         self.refill.flushed();
     }
 
@@ -191,9 +195,14 @@ impl Area {
     }
 
     /// Return `len` bytes at `off` of the area; a return that found the
-    /// ring full goes in at the next tick.
-    pub(super) fn give_back(&mut self, off: u64, len: u32) {
-        self.refill.give(off, len);
+    /// ring full goes in at the next tick, and one that found the queue
+    /// behind it full too has the kernel read the ring now.
+    pub(super) fn give_back(&mut self, ring: &mut Ring, off: u64, len: u32) {
+        if !self.refill.give(off, len) {
+            self.flush(ring);
+            let taken = self.refill.give(off, len);
+            debug_assert!(taken, "a flushed ring has room");
+        }
     }
 }
 
@@ -271,7 +280,7 @@ impl UringIo {
         );
         let at = u64::from(page.0 - self.limits.area_base()) * u64::from(Limits::PAGE);
         if let Some(area) = self.area.as_mut() {
-            area.give_back(at + u64::from(off), len);
+            area.give_back(&mut self.ring, at + u64::from(off), len);
         }
     }
 }

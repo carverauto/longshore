@@ -63,7 +63,7 @@ fn pages(from: u64, to: u64) -> impl Iterator<Item = u64> {
 fn an_entry_carries_the_offset_under_the_token_and_the_length() {
     let mut kernel = Kernel::new();
     let mut refill = kernel.refill(4);
-    refill.give(3 * 4096 + 256, 1000);
+    assert!(refill.give(3 * 4096 + 256, 1000), "the queue was full");
     kernel.take(1);
     let wrote = Rqe {
         off: TOKEN | (3 * 4096 + 256),
@@ -80,7 +80,7 @@ fn the_ring_never_holds_more_than_it_has_and_nothing_is_returned_twice() {
     let mut refill = kernel.refill(16);
     // Three rings' worth, with the kernel reading a few now and then.
     for (i, off) in pages(0, 24).enumerate() {
-        refill.give(off, 4096);
+        assert!(refill.give(off, 4096), "the queue was full");
         assert!(
             kernel.pending() <= ENTRIES,
             "{} in a ring of 8",
@@ -107,10 +107,10 @@ fn a_return_that_finds_the_ring_full_waits_and_asks_for_a_flush() {
     let mut kernel = Kernel::new();
     let mut refill = kernel.refill(4);
     for off in pages(0, 8) {
-        refill.give(off, 4096);
+        assert!(refill.give(off, 4096), "the queue was full");
     }
     assert!(!refill.wants_flush(), "a full ring alone asks for nothing");
-    refill.give(8 * 4096, 4096);
+    assert!(refill.give(8 * 4096, 4096), "the queue was full");
     assert_eq!((refill.waiting(), kernel.pending()), (1, ENTRIES));
     assert!(refill.wants_flush());
     // A flush that read nothing leaves it waiting, and asked for again.
@@ -124,13 +124,22 @@ fn a_return_that_finds_the_ring_full_waits_and_asks_for_a_flush() {
 }
 
 #[test]
-fn past_the_room_it_was_built_with_the_queue_grows_and_loses_nothing() {
+fn a_return_that_finds_the_queue_full_too_is_refused_and_taken_after_a_read() {
     let mut kernel = Kernel::new();
     let mut refill = kernel.refill(2);
+    let mut refused = 0;
     for off in pages(0, 13) {
-        refill.give(off, 4096);
+        if !refill.give(off, 4096) {
+            // What the backend does: have the kernel read the ring, then
+            // give it again.
+            refused += 1;
+            kernel.take(ENTRIES);
+            refill.flushed();
+            assert!(refill.give(off, 4096), "a read ring has room");
+        }
+        assert!(refill.waiting() <= 2, "the queue grew");
     }
-    assert_eq!((refill.waiting(), kernel.pending()), (5, ENTRIES));
+    assert!(refused > 0);
     while refill.waiting() > 0 || kernel.pending() > 0 {
         kernel.take(ENTRIES);
         refill.flushed();
@@ -144,11 +153,11 @@ fn a_return_goes_behind_what_waits_though_the_ring_has_room_again() {
     let mut kernel = Kernel::new();
     let mut refill = kernel.refill(4);
     for off in pages(0, 9) {
-        refill.give(off, 4096);
+        assert!(refill.give(off, 4096), "the queue was full");
     }
     kernel.take(2);
     // Room for two, and one waits: the new one waits behind it.
-    refill.give(9 * 4096, 4096);
+    assert!(refill.give(9 * 4096, 4096), "the queue was full");
     assert_eq!(refill.waiting(), 2);
     refill.drain();
     assert_eq!((refill.waiting(), kernel.pending()), (0, ENTRIES));
