@@ -86,6 +86,41 @@ So a chunk backs more than one completion, an empty area makes the card
 drop packets and TCP repair it, and the repair takes seconds. The mode
 must stop receiving before the area is empty; `design.md` says how.
 
+## How payload lies in the pages, and writing it to a file as it lies
+
+The database's format on the wire is its format in the log, so the
+question is whether received pages can go to a direct-I/O write with no
+move at all. `zcrecv` counts how pieces lie; `zcrecv ... log` writes to a
+file a connection with direct I/O, 1 MiB a write (set `log` in the raw
+file; four connections, 5 seconds, two runs each).
+
+| Packet size | Pieces that are a whole page |
+|---|---|
+| MTU 9000 (payload 8,948 bytes a packet) | 75 %; the stream's blocks almost never lie in one page |
+| MTU 8244 (payload 8,192 = two pages) | 100 % |
+| MTU 4148 (payload 4,096 = one page) | 100 % |
+
+- **With a packet's payload a whole number of pages, every piece is a
+  whole page.** The card puts each packet's payload at the start of a
+  page, so a full packet fills its pages exactly.
+- **But the stream's blocks only lie in those pages while every packet
+  is full.** In three of five runs one short packet early in a
+  connection (after about 62 KiB) shifted everything behind it: the
+  pages are still whole, but a 4 KiB block of the stream then straddles
+  two of them. The test program gives up on a connection at that point,
+  so in those runs it wrote nothing as it lay. No run yet wrote a file
+  from the area's pages; that the kernel accepts such a write is not
+  shown.
+- **What a copy and a write cost, for comparison:** received with the
+  kernel's copy into a 1 MiB buffer and written from it, the thread
+  spends 0.151 CPU-seconds a GB (2.7 GB/s, the disk's pace, one write at
+  a time). Received without a copy and not written, 0.038.
+
+So the pages come as a log would want them, and what is missing is
+keeping the stream in step with them (a sender that only sends whole
+packets, or a filler in the log's format after a short one) and the
+write itself.
+
 ## Go
 
 The mode works on this card. It halves the CPU of receiving payload that

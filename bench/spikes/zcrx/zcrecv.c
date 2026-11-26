@@ -5,13 +5,19 @@
 
 // Throwaway spike: receive TCP streams on one ring and count, with io_uring
 // zero-copy receive or with the kernel's copy, reading every byte or none.
-//   zcrecv IFACE QUEUE ADDR PORT CONNS zc|copy read|count|stall
+//   zcrecv IFACE QUEUE ADDR PORT CONNS zc|copy read|count|stall|log [DIR]
+// log: write what arrives to a file a connection with direct I/O, 1 MiB a write:
+// zc writes the area's pages as they lie (a piece that is not a whole page at a
+// block of the stream ends that for its connection and is counted); copy writes
+// the buffer the kernel copied into.
 // stall (zc only): after a second, return no chunk until nothing arrives for a
 // second, then return them all and go on. Shows what an empty area does.
 // Built with: gcc -O2 -Wall -o zcrecv zcrecv.c
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/uio.h>
 #include <linux/io_uring.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -34,10 +40,10 @@ struct rqe { uint64_t off; uint32_t len, pad; };
 static double now(clockid_t c) { struct timespec t; clock_gettime(c, &t); return t.tv_sec + t.tv_nsec / 1e9; }
 static void die(const char *w) { printf("%s: %s\n", w, strerror(errno)); exit(1); }
 int main(int argc, char **argv) {
-    if (argc != 8) return 2;
+    if (argc != 8 && argc != 9) return 2;
     const char *ifn = argv[1]; unsigned q = atoi(argv[2]); int port = atoi(argv[4]); int conns = atoi(argv[5]);
-    int zc = !strcmp(argv[6], "zc"), touch = !strcmp(argv[7], "read"), stall = !strcmp(argv[7], "stall");
-    if ((!zc && strcmp(argv[6], "copy")) || (!touch && !stall && strcmp(argv[7], "count")) || (stall && !zc)) return 2;
+    int zc = !strcmp(argv[6], "zc"), touch = !strcmp(argv[7], "read"), stall = !strcmp(argv[7], "stall"), logm = !strcmp(argv[7], "log");
+    if ((!zc && strcmp(argv[6], "copy")) || (!touch && !stall && !logm && strcmp(argv[7], "count")) || (stall && !zc)) return 2;
     if (conns > 64) return 2;
     struct io_uring_params p; memset(&p, 0, sizeof p);
     p.cq_entries = 32768;
@@ -64,6 +70,11 @@ int main(int argc, char **argv) {
     size_t blen = 1u << 20; char *bufs = mmap(0, blen * 64, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
     if (bufs == MAP_FAILED) die("buffers");
     int fds[64];
+    /* log: a file a connection, and the pages (and their returns) of the write being gathered. */
+    enum { GATHER = 256 }; int files[64]; uint64_t fpos[64] = {0}, unaligned = 0, written = 0; int ok[64], ngather[64] = {0};
+    struct iovec (*iov)[GATHER] = logm ? calloc(64, sizeof *iov) : 0; struct rqe (*back)[8 * GATHER] = logm ? calloc(64, sizeof *back) : 0; int nback[64] = {0}; uint64_t block[64] = {0};
+    for (int i = 0; logm && i < conns; i++) { char path[300]; snprintf(path, sizeof path, "%s/zcrecv-log-%d.dat", argc > 8 ? argv[8] : ".", i);
+        files[i] = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_DIRECT, 0600); if (files[i] < 0) die("log file"); unlink(path); ok[i] = 1; }
     unsigned *rq_tail = (unsigned *)(rq + reg.offsets.tail); struct rqe *rqes = (struct rqe *)(rq + reg.offsets.rqes);
     unsigned *rq_head = (unsigned *)(rq + reg.offsets.head);
     unsigned rtail = 0, rmask = rq_entries - 1, max_pending = 0;
@@ -83,12 +94,15 @@ int main(int argc, char **argv) {
         struct io_uring_sqe *s = &sqes[stail & sq_mask]; memset(s, 0, sizeof *s);
         fds[i] = fd; s->fd = fd; s->user_data = i;
         if (zc) { s->opcode = OP_RECV_ZC; s->ioprio = IORING_RECV_MULTISHOT; s->file_index = reg.zcrx_id; /* zcrx_ifq_idx shares this union */ }
-        else { s->opcode = IORING_OP_RECV; s->addr = (uint64_t)(bufs + i * blen); s->len = blen; }
+        else { s->opcode = IORING_OP_RECV; s->addr = (uint64_t)(bufs + i * blen); s->len = blen; if (logm) s->msg_flags = MSG_WAITALL; }
         sq_arr[stail & sq_mask] = stail & sq_mask; stail++;
     }
     __atomic_store_n(sq_tail, stail, __ATOMIC_RELEASE);
     unsigned submit = conns; int open = conns;
     uint64_t bytes = 0, cq_n = 0, sum = 0, maxlen = 0, enters = 0; double t0 = 0, c0 = 0;
+    /* How the stream lies in the area: a piece that is a whole page, starting where a
+       block of the stream starts, could go to a direct-I/O write as it lies. */
+    uint64_t pos[64] = {0}, page_start = 0, whole_page = 0, block_bytes = 0;
     while (open > 0) {
         long rc = syscall(426, ring, submit, (phase == 1 || phase == 2) ? 0 : 1, IORING_ENTER_GETEVENTS, 0, 0);
         if (rc < 0 && errno != EINTR) die("enter");
@@ -103,8 +117,9 @@ int main(int argc, char **argv) {
                 char *b = bufs + c->user_data * blen;
                 bytes += c->res; cq_n++; if ((uint64_t)c->res > maxlen) maxlen = c->res;
                 if (touch) { int k = 0; for (; k + 8 <= c->res; k += 8) sum += *(uint64_t *)(b + k); for (; k < c->res; k++) sum += (unsigned char)b[k]; }
+                if (logm && (size_t)c->res == blen) { if (pwrite(files[c->user_data], b, blen, fpos[c->user_data]) != (ssize_t)blen) die("write"); fpos[c->user_data] += blen; written += blen; }
                 struct io_uring_sqe *s = &sqes[stail & sq_mask]; memset(s, 0, sizeof *s);
-                s->opcode = IORING_OP_RECV; s->fd = fds[c->user_data]; s->user_data = c->user_data; s->addr = (uint64_t)b; s->len = blen;
+                s->opcode = IORING_OP_RECV; s->fd = fds[c->user_data]; s->user_data = c->user_data; s->addr = (uint64_t)b; s->len = blen; if (logm) s->msg_flags = MSG_WAITALL;
                 sq_arr[stail & sq_mask] = stail & sq_mask; stail++; submit++;
                 continue;
             }
@@ -115,7 +130,26 @@ int main(int argc, char **argv) {
             if (c->res <= 0) continue;
             if (!t0) { t0 = now(CLOCK_MONOTONIC); c0 = now(CLOCK_THREAD_CPUTIME_ID); }
             bytes += c->res; cq_n++; if ((uint64_t)c->res > maxlen) maxlen = c->res;
+            { uint64_t in = off & 4095, *at = &pos[c->user_data & 63]; if (!in) page_start++; if (!in && c->res == 4096) whole_page++; if (!in && c->res == 4096 && !(*at & 4095)) block_bytes += 4096; *at += c->res; }
             if (touch) { char *b = area + (off & ~AREA_MASK); int k = 0; for (; k + 8 <= c->res; k += 8) sum += *(uint64_t *)(b + k); for (; k < c->res; k++) sum += (unsigned char)b[k]; }
+            if (logm) {
+                /* A block of the stream may come as several pieces of one page (the kernel
+                   counts a reference a piece): it is whole when they have filled the page. */
+                int i = c->user_data & 63; uint64_t in = off & 4095, base = (off & ~AREA_MASK) & ~4095ull, before = pos[i] - c->res;
+                if (ok[i] && (before & 4095) == in && (in == 0 || base == block[i]) && nback[i] < 8 * GATHER) {
+                    block[i] = base;
+                    back[i][nback[i]].off = (off & ~AREA_MASK) | a.rq_area_token; back[i][nback[i]++].len = c->res;
+                    if (!(pos[i] & 4095)) { int n = ngather[i]++; iov[i][n].iov_base = area + base; iov[i][n].iov_len = 4096; }
+                    if (ngather[i] == GATHER) {
+                        if (pwritev(files[i], iov[i], GATHER, fpos[i]) != GATHER * 4096) die("writev");
+                        fpos[i] += GATHER * 4096; written += GATHER * 4096; ngather[i] = 0;
+                        for (int k = 0; k < nback[i]; k++) rqes[rtail++ & rmask] = back[i][k];
+                        nback[i] = 0;
+                    }
+                    continue;
+                }
+                ok[i] = 0; unaligned += c->res;
+            }
             last = now(CLOCK_MONOTONIC);
             if (phase == 0 && stall && last - t0 > 1.0) phase = 1;
             if (phase == 3 && !resumed_at) resumed_at = last;
@@ -139,8 +173,9 @@ int main(int argc, char **argv) {
         __atomic_store_n(cq_head, head, __ATOMIC_RELEASE);
     }
     double secs = now(CLOCK_MONOTONIC) - t0, cpu = now(CLOCK_THREAD_CPUTIME_ID) - c0, gb = bytes / 1e9;
-    printf("{\"cmd\":\"zcrecv\",\"mode\":\"%s\",\"read\":%d,\"conns\":%d,\"secs\":%.2f,\"gb_per_s\":%.3f,\"cpu\":%.2f,\"cpu_s_per_gb\":%.3f,\"completions\":%llu,\"mean_len\":%.0f,\"max_len\":%llu,\"enters\":%llu,\"max_pending_returns\":%u,\"sum\":%llu}\n",
-        argv[6], touch, conns, secs, gb / secs, cpu, cpu / gb, (unsigned long long)cq_n, (double)bytes / cq_n, (unsigned long long)maxlen, (unsigned long long)enters, max_pending, (unsigned long long)(sum & 0xff));
+    printf("{\"cmd\":\"zcrecv\",\"mode\":\"%s\",\"read\":%d,\"conns\":%d,\"secs\":%.2f,\"gb_per_s\":%.3f,\"cpu\":%.2f,\"cpu_s_per_gb\":%.3f,\"completions\":%llu,\"mean_len\":%.0f,\"max_len\":%llu,\"enters\":%llu,\"pieces_at_page_start\":%.4f,\"pieces_whole_page\":%.4f,\"bytes_in_whole_blocks\":%.4f,\"max_pending_returns\":%u,\"sum\":%llu}\n",
+        argv[6], touch, conns, secs, gb / secs, cpu, cpu / gb, (unsigned long long)cq_n, (double)bytes / cq_n, (unsigned long long)maxlen, (unsigned long long)enters, cq_n ? (double)page_start / cq_n : 0, cq_n ? (double)whole_page / cq_n : 0, bytes ? (double)block_bytes / bytes : 0, max_pending, (unsigned long long)(sum & 0xff));
+    if (logm) printf("{\"cmd\":\"zclog\",\"mode\":\"%s\",\"written_gb\":%.3f,\"not_written_as_it_lay_gb\":%.3f}\n", argv[6], written / 1e9, unaligned / 1e9);
     if (stall) printf("{\"cmd\":\"zcstall\",\"area_chunks\":%zu,\"held_completions\":%u,\"bytes_before_stall\":%llu,\"secs_to_resume\":%.3f,\"bytes_total\":%llu,\"phase\":%d}\n",
         alen / 4096, held_at_stall, (unsigned long long)bytes_at_stall, resumed_at - stalled_at - 1.0 > 0 ? resumed_at - stalled_at - 1.0 : 0.0, (unsigned long long)bytes, phase);
     return 0;
