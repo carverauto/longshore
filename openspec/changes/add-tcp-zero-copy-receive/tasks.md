@@ -10,7 +10,7 @@ its write-up is the result.
 - [x] 1.4 Review of group 1
 
 ## 2. The contract
-- [ ] 2.1 (written and reviewed once: not passed, see "Review of the contract" in `design.md`) `design.md`: the ownership table of chunks, the states of a queue's registration, the invariants and the exhaustion rows, reviewed before code; first, from the kernel's source and a run on the Spark, what the kernel does when the area is empty and how many returns can be outstanding
+- [ ] 2.1 (written and reviewed once: not passed; rewritten to "Decided (2026-11-26)" in `design.md`, then reviewed again) `design.md`: the ownership table of chunks, the states of a queue's registration, the invariants and the exhaustion rows, reviewed before code; first, from the kernel's source and a run on the Spark, what the kernel does when the area is empty and how many returns can be outstanding
 - [ ] 2.2 `SimIo`: `Rx::ZeroCopy` receives delivered in chunks with seeded boundaries and seeded exhaustion; same seed, same trace
 - [ ] 2.3 The model test and the conformance suite take the mode (failing until group 3)
 - [ ] 2.4 Review of group 2
@@ -36,3 +36,10 @@ its write-up is the result.
 - [ ] 5.2 Results in `bench/results/`; card settings and the support matrix in `docs/tcp.md`
 - [ ] 5.3 `add-tcp-af-xdp-backend` updated with what is left for it to win, or closed
 - [ ] 5.4 Review of group 5
+
+## 6. The body at a block, in direct mode (first, by the owner's decision)
+- [ ] 6.1 `HeaderFraming` can ask for the body at a block: the frame is received with its header ending at a block boundary of its frame memory (for a 256-byte header, 3,840 bytes in); `Config::plan` refuses frame memory too small for the lead and the largest frame
+- [ ] 6.2 Ring mode and `hold` put a frame in frame memory at the same place, so a frame's span says where it lies whatever the mode
+- [ ] 6.3 Tests: the body's offset in every receive mode, with and without TLS; the model test and the conformance suite run with the option; a log write of the body as it lies
+- [ ] 6.4 `tcp_uring path` with a 256-byte header and the body written from where it lies; the gain measured on the Spark pair against milestone 31's 6 %
+- [ ] 6.5 `docs/tcp.md`; review of group 6

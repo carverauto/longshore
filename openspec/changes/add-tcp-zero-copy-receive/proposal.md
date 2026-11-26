@@ -59,6 +59,11 @@ default it concerns was called provisional until measured on a card.
 - Simulation: `SimIo` delivers `Rx::ZeroCopy` receives in chunks of the
   same area model, with seeded chunk boundaries and exhaustion, so the
   model test and the conformance suite cover the mode on every host.
+- The body at a block, in direct mode: header framing can ask for a
+  frame's body, not its header, at a block boundary of its memory.
+  UltraGraphDB's log takes a bulk load's body that way; measured, it
+  saves the move the database would make (6 % of the receiving thread).
+  Built first.
 - Zero-copy sends over a card: the cause of the slow case is found and
   the defaults (segment length, sends in flight a connection) are set so
   that no frame size sends slower with zero-copy than without.
@@ -68,7 +73,7 @@ default it concerns was called provisional until measured on a card.
 
 ## Impact
 - Affected specs: `tcp-zero-copy-receive` (ADDED), `tcp-connections`
-  (ADDED: zero-copy sends over a card)
+  (ADDED: zero-copy sends over a card; a frame's body at a block)
 - Affected code: `longshore_common` (`io::uring` registration, refill ring,
   `Op::ArmedRecvZc`; `sim`), `longshore_tcp` (`Rx::ZeroCopy`, pieces,
   chunk accounting), `longshore-bench` (`tcp_uring`), `docs/tcp.md`

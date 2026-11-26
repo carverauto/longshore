@@ -132,18 +132,57 @@ only improve on that for:
 - a frame forwarded with no copy at all, which needs pieces held across
   turns, counted holds and a send from the area: findings 1 to 5.
 
-Three ways on from here; the choice is recorded when made.
+## Decided (2026-11-26), from UltraGraphDB's protocol and three more runs
+The database's protocol (`../ultragraphdb/specification/binary_protocol/
+PROTOCOL.md`) settles what the mode is for:
 
-- **Narrow.** Pieces live one turn, as ring buffers do: a frame whole
-  within a turn is lent in place until the next `poll`; anything else is
-  moved into frame memory then. Findings 1 to 5 fall away (nothing is
-  held), `release` stays what it is, the area is bounded by a turn's
-  completions. Wins only the first case above; plain TCP only.
-- **Full.** As proposed, with findings 1 to 9 answered. Wins both cases.
-  Several times the work of the narrow form, and most of the risk.
-- **Shelve.** Keep the measurements and the note; do the zero-copy send
-  fault (group 4) as a change of its own; come back when a workload
-  shows the receive copy is what it waits for.
+- **Its frames**: a 256-byte header and a body, 256 bytes to 1 MiB, back
+  to back; every body byte under a checksum the receiver must check, a
+  leaf a 4 KiB block of the frame.
+- **Replication (its stage 8)** carries the log's Round frames as they
+  are: there the bytes on the wire are the bytes of the log. This is the
+  traffic the mode is built for, by the owner's decision.
+- **A client's bulk load** is not logged as received: its body goes into
+  a Round frame at a block boundary, 256 bytes off from where it lay in
+  its own frame. Zero-copy receive cannot help that; receiving the frame
+  so that its body lies at a block can. That comes first, by the owner's
+  decision, and is group 6.
+
+And the runs (milestone 31) settle what is possible:
+
+- With a packet's payload a whole number of pages (MTU 8244), every piece
+  is a whole page.
+- The kernel accepts a vectored direct-I/O write from the area's pages;
+  card to disk without a copy costs the thread 0.066 CPU-seconds a GB
+  against 0.154.
+- A frame lies in whole pages when it starts a packet; one short packet
+  inside a frame puts the rest of that frame out of step.
+- The body at a block, in direct mode, saves 6 % of the thread.
+
+So the mode is the full one, shaped by these:
+
+- **It is for frames that are written as they lie.** A frame that starts
+  a packet and stays in step is lent as its pages and held until its
+  write is durable; any other frame is moved once into frame memory, and
+  is then what direct mode gives today. The gain is opportunistic by
+  frame, never a loss against direct mode.
+- **Only whole pages are ever held.** A piece that is not a whole page of
+  a frame in step is moved on arrival and returned in the same turn.
+  That removes the one-byte piece that pins a page.
+- **The kernel holds the bound.** A zero-copy receive is armed with a byte
+  credit and ends when it is used (`io_recvzc`, `sqe->len`); a connection
+  gets credit only for what it may hold, and more when frames are
+  released. This takes the place of the stop rule that deadlocked.
+- **Plain TCP only, and no other kind of receive on such a connection.**
+  TLS and Unix sockets are refused with the mode when a connection is
+  opened or a listener made.
+- **A write from pages is a new operation** of the backend: a vectored
+  file write over a list of area pages.
+- **The floor is Linux 7.0**, the kernel it was read from and run on.
+
+The contract below is the first one, which did not pass. It is rewritten
+to these decisions, with the code of `rx.rs`, `pull.rs`, `spill.rs` and
+`frames.rs` read first, and reviewed again before any code of the mode.
 
 ## What the kernel does (Linux 7.0, `io_uring/zcrx.c`, and a run)
 Read from the source of the kernel the Sparks run, and checked by the
