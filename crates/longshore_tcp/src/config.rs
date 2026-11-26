@@ -369,7 +369,10 @@ impl Config {
     /// Tokens the `Net` uses, from `Sizes::with_token_base` up: route a
     /// completion with a token in that range to `Net::on_completion`.
     pub const fn tokens(&self) -> u64 {
-        self.lent_tokens() + self.conns() as u64 * self.sizes.zero_copy_sends as u64
+        // A multiple of eight, so that the next set's tokens say their
+        // kind as this one's do.
+        let lent = self.conns() as u64 * self.sizes.zero_copy_sends as u64;
+        self.lent_tokens() + lent.next_multiple_of(8)
     }
 
     /// How far above the first token those of the zero-copy sends

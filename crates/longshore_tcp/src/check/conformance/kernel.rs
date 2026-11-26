@@ -30,10 +30,16 @@ pub struct KernelRig<IO: Io> {
 const TICK: Token = Token::new(1 << 40);
 const FILL: u64 = 1 << 41;
 
+/// Three sends a slot whose memory may outlive their report, as the
+/// statements on lent sends use.
+const fn lending(sizes: Sizes) -> Sizes {
+    sizes.with_zero_copy_sends(3, 6)
+}
+
 impl<IO: Io> KernelRig<IO> {
     /// A rig whose listener listens at `addr`.
     pub fn new(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) -> KernelRig<IO> {
-        KernelRig::build(make, addr, sizes(2, 2, 1), None, |t| t)
+        KernelRig::build(make, addr, lending(sizes(2, 2, 1)), None, |t| t)
     }
 
     /// [`KernelRig::new`], with TLS for both ends from `certs`.
@@ -43,7 +49,7 @@ impl<IO: Io> KernelRig<IO> {
         addr: SocketAddr,
         certs: &crate::check::Certs,
     ) -> KernelRig<IO> {
-        let sizes = crate::check::secure::sizes(2, 2, 1);
+        let sizes = lending(crate::check::secure::sizes(2, 2, 1));
         let wrap = |t: KernelTransport<IO>| t.with_tls(certs.both());
         KernelRig::build(make, addr, sizes, Some(certs.name()), wrap)
     }

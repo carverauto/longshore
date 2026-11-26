@@ -37,7 +37,7 @@ impl Sizes {
     /// listeners accept, `listeners` listeners. Defaults for the rest: 64
     /// frames of 1 MiB, 64 send segments of 64 KiB, 64 ring buffers of
     /// 16 KiB, headers up to 256 bytes, 16 queued sends per connection,
-    /// zero-copy sends from 16 KiB, eight of them a connection and 256 in
+    /// zero-copy sends from 16 KiB, one of them a connection and 256 in
     /// all whose memory the kernel may still read, tokens from 0.
     pub const fn new(connects: u32, accepts: u32, listeners: u32) -> Sizes {
         Sizes {
@@ -53,7 +53,7 @@ impl Sizes {
             header_max: 256,
             spans: 16,
             zero_copy_min: 16 << 10,
-            zero_copy_sends: 8,
+            zero_copy_sends: 1,
             zero_copy_sends_in_all: 256,
             tls: false,
             token_base: 0,
@@ -117,7 +117,10 @@ impl Sizes {
     /// fewer) is what the set adds to the backend's operations for them.
     /// With `per_connection` 0 a connection has one zero-copy send at a
     /// time and waits for its memory before the next: a send every round
-    /// trip.
+    /// trip. The default of one is provisional: over loopback in a
+    /// container eight carried less than one (7.5 against 11 GB/s in
+    /// 64 KiB sends), and what more than one is worth over a network
+    /// card has not been measured.
     #[must_use]
     pub const fn with_zero_copy_sends(mut self, per_connection: u32, in_all: u32) -> Sizes {
         (self.zero_copy_sends, self.zero_copy_sends_in_all) = (per_connection, in_all);

@@ -42,7 +42,8 @@ use std::net::SocketAddr;
 pub use kernel::KernelRig;
 
 /// A transport with one listener slot (0), two connection slots for
-/// connects (0 and 1), and at least two that accepts fill.
+/// connects (0 and 1), at least two that accepts fill, and room for
+/// three sends of a slot lent until released, numbered 0 to 2.
 pub trait Rig {
     /// The transport checked.
     type T: Transport;

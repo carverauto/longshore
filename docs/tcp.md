@@ -170,7 +170,7 @@ reading the memory until the peer has acknowledged the bytes; until then
 the memory is pinned: a send segment stays out of the pool though its
 place in the queue is free, and frame memory keeps one more hold. A
 connection has so many such sends out at most, and the set so many in
-all (`Sizes::with_zero_copy_sends`, 8 and 256), and a connection sends
+all (`Sizes::with_zero_copy_sends`, 1 and 256), and a connection sends
 with a copy while either is reached. Each is an operation of the
 backend while it is out, so the second number is what the set adds to
 `Limits::ops_max` for them. Its slot is not free, and a drain not
@@ -214,7 +214,7 @@ from the `Config`. Plan several components one on top of the other.
 | `with_header_max(bytes)` | The longest header | 256 |
 | `with_spans(n)` | Queued sends per connection | 16 |
 | `with_zero_copy_min(bytes)` | Sends at least this long are zero-copy | 16 KiB |
-| `with_zero_copy_sends(per_connection, in_all)` | Zero-copy sends whose memory the kernel still reads, a connection and in the whole set; each is an operation of the backend until it is back | 8 and 256 |
+| `with_zero_copy_sends(per_connection, in_all)` | Zero-copy sends whose memory the kernel still reads, a connection and in the whole set; each is an operation of the backend until it is back | 1 and 256 |
 | `with_tls(on)` | Room for TLS; segments are then at least `TLS_SEGMENT_MIN` (36 KiB) | off |
 | `with_token_base(base)` | The first of the set's tokens; it uses `Config::tokens()` of them | 0 |
 
@@ -317,6 +317,10 @@ Runs on hosts with 200 and 300 Gb/s cards are to settle them.
   little.
 - **Send segments: 64 KiB.** Larger ones gained nothing.
 - **Zero-copy from 16 KiB.** Unchanged: loopback cannot tell.
+- **One zero-copy send a connection with its memory out.** Over
+  loopback eight carried less than one (7.5 against 11 GB/s in 64 KiB
+  sends, the receiving thread full either way); over a card more than
+  one has not been measured.
 - **How a log is made durable, and whether a thread waits or spins:** no
   default. On the container's virtual disk the two ways of syncing could
   not be told apart. A single connection was answered in 24 µs with both
