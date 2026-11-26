@@ -25,8 +25,11 @@ the wire runs were made once each on machines that do other work.
 
 - **One receiving thread is full at about 50 Gb/s.** 6.1 to 6.7 GB/s on the
   ring with the receiving thread at 88 to 100 % of its core, 0.13 to
-  0.16 CPU-seconds a GB. On epoll 4.4 to 5.0 GB/s at 0.20 to 0.23.
-  Direct receive of 1 MiB frames is the cheapest: 6.7 GB/s at 0.130.
+  0.16 CPU-seconds a GB. On epoll 4.4 to 5.0 GB/s at 0.20 to 0.23 (3.5
+  at 0.28 with sixteen connections of 1 MiB frames). Ring and direct
+  receive of 1 MiB frames are not told apart by these runs: the same
+  direct run, repeated later in this file, gave 5.4 to 6.9 GB/s at 0.13
+  to 0.16.
 - **Sending is about six times cheaper than receiving.** With zero-copy
   sends of 1 MiB the sending thread spends 0.024 to 0.030 CPU-seconds a GB
   (15 to 20 % of a core at 6.5 GB/s) while the receiver is full. Copied
@@ -47,7 +50,7 @@ the wire runs were made once each on machines that do other work.
   (p99 1.1 ms). Epoll: 31,000, 154,000, 173,000. Spinning made one
   connection worse here (25,000 a second, p99 524 µs), not explained.
 - **Loopback on this machine is slower than in the laptop's container**
-  (bulk 4 to 5.5 GB/s against 11.5 to 14.7; request and response 0.27
+  (bulk 3.1 to 7.5 GB/s, mostly 4 to 5.5, against 11.5 to 14.7; request and response 0.27
   million a second at 256 connections against 1.0 million). Threads were not
   pinned and the machine has slow cores and a system-call monitor; which of
   these it is was not measured. The wire runs, pinned, are the ones to read.
@@ -76,15 +79,19 @@ and `links`. A Spark shows its 200 Gb/s port as two interfaces
 - **Receiving scales with cores until the interface is full.** One interface
   carries about 110 Gb/s whatever the number of receivers; the two together
   carry 198 Gb/s, the link. Kernel TCP fills the link with four to eight
-  receiving cores, and the senders at 7 to 21 % of a core each.
+  receiving cores, and the senders at 7 to 21 % of a core each (read
+  from the senders' own lines when the runs were made; they were not
+  kept in the raw file).
 - **A receiver's core is the limit below that**: two receivers, one an
-  interface, are full at 7.3 GB/s each (0.136 CPU-seconds a GB).
+  interface, are full at 6.7 and 7.8 GB/s (0.136 CPU-seconds a GB).
 
 ## Hardware receive offload on and off
 
 `rx-gro-hw` switched on both interfaces of both machines, off, on, off,
 on; after each switch 1, 2 and 8 receivers as above. Two runs a cell, both
-shown. The lines carry `rx_gro_hw` and `round` in the raw file.
+shown. The lines carry `rx_gro_hw` and `round` in the raw file; the
+machine's idle and packet-handling shares were read from `mpstat` on the
+receiving machine during each run and are not in it.
 
 | Receivers | `rx-gro-hw` | Total GB/s | Receive CPU-seconds a GB | Receiving machine idle |
 |---|---|---|---|---|
@@ -95,24 +102,26 @@ shown. The lines carry `rx_gro_hw` and `round` in the raw file.
 | 8 | off | 24.6, 24.3 | 0.259, 0.254 | 51 %, 51 % |
 | 8 | on | 24.7, 24.7 | 0.244, 0.234 | 55 %, 53 % |
 
-- **On is a little better, never worse**: about a tenth less CPU a byte
-  for one receiver (0.134 against 0.150), and at the full link three
-  points more of the machine idle and less time in the kernel's packet
-  handling (6 % against 8 to 11 % of the machine). With two receivers the
-  difference is within what two runs vary by.
+- **On looks a little better in these four rounds**: about a tenth less
+  CPU a byte for one receiver (0.134 against 0.150), and at the full link
+  three points more of the machine idle and less time in the kernel's
+  packet handling (6 % against 8 to 11 % of the machine). With two
+  receivers the difference is within what two runs vary by. It is not
+  settled: the one-receiver run of the table above, made earlier with the
+  setting on, cost 0.162, more than either run here with it off.
 - It does not change what a core can receive by much: the copy into the
   program's memory is the cost either way.
 
 ## What it means for kernel bypass
 
-Receive is where the CPU goes: a core takes 43 to 58 Gb/s, and sending the
+Receive is where the CPU goes: a core takes 43 to 62 Gb/s, and sending the
 same bytes costs a sixth of it. The link itself is filled without bypass,
 so on these machines bypass can only save receiving cores (four to eight
-of twenty at the full link), not carry more. Both ways around the kernel's
-receive copy are in this kernel (`CONFIG_XDP_SOCKETS`,
-`CONFIG_IO_URING_ZCRX`), and the card's header and data split
-(`rx-gro-hw`) can be turned on. Neither was measured: longshore has no
-code for either yet.
+of twenty at the full link), not carry more. Both ways around the kernel's receive copy are in this kernel
+(`CONFIG_XDP_SOCKETS`, `CONFIG_IO_URING_ZCRX`). Zero-copy receive was
+tried afterwards: see milestone 31, which also shows that the card's
+header and data split is a setting of its own (`ethtool -G IFACE
+tcp-data-split on`), not `rx-gro-hw`.
 
 ## Follow-ups
 
