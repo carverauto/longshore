@@ -26,6 +26,15 @@
 //!   --dir PATH              path: where the log goes (a file system with
 //!                           direct I/O; the temporary directory)
 //!
+//!   --listen ADDR:PORT      be the peer alone, at this address, until every
+//!                           connection of the run has come and closed
+//!   --connect ADDR:PORT     be the load alone, against a peer elsewhere
+//!
+//! With `--listen` and `--connect` the two ends run on two machines, with
+//! the same options otherwise: the peer first. Each prints a line of its
+//! own; the load's has no figures of the peer, and counts as carried what
+//! it sent.
+//!
 //! `--wait` is for both threads. The time measured starts when every
 //! connection is up, and ends before any is closed. The CPU figures are of
 //! the two threads themselves: what the ring hands to its kernel workers
@@ -43,13 +52,15 @@ use longshore::tcp::{
     SendError, Sizes,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
 mod load;
 mod path;
+mod stop;
+
+pub(crate) use stop::Stop;
 
 /// What a run measures.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -81,6 +92,10 @@ pub(crate) struct Opts {
     pub(crate) zc_min: u32,
     pub(crate) segment: u32,
     pub(crate) spin: bool,
+    /// The peer alone, at this address.
+    listen: Option<SocketAddr>,
+    /// The load alone, against a peer at this address.
+    pub(crate) connect: Option<SocketAddr>,
 }
 
 impl Opts {
@@ -113,6 +128,8 @@ impl Opts {
             zc_min: 16_384,
             segment: 65_536,
             spin: false,
+            listen: None,
+            connect: None,
         };
         while let Some(flag) = args.next() {
             let value = args.next().or_die(&format!("{flag} needs a value"));
@@ -136,6 +153,17 @@ impl Opts {
                 "--wait" => o.spin = pick(&flag, &value, "sleep", "spin"),
                 "--sync" => o.dsync = pick(&flag, &value, "fsync", "dsync"),
                 "--dir" => o.dir.clone_from(&value),
+                "--listen" | "--connect" => {
+                    let addr = value
+                        .parse()
+                        .ok()
+                        .or_die(&format!("{flag} takes an address and a port"));
+                    if flag == "--listen" {
+                        o.listen = Some(addr);
+                    } else {
+                        o.connect = Some(addr);
+                    }
+                }
                 other => die(format_args!("unknown flag {other}")),
             }
         }
@@ -265,6 +293,8 @@ pub(crate) struct Peer {
     pub(crate) frames: u64,
     pub(crate) bytes: u64,
     pub(crate) cpu: f64,
+    /// From the first frame to the stop.
+    pub(crate) secs: f64,
 }
 
 /// CPU time of the calling thread, in seconds.
@@ -292,41 +322,55 @@ pub(crate) fn run(cmd: &str, args: impl Iterator<Item = String>) {
     }
 }
 
-/// The peer on a thread of its own, then the load on this one.
+/// The peer's end: a set that listens at `at`, and where it does.
+fn listening<IO: Io>(
+    o: &Opts,
+    make: impl FnOnce(Limits) -> IO,
+    at: SocketAddr,
+) -> (Side<IO>, SocketAddr) {
+    let files = if o.kind == Kind::Path { o.lines() } else { 0 };
+    let mut side = Side::new(make, o.sizes(0, o.lines()), o.spin, files);
+    // Every connection of the run is opened at once.
+    let how = ListenConfig::new(o.peer_opts()).with_backlog(o.lines().max(128));
+    let listener = side.net.listen(&mut side.io, at, how).ok().or_die("listen");
+    let addr = side
+        .net
+        .listener_addr(listener)
+        .or_die("the listener's address");
+    (side, addr)
+}
+
+/// Be the peer of the run until `stop` says so.
+fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer {
+    if o.kind == Kind::Path {
+        path::serve(side, stop, o)
+    } else {
+        load::serve(side, stop)
+    }
+}
+
+/// The peer on a thread of its own, then the load on this one; or one of
+/// the two alone, with the other on another machine.
 fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: impl Fn() -> M) {
-    let stop = Arc::new(AtomicBool::new(false));
+    if let Some(at) = o.listen {
+        let (mut side, addr) = listening(o, make(), at);
+        eprintln!("tcp_uring: listening at {addr}");
+        let seen = serve(&mut side, &Stop::after(o.lines()), o);
+        return load::report_peer(o, &seen);
+    }
+    if let Some(addr) = o.connect {
+        let mut side = Side::new(make(), o.sizes(o.lines(), 0), o.spin, 0);
+        let done = load::drive(&mut side, o, addr);
+        return load::report(o, &done, &Peer::default());
+    }
+    let stop = Arc::new(Stop::after(0));
     let (tell, told) = mpsc::channel();
     let (peer_make, peer_stop, at_peer) = (make(), Arc::clone(&stop), o.clone());
     let peer = std::thread::spawn(move || {
-        let files = if at_peer.kind == Kind::Path {
-            at_peer.lines()
-        } else {
-            0
-        };
-        let mut side = Side::new(
-            peer_make,
-            at_peer.sizes(0, at_peer.lines()),
-            at_peer.spin,
-            files,
-        );
         let any = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        // Every connection of the run is opened at once.
-        let how = ListenConfig::new(at_peer.peer_opts()).with_backlog(at_peer.lines().max(128));
-        let listener = side
-            .net
-            .listen(&mut side.io, any, how)
-            .ok()
-            .or_die("listen");
-        let addr = side
-            .net
-            .listener_addr(listener)
-            .or_die("the listener's address");
+        let (mut side, addr) = listening(&at_peer, peer_make, any);
         tell.send(addr).ok().or_die("the peer's address");
-        if at_peer.kind == Kind::Path {
-            path::serve(&mut side, &peer_stop, &at_peer)
-        } else {
-            load::serve(&mut side, &peer_stop)
-        }
+        serve(&mut side, &peer_stop, &at_peer)
     });
     let addr = told
         .recv_timeout(Duration::from_secs(10))
@@ -334,7 +378,7 @@ fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: imp
         .or_die("the peer");
     let mut side = Side::new(make(), o.sizes(o.lines(), 0), o.spin, 0);
     let done = load::drive(&mut side, o, addr);
-    stop.store(true, Ordering::Release);
+    stop.tell();
     let seen = peer.join().ok().or_die("the peer thread");
     load::report(o, &done, &seen);
 }

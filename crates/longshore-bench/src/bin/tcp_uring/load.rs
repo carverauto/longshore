@@ -9,27 +9,31 @@
 //! are taken.
 
 use super::path::{LOG, REPLICA};
-use super::{queued, thread_cpu, unexpected, Kind, Opts, Peer, Side, HEADER};
+use super::{queued, thread_cpu, unexpected, Kind, Opts, Peer, Side, Stop, HEADER};
 use crate::die::OrDie;
 use longshore::io::Io;
 use longshore::tcp::{Conn, Event, SendError};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// The byte behind the length prefix: 1 asks for the frame to be sent back.
 const ASKS: usize = 4;
 
 /// Accept, count, and send back what asks for it, until told to stop.
-pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool) -> Peer {
+pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop) -> Peer {
     let mut seen = Peer::default();
     let cpu0 = thread_cpu();
-    while !stop.load(Ordering::Acquire) {
+    let mut first = None;
+    while !stop.now() {
         side.turn();
         while let Some(e) = side.net.next_event() {
             let conn = match e {
                 Event::Readable(conn) => conn,
-                Event::Accepted { .. } | Event::Writable(_) | Event::Closed { .. } => continue,
+                Event::Accepted { .. } | Event::Writable(_) => continue,
+                Event::Closed { .. } => {
+                    stop.closed();
+                    continue;
+                }
                 Event::Up(_)
                 | Event::Refused { .. }
                 | Event::Finished(_)
@@ -38,6 +42,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool) -> Peer {
                 | Event::Drained => unexpected(e),
             };
             while let Ok(Some(frame)) = side.net.next_frame(&mut side.io, conn) {
+                first = first.or_else(|| Some(Instant::now()));
                 seen.frames += 1;
                 seen.bytes += u64::from(frame.len());
                 let asks = side
@@ -68,6 +73,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool) -> Peer {
         }
     }
     seen.cpu = thread_cpu() - cpu0;
+    seen.secs = first.map_or(0.0, |at| at.elapsed().as_secs_f64());
     seen
 }
 
@@ -256,14 +262,15 @@ pub(super) fn drive<IO: Io>(side: &mut Side<IO>, o: &Opts, addr: SocketAddr) -> 
 pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
     let (secs, cpu) = (done.secs, done.cpu);
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
-    let gb = peer.bytes as f64 / 1e9;
-    let per_gb = |spent: f64| if gb > 0.0 { spent / gb } else { 0.0 };
     let frame = o.frame_len();
-    let count = if o.kind == Kind::Bulk {
-        peer.frames
-    } else {
-        done.count
+    // With the peer elsewhere, what was sent counts as carried.
+    let (count, bytes) = match o.kind {
+        _ if o.connect.is_some() => (done.count, done.count * u64::from(frame)),
+        Kind::Bulk => (peer.frames, peer.bytes),
+        Kind::Rr | Kind::Path => (done.count, peer.bytes),
     };
+    let gb = bytes as f64 / 1e9;
+    let per_gb = |spent: f64| if gb > 0.0 { spent / gb } else { 0.0 };
     let (cmd, sync) = match o.kind {
         Kind::Rr => ("rr", "-"),
         Kind::Bulk => ("bulk", "-"),
@@ -289,5 +296,26 @@ pub(super) fn report(o: &Opts, done: &Done, peer: &Peer) {
         per_gb(peer.cpu),
         std::env::consts::ARCH,
         kernel.trim(),
+    );
+}
+
+/// One JSON line for a peer that ran alone.
+pub(super) fn report_peer(o: &Opts, peer: &Peer) {
+    let gb = peer.bytes as f64 / 1e9;
+    let per = |n: f64, by: f64| if by > 0.0 { n / by } else { 0.0 };
+    println!(
+        "{{\"cmd\":\"peer\",\"backend\":\"{}\",\"rx\":\"{:?}\",\"wait\":\"{}\",\"conns\":{},\"frame\":{},\"ring\":{},\"secs\":{:.2},\"frames\":{},\"per_s\":{:.0},\"gb_per_s\":{:.3},\"cpu\":{:.2},\"cpu_s_per_gb\":{:.3}}}",
+        if o.epoll { "epoll" } else { "uring" },
+        o.rx,
+        if o.spin { "spin" } else { "sleep" },
+        o.conns,
+        o.frame_len(),
+        o.ring,
+        peer.secs,
+        peer.frames,
+        per(peer.frames as f64, peer.secs),
+        per(gb, peer.secs),
+        peer.cpu,
+        per(peer.cpu, gb),
     );
 }

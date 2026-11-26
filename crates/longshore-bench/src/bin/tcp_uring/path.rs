@@ -10,11 +10,10 @@
 //! memory. The time the load measures is the whole path: wire, durable,
 //! replicated, answered.
 
-use super::{thread_cpu, unexpected, Opts, Peer, Side, BLOCK};
+use super::{thread_cpu, unexpected, Opts, Peer, Side, Stop, BLOCK};
 use crate::die::{die, OrDie};
 use longshore::io::{FileSlot, Io, Op, OpenFlags, Token};
 use longshore::tcp::{Conn, Event, Frame, SendError};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 const FILE: FileSlot = FileSlot::new(0);
 /// Blocks of the file: it is written round and round.
@@ -169,7 +168,7 @@ impl Node {
 }
 
 /// Log, replicate and answer, until told to stop.
-pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool, o: &Opts) -> Peer {
+pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer {
     open(side, o);
     let mut node = Node {
         pending: (0..o.conns + 3).map(|_| None).collect(),
@@ -178,8 +177,8 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool, o: &Opts) ->
         dsync: o.dsync,
         seen: Peer::default(),
     };
-    let cpu0 = thread_cpu();
-    while !stop.load(Ordering::Acquire) {
+    let (cpu0, mut first) = (thread_cpu(), None);
+    while !stop.now() {
         side.turn();
         while let Some(c) = side.others.pop_front() {
             node.stored(side, c.token().get(), c.result());
@@ -187,7 +186,11 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool, o: &Opts) ->
         while let Some(e) = side.net.next_event() {
             let conn = match e {
                 Event::Readable(conn) => conn,
-                Event::Accepted { .. } | Event::Writable(_) | Event::Closed { .. } => continue,
+                Event::Accepted { .. } | Event::Writable(_) => continue,
+                Event::Closed { .. } => {
+                    stop.closed();
+                    continue;
+                }
                 Event::Up(_)
                 | Event::Refused { .. }
                 | Event::Finished(_)
@@ -196,6 +199,7 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool, o: &Opts) ->
                 | Event::Drained => unexpected(e),
             };
             while let Ok(Some(frame)) = side.net.next_frame(&mut side.io, conn) {
+                first = first.or_else(|| Some(std::time::Instant::now()));
                 let says = side
                     .net
                     .bytes(&mut side.io, &frame)
@@ -212,5 +216,6 @@ pub(super) fn serve<IO: Io>(side: &mut Side<IO>, stop: &AtomicBool, o: &Opts) ->
         }
     }
     node.seen.cpu = thread_cpu() - cpu0;
+    node.seen.secs = first.map_or(0.0, |at| at.elapsed().as_secs_f64());
     node.seen
 }
