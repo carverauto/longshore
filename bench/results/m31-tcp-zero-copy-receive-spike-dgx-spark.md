@@ -285,6 +285,54 @@ it only when the kernel reads that ring, which an idle queue never does
 unless it is asked to with a flush. Not tried: the `ENOSPC` of a call in
 which nothing at all fitted the completion ring.
 
+## What makes a frame start a page
+
+The mode keeps a frame in its pages only if the frame's first byte lands
+at the start of a page. Measured with `zccredit ... credit FRAME` on
+`donbot` (the share of frames whose header starts a page, of 4,000), the
+sender on `roberto`.
+
+`tcp_uring bulk --frame-on-packet on|off` (a frame a send of its own,
+`TCP_NODELAY`; set `frame_on_packet` in the raw file), three runs each:
+
+| MTU | Frame | Option off | Option on |
+|---|---|---|---|
+| 9000 | 64 KiB | 0.4 to 0.7 % | 2.5 to 3.3 % |
+| 9000 | 1 MiB | 5.0 to 9.5 % | 13.2 to 13.6 % |
+| 8244 | 64 KiB | 0 to 93 % | 51 to 99 % |
+| 8244 | 1 MiB | 94 to 99 % | 94 to 96 % |
+| 8244 | 65,836 bytes | 0 to 0.2 % | 0.3 to 1.2 % |
+| 8244 | 1,047,576 bytes | 0.4 to 0.6 % | 1.1 to 2.5 % |
+
+A frame a send of its own does not make it start a packet: at speed the
+socket still holds unsent bytes of the last frame, and the kernel fills
+the next frame's first bytes into that tail. Frames whose length is a
+whole number of packets line up anyway.
+
+A throwaway sender, `bench/spikes/zcrx/eor.py`, with each frame's send
+marked `MSG_EOR` or not (one or two runs each; not in the raw file):
+
+| MTU | Frame | Without `MSG_EOR` | With `MSG_EOR` |
+|---|---|---|---|
+| 8244 | 65,836 and 1,047,576 bytes | 0.5 to 6.4 % | 14.2 to 14.6 % |
+| 8244 | 69,632 bytes (17 blocks) | 42.1 % | 99.8 % |
+| 8244 | 1,044,480 bytes (255 blocks) | 99.4 % | 100.0 % |
+| 9000 | 69,632 bytes | 4.5 % | 14.4 % |
+| 9000 | 1,044,480 bytes | 13.2 % | 28.5 % |
+
+`MSG_EOR` ends a socket buffer: nothing is appended to it, and the next
+send starts a buffer, and so a packet, of its own. That alone is not
+enough: the receiving card lays the payloads of a run of packets back to
+back in its pages (`rx-gro-hw`, which the driver keeps on while headers
+and data are split: switching it off was refused), so a frame that
+starts a packet starts a page only if every frame before it filled whole
+pages. Hence the rule, all three together: **packets of a whole number
+of pages (MTU 8244), frames of whole 4 KiB blocks, each frame's send
+marked `MSG_EOR`**; then 99.8 to 100 % of frames start a page.
+UltraGraphDB's log writes each round padded to whole blocks, so a
+replica sent the log's bytes as they lie on disk gets the second for
+free.
+
 ## Go
 
 The mode works on this card. It halves the CPU of receiving payload that
