@@ -130,6 +130,18 @@ bytes are moved once. TLS works with every provider, and nothing allocates
 after the set is built.
 [TCP connections][tcp] describes the API, the receive modes and sizing.
 
+## Files
+
+`longshore::file` is file I/O for programs that keep their own data on
+disk. A fixed set of files and operations is driven from the caller's loop
+on the same backend and thread as connections and the object storage
+client. Reads and writes are resumed until whole, operations that must
+happen in order go to the kernel as one chain, direct-I/O alignment is
+checked before anything is submitted, and every backend reports the same
+errors, a failed sync among them. It is file I/O only: logs, pages,
+records and checksums are left to the program that uses it.
+[Files][file] describes the API, sizing and durability.
+
 ## TLS and crypto providers
 
 HTTPS is TLS 1.3 with AES-GCM. The handshake always runs in rustls; the
@@ -245,6 +257,7 @@ the node. See [Running in containers][containers].
 | [How it works][design] | The design, and the crates in this repository |
 | [The I/O layer][io] | File operations, serving, the buffer ring, mailboxes, the simulated disk |
 | [TCP connections][tcp] | `longshore::tcp`: connections, framing, frame memory, TLS, sizing |
+| [Files][file] | `longshore::file`: files, sequences, direct I/O, durability, sizing |
 | [The shareable client][client] | The handle other threads use: operations, settings, failure behaviour |
 | [Building, testing and running against a store][testing] | The test scripts, and `s3_uring` against a real bucket |
 | [Running in containers][containers] | The seccomp profile and the locked-memory limit |
@@ -261,6 +274,7 @@ Apache License 2.0. See `LICENSE`.
 [client]: https://github.com/carverauto/longshore/blob/main/docs/client.md
 [containers]: https://github.com/carverauto/longshore/blob/main/docs/containers.md
 [design]: https://github.com/carverauto/longshore/blob/main/docs/design.md
+[file]: https://github.com/carverauto/longshore/blob/main/docs/file.md
 [io]: https://github.com/carverauto/longshore/blob/main/docs/io.md
 [tcp]: https://github.com/carverauto/longshore/blob/main/docs/tcp.md
 [limits]: https://github.com/carverauto/longshore/blob/main/docs/limits.md
