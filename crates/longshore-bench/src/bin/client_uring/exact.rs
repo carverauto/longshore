@@ -106,10 +106,13 @@ pub fn round_trip(client: &Client, len: usize) {
 }
 
 /// A request to an address nothing answers ends at its deadline, and long
-/// before the minute a request is otherwise given. The kernel is still
-/// connecting when the deadline passes, so this cancels real work.
+/// before the minute a request is otherwise given. Where the address is
+/// routed nowhere, the kernel is still connecting when the deadline passes,
+/// so this cancels real work. Some container networks accept any connect
+/// (NAT answers the SYN), and then the PUT is sent and never answered.
 pub fn deadline_stops_a_connect() {
-    // TEST-NET-1: routed nowhere, so the connect waits.
+    // TEST-NET-1: routed nowhere, so the connect waits, unless the
+    // network in between accepts it.
     let nowhere = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
     let credentials = Credentials::new("AKIDEXAMPLE", "secret").or_die("Credentials::new");
     let b = Builder::new("bucket.objects.test", "us-test-1", credentials)
@@ -126,20 +129,34 @@ pub fn deadline_stops_a_connect() {
     let (put, _body) = client.put("k", body, 1024, &Put::default(), budget).wait();
     let took = started.elapsed();
     let report = put.or_die("a report");
-    // Nothing was sent either way. A host with no route at all refuses the
-    // connect at once, and the attempts that follow are refused too until
-    // the deadline ends them.
-    assert!(
-        matches!(
-            report.end(),
-            End::NotSent(Cause::Deadline | Cause::Transport(_))
-        ),
-        "{report:?}"
-    );
-    assert_eq!((report.sent(), report.request()), (0, None));
+    let path = if report.sent() == 0 {
+        // The connect never completed. A host with no route at all refuses
+        // it at once, and the attempts that follow are refused too until
+        // the deadline ends them.
+        assert!(
+            matches!(
+                report.end(),
+                End::NotSent(Cause::Deadline | Cause::Transport(_))
+            ),
+            "{report:?}"
+        );
+        assert_eq!(report.request(), None, "{report:?}");
+        "an unanswered connect"
+    } else {
+        // The network accepted the connect: the PUT went out, nothing
+        // answered it, and the deadline ended the wait for an answer.
+        assert_eq!(report.end(), End::Unknown(Cause::Deadline), "{report:?}");
+        assert_eq!(report.unanswered(), report.sent(), "{report:?}");
+        assert_eq!(
+            report.request().map(|signed| signed.method()),
+            Some("PUT"),
+            "{report:?}"
+        );
+        "a sent, unanswered PUT"
+    };
     assert!(took < Duration::from_secs(5), "took {took:?}");
     println!(
-        "ok exact: deadline ended an unanswered connect in {took:?} as {:?}",
+        "ok exact: deadline ended {path} in {took:?} as {:?}",
         report.end()
     );
 }
