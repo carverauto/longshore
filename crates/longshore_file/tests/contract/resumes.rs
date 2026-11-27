@@ -11,7 +11,7 @@
 
 use super::sim::{place, rig};
 use longshore_common::io::Op;
-use longshore_common::sim::PlacedFault;
+use longshore_common::sim::{PlacedFault, SimIo};
 use longshore_file::check::{bytes, rw_create, tickets, Kind, Submitted, BLOCK};
 use longshore_file::{ErrorKind, FileError, Step};
 
@@ -51,34 +51,53 @@ fn a_short_write_is_resumed_for_the_rest() {
     rig.at_rest(0);
 }
 
+/// The result of the first completion from completion number `from` on.
+fn first_result(rig: &mut longshore_file::check::Rig<SimIo>, from: u64) -> i32 {
+    rig.io().result(from).unwrap().1
+}
+
+/// Cut at a sector inside its first block, a direct write has no whole
+/// block to resume from, and ends `NoProgress`; cut past it, the rest is
+/// written again from the last whole block, from the same buffer.
 #[test]
 fn a_short_direct_write_resumes_from_its_last_whole_block() {
     let mut rig = rig();
     let flags = rw_create().with_empty(true).with_direct(true);
     let f = rig.open("/direct-short.dat", flags);
-    let len = 3 * BLOCK;
-    for round in 0..4u64 {
+    let len = 4 * BLOCK;
+    let (mut resumed, mut stalled) = (0, 0);
+    for round in 0..16u64 {
         let data = bytes(round as u8, len as usize);
         let at = round * u64::from(len);
-        let mark = rig.io().submitted();
+        let (mark, from) = (rig.io().submitted(), rig.io().completed());
         place(&mut rig, 1, PlacedFault::ShortWrite);
-        assert_eq!(rig.write(f, &data, at), Ok(u64::from(len)));
+        let r = rig.write(f, &data, at);
+        let cut = first_result(&mut rig, from).unsigned_abs();
         let w = writes(rig.io().since(mark));
+        if cut < BLOCK {
+            assert_eq!((r, w.len()), (Err(FileError::NoProgress), 1), "{w:?}");
+            stalled += 1;
+            continue;
+        }
+        assert_eq!(r, Ok(u64::from(len)));
         assert_eq!(w.len(), 2, "{w:?}");
-        let (from, off, rest) = w[1];
-        assert!(
-            from.is_multiple_of(u64::from(BLOCK)),
-            "resumed at a block: {w:?}"
-        );
-        assert_eq!(u64::from(off), from - at, "from the same buffer: {w:?}");
-        assert_eq!(rest, len - off, "{w:?}");
-        assert!(off < len, "{w:?}");
+        let off = cut / BLOCK * BLOCK;
+        assert_eq!(w[1], (at + u64::from(off), off, len - off), "cut at {cut}");
         assert_eq!(rig.read(f, at, len), (Ok(u64::from(len)), data));
+        resumed += 1;
     }
+    assert!(
+        resumed > 0 && stalled > 0,
+        "{resumed} resumed, {stalled} not"
+    );
     assert_eq!(rig.close(f), Ok(0));
     rig.at_rest(0);
 }
 
+/// An error after some bytes is `Partial` with how many; a resume that
+/// moves nothing is `NoProgress`, alone or after some bytes. The
+/// simulator cuts a buffered write only at a sector inside it, so a write
+/// of nothing comes from a direct one cut inside a block.
 #[test]
 fn an_error_after_some_bytes_is_partial_and_none_is_no_progress() {
     let mut rig = rig();
@@ -95,17 +114,34 @@ fn an_error_after_some_bytes_is_partial_and_none_is_no_progress() {
         ),
         other => panic!("cut, then failed: {other:?}"),
     }
-    // Less than a sector, cut: nothing written.
-    place(&mut rig, 1, PlacedFault::ShortWrite);
-    assert_eq!(rig.write(f, &[1; 100], 0), Err(FileError::NoProgress));
-    // A sector, then nothing of the rest.
-    place(&mut rig, 1, PlacedFault::ShortWrite);
-    place(&mut rig, 2, PlacedFault::ShortWrite);
-    let stalled = FileError::Partial {
-        done: 512,
-        kind: ErrorKind::NoProgress,
-    };
-    assert_eq!(rig.write(f, &[2; 600], 0), Err(stalled));
+    let flags = rw_create().with_empty(true).with_direct(true);
+    let d = rig.open("/partial-direct.dat", flags);
+    let (mut alone, mut after) = (0, 0);
+    for round in 0..16u64 {
+        let from = rig.io().completed();
+        place(&mut rig, 1, PlacedFault::ShortWrite);
+        place(&mut rig, 2, PlacedFault::ShortWrite);
+        let r = rig.write(d, &bytes(3, 2 * BLOCK as usize), round * 8192);
+        let stalled = FileError::Partial {
+            done: u64::from(BLOCK),
+            kind: ErrorKind::NoProgress,
+        };
+        if first_result(&mut rig, from).unsigned_abs() < BLOCK {
+            assert_eq!(r, Err(FileError::NoProgress));
+            alone += 1;
+            // The second fault was not used: a status takes it, failing.
+            let taken = rig.status("/nothing-here");
+            assert!(taken.is_err(), "{taken:?}");
+        } else {
+            assert_eq!(r, Err(stalled));
+            after += 1;
+        }
+    }
+    assert!(
+        alone > 0 && after > 0,
+        "{alone} alone, {after} after a block"
+    );
+    assert_eq!(rig.close(d), Ok(0));
     assert_eq!(rig.close(f), Ok(0));
     rig.at_rest(0);
 }

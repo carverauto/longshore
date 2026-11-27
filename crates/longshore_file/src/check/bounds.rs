@@ -105,7 +105,7 @@ fn a_sequence_needs_room_for_every_step<IO: Io>(make: &mut impl FnMut(Limits) ->
 /// in the order it was asked for: a sequence that needs more room than
 /// there is holds back what was asked for after it.
 fn waiting_goes_first_in_first_out<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
-    let mut rig = Rig::new(make, limits(), three());
+    let mut rig = Rig::new(make, limits(), three().with_shared(4));
     let a = rig.open(&format!("{root}wait-a.dat"), rw_create());
     let b = rig.open(&format!("{root}wait-b.dat"), rw_create());
     let e = rig.extent();
