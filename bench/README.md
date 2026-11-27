@@ -64,6 +64,7 @@ the syncs, and the thread's CPU-seconds a GB. See the header of
 
 ```sh
 cargo build --release -p longshore-bench --bin file_bench
+mkdir -p /tmp/fb                       # the directory of --path must exist
 ./target/release/file_bench --backend posix --direct --write-size 64k --depth 16 \
     --sync-every 16 --random --file-size 256m --secs 1 --runs 3 --path /tmp/fb/f.dat
 ```

@@ -12,10 +12,14 @@ Task 4.1 of `add-file-crate`, measured 2026-11-27 with `file_bench` on
 - Disk: the internal `APPLE SSD AP8192Z`, 8 TB, APFS on the Data volume,
   FileVault on. The file was `/private/tmp/m36-file-bench/f.dat`, removed
   after each cell.
-- Build: release, commit `d238b33` (the implementation of groups 1 and 2).
-  The commit after it, `dbb83f5`, changes how many tokens the set counts
-  and how `file_bench` sizes its table of tickets; it does not change the
-  I/O path, and the runs were not repeated on it.
+- Build: release, commit `d238b33` (the implementation of groups 1 and 2),
+  whose `crates/` is the same as `165bf19`'s, the build of milestone 37.
+  Six commits followed before `dbb83f5`, among them `5c0bf52`, the fixes
+  of the review of groups 1 and 2 (bounded rewrites of sub-block writes,
+  which durable-write errors poison, refused chains as plain errors), and
+  `dbb83f5`, the token count. Those touch short transfers, error paths and
+  the count of tokens, which these runs did not reach: no transfer came
+  back short and no operation failed. The runs were not repeated on them.
 - The machine was not idle: other work, not recorded, ran on it during
   the matrix. That shows as stalls of single operations, described below.
 
@@ -30,36 +34,49 @@ file_bench --backend posix --write-size W --depth D --file-size 256m --secs 1 --
 
 for W of 4 KiB, 64 KiB and 1 MiB, D of 1, 4 and 16, buffered and
 `--direct` (`F_NOCACHE`), the three ways to sync, and sequential and
-random offsets: 108 cells, 23 minutes. Each cell makes a 256 MiB
-file, reserves it and writes it once unmeasured, then runs three times;
-each run opens the file through each API in turn, the order swapped every
-run, and makes a write pass and a read pass of one second each. A pass
-ends at the first operation it would hand out after one second, and then
-waits for what is in flight.
+random offsets: 108 cells, 23 minutes. Each cell makes a 256 MiB file,
+reserves it and writes it once unmeasured, then runs three times. Each
+run opens the file through each API in turn and makes a write pass and a
+read pass of one second each: the set goes first in runs 1 and 3, the
+raw path in run 2 (`file_bench/opts.rs`, `Opts::apis`). A pass ends at the
+first operation it would hand out after one second, and then waits for
+what is in flight.
 
 - `file`: through `longshore::file::Files` (open, `write_at`, `read_at`,
   `sync`, close), with one file of `depth + 1` operations.
 - `raw`: through `Op::FileWrite`, `Op::FileRead` and `Op::FileSync`
   submitted directly, on the same backend and the same buffers.
 - Sync at the end: one data sync at the end of a write pass, inside its
-  time. `--sync-every 16`: a data sync each time 16 writes have completed
-  since the last, at most one in flight, writes going on meanwhile, plus
-  the one at the end. `--dsync`: the file opened with `O_DSYNC`, no sync.
-  On macOS a data sync is `F_FULLFSYNC`, which flushes the drive's cache;
-  `O_DSYNC` does not (`OpenFlags::with_dsync`).
+  time. `--sync-every 16`: a data sync asked for each time 16 writes have
+  completed since the last, at most one in flight, plus the one at the
+  end. `--dsync`: the file opened with `O_DSYNC`, no sync. On macOS every
+  sync is `F_FULLFSYNC`, data-only or not, which flushes the drive's
+  cache; `O_DSYNC` does not (`OpenFlags::with_dsync`).
 - GB/s: bytes of the pass over its time, 10^9 bytes. ops/s: writes or
   reads a second, syncs not counted. CPU-s/GB: the thread's CPU time
   (`CLOCK_THREAD_CPUTIME_ID`, user and system) over the pass's GB. p99:
   latency of a write or read from the call to its completion, kept in a
   histogram of about 3 % resolution. Sync p50 and p99: the same, of the
   syncs.
-- Every figure below is the median of three runs of one cell, of one API.
+- Every figure in the tables is the median of three runs of one cell, of
+  one API.
 
-`PosixIo` on macOS runs file operations synchronously inside `tick`
+**What the portable backend does on macOS.** `PosixIo` runs file
+operations synchronously inside `tick`, on the measured thread
 (`openspec/project.md`): operations in flight are performed one after
-another by the thread, so depth does not put several at the drive at
-once. Depth still gains where the poller's turn is shared by more
-operations.
+another, so depth does not put several at the drive at once, and a sync
+blocks the thread, so no write overlaps it. The thread's CPU therefore
+includes the kernel's work for every operation, the copy of every
+buffered byte among it; the set's own bookkeeping is a small part of that
+total, and it is against that total that its cost is measured here.
+
+**What the GB/s are of.** Each pass rewrites a 256 MiB file many times
+over (a second of buffered writes at 13 GB/s is about 50 passes over it).
+Buffered writes land in the page cache, and only what is dirty at a sync
+reaches the drive: with one sync at the end, the buffered write figures
+are of copying into the cache, not of the disk. Buffered reads of the
+file just written come from the cache too. Direct I/O and the synced and
+durable cells go to the drive.
 
 ## The set's cost against the raw path
 
@@ -84,30 +101,60 @@ file's state):
 | Read, 1 MiB | GB/s | 36 | 0.99 | 0.79 | 1.11 |
 | Read, 1 MiB | CPU-s per GB | 36 | 1.01 | 0.73 | 1.41 |
 
-The three runs of one cell and one API differ by a median of 5 % in
-GB/s, highest over lowest, and by 15 % or more in a tenth of them. The
-cells where the two APIs differ most go both ways, and no kind of cell
-has the set behind in all its cells. What the runs show: on this backend
-the set costs no throughput and no CPU a GB that three runs of one second
-can tell from the raw path's. They cannot show a cost of a few percent:
-the largest median gap, 2 % more CPU a GB for the set at 4 KiB reads, is
-within the runs' spread. The one ratio of 8.62 is a cell where the raw
-path stalled in all three runs (below).
+Counting the cells in which the set's median is on the worse side of the
+raw path's:
+
+| Passes | Cells | Set's CPU a GB above raw | Set's GB/s below raw |
+|---|---|---|---|
+| Write | 108 | 56 (two-sided sign test p = 0.77) | 55 (p = 0.92) |
+| Read | 108 | 75 (p = 7 × 10⁻⁵) | 70 (p = 0.003) |
+
+The median, over the 108 read cells, of the set's CPU a GB over the raw
+path's, taking each run on its own, is 1.008 in run 1, 1.016 in run 2 and
+1.017 in run 3. Run 2 is the one in which the raw path went first, so the
+order does not account for it.
+
+What the runs show:
+
+- **Reads cost the set about 1 to 2 % more of the thread's CPU a GB**,
+  and a little throughput with it. The difference is small against the
+  spread of single cells, but it is on the same side in most of them, and
+  in every run. It is a share of the thread's whole CPU, which includes
+  the kernel's work for each read.
+- **Writes show no difference.** The set is on either side of the raw
+  path about as often, in throughput and in CPU.
+- **Single cells say little.** The three runs of one cell and one API
+  differ by a median of 5 % in GB/s, highest over lowest, and by 15 % or
+  more in a tenth of them. Of the 432 pairs of a cell and a measure (GB/s
+  or CPU a GB, per phase), 34 have the two APIs' run ranges apart, 25 of
+  them against the set and 9 for it: for one, buffered sequential 4 KiB
+  writes at depth 1 with a sync every 16 writes, the set's runs spent 5.02
+  to 5.77 CPU-s a GB and the raw path's 2.82 to 4.74. In 20 of the 72
+  groups of cells that differ only in depth, the set's median CPU a GB is
+  above the raw path's at all three depths, for example buffered
+  sequential 64 KiB writes (1.001, 1.17, 1.005) and direct sequential
+  4 KiB reads (1.05, 1.09, 1.11).
+- **The one ratio of 8.62** is a cell where the raw path stalled in all
+  three runs (below).
 
 ## Stalls
 
 In 39 of the 1,296 passes a write, a read or a sync took 0.1 s or more:
 21 through the set and 18 raw, all but one of them write passes. 16 of
 them, all buffered 4 KiB sequential writes with `--dsync` (9 raw, 7
-through the set), had an operation of 0.5 to 2.3 s. The others had
+through the set), had an operation of 0.70 to 2.35 s. The others had
 operations or syncs of 0.1 to 0.36 s, in cells of every write size. A
 few passes of both APIs moved under a tenth of their cell's median, for
 one a pass of direct 4 KiB random writes at depth 16 through the set: 48
 writes in 1.3 s. The thread's CPU in such passes was under 1 %: it was
-waiting for the kernel. Each figure below is a median of three runs, so a cell with
-one such pass is not moved by it. The buffered 4 KiB `--dsync` sequential
-cells had stalls in 16 of their 18 passes, and their figures are not a
-measurement of either API.
+waiting for the kernel.
+
+A median of three runs is moved by a stall when two of the three runs
+stalled. That is so in the buffered 4 KiB `--dsync` sequential cells
+(16 of their 18 passes stalled), whose figures are not a measurement of
+either API, and in five more cell and API pairs, all direct random 64 KiB
+writes synced at the end: depth 1 for both APIs, depth 4 for the set,
+depth 16 for both. Those rows are marked † in the table below.
 
 No pass failed, hung or ended early. The set's path ran every cell.
 
@@ -150,19 +197,21 @@ Random offsets, synced at the end:
 | direct | 4 KiB | 1 | 0.03 | 0.03 | 5.299 | 4.287 |
 | direct | 4 KiB | 4 | 0.03 | 0.03 | 4.473 | 4.205 |
 | direct | 4 KiB | 16 | 0.03 | 0.03 | 4.774 | 4.454 |
-| direct | 64 KiB | 1 | 1.25 | 1.37 | 0.218 | 0.201 |
-| direct | 64 KiB | 4 | 1.75 | 1.83 | 0.163 | 0.170 |
-| direct | 64 KiB | 16 | 1.79 | 1.82 | 0.152 | 0.166 |
+| direct | 64 KiB | 1 | 1.25 † | 1.37 † | 0.218 † | 0.201 † |
+| direct | 64 KiB | 4 | 1.75 † | 1.83 | 0.163 † | 0.170 |
+| direct | 64 KiB | 16 | 1.79 † | 1.82 † | 0.152 † | 0.166 † |
 | direct | 1 MiB | 1 | 5.72 | 5.62 | 0.029 | 0.029 |
 | direct | 1 MiB | 4 | 6.03 | 5.94 | 0.028 | 0.027 |
 | direct | 1 MiB | 16 | 5.81 | 5.95 | 0.033 | 0.030 |
 
-The direct random 4 KiB rows are the one group where the set's median
-CPU a GB is above the raw path's at all three depths (6 to 24 %); their
-GB/s are the same. Single runs of either API in those cells range from
-4.0 to 5.6 CPU-s a GB (and one pass of the set, which stalled, at 20.8),
-so the gap lies inside the runs' spread and is not shown to be the
-set's.
+† Two of the three runs of this API in this cell had a write or sync of
+0.1 s or more: the median is of a stalled run.
+
+In the direct random 4 KiB rows the set's median CPU a GB is above the
+raw path's at all three depths (6 to 24 %), as it is in 19 more groups of
+three depths in the whole matrix (above); their GB/s are the same. Single
+runs of either API in those cells range from 4.0 to 5.6 CPU-s a GB (and
+one pass of the set, which stalled, at 20.8).
 
 ## Reads
 
@@ -192,15 +241,18 @@ are in the raw lines and differ from these in nothing measured.
 
 Buffered reads of a 256 MiB file just written come from the page cache.
 The buffered 64 KiB, depth 4 cell is the widest gap in the table, 20 %
-against the set in GB/s, here and in the same cell's sequential writes;
-the cells beside it at depths 1 and 16 show none, and the random reads at
-depth 4 differ by 4 %. The medians of the random reads of these cells
-(in the raw lines) are within 5 % of each other in every row.
+against the set in GB/s (6.51 against 8.17), and 17 % in the same cell's
+sequential writes (4.53 against 5.44); the runs of the two APIs overlap
+there (writes: the set 4.43 to 5.67, raw 4.27 to 5.64), the cells beside
+it at depths 1 and 16 show no such gap, and the random reads at depth 4
+differ by 4 %. The medians of the random reads of these cells (in the raw
+lines) are within 5 % of each other in every row.
 
 ## Syncs
 
 A data sync every 16 writes, sequential offsets. On this disk a sync
-takes 5 to 13 ms and sets the rate: about 16 writes a sync.
+takes 5 to 13 ms. It blocks the thread, so no write runs while it does,
+and the syncs set the rate.
 
 | I/O | Write size | Depth | file ops/s | raw ops/s | file sync p50 µs | raw sync p50 µs | file sync p99 µs | raw sync p99 µs |
 |---|---|---|---|---|---|---|---|---|
@@ -249,17 +301,20 @@ of the cells above at the same durability.
 | direct | 1 MiB | 16 | 6090 | 6040 | 3080 | 3211 | 0.029 | 0.030 |
 
 The buffered 4 KiB rows are the cells with the long stalls: 16 of their
-18 passes had an operation of 0.5 to 2.3 s, so their rates say how often
+18 passes had an operation of 0.70 to 2.35 s, so their rates say how often
 a stall fell in a pass, not what either API does. The random-offset cells
 of the same rows, with no such stall, ran 28,000 to 43,700 writes a
 second, medians of either API (in the raw lines).
 
 ## What this does not show
 
-- Anything of `UringIo`, or of Linux: the DGX Spark's NVMe is the other
-  half of task 4.1.
-- A cost of the set below a few percent: that needs longer passes and
-  more runs than three of one second.
+- Anything of `UringIo`, or of Linux: the DGX Spark's NVMe is milestone
+  37.
+- The size of the set's cost on reads more closely than "about 1 to 2 %
+  of the thread's CPU", or any cost on writes below a few percent: that
+  needs longer passes and more runs than three of one second.
+- What the set's own work costs apart from the kernel's: on this backend
+  the two run on the same thread and are measured together.
 - Gathered writes, sequences, or several files: the bench drives one file
   with single writes, reads and syncs.
 - Whether `FileSizes`'s defaults fit: the bench sizes its set itself
