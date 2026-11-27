@@ -80,8 +80,9 @@ pub(crate) struct Opts {
     pub(crate) random: bool,
     /// The file's size: the offsets of a pass lie inside it.
     pub(crate) file_size: u64,
-    /// Bytes a pass moves, when it is not bounded by time.
-    pub(crate) bytes: u64,
+    /// Bytes a pass moves, when it is not bounded by time; the file's size
+    /// when not given (see [`Opts::pass_bytes`]).
+    pub(crate) bytes: Option<u64>,
     /// Seconds a pass runs, when it is bounded by time.
     pub(crate) secs: Option<u64>,
     /// The file. It is made, filled once, and removed at the end.
@@ -137,7 +138,7 @@ impl Opts {
             dsync: false,
             random: false,
             file_size: 1 << 30,
-            bytes: 0,
+            bytes: None,
             secs: None,
             path: std::env::temp_dir()
                 .join(format!("file_bench-{}.dat", std::process::id()))
@@ -158,9 +159,6 @@ impl Opts {
                 // A flag given no value is refused for the empty one.
                 _ => o.set(&flag, args.next().as_deref().unwrap_or_default()),
             }
-        }
-        if o.bytes == 0 {
-            o.bytes = o.file_size;
         }
         o.check();
         o
@@ -197,7 +195,7 @@ impl Opts {
             "--depth" => self.depth = count(flag, value),
             "--sync-every" => self.sync_every = count(flag, value),
             "--file-size" => self.file_size = bytes(flag, value),
-            "--bytes" => self.bytes = bytes(flag, value),
+            "--bytes" => self.bytes = Some(bytes(flag, value)),
             "--secs" => self.secs = Some(u64::from(count(flag, value))),
             "--path" => value.clone_into(&mut self.path),
             "--runs" => self.runs = count(flag, value),
@@ -224,7 +222,10 @@ impl Opts {
         {
             die("--file-size takes whole writes, one at least");
         }
-        if self.secs == Some(0) || (self.secs.is_none() && self.bytes < u64::from(self.write)) {
+        if self.secs.is_some() && self.bytes.is_some() {
+            die("--bytes and --secs each bound a pass: give one of them, not both");
+        }
+        if self.secs == Some(0) || self.pass_bytes() < u64::from(self.write) {
             die("--secs takes 1 or more, --bytes one write at least");
         }
         if self.path.is_empty() {
@@ -233,6 +234,11 @@ impl Opts {
         if self.dsync && self.sync_every != 0 {
             die("--dsync makes every write durable: --sync-every adds nothing to it");
         }
+    }
+
+    /// Bytes a pass not bounded by time moves: `--bytes`, or the file's size.
+    pub(crate) fn pass_bytes(&self) -> u64 {
+        self.bytes.unwrap_or(self.file_size)
     }
 
     /// The APIs of run `run` (from 1), in the order they run.

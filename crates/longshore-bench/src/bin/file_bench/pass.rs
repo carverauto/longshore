@@ -120,7 +120,7 @@ impl Pass {
         let until = match (fill, o.secs) {
             (true, _) => Until::Bytes(o.file_size),
             (false, Some(s)) => Until::Ns(s * 1_000_000_000),
-            (false, None) => Until::Bytes(o.bytes),
+            (false, None) => Until::Bytes(o.pass_bytes()),
         };
         Pass {
             write,
