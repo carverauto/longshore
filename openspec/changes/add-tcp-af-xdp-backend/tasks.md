@@ -4,7 +4,7 @@ code for a state machine is written before its table in `design.md` has
 been reviewed.
 
 ## 0. The contract
-- [ ] 0.0 (restated in `proposal.md`: no case on large frames; small frames not shown either way; the 324-byte cells again without the sender's option and with a profile first; go or close waits for them) The case restated from the results of `add-tcp-zero-copy-receive` (cores at the full link with and without the receive copy): go, or the change is closed
+- [x] 0.0 (closed 2026-11-27: milestone 35 left one case, a small message a packet, the traffic of order messages, not of a database; no case on large frames or batched small frames) The case restated from the results of `add-tcp-zero-copy-receive` (cores at the full link with and without the receive copy): go, or the change is closed
 - [ ] 0.1 Review of the TCP connection, chunk ownership and queue socket state tables, the invariants X1 to X11 and the exhaustion table in `design.md`; corrections made there first
 - [ ] 0.2 The packet-level model test's harness on change 2's packet device: both ends, seeded packet faults, the smallest pools, invariants checked after every step, replay by seed (failing until the stack exists)
 - [ ] 0.3 The transport conformance suite of change 2 wired to run against `XdpTransport` on the packet device

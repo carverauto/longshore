@@ -137,8 +137,10 @@ either redesigned or left out.
   with `tls(true)` when the `tls` feature is disabled returns
   `BuildError::Setting` naming `tls`. Other platforms build the crate and
   run the simulator, while `Builder::build` returns `BuildError::Unsupported`.
-- Not planned: HTTP/2 (object stores gain nothing from it over pooled
-  HTTP/1.1 connections and S3 does not offer it), interactive sign-in flows
+- Not planned: kernel bypass (AF_XDP and a user-space TCP stack; io_uring
+  zero-copy receive over the kernel's TCP does better on the large frames
+  a database moves, milestones 34 and 35), HTTP/2 (object stores gain
+  nothing from it over pooled HTTP/1.1 connections and S3 does not offer it), interactive sign-in flows
   such as SSO, and Azure Blob Storage until an account is available to test
   against.
 

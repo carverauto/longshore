@@ -1,5 +1,13 @@
 # Change: Kernel bypass for longshore_tcp through AF_XDP, tuned for 200 and 300 Gb/s
 
+**Closed 2026-11-27, not to be built.** Milestones 34 and 35 left one
+case: small messages each in a packet of its own, at well over 400,000 a
+second a core pair or round trips well under 25 µs. That is the traffic
+of trading systems and exchanges sending order messages. A database moves
+query results and inserts across many frames, where io_uring zero-copy
+receive over the kernel's TCP already does better than this design could
+(it moves every payload once). The text below is kept as it stood.
+
 ## Why
 At 200 and 300 Gb/s a NIC delivers 25 to 37.5 GB/s. Kernel TCP spends each
 core on the receive copy (`copy_to_user` was 58% of the client on an HTTPS
@@ -42,9 +50,10 @@ corrected by its review):
   not measured; only the last two are what a user-space stack removes,
   and the set's own it can cut in place.
 
-So the measurements give this change no case yet. Before go or close: the
-324-byte cells again without the sender's option, with the senders' lines
-kept, and a profile of the receiving and the queue's cores (task 0.0).
+So the measurements gave this change no case on large frames. Milestone
+35 then ran the 324-byte cells again without the sender's option, with a
+profile: batched small frames reach 11.3 million a second a core with the
+kernel's TCP; only one small frame a packet leaves a case (task 0.0).
 
 ## What Changes
 - `XdpTransport` behind the `Transport` seam, its `Driver` the core's

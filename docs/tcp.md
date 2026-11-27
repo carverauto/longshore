@@ -487,6 +487,4 @@ allocation guard and once per TLS provider. See
 
 ## Not there yet
 
-- The AF_XDP transport. The simulated packet link it is to be tested on
-  is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.
