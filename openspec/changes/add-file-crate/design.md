@@ -176,7 +176,9 @@ On a direct-I/O file a short write resumes from what was written rounded
 down to a block (the same bytes rewritten from the same buffer); one that
 wrote less than a block is rewritten from the same offset, four times at
 most: a fifth such write in a row with no whole block ends `NoProgress`,
-so resumes are bounded. A short read ending off a block boundary is the end of the file. An error
+so resumes are bounded; `done` then counts whole blocks only. Whenever a
+write ends in an error, the bytes of its range past `done` are of unknown
+state: the backend may have written some of them. A short read ending off a block boundary is the end of the file. An error
 ends the transfer with `FileError::Partial { done, kind }` when bytes were
 done, the plain error when none were.
 
