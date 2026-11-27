@@ -6,8 +6,10 @@
 //! Where the packets of a stream begin, for [`Virtual`].
 //!
 //! Every send on a stream socket is a packet: its first byte is noted in
-//! the receiving socket, by where it lies in that socket's queue. A
-//! receive into the receive area cuts its pieces from packets: a packet
+//! the receiving socket, by how many bytes were ever queued in that
+//! socket before it. A count that only grows never comes round to a
+//! place that was taken already, as a place in the socket's ring would.
+//! A receive into the receive area cuts its pieces from packets: a packet
 //! starts a page, as a card lays each packet's payload at the start of
 //! one, and no piece runs from one packet into the next. The lengths of
 //! the last packets sent are kept as well, for a test that asks what a
@@ -24,11 +26,13 @@ const LOG: usize = 256;
 /// Where the packets waiting in each socket begin, and how long the last
 /// packets of all sockets were.
 pub(in crate::sim) struct Packets {
-    /// For each socket, the places in its queue where a packet begins:
-    /// a ring of `MARKS`, oldest at `head`.
-    marks: Box<[u32]>,
+    /// For each socket, the bytes ever queued in it before each waiting
+    /// packet: a ring of `MARKS`, oldest at `head`.
+    marks: Box<[u64]>,
     head: Box<[u8]>,
     len: Box<[u8]>,
+    /// For each socket, the bytes ever queued in it.
+    queued: Box<[u64]>,
     /// The lengths of the last packets sent, a ring, and how many were
     /// ever sent.
     lens: Box<[u32]>,
@@ -39,7 +43,7 @@ pub(in crate::sim) struct Packets {
 }
 
 /// The bit of a mark that says the packet before it ended a buffer.
-const FIRM: u32 = 1 << 31;
+const FIRM: u64 = 1 << 63;
 
 impl Packets {
     pub(super) fn new(limits: &Limits) -> Packets {
@@ -48,6 +52,7 @@ impl Packets {
             marks: vec![0; socks * MARKS].into_boxed_slice(),
             head: vec![0; socks].into_boxed_slice(),
             len: vec![0; socks].into_boxed_slice(),
+            queued: vec![0; socks].into_boxed_slice(),
             lens: vec![0; LOG].into_boxed_slice(),
             sent: 0,
             ends: vec![false; socks].into_boxed_slice(),
@@ -58,6 +63,7 @@ impl Packets {
     pub(super) fn reset(&mut self) {
         self.head.fill(0);
         self.len.fill(0);
+        self.queued.fill(0);
         self.sent = 0;
         self.ends.fill(false);
     }
@@ -67,60 +73,64 @@ impl Packets {
         self.ends[sock as usize] = on;
     }
 
-    /// No packet waits in `sock` any more: its connection is over.
+    /// No packet waits in `sock` any more, and its sends end no buffer:
+    /// its connection is over, or a new one begins.
     pub(super) fn forget(&mut self, sock: u32) {
         (self.head[sock as usize], self.len[sock as usize]) = (0, 0);
         self.ends[sock as usize] = false;
     }
 
-    /// A packet of `n` bytes from `from` was queued in `sock`, its first
-    /// byte at `at` of the socket's queue.
-    pub(super) fn sent(&mut self, (from, sock): (u32, u32), at: usize, n: usize) {
+    /// A packet of `n` bytes from `from` was queued in `sock`, behind the
+    /// `waiting` bytes that were in its queue before.
+    pub(super) fn sent(&mut self, (from, sock): (u32, u32), waiting: usize, n: usize) {
         let firm = if self.ends[from as usize] { FIRM } else { 0 };
         self.lens[(self.sent % LOG as u64) as usize] = n as u32;
         self.sent += 1;
         let s = sock as usize;
+        let at = self.queued[s];
+        self.queued[s] += n as u64;
+        // Marks of bytes that were taken already make no room for others.
+        self.behind(s, at.saturating_sub(waiting as u64));
         if (self.len[s] as usize) < MARKS {
             let slot = (self.head[s] as usize + self.len[s] as usize) % MARKS;
-            self.marks[s * MARKS + slot] = at as u32 | firm;
+            self.marks[s * MARKS + slot] = at | firm;
             self.len[s] += 1;
         }
     }
 
-    /// The `k`-th waiting mark of `sock`, as bytes ahead of `rx_head`.
-    fn ahead_of(&self, sock: usize, k: usize, rx_head: usize) -> usize {
-        let mark =
-            (self.marks[sock * MARKS + (self.head[sock] as usize + k) % MARKS] & !FIRM) as usize;
-        (mark + SOCK_BUF - rx_head) % SOCK_BUF
+    /// The `k`-th waiting mark of `sock`: the bytes ever queued before it.
+    fn mark(&self, sock: usize, k: usize) -> u64 {
+        self.marks[sock * MARKS + (self.head[sock] as usize + k) % MARKS] & !FIRM
     }
 
-    /// What lies ahead of a socket that has `rx_len` bytes waiting from
-    /// `rx_head`: whether a packet begins with the next byte, whether it
-    /// follows a send that ended a buffer (and so cannot have been joined
-    /// to the one before), and how many bytes come before the next packet
-    /// begins.
-    pub(super) fn ahead(
-        &mut self,
-        sock: u32,
-        rx_head: usize,
-        rx_len: usize,
-    ) -> (bool, bool, usize) {
-        let s = sock as usize;
-        // Marks of bytes that were taken already are behind.
-        while self.len[s] > 0 && self.ahead_of(s, 0, rx_head) >= rx_len {
+    /// Drops the marks of `sock` before `read`, the bytes ever taken.
+    fn behind(&mut self, s: usize, read: u64) {
+        while self.len[s] > 0 && self.mark(s, 0) < read {
             self.head[s] = ((self.head[s] as usize + 1) % MARKS) as u8;
             self.len[s] -= 1;
         }
+    }
+
+    /// What lies ahead of a socket that has `rx_len` bytes waiting:
+    /// whether a packet begins with the next byte, whether it follows a
+    /// send that ended a buffer (and so cannot have been joined to the one
+    /// before), and how many bytes come before the next packet begins.
+    pub(super) fn ahead(&mut self, sock: u32, rx_len: usize) -> (bool, bool, usize) {
+        let s = sock as usize;
+        // What waits are the last bytes queued: the rest were taken, or
+        // thrown away with the queue.
+        let read = self.queued[s].saturating_sub(rx_len as u64);
+        self.behind(s, read);
         if self.len[s] == 0 {
             return (false, false, rx_len);
         }
-        let first = self.ahead_of(s, 0, rx_head);
+        let first = (self.mark(s, 0) - read) as usize;
         if first > 0 {
-            return (false, false, first);
+            return (false, false, first.min(rx_len));
         }
         let firm = self.marks[s * MARKS + self.head[s] as usize] & FIRM != 0;
         let next = if self.len[s] > 1 {
-            self.ahead_of(s, 1, rx_head).min(rx_len)
+            ((self.mark(s, 1) - read) as usize).min(rx_len)
         } else {
             rx_len
         };

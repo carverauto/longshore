@@ -310,11 +310,8 @@ impl Virtual {
         // A packet that begins here starts a page, unless, one time in
         // eight, it was joined to the one before; no piece runs from one
         // packet into the next.
-        let (head, waiting) = (
-            self.socks[sock.0 as usize].rx_head,
-            self.socks[sock.0 as usize].rx_len,
-        );
-        let (begins, firm, within) = self.packets.ahead(sock.0, head, waiting);
+        let waiting = self.socks[sock.0 as usize].rx_len;
+        let (begins, firm, within) = self.packets.ahead(sock.0, waiting);
         // A packet after a send that ended a buffer is never joined; the
         // draw is made only for the others, so traces without stay as
         // they were.
