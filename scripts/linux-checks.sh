@@ -48,6 +48,9 @@ timeout 120 ./tcp_uring --v6 --dir "$file_dir"
 timeout 60 ./file_uring --dir "$file_dir"
 timeout 60 ./file_uring --dir "$file_dir" --posix
 timeout 60 ./file_uring --dir "$file_dir" --bench --interleave --iters 200
+# longshore_file's contract suite, on io_uring and then on epoll.
+mkdir -p "$file_dir/set"
+timeout 120 ./files_uring --dir "$file_dir/set" --posix
 timeout 60 ./echo_uring
 timeout 60 ./echo_uring --zc
 timeout 60 ./echo_uring --total 1000003 --chunk 4096 --zc

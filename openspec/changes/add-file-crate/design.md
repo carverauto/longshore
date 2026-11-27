@@ -239,8 +239,10 @@ durable writes (`OpenFlags::with_dsync`) that fails with `EIO`, `ENOSPC` or
 done, kind: SyncFailed }` when bytes were done); other errors of such a
 write are reported as they are and do not poison, and neither does a
 write that ends `NoProgress`. A Poisoned file's waiting operations end `Poisoned`, its transfers
-in progress end `Partial { done, kind: Poisoned }`, and its operations in
-flight report their own outcomes. Reads stay allowed: the bytes are
+in progress end `Partial { done, kind: Poisoned }`, where `done` is every
+byte the backend reported, a direct write's part of a block included
+(plain `Poisoned` only when the backend wrote nothing), and its operations
+in flight report their own outcomes. Reads stay allowed: the bytes are
 readable, only their durability is lost.
 
 ### C11 Refusals at the call
@@ -271,8 +273,9 @@ which the crate leaves to its users.
 - F5 The steps of a sequence each start after the one before is whole;
   after a failed step the rest report `Cancelled`. Their events need not
   come in step order: a step waiting behind an earlier one ends `Poisoned`
-  as soon as its file is poisoned, and the steps after it `Cancelled`,
-  before the earlier step reports; within one turn a poisoned file's
+  when its chain comes up for submission and its file is poisoned by then,
+  and the steps after it `Cancelled`, which can be before a step of another
+  file reports; within one turn a poisoned file's
   waiting operations may report before the failed sync that poisoned it.
 - F6 A Poisoned file submits nothing but reads and its close.
 - F7 With no silent fault on, a read returns, for each byte, what the last
