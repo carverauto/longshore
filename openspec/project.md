@@ -101,7 +101,7 @@ either redesigned or left out.
   zero-allocation WAL recovery under `alloc_guard`)
 - Shared generic `IO: Io` contract, file, chain, and server-networking tests
   across `SimIo`, `PosixIo` (`kqueue`/`epoll`), and `UringIo` (`contract_uring`,
-  `file_uring`, `server_uring`, `tcp_uring`), plus `fault-injection` stale-readiness and
+  `file_uring`, `files_uring`, `server_uring`, `tcp_uring`), plus `fault-injection` stale-readiness and
   ring-failure checks (`client_faults`, `uring_faults`)
 - Concurrency model checks via `scripts/test-model.sh` (`--cfg longshore_model`
   with `loom` for `longshore_mailbox` `mailbox_model` and `longshore_s3`
@@ -132,7 +132,12 @@ either redesigned or left out.
   and `RLIMIT_NOFILE >= sockets_max + files_max`. On 6.1, `FileSync`,
   `FileReserve`, `FilePunch`, `FileRename`, `FileUnlink`, `FileMkdir`, and
   creating/emptying `FileOpen` execute on kernel `io-wq` workers; truncate
-  and directory listing are intentionally omitted.
+  and directory listing are intentionally omitted. The one exception to the
+  `<= 6.1` features is `longshore_tcp`'s `Rx::ZeroCopy` (io_uring zero-copy
+  receive), which needs Linux 7.0 (the flush of returns), `CAP_NET_ADMIN`,
+  and a card queue with header and data split; building a backend with a
+  receive area refuses, naming what is missing, anywhere else, and the
+  other receive modes run on 6.1.
 - macOS (`kqueue`) and Linux `Builder::portable` (`epoll`) run on `PosixIo`
   (without zero-copy sends or registered buffers; macOS refuses core pinning
   with `BuildError::Setting` and runs file ops synchronously via `F_NOCACHE`,
