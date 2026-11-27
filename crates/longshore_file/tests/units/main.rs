@@ -7,6 +7,10 @@
 //! the bounds, and the faults that end or resume an operation.
 
 mod bounds;
+#[cfg(test)]
+mod chains;
+#[cfg(test)]
+mod counts;
 mod faults;
 mod ops;
 mod plan;
@@ -19,3 +23,5 @@ mod recorded;
 mod review;
 #[cfg(test)]
 mod rig;
+#[cfg(test)]
+mod spy;

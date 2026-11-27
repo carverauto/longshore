@@ -222,13 +222,15 @@ freed all the same.
 
 ## Operations
 
+Each call takes the backend, `&mut io`, first; the table leaves it out.
+
 | Operation | Needs | The set holds while it is in flight | `u64` of the result |
 |---|---|---|---|
 | `open(path, flags)` | a free file slot | its path buffer | 0; the `File` is in `file` |
 | `close(file)` | – | – | 0 |
-| `read_at(file, x, (extent, at, len), file_off)` | not opened write-only | the extent | bytes read; fewer only at the end of the file |
-| `write_at(file, x, (extent, at, len), file_off)` | opened for writing | the extent | bytes written: all, or an error |
-| `write_spans(file, x, &[Span], file_off)` | opened for writing | each extent span; the slot's span list | as `write_at` |
+| `read_at(x, file, (extent, at, len), file_off)` | not opened write-only | the extent | bytes read; fewer only at the end of the file |
+| `write_at(x, file, (extent, at, len), file_off)` | opened for writing | the extent | bytes written: all, or an error |
+| `write_spans(x, file, &[Span], file_off)` | opened for writing | each extent span; the slot's span list | as `write_at` |
 | `sync(file, data_only)` | – | – | 0 |
 | `reserve(file, (off, len), keep_size)` | opened for writing, `len > 0` | – | 0; best effort on macOS |
 | `punch(file, (off, len))` | opened for writing, `len > 0`, whole blocks | – | 0 |
@@ -286,9 +288,10 @@ each any operation but open and close, of any file or a path, and writes
 their tickets into `tickets` in order. Each step counts against its own
 file's share or the path slots, and the whole sequence is refused `Full`
 unless every step has room; every step is checked before anything is
-submitted, as a single call would be. The steps go to the backend as one
-chain (`IOSQE_IO_LINK` on the ring; the portable backend and the
-simulator order them themselves).
+submitted, as a single call would be, and a refused sequence leaves the
+tickets of the steps before the refused one `Ticket::NONE`. The steps go
+to the backend as one chain (`IOSQE_IO_LINK` on the ring; the portable
+backend and the simulator order them themselves).
 
 - Each step starts after the one before it is whole. When the backend
   ends a chain early because a transfer was short, the set waits for
@@ -301,9 +304,13 @@ simulator order them themselves).
   (another component took room the plan gave the set), the refused step
   reports the backend's errno as its plain error (`Os` for a resource the
   backend had none of, `NoSpace`, `Invalid` and the rest as they map),
-  the others `Cancelled`, and no file is poisoned by it.
+  the others `Cancelled` (a transfer resumed in that chain, which had
+  moved bytes before, `Partial { done, kind: Os { errno: 125 } }`), and
+  no file is poisoned by it.
 - A sequence waiting for room is not overtaken: waiting work is submitted
-  first in, first out.
+  first in, first out. A step of a file poisoned while it waited ends
+  `Poisoned` only once the steps before it are at the backend, so a close
+  waiting for it does not take their room.
 
 **Replacing a file durably.** Write a temporary file, sync it, rename it
 over the old name, and sync the directory. With the temporary file and
@@ -356,7 +363,10 @@ every backend, including macOS, whose kernel would take it, and the
 simulator.
 
 On every file, `punch` takes whole blocks, `reserve` and `punch` take a
-length above 0, and a range must lie inside its extent (`TooLarge`).
+length above 0, a range must lie inside its extent, and a transfer
+(`read_at`, `write_at`, or a gathered write's spans together) moves at
+most `i32::MAX` bytes, since every backend counts a completion's bytes in
+an `i32` (`TooLarge`, as a step of a sequence too).
 
 A file system without direct I/O refuses the open with `EINVAL`, and the
 event carries `Invalid { errno }`.
@@ -446,7 +456,7 @@ the call, with nothing submitted:
 | `Poisoned` | A sync of the file failed, or a durable write was lost: only reads and `close` |
 | `NotOpen` | Not opened for this: a write of a read-only file, a read of a write-only one |
 | `Unaligned` | On a direct-I/O file, a buffer, length or offset that is not whole blocks |
-| `TooLarge` | More spans or steps than planned, a range past its extent, a length of 0 where one is needed |
+| `TooLarge` | More spans or steps than planned, a range past its extent, a transfer of more than `i32::MAX` bytes, a length of 0 where one is needed |
 | `BadPath` | A path longer than `path_max`, or with a NUL inside |
 | `StaleExtent`, `TooManyHolds` | An extent that cannot be held |
 
@@ -493,8 +503,12 @@ file, one thread, three runs of one second a cell:
   25 of them against the set.
 - On a DGX Spark's NVMe (`bench/results/m37-file-bench-dgx-spark-nvme.md`;
   direct I/O, sequential, 64 KiB and 1 MiB, depth 1 to 32 on the ring, 1
-  and 4 on `epoll`), the two paths' ranges overlap in throughput and CPU
-  a GB, with the caveats that file gives.
+  and 4 on `epoll`), the two paths are within a few per cent of each
+  other in nearly every cell: of 50 cells, the three runs' GB/s ranges
+  are apart in 4, three of them in the set's favour and one in raw's, and
+  the CPU-a-GB ranges in 5, three with the set lower and two with it
+  higher; three runs a cell do not resolve differences of a few per cent,
+  and the other caveats are in that file.
 
 How a program makes its writes durable is its own choice, and these
 figures say nothing of it beyond the drive's: on that Mac a sync
@@ -539,8 +553,8 @@ Faults planted one at a time in the crate, and the suites that caught
 them, are in `crates/longshore_file/tests/README.md`, with the rows of the
 contract's tables no test reaches: errors no backend here can produce
 (`Denied`, a sync failing with an errno other than `EIO`, durable writes
-failing with `ENOSPC` or `EDQUOT`), generations wrapping, a short read
-before the end of the file, and some sequence steps. The contract, its
+failing with `ENOSPC` or `EDQUOT`), generations wrapping, and some
+sequence steps. The contract, its
 state tables and invariants are in
 `openspec/changes/archive/2026-11-27-add-file-crate/design.md`; the
 requirements in `openspec/specs/file-io/spec.md`.

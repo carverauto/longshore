@@ -180,9 +180,11 @@ offsets, three runs of one second a cell (`m36-file-bench-macos.md`):
 
 Medians of three runs. On that machine a sync, which flushes the drive's
 cache and blocks the thread, took 5 to 13 ms and set the rate of the
-synced row. On the ring, with direct I/O to a DGX Spark's NVMe, the two
-paths' ranges overlap (`m37-file-bench-dgx-spark-nvme.md`, with its own
-conditions).
+synced row. With direct I/O to a DGX Spark's NVMe, on the ring and on
+`epoll`, the two paths are within a few per cent in nearly every cell:
+of 50, the three runs' GB/s ranges are apart in 4 (three for the set, one
+for raw) and the CPU-a-GB ranges in 5 (three with the set lower, two
+higher) (`m37-file-bench-dgx-spark-nvme.md`, with its own conditions).
 
 ## Compared with the talk
 

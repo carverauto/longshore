@@ -16,6 +16,19 @@ use longshore_common::io::{BufId, Io, OpenFlags};
 /// The highest file offset a kernel takes (`loff_t`).
 const OFFSET_MOST: u64 = i64::MAX.unsigned_abs();
 
+/// The most bytes one transfer moves: every backend reports a
+/// completion's bytes as an `i32`.
+const TRANSFER_MOST: u32 = i32::MAX.unsigned_abs();
+
+/// `len`, if a completion can count it (contract C9).
+const fn counted(len: u32) -> Result<u32, FileError> {
+    if len > TRANSFER_MOST {
+        Err(FileError::TooLarge)
+    } else {
+        Ok(len)
+    }
+}
+
 /// What a refused hold is reported as.
 pub(crate) const fn hold_error(e: ExtentError) -> FileError {
     match e {
@@ -178,7 +191,8 @@ impl Files {
             return Err(FileError::NotOpen);
         }
         self.check_extent(x, range, flags.direct())?;
-        self.check_file_range(file_off, u64::from(range.2), flags.direct())?;
+        let bytes = u64::from(counted(range.2)?);
+        self.check_file_range(file_off, bytes, flags.direct())?;
         let i = self.take_op(f)?;
         let (extent, at, len) = range;
         if let Err(e) = x.hold(extent) {
@@ -243,6 +257,7 @@ impl Files {
             let len = self.check_span(x, *s, flags.direct())?;
             sum = sum.checked_add(len).ok_or(FileError::TooLarge)?;
         }
+        let sum = counted(sum)?;
         self.check_file_range(file_off, u64::from(sum), flags.direct())?;
         let i = self.take_op(f)?;
         let row = i as usize * max;

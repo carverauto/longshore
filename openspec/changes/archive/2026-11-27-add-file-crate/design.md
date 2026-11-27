@@ -191,8 +191,12 @@ unless every step has room. The set pre-checks every step, so the backend
 never refuses the chain for its operations. Should it refuse one for
 want of its own resources all the same (another layer took room the plan
 gave the set), the refused step reports its own error as C10 maps it
-(`ENOBUFS` as `Os { errno }`), the others `Cancelled`, and no file is
-poisoned by it.
+(`ENOBUFS` as `Os { errno }`), the others `Cancelled` (a step resumed in
+that chain that had moved bytes before, `Partial { done, kind: Os {
+errno: ECANCELED } }`, as C6 has it), and no file is poisoned by it. A
+step of a file poisoned while it waited ends `Poisoned` once the backend
+took the steps before it, never before: a close it held back then goes
+behind them, and a chain the backend refuses for room waits whole.
 Steps go to the backend as chains: a chain ends after every path step
 (status, rename, unlink, mkdir), and the steps after it are submitted as a
 new chain only once it reported success, since the kernel does not break
@@ -218,7 +222,10 @@ On a direct-I/O file: each extent span is of the block-aligned class and
 starts at a block boundary; lengths and file offsets are whole blocks;
 otherwise `Unaligned`. On every file: `punch` is whole blocks, otherwise
 `Unaligned`; `reserve`
-and `punch` have `len > 0`; ranges lie inside their extents (`TooLarge`).
+and `punch` have `len > 0`; ranges lie inside their extents; a transfer
+(`read_at`, `write_at`, or a gathered write's spans together) moves at
+most `i32::MAX` bytes, since every backend counts a completion's bytes in
+an `i32` (`TooLarge`).
 
 ### C10 Errors and poisoning
 `FileError` is flat (no field of its own type): `Full`, `Stale`,
@@ -250,7 +257,10 @@ readable, only their durability is lost.
 ### C11 Refusals at the call
 `Full`, `Stale`, `Closing`, `Poisoned`, `NotOpen`, `Unaligned`, `TooLarge`,
 `BadPath`, `StaleExtent`, `TooManyHolds`. A refusal submits nothing, takes
-no slot and no hold.
+no slot and no hold. A transfer of more than `i32::MAX` bytes (C9) is
+refused `TooLarge` at the call, as a step too, so no backend is given
+one. A refused sequence leaves the tickets of the steps before the
+refused one `Ticket::NONE` in the caller's slice.
 
 ### C12 Power loss, and what is not detected
 `Files::power_lost(&mut Extents)` frees every file and operation slot,

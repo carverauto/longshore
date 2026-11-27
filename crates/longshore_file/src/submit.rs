@@ -198,25 +198,47 @@ impl Files {
     /// Gives the steps from `lead` on to the backend as one chain, up to
     /// and with the first path step. A step of a Poisoned file that it may
     /// not run ends there, and the steps after it are cancelled; those
-    /// before it go.
+    /// before it go. Nothing ends before the backend took the steps before
+    /// it: an end can let a held close go, which must not take their room
+    /// (contract C4), and a chain the backend refuses waits whole.
     fn submit_chain<IO: Io>(
         &mut self,
         io: &mut IO,
         x: &mut Extents,
         lead: u32,
     ) -> Result<(), Busy> {
+        let (n, last, blocked) = self.stage_chain(io, lead);
+        if n > 0 {
+            io.submit_chain(&self.chain[..n])?;
+            let mut k = lead;
+            for _ in 0..n {
+                self.recs[k as usize].state = OState::Submitted;
+                k = self.recs[k as usize].next;
+            }
+            let l = &mut self.recs[lead as usize];
+            (l.out, l.sent) = (n as u32, n as u32);
+        }
+        if blocked != NONE {
+            if last != NONE {
+                self.recs[last as usize].next = NONE;
+            }
+            let next = self.recs[blocked as usize].next;
+            let e = self.blocked_error(blocked);
+            self.finish(io, x, blocked, Err(e));
+            self.cancel_from(io, x, next);
+        }
+        Ok(())
+    }
+
+    /// Puts the steps from `lead` on that go as one chain into the chain
+    /// table, changing no record: how many, the last of them, and the step
+    /// of a Poisoned file that ends them, if one does (else `NONE`).
+    fn stage_chain<IO: Io>(&mut self, io: &mut IO, lead: u32) -> (usize, u32, u32) {
         let mut n = 0;
         let (mut r, mut last) = (lead, NONE);
         while r != NONE {
             if self.blocked(r) {
-                if last != NONE {
-                    self.recs[last as usize].next = NONE;
-                }
-                let next = self.recs[r as usize].next;
-                let e = self.blocked_error(r);
-                self.finish(io, x, r, Err(e));
-                self.cancel_from(io, x, next);
-                break;
+                return (n, last, r);
             }
             let op = self.op_of(io, r);
             self.chain[n] = (self.token(r), op);
@@ -229,18 +251,7 @@ impl Files {
                 break;
             }
         }
-        if n == 0 {
-            return Ok(());
-        }
-        io.submit_chain(&self.chain[..n])?;
-        let mut k = lead;
-        for _ in 0..n {
-            self.recs[k as usize].state = OState::Submitted;
-            k = self.recs[k as usize].next;
-        }
-        let l = &mut self.recs[lead as usize];
-        (l.out, l.sent) = (n as u32, n as u32);
-        Ok(())
+        (n, last, NONE)
     }
 
     /// Ends every step from `r` on as `Cancelled`.
