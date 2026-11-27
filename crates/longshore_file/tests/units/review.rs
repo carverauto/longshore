@@ -8,7 +8,7 @@
 //! per-file cap with shared slots to spare.
 
 use crate::rig::{disk, pattern, rw, ticket_of, Rig};
-use longshore_common::io::{Io, Limits, OpenFlags};
+use longshore_common::io::{Completion, Io, Limits, OpenFlags, Token};
 use longshore_common::sim::{DiskFaults, Faults, PlacedFault, SimIo};
 use longshore_file::{FileError, FileSizes, Span, Step, Ticket};
 
@@ -146,6 +146,25 @@ fn a_file_slot_opens_again_only_once_its_close_is_taken() {
     let ev = r.files.next_event().unwrap();
     assert_eq!(ticket_of(&ev), c);
     assert!(r.files.open(&mut r.io, "/b", rw()).is_ok());
+}
+
+#[test]
+fn a_completion_for_nothing_in_flight_is_taken_and_ignored() {
+    let mut r = Rig::new(FileSizes::new(1, 1));
+    let a = r.open("/a", rw());
+    let s = r.files.sync(&mut r.io, a, false).unwrap();
+    r.io.power_loss();
+    r.files.power_lost(&mut r.x);
+    // A completion of the sync, as a backend that delivered it late would.
+    let base = r.files.config().token_base();
+    let late = Completion::new(Token::new(base + u64::from(s.index())), 0);
+    assert!(r.files.on_completion(&mut r.io, &mut r.x, late));
+    assert!(r.files.next_event().is_none());
+    assert_eq!(r.files.usage().ops(), 0);
+    // A token past the set's is not its own.
+    let tokens = r.files.config().tokens();
+    let other = Completion::new(Token::new(base + tokens), 0);
+    assert!(!r.files.on_completion(&mut r.io, &mut r.x, other));
 }
 
 #[test]
