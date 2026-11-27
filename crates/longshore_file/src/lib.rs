@@ -8,8 +8,9 @@
 //!
 //! The set does no I/O itself and never waits. It is file I/O and nothing
 //! built on it: logs, pages, records and checksums are left to the program
-//! that uses it. The contract it keeps is in the OpenSpec change
-//! `add-file-crate` (`design.md`, "The contract").
+//! that uses it. The contract it keeps is in
+//! `openspec/changes/archive/2026-11-27-add-file-crate/design.md` ("The
+//! contract"), its requirements in `openspec/specs/file-io/spec.md`.
 //!
 //! # Panics
 //!

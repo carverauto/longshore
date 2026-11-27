@@ -1,6 +1,6 @@
 # The tests of `longshore_file`, against the contract's tables
 
-The contract is in `openspec/changes/add-file-crate/design.md` ("The
+The contract is in `openspec/changes/archive/2026-11-27-add-file-crate/design.md` ("The
 contract"). Each row of its tables C3, C4, C5, C10 and C11 is listed below
 with the tests that reach it.
 
