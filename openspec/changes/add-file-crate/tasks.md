@@ -32,4 +32,4 @@ change.
 ## 4. Measurement and documentation
 - [x] 4.1 (milestone 36 on this Mac, 108 cells: the set's median against raw 0.99 to 1.00 in GB/s, 1.00 to 1.02 in CPU a GB; milestone 37 on donbot's NVMe, 100 cells, both backends, direct I/O: the set's range overlaps or beats raw in every cell) A bench through the crate against the raw operations, on this Mac and on a DGX Spark's NVMe: buffered and direct, several operations in flight, syncs; results in `bench/results/`
 - [x] 4.2 (`docs/file.md`, following the revised contract; `bench/README.md` and `docs/benchmarks.md`) `docs/file.md`: the API, sizing, direct I/O, ordering and durability, what a failed sync means, and what the crate does not do
-- [ ] 4.3 Review of group 4
+- [x] 4.3 (independent review against the raw lines: the tables reproduced, the headlines did not; corrected in m36 and m37: reads cost the set about 1 to 2 % CPU a GB over 108 cells, writes nothing; 4 of 50 cells apart in GB/s on the NVMe, one of them for raw; run order, the portable backend's CPU, page-cache and hot-region rewrites stated; docs/file.md made to agree with the code) Review of group 4
