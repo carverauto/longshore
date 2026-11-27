@@ -15,5 +15,9 @@ longshore_common.workspace = true
 # Turns the simulator on for this crate's own tests.
 longshore_common = { workspace = true, features = ["sim"] }
 
+[[test]]
+name = "file_units"
+path = "tests/units/main.rs"
+
 [lints]
 workspace = true

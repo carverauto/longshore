@@ -11,14 +11,22 @@
 //! that uses it. The contract it keeps is in the OpenSpec change
 //! `add-file-crate` (`design.md`, "The contract").
 
+mod accept;
+mod buffers;
+mod complete;
 mod config;
+mod errno;
 mod error;
 mod event;
+mod events;
 mod files;
 mod handle;
 mod plan;
+mod sequence;
 mod sizes;
 mod span;
+mod state;
+mod submit;
 
 pub use config::{ConfigError, FileConfig};
 pub use error::{ErrorKind, FileError};
