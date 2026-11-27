@@ -65,7 +65,18 @@ pub(super) fn area(limits: Limits, s: &Sizes, conns: u32) -> Limits {
         .saturating_add(conns)
         .saturating_add(a_turn)
         .saturating_add(s.zc_spare);
+    // The refill ring and the queue behind it hold every piece that can be
+    // out (C7): the records', a header a connection, and a turn's. Sized
+    // so, not a piece a page of the area, the completion ring that holds
+    // them does not grow with the spare.
+    let pieces = s
+        .zc_pieces
+        .saturating_add(conns)
+        .saturating_add(a_turn)
+        .saturating_add(limits.area_pieces())
+        .min(PIECES_MOST);
     limits
         .with_ops_max(ops)
         .with_area_pages(limits.area_pages().saturating_add(pages))
+        .with_area_pieces(pieces)
 }

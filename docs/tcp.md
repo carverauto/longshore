@@ -211,7 +211,11 @@ connection, what one turn can bring, and `with_zc_spare` pages more for
 what the kernel holds and no program can count: the card's ring and pool
 and the sockets' receive queues. A rule of thumb for the spare is the
 card's receive ring entries plus each connection's receive buffer in
-pages. The plan also refuses a set with fewer frame buffers than
+pages. The backend's ring of returns is sized by the pieces that can be
+out, not by the area, so a large spare costs pages and nothing more. The
+plan gives no room for gathered writes: a program that writes frames in
+pages adds `Limits::with_gather(writes, pages a frame + 1)` itself, a
+write in flight a row. The plan also refuses a set with fewer frame buffers than
 connections: every connection of the mode takes its frame memory before
 its body is asked for, so that a frame that falls out of step can always
 be moved at once.

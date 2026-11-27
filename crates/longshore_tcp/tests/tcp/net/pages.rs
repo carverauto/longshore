@@ -106,3 +106,16 @@ fn the_plan_asks_for_an_area_and_a_cancel_a_connection() {
     let cfg = cfg.resolved(&with);
     assert_eq!(cfg.frame_first(), with.aligned(0));
 }
+
+#[test]
+fn the_returns_are_sized_by_the_pieces_out_not_by_the_spare() {
+    let paged = sizes(2, 2, 1).with_zc(64, 8, 32);
+    let (small, _) = Config::plan(Limits::BASE, paged).unwrap();
+    let (large, _) = Config::plan(Limits::BASE, paged.with_zc_spare(16_384)).unwrap();
+    // The records, a header a connection, a turn's completions.
+    let a_turn = 2 * small.ops_max() + 2;
+    assert_eq!(small.area_pieces(), 32 + 4 + a_turn);
+    // A spare of 64 MiB grows the area, not its ring of returns.
+    assert!(large.area_pages() > small.area_pages() + 16_000);
+    assert_eq!(large.area_returns(), small.area_returns());
+}
