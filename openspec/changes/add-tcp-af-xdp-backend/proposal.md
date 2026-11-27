@@ -22,6 +22,30 @@ built and measured first. This change starts only if those numbers leave
 something for a user-space stack to win, and its case is then restated
 from them (task 0.0).
 
+**The case, restated from `add-tcp-zero-copy-receive`** (milestones 31
+and 34, one interface of a Spark's port, about 110 Gb/s):
+
+- *Large frames: nothing left to win in bytes.* With zero-copy receive
+  the kernel's TCP delivers frames of whole pages into the area: 64 KiB
+  frames at 5.6 to 5.8 GB/s a core and 0.125 CPU-s a GB in the thread
+  (0.21 with the queue's core), 1 MiB frames at 0.08 to 0.09. This
+  change's own design moves every payload once from UMEM into frame
+  memory, which is what direct mode costs today (0.17 to 0.18 CPU-s a
+  GB): on large frames it would be dearer than zero-copy receive, not
+  cheaper. Three cores fill the interface in every mode.
+- *Small frames: the cost of a frame is all there is.* 324-byte frames
+  come to about 330,000 a second a core in every mode, and a request and
+  its answer take a median of 32 µs and 150 to 170 µs at the 99th
+  percentile. That is system calls, the kernel's TCP a segment and the
+  set's own work a frame, which no receive mode changes and a user-space
+  stack batching packets could.
+
+So what is left is small messages: their rate a core and their latency.
+Before this change is started for them, a profile of the 324-byte cells
+says how much of a frame's cost is the kernel's and how much the set's
+own: what the set spends it can cut in place. Go or close is decided on
+that (task 0.0).
+
 ## What Changes
 - `XdpTransport` behind the `Transport` seam, its `Driver` the core's
   AF_XDP sockets: one socket per NIC queue per core; fill, completion,

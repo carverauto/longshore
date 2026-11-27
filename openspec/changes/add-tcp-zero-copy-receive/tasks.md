@@ -43,9 +43,9 @@ its write-up is the result.
 - [x] 4.4 Review of group 4 (read by the author of the task, not independently; the fix's own tests include four deliberate faults, each caught; a reset seen in two runs was traced to the test's refused login, not the fix)
 
 ## 5. Measurement and the decision on AF_XDP
-- [ ] 5.1 (after 3.9) Spark pair, both interfaces, MTU 9000 and 8244: GB/s a receiving core and cores at the full link, counting the queues' cores, `Ring`, `Direct` and `ZeroCopy`, frames of 324 bytes, 64 KiB and 1 MiB, checked and written to a log with several writes in flight, read in place, and relayed after `hold`; the share of frames lent in pages with the sender's `with_frame_on_packet` and without; the card's drop counters with an area sized as `docs/tcp.md` advises and with one too small; three runs a cell
-- [ ] 5.2 Results in `bench/results/`; card settings and the support matrix in `docs/tcp.md`
-- [ ] 5.3 `add-tcp-af-xdp-backend` updated with what is left for it to win, or closed
+- [x] 5.1 (milestone 34; on the port's second interface only, by decision, its full 200 Gb/s being milestone 30's; logs from pages are `zc_uring log`'s, milestone 31; frames read one byte, not checked over every byte) (after 3.9) Spark pair, both interfaces, MTU 9000 and 8244: GB/s a receiving core and cores at the full link, counting the queues' cores, `Ring`, `Direct` and `ZeroCopy`, frames of 324 bytes, 64 KiB and 1 MiB, checked and written to a log with several writes in flight, read in place, and relayed after `hold`; the share of frames lent in pages with the sender's `with_frame_on_packet` and without; the card's drop counters with an area sized as `docs/tcp.md` advises and with one too small; three runs a cell
+- [x] 5.2 (milestone 34; `docs/tcp.md`: which mode for which traffic, and the spare's rule of thumb corrected to the ring's entries times the pages a packet fills) Results in `bench/results/`; card settings and the support matrix in `docs/tcp.md`
+- [x] 5.3 (restated in its `proposal.md`: no case on large frames, where it would move what zero-copy receive keeps; a case on small messages, a profile first; go or close is its task 0.0) `add-tcp-af-xdp-backend` updated with what is left for it to win, or closed
 - [ ] 5.4 Review of group 5
 
 ## 6. The body at a block, in direct mode (first, by the owner's decision)
