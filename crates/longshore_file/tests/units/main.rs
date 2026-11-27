@@ -11,6 +11,8 @@ mod faults;
 mod ops;
 mod plan;
 #[cfg(test)]
+mod poisoned;
+#[cfg(test)]
 mod record;
 mod recorded;
 #[cfg(test)]

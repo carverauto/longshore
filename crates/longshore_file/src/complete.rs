@@ -115,12 +115,14 @@ impl Files {
             if durable {
                 self.poison(io, x, r.file);
             }
-            return Outcome::Done(Err(transfer_error(r.done, errno_of(res), durable)));
+            return Outcome::Done(Err(transfer_error(r.reach, errno_of(res), durable)));
         }
         let len = r.work.len();
         let n = u64::from(res.unsigned_abs());
         debug_assert!(r.done + n <= len, "a transfer moved more than it asked");
         let total = (r.done + n).min(len);
+        let reach = total.max(r.reach);
+        self.recs[i as usize].reach = reach;
         if total == len {
             return Outcome::Done(Ok(len));
         }
@@ -134,6 +136,8 @@ impl Files {
                 total
             };
             if n == 0 || (next <= r.done && r.stalls >= STALLS_MOST) {
+                // C6 counts a stalled write's whole blocks only: what it
+                // left of a block past them is not reported done.
                 return Outcome::Done(Err(ended(r.done, ErrorKind::NoProgress)));
             }
             // Bytes written but no whole block: the same blocks again, a

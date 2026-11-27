@@ -203,7 +203,7 @@ impl Files {
                     // A transfer that ran short, with no sequence left to
                     // finish it in.
                     Outcome::More => Err(ended(
-                        self.recs[r as usize].done,
+                        self.recs[r as usize].reach,
                         ErrorKind::Os { errno: ECANCELED },
                     )),
                 }

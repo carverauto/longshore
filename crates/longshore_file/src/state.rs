@@ -156,8 +156,11 @@ pub(crate) struct OpRec {
     /// The file's generation when the operation was accepted.
     pub(crate) file_gen: u32,
     pub(crate) work: Work,
-    /// Bytes transferred so far.
+    /// Bytes transferred so far: where the transfer resumes from.
     pub(crate) done: u64,
+    /// Every byte the backend reported moved, a direct write's part of a
+    /// block past `done` included: what a transfer that ends reports.
+    pub(crate) reach: u64,
     /// Resumes in a row of a direct write that wrote no whole block.
     pub(crate) stalls: u8,
     pub(crate) result: Result<u64, FileError>,
@@ -183,6 +186,7 @@ impl OpRec {
         file_gen: 0,
         work: Work::Close,
         done: 0,
+        reach: 0,
         stalls: 0,
         result: Ok(0),
         raw: 0,
