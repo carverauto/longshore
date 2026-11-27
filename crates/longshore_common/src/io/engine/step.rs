@@ -8,6 +8,15 @@
 use super::*;
 use crate::io::trace::fold;
 
+/// Whether the engine resolves `op` itself, asking the world nothing: it
+/// is visited whatever the world says is ready.
+fn resolved_here(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Timeout { .. } | Op::Cancel { .. } | Op::AwaitWake | Op::ArmedRecvZc { credit: 0, .. }
+    )
+}
+
 impl<W: World> Engine<W> {
     pub(super) fn record_trace(&mut self, c: Completion) {
         let now = self.world.now_ns();
@@ -150,9 +159,7 @@ impl<W: World> Engine<W> {
                 }
                 Some(Attempt::single(-ECANCELED))
             } else {
-                let visit = p.fresh
-                    || matches!(p.op, Op::Timeout { .. } | Op::Cancel { .. } | Op::AwaitWake)
-                    || self.world.is_ready(&p.op);
+                let visit = p.fresh || resolved_here(&p.op) || self.world.is_ready(&p.op);
                 self.pending[idx].fresh = false;
                 if !visit {
                     i = idx + 1;
