@@ -11,6 +11,18 @@ use longshore_common::io::{Io, OpenFlags};
 use longshore_file::{FileError, FileSizes, Span, Step, Ticket};
 
 #[test]
+fn reserve_and_punch() {
+    let mut r = Rig::new(FileSizes::new(1, 1));
+    let f = r.open("/r.dat", rw());
+    let t1 = r.files.reserve(&mut r.io, f, (0, 8192), false).unwrap();
+    assert_eq!(r.wait(t1).1, Ok(0));
+    let t2 = r.files.punch(&mut r.io, f, (0, 4096)).unwrap();
+    assert_eq!(r.wait(t2).1, Ok(0));
+    let t3 = r.files.status(&mut r.io, "/r.dat").unwrap();
+    assert_eq!(r.wait(t3).1, Ok(8192));
+}
+
+#[test]
 fn write_sync_read_back_close() {
     let mut r = Rig::new(FileSizes::new(2, 2));
     let f = r.open("/a.dat", rw());
