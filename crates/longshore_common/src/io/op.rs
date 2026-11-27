@@ -94,7 +94,9 @@ pub enum Op {
     ArmedRecvZc {
         /// The connected socket.
         sock: Sock,
-        /// The most bytes to deliver before the receive ends; not 0.
+        /// The most bytes to deliver before the receive ends; not 0, which
+        /// the ring refuses with `-EINVAL` (the kernel would take it for no
+        /// limit) and which fails a simulated run.
         credit: u32,
     },
     /// Send `len` bytes of buffer `buf` starting at `off`. May complete short.

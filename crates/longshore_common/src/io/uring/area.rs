@@ -244,10 +244,10 @@ impl UringIo {
     /// A zero-copy receive has a credit, and a ring with an area.
     pub(super) fn precheck_recv_zc(&self, sock: Sock, credit: u32) -> Result<(), i32> {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
-        assert!(
-            credit != 0,
-            "a zero-copy receive is never armed with a credit of 0"
-        );
+        if credit == 0 {
+            // The kernel takes a length of 0 for no limit at all.
+            return Err(-EINVAL);
+        }
         if self.area.is_none() {
             return Err(-ENOBUFS);
         }

@@ -56,3 +56,23 @@ fn the_ring_without_an_area_builds_with_the_same_limits() {
     let built = longshore_common::io::uring::UringIo::new(limits().with_area_pages(0));
     assert!(built.is_ok(), "{:?}", built.err());
 }
+
+/// A zero-copy receive with a credit of 0 is refused, not taken for no
+/// limit as the kernel would; before an area is looked for.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_ring_refuses_a_credit_of_0() {
+    use longshore_common::io::{Completions, Io, Op, Sock, Token, EINVAL, ENOBUFS};
+    let mut io = longshore_common::io::uring::UringIo::new(limits().with_area_pages(0)).unwrap();
+    let mut out = Completions::new(8);
+    for (credit, want) in [(0, -EINVAL), (256, -ENOBUFS)] {
+        let op = Op::ArmedRecvZc {
+            sock: Sock::new(0),
+            credit,
+        };
+        io.submit(Token::new(1), op).unwrap();
+        io.tick(false, &mut out).unwrap();
+        let c = out.pop().expect("the refusal");
+        assert_eq!(c.result(), want, "credit {credit}");
+    }
+}
