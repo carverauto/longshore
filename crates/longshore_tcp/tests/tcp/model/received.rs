@@ -178,6 +178,14 @@ impl Run {
     /// At rest: no piece out, nothing kept.
     pub(crate) fn pages_at_rest(&mut self) -> Result<(), String> {
         self.pages_hold()?;
+        for server in [false, true] {
+            // The budget whole again, no run, record or header kept.
+            let (net, _) = self.net(server);
+            let p = sealed(|| net.usage()).pages();
+            if (p.pages().0, p.runs(), p.pieces(), p.headers()) != (0, 0, 0, 0) {
+                return Err(format!("kept at rest (server: {server}): {p:?}"));
+            }
+        }
         match self.w.io().pieces_out() {
             (0, 0) => Ok(()),
             out => Err(format!("{out:?} pieces and pages out at rest")),
