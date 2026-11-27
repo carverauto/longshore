@@ -22,6 +22,10 @@ The system SHALL size every table of a `Files` set when it is planned and built 
 - **WHEN** an operation is asked for while every operation the plan allows is in use
 - **THEN** it is refused at once with `FileError::Full`, and nothing is queued past the plan
 
+#### Scenario: One busy file cannot take every slot
+- **WHEN** one file has as many operations in flight as its per-file bound allows
+- **THEN** its next operation is refused with `FileError::Full`, and every other open file can still start an operation, since each open file has an operation slot reserved for it
+
 ### Requirement: Handles and tickets
 The system SHALL name each open file by a `File` handle carrying a generation, refuse an operation on a handle whose file was closed, and return for each accepted operation a `Ticket` whose outcome is reported exactly once as an event.
 

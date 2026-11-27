@@ -3,7 +3,7 @@ the next group starts. The no-mistakes gate runs once, at the end of the
 change.
 
 ## 0. The contract
-- [ ] 0.1 `design.md`: the state tables of a file handle and of an operation, the table of every backend result against what the set does, the invariants, and an answer for every bound that can be reached
+- [x] 0.1 (C1 to C12 and F1 to F10; the per-file bound as the user asked: a reserved operation slot for every file and a cap per file) `design.md`: the state tables of a file handle and of an operation, the table of every backend result against what the set does, the invariants, and an answer for every bound that can be reached
 - [ ] 0.2 Review of the contract; corrections made there first
 
 ## 1. The crate and its plan
