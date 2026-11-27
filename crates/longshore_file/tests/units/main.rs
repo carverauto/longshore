@@ -8,6 +8,8 @@
 
 mod bounds;
 #[cfg(test)]
+mod chains;
+#[cfg(test)]
 mod counts;
 mod faults;
 mod ops;

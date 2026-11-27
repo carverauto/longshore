@@ -302,9 +302,13 @@ backend and the simulator order them themselves).
   (another component took room the plan gave the set), the refused step
   reports the backend's errno as its plain error (`Os` for a resource the
   backend had none of, `NoSpace`, `Invalid` and the rest as they map),
-  the others `Cancelled`, and no file is poisoned by it.
+  the others `Cancelled` (a transfer resumed in that chain, which had
+  moved bytes before, `Partial { done, kind: Os { errno: 125 } }`), and
+  no file is poisoned by it.
 - A sequence waiting for room is not overtaken: waiting work is submitted
-  first in, first out.
+  first in, first out. A step of a file poisoned while it waited ends
+  `Poisoned` only once the steps before it are at the backend, so a close
+  waiting for it does not take their room.
 
 **Replacing a file durably.** Write a temporary file, sync it, rename it
 over the old name, and sync the directory. With the temporary file and

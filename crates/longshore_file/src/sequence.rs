@@ -17,7 +17,7 @@
 //! all whole.
 
 use crate::complete::Outcome;
-use crate::errno::{ended, errno_of, error, ECANCELED};
+use crate::errno::{ended, errno_of, transfer_error, ECANCELED};
 use crate::state::{OState, PathKind, Work, NONE};
 use crate::{ErrorKind, FileError, Files, Step, Ticket};
 use longshore_common::io::extents::Extents;
@@ -218,15 +218,18 @@ impl Files {
     /// The backend refused the chain as a whole: the step it named
     /// reports its errno as a plain error (`Os` for a resource the backend
     /// had none of, such as a gather row; `Invalid` for what the set's
-    /// checks are there to prevent), the rest `Cancelled`. Nothing ran, so
-    /// no file is poisoned.
+    /// checks are there to prevent), the rest `Cancelled`. A step resumed
+    /// in this chain keeps the bytes it moved before (contract C6): it
+    /// ends `Partial`. Nothing ran, so no file is poisoned.
     fn refused<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, lead: u32, sent: u32) {
         let mut r = lead;
         for _ in 0..sent {
             let next = self.recs[r as usize].next;
-            let res = self.recs[r as usize].raw;
+            let (res, reach) = (self.recs[r as usize].raw, self.recs[r as usize].reach);
             let e = if res < 0 && res != -ECANCELED {
-                error(errno_of(res))
+                transfer_error(reach, errno_of(res), false)
+            } else if reach > 0 {
+                ended(reach, ErrorKind::Os { errno: ECANCELED })
             } else {
                 FileError::Cancelled
             };

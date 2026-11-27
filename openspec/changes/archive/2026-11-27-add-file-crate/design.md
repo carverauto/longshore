@@ -191,8 +191,12 @@ unless every step has room. The set pre-checks every step, so the backend
 never refuses the chain for its operations. Should it refuse one for
 want of its own resources all the same (another layer took room the plan
 gave the set), the refused step reports its own error as C10 maps it
-(`ENOBUFS` as `Os { errno }`), the others `Cancelled`, and no file is
-poisoned by it.
+(`ENOBUFS` as `Os { errno }`), the others `Cancelled` (a step resumed in
+that chain that had moved bytes before, `Partial { done, kind: Os {
+errno: ECANCELED } }`, as C6 has it), and no file is poisoned by it. A
+step of a file poisoned while it waited ends `Poisoned` once the backend
+took the steps before it, never before: a close it held back then goes
+behind them, and a chain the backend refuses for room waits whole.
 Steps go to the backend as chains: a chain ends after every path step
 (status, rename, unlink, mkdir), and the steps after it are submitted as a
 new chain only once it reported success, since the kernel does not break
