@@ -33,6 +33,13 @@ pub struct Ticket {
 }
 
 impl Ticket {
+    /// A placeholder, to fill the slice [`crate::Files::sequence`] writes
+    /// tickets into: no operation is ever given it, and no event names it.
+    pub const NONE: Ticket = Ticket {
+        index: u32::MAX,
+        generation: u32::MAX,
+    };
+
     /// The operation slot.
     pub const fn index(self) -> u32 {
         self.index
