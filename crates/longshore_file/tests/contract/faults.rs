@@ -60,12 +60,9 @@ fn a_failed_durable_write_poisons_and_a_failed_buffered_one_does_not() {
     let mut rig = rig();
     let durable = rig.open("/dsync.dat", rw_create().with_dsync(true));
     place(&mut rig, 1, PlacedFault::Fail);
+    // EIO on a durable write is a failed sync (C10).
     let r = rig.write(durable, &[1; 100], 0);
-    let failed = [
-        FileError::SyncFailed { errno: EIO },
-        FileError::Io { errno: EIO },
-    ];
-    assert!(matches!(r, Err(e) if failed.contains(&e)), "{r:?}");
+    assert_eq!(r, Err(FileError::SyncFailed { errno: EIO }));
     let e = rig.extent();
     rig.refused("after", FileError::Poisoned, |s, io, x| {
         s.write_at(io, x, durable, (e, 0, 1), 0)

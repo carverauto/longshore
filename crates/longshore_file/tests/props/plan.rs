@@ -90,7 +90,7 @@ fn the_plan_refuses_or_adds_what_c2_says(tc: TestCase) {
             assert_eq!(c.path_max(), (small - 256) / 2 - 1);
             assert_eq!(c.token_base(), token_base);
             // A token for every operation slot and every file slot's own.
-            assert!(c.tokens() >= u64::from(ops + files), "{}", c.tokens());
+            assert_eq!(c.tokens(), u64::from(ops + files));
             // No file can take every slot: each other file keeps its own,
             // and the path operations theirs.
             assert!(per_file <= ops - (files - 1) - paths, "{s:?}");

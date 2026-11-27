@@ -267,6 +267,19 @@ impl Run {
                             ..
                         }
                 );
+                // On a durable-write file EIO is a failed sync (C10).
+                let plain_eio = matches!(
+                    e,
+                    FileError::Io { errno: 5 }
+                        | FileError::Partial {
+                            kind: ErrorKind::Io { errno: 5 },
+                            ..
+                        }
+                );
+                assert!(
+                    !(dsync && plain_eio),
+                    "a durable write's EIO not a failed sync: {e:?}"
+                );
                 if dsync && disk {
                     // A failed durable write is a failed sync (C10).
                     self.st.inodes[inode].sync_failed();

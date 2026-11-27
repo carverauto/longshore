@@ -56,48 +56,80 @@ fn first_result(rig: &mut longshore_file::check::Rig<SimIo>, from: u64) -> i32 {
     rig.io().result(from).unwrap().1
 }
 
-/// Cut at a sector inside its first block, a direct write has no whole
-/// block to resume from, and ends `NoProgress`; cut past it, the rest is
-/// written again from the last whole block, from the same buffer.
+/// Cut short, a direct write is written again from its last whole block,
+/// from the same buffer: past the first block the rest of it, inside it
+/// all of it again from the same offset (C6).
 #[test]
 fn a_short_direct_write_resumes_from_its_last_whole_block() {
     let mut rig = rig();
     let flags = rw_create().with_empty(true).with_direct(true);
     let f = rig.open("/direct-short.dat", flags);
     let len = 4 * BLOCK;
-    let (mut resumed, mut stalled) = (0, 0);
+    let (mut resumed, mut again) = (0, 0);
     for round in 0..16u64 {
         let data = bytes(round as u8, len as usize);
         let at = round * u64::from(len);
         let (mark, from) = (rig.io().submitted(), rig.io().completed());
         place(&mut rig, 1, PlacedFault::ShortWrite);
-        let r = rig.write(f, &data, at);
+        assert_eq!(rig.write(f, &data, at), Ok(u64::from(len)));
         let cut = first_result(&mut rig, from).unsigned_abs();
         let w = writes(rig.io().since(mark));
-        if cut < BLOCK {
-            assert_eq!((r, w.len()), (Err(FileError::NoProgress), 1), "{w:?}");
-            stalled += 1;
-            continue;
-        }
-        assert_eq!(r, Ok(u64::from(len)));
         assert_eq!(w.len(), 2, "{w:?}");
         let off = cut / BLOCK * BLOCK;
         assert_eq!(w[1], (at + u64::from(off), off, len - off), "cut at {cut}");
         assert_eq!(rig.read(f, at, len), (Ok(u64::from(len)), data));
-        resumed += 1;
+        if off == 0 {
+            again += 1;
+        } else {
+            resumed += 1;
+        }
     }
-    assert!(
-        resumed > 0 && stalled > 0,
-        "{resumed} resumed, {stalled} not"
-    );
+    assert!(resumed > 0 && again > 0, "{resumed} resumed, {again} again");
     assert_eq!(rig.close(f), Ok(0));
     rig.at_rest(0);
 }
 
-/// An error after some bytes is `Partial` with how many; a resume that
-/// moves nothing is `NoProgress`, alone or after some bytes. The
-/// simulator cuts a buffered write only at a sector inside it, so a write
-/// of nothing comes from a direct one cut inside a block.
+/// What C6 says a direct write of `len` bytes ends with when the backend
+/// completes its attempts with `results`, in order: each resumes from
+/// what was written rounded down to a block; an attempt that adds no
+/// whole block counts, and the fifth such in a row ends `NoProgress`.
+fn direct_outcome(len: u64, results: &[i32]) -> Result<u64, FileError> {
+    let (mut done, mut stalls) = (0u64, 0);
+    for r in results {
+        let Ok(n) = u64::try_from(*r) else {
+            let kind = ErrorKind::Io { errno: EIO };
+            return if done > 0 {
+                Err(FileError::Partial { done, kind })
+            } else {
+                Err(FileError::Io { errno: EIO })
+            };
+        };
+        if done + n == len {
+            return Ok(len);
+        }
+        let now = (done + n) / u64::from(BLOCK) * u64::from(BLOCK);
+        if now > done {
+            (done, stalls) = (now, 0);
+        } else {
+            stalls += 1;
+            if stalls == 5 {
+                let kind = ErrorKind::NoProgress;
+                return if done > 0 {
+                    Err(FileError::Partial { done, kind })
+                } else {
+                    Err(FileError::NoProgress)
+                };
+            }
+        }
+    }
+    panic!("the write did not end: {results:?}");
+}
+
+/// An error after some bytes is `Partial` with how many. A direct write
+/// cut inside a block four times in a row is written whole the fifth
+/// time; cut five times it ends `NoProgress`, or `Partial` of
+/// `NoProgress` after whole blocks. The simulator never cuts a buffered
+/// write to nothing.
 #[test]
 fn an_error_after_some_bytes_is_partial_and_none_is_no_progress() {
     let mut rig = rig();
@@ -116,31 +148,51 @@ fn an_error_after_some_bytes_is_partial_and_none_is_no_progress() {
     }
     let flags = rw_create().with_empty(true).with_direct(true);
     let d = rig.open("/partial-direct.dat", flags);
-    let (mut alone, mut after) = (0, 0);
-    for round in 0..16u64 {
-        let from = rig.io().completed();
-        place(&mut rig, 1, PlacedFault::ShortWrite);
-        place(&mut rig, 2, PlacedFault::ShortWrite);
-        let r = rig.write(d, &bytes(3, 2 * BLOCK as usize), round * 8192);
-        let stalled = FileError::Partial {
-            done: u64::from(BLOCK),
-            kind: ErrorKind::NoProgress,
-        };
-        if first_result(&mut rig, from).unsigned_abs() < BLOCK {
-            assert_eq!(r, Err(FileError::NoProgress));
-            alone += 1;
-            // The second fault was not used: a status takes it, failing.
-            let taken = rig.status("/nothing-here");
-            assert!(taken.is_err(), "{taken:?}");
-        } else {
-            assert_eq!(r, Err(stalled));
-            after += 1;
+    // One block: every cut is inside it.
+    let block = bytes(4, BLOCK as usize);
+    for k in 1..=4 {
+        place(&mut rig, k, PlacedFault::ShortWrite);
+    }
+    assert_eq!(
+        rig.write(d, &block, 0),
+        Ok(u64::from(BLOCK)),
+        "four cuts, then whole"
+    );
+    for k in 1..=5 {
+        place(&mut rig, k, PlacedFault::ShortWrite);
+    }
+    assert_eq!(
+        rig.write(d, &block, 0),
+        Err(FileError::NoProgress),
+        "five cuts"
+    );
+    // Two blocks, six cuts: what C6 says of the cuts the disk made.
+    let mut seen = [0; 3];
+    for round in 0..24u64 {
+        let (from, mark) = (rig.io().completed(), rig.io().submitted());
+        for k in 1..=6 {
+            place(&mut rig, k, PlacedFault::ShortWrite);
+        }
+        let r = rig.write(d, &bytes(5, 2 * BLOCK as usize), round * 8192);
+        let results: Vec<i32> = (from..rig.io().completed())
+            .map(|n| rig.io().result(n).unwrap().1)
+            .collect();
+        assert_eq!(
+            r,
+            direct_outcome(u64::from(2 * BLOCK), &results),
+            "{results:?}"
+        );
+        seen[match r {
+            Ok(_) => 0,
+            Err(FileError::NoProgress) => 1,
+            Err(_) => 2,
+        }] += 1;
+        // Cuts the write did not take go to statuses, which fail.
+        while rig.io().submitted() < mark + 6 {
+            assert!(rig.status("/nothing-here").is_err());
         }
     }
-    assert!(
-        alone > 0 && after > 0,
-        "{alone} alone, {after} after a block"
-    );
+    assert!(seen[1] + seen[2] > 0 && seen[0] + seen[2] > 0, "{seen:?}");
     assert_eq!(rig.close(d), Ok(0));
     assert_eq!(rig.close(f), Ok(0));
     rig.at_rest(0);
