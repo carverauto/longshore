@@ -355,7 +355,7 @@ from the `Config`. Plan several components one on top of the other.
 | `with_header_max(bytes)` | The longest header | 256 |
 | `with_spans(n)` | Queued sends per connection | 16 |
 | `with_zero_copy_min(bytes)` | Sends at least this long are zero-copy | 16 KiB |
-| `with_zero_copy_sends(per_connection, in_all)` | Zero-copy sends whose memory the kernel still reads, a connection and in the whole set; each is an operation of the backend until it is back | 1 and 256 |
+| `with_zero_copy_sends(per_connection, in_all)` | Zero-copy sends whose memory the kernel still reads, a connection and in the whole set; each is an operation of the backend until it is back | 4 and 256 |
 | `with_tls(on)` | Room for TLS; segments are then at least `TLS_SEGMENT_MIN` (36 KiB) | off |
 | `with_token_base(base)` | The first of the set's tokens; it uses `Config::tokens()` of them | 0 |
 
@@ -487,9 +487,6 @@ allocation guard and once per TLS provider. See
 
 ## Not there yet
 
-- `Rx::ZeroCopy` measured through `longshore_tcp` on a card
-  (`tcp_uring --rx zc`); so far the backend's own receive and log from
-  pages (`zc_uring`) and the test programs of milestone 31 are.
 - The AF_XDP transport. The simulated packet link it is to be tested on
   is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.

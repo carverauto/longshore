@@ -2,16 +2,17 @@
 
 `longshore_tcp` receives in one of three modes, chosen per listener or
 connection with `ConnOpts::with_rx`. Two exist (`Rx::Ring`, `Rx::Direct`);
-the third (`Rx::ZeroCopy`) is proposed in `add-tcp-zero-copy-receive` and
-only measured by a test program so far. This note says what each does,
+the third (`Rx::ZeroCopy`) is built by `add-tcp-zero-copy-receive` and
+measured through `longshore_tcp` in milestone 34. This note says what each does,
 what it costs, and which fits which traffic of a database node.
 
 The numbers are from two DGX Sparks over 200 GbE
 (`bench/results/m30-tcp-dgx-spark-pair-200gbe-aarch64.md`,
 `m31-tcp-zero-copy-receive-spike-dgx-spark.md`): one to three runs each,
 on machines that do other work. Read them as "about", and as true of that
-card and that disk. What `Rx::ZeroCopy` would do is measured with a test
-program (`bench/spikes/zcrx/zcrecv.c`), not with `longshore_tcp`.
+card and that disk. The early figures of `Rx::ZeroCopy` are a test
+program's (`bench/spikes/zcrx/zcrecv.c`); milestone 34 has the mode
+through `longshore_tcp` (`bench/results/m34-tcp-receive-modes-dgx-spark.md`).
 
 ## What costs CPU when receiving
 
@@ -23,11 +24,11 @@ that one copy lands, and whether it happens at all.
 
 ## The three modes
 
-| | `Rx::Ring` | `Rx::Direct` | `Rx::ZeroCopy` (proposed) |
+| | `Rx::Ring` | `Rx::Direct` | `Rx::ZeroCopy` |
 |---|---|---|---|
 | Where payload arrives | A ring of buffers shared by all connections | The frame's own block-aligned buffer | Pages of an area the card writes into |
 | Kernel copies payload | Yes | Yes | No |
-| A frame is lent | In place if it lies in one ring buffer; put together in frame memory if not | In place, always | In place if in one page; as its pieces, in order, if not |
+| A frame is lent | In place if it lies in one ring buffer; put together in frame memory if not | In place, always | In its pages if it starts a page and each block lies in one; moved once into frame memory if not |
 | Ready for a direct-I/O write | After `hold` (one move) or after being put together | As it is; with `with_body_at_block`, its body at a block | As its pages lie, when the frame starts a packet and packets carry whole pages; after one move otherwise |
 | Operations a frame | Fewest: one armed receive serves everything | Two receives (header, then body) | One armed receive; one completion a page |
 | Receiving thread's CPU-seconds a GB | 0.13 to 0.16 | 0.13 to 0.16 | 0.035 if the bytes are not read; 0.12 if they are, against 0.16 for a copy that is then read |

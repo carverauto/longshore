@@ -72,7 +72,7 @@ impl Frame {
     }
 
     /// Its run, for a hold by a file write that reads its pages
-    /// (`Net::pages().hold`); `None` for a frame that is not in pages.
+    /// (`Net::runs().hold`); `None` for a frame that is not in pages.
     pub const fn run(&self) -> Option<Run> {
         match self.mem {
             Mem::Pages(run) => Some(run),
