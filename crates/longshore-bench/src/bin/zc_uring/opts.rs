@@ -101,8 +101,16 @@ pub(super) fn parse() -> Opts {
             _ => die(format_args!("no option {flag}; {usage}")),
         }
     }
-    if o.frame <= 256 || o.pages == 0 || o.writes == 0 || o.spans == 0 {
-        die("--frame must be over 256, and --pages, --writes and --spans at least 1");
+    // The program asks for more only while it holds under half the area's
+    // pages, so one page would leave it asking for none.
+    if o.frame <= 256 || o.pages < 2 || o.writes == 0 || o.spans == 0 {
+        die("--frame must be over 256, --pages at least 2, and --writes and --spans at least 1");
+    }
+    if o.spans > Limits::GATHER_SPANS_MOST {
+        die(format_args!(
+            "--spans must be at most {}",
+            Limits::GATHER_SPANS_MOST
+        ));
     }
     if o.mode == "log" && o.file.is_none() {
         die("log needs --file");
@@ -111,13 +119,15 @@ pub(super) fn parse() -> Opts {
 }
 
 pub(super) fn limits(o: &Opts) -> Limits {
+    let more = |by: u32| o.writes.checked_add(by).or_die("--writes, too many");
+    let span_bytes = o.spans.checked_mul(12).or_die("--spans, too many");
     Limits::BASE
         .with_sockets_max(2)
-        .with_small_buffers(o.writes + 1)
-        .with_small_buffer_size((12 * o.spans).max(4096))
+        .with_small_buffers(more(1))
+        .with_small_buffer_size(span_bytes.max(4096))
         .with_files_max(1)
         .with_block_size(PAGE)
-        .with_ops_max(o.writes + 8)
+        .with_ops_max(more(8))
         .with_area_pages(o.pages)
         .with_area_queue(o.interface, o.queue)
         .with_gather(o.writes, o.spans)
