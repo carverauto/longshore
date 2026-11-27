@@ -127,6 +127,11 @@ impl<IO: Io> Spy<IO> {
         self.ticks
     }
 
+    /// The backend lost power: what was in flight will never complete.
+    pub fn lost(&mut self) {
+        self.completed = self.submitted;
+    }
+
     /// Room for `n` more operations, then `Busy`; `None` for the backend's
     /// own room.
     pub fn set_room(&mut self, room: Option<u32>) {
