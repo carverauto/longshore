@@ -9,8 +9,8 @@
 //! end of a file is not a failure, and the steps may be of several files
 //! and of paths.
 
-use super::{bytes, fail, limits, must, rw_create, sizes, tickets, Kind, Rig};
-use crate::{Event, File, FileError, Step};
+use super::{bytes, fail, limits, must, rw_create, sizes, Kind, Rig};
+use crate::{Event, File, FileError, Step, Ticket};
 use longshore_common::io::extents::Extent;
 use longshore_common::io::{Io, Limits};
 
@@ -28,7 +28,7 @@ pub(super) fn results<IO: Io>(
     rig: &mut Rig<IO>,
     steps: &[Step<'_>],
 ) -> (Vec<Result<u64, FileError>>, bool) {
-    let mut ts = tickets::<8>();
+    let mut ts = [Ticket::NONE; 8];
     let n = must(
         rig.call(|s, io, x| s.sequence(io, x, steps, &mut ts)),
         "sequence",
@@ -211,7 +211,7 @@ fn steps_behind_a_path_step_wait_for_it<IO: Io>(make: &mut impl FnMut(Limits) ->
         },
     ];
     let mark = rig.io().submitted();
-    let mut ts = tickets::<3>();
+    let mut ts = [Ticket::NONE; 3];
     let n = rig.call(|s, io, x| s.sequence(io, x, &steps, &mut ts));
     assert_eq!(n, Ok(3));
     assert_eq!(rig.io().submitted(), mark + 1, "only the status went");

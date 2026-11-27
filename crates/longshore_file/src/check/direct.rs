@@ -10,8 +10,8 @@
 //! a punch is whole blocks on every file. A file system that cannot open
 //! a file for direct I/O (tmpfs) leaves the direct checks out.
 
-use super::{bytes, fail, limits, rw_create, sizes, tickets, Rig, BLOCK};
-use crate::{FileError, Span, Step};
+use super::{bytes, fail, limits, rw_create, sizes, Rig, BLOCK};
+use crate::{FileError, Span, Step, Ticket};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::{BufId, Io, Limits};
 
@@ -99,7 +99,7 @@ fn unaligned_refused<IO: Io>(rig: &mut Rig<IO>, f: crate::File) {
         len: 100,
         file_off: 0,
     }];
-    let mut ts = tickets::<1>();
+    let mut ts = [Ticket::NONE; 1];
     rig.refused("a step", off, |s, io, x| s.sequence(io, x, &steps, &mut ts));
     rig.release(e);
     // An extent of the large class: not block-aligned memory.

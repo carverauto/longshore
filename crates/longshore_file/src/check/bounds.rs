@@ -9,7 +9,7 @@
 //! room for every step, close is never `Full`, and work that waits for
 //! room at the backend goes first in, first out, a sequence not overtaken.
 
-use super::{limits, must, rw_create, tickets, Kind, Rig, Submitted};
+use super::{limits, must, rw_create, Kind, Rig, Submitted};
 use crate::{File, FileError, FileSizes, Step, Ticket};
 use longshore_common::io::{Io, Limits};
 
@@ -124,7 +124,7 @@ fn a_sequence_needs_room_for_every_step<IO: Io>(make: &mut impl FnMut(Limits) ->
         data_only: true,
     };
     let (two, one) = ([step; 2], [step]);
-    let mut ts = tickets::<2>();
+    let mut ts = [Ticket::NONE; 2];
     rig.refused("two steps", FileError::Full, |s, io, x| {
         s.sequence(io, x, &two, &mut ts)
     });
@@ -167,7 +167,7 @@ fn waiting_goes_first_in_first_out<IO: Io>(make: &mut impl FnMut(Limits) -> IO, 
             data_only: true,
         },
     ];
-    let mut seq = tickets::<2>();
+    let mut seq = [Ticket::NONE; 2];
     let n = rig.call(|s, io, x| s.sequence(io, x, &steps, &mut seq));
     assert_eq!(n, Ok(2), "a sequence that waits");
     ts.extend_from_slice(&seq);

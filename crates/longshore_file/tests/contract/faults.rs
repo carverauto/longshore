@@ -11,8 +11,8 @@
 
 use super::sim::{place, rig};
 use longshore_common::sim::{DiskFaults, PlacedFault};
-use longshore_file::check::{self, bytes, must, rw_create, tickets};
-use longshore_file::{ErrorKind, FileError, Span, Step};
+use longshore_file::check::{self, bytes, must, rw_create};
+use longshore_file::{ErrorKind, FileError, Span, Step, Ticket};
 
 const EIO: i32 = 5;
 
@@ -41,7 +41,7 @@ fn a_failed_sync_poisons_the_file_and_reads_and_its_close_go_on() {
             file: f,
             data_only: true,
         }];
-        let mut ts = tickets::<1>();
+        let mut ts = [Ticket::NONE; 1];
         rig.refused("a step", p, |s, io, x| s.sequence(io, x, &steps, &mut ts));
         rig.release(e);
         assert_eq!(rig.read(f, 0, 1000), (Ok(1000), data));
@@ -144,7 +144,7 @@ fn a_waiting_step_of_a_file_poisoned_meanwhile_ends_poisoned() {
             data_only: false,
         },
     ];
-    let mut ts = tickets::<3>();
+    let mut ts = [Ticket::NONE; 3];
     assert_eq!(
         rig.call(|s, io, x| s.sequence(io, x, &steps, &mut ts)),
         Ok(3)

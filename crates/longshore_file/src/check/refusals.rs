@@ -9,8 +9,8 @@
 //! paths, stale extents, an extent with every hold taken, and no free file
 //! slot; a page span that is not a page of the receive area.
 
-use super::{bytes, limits, must, rw_create, sizes, tickets, Rig, EXTENT};
-use crate::{FileError, Span, Step};
+use super::{bytes, limits, must, rw_create, sizes, Rig, EXTENT};
+use crate::{FileError, Span, Step, Ticket};
 use longshore_common::io::{Io, Limits};
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
@@ -45,7 +45,7 @@ fn stale_handles<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
         file: f,
         data_only: true,
     }];
-    let mut ts = tickets::<1>();
+    let mut ts = [Ticket::NONE; 1];
     rig.refused("a step", stale, |s, io, x| {
         s.sequence(io, x, &steps, &mut ts)
     });
@@ -65,7 +65,7 @@ fn stale_handles<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
             data_only: true,
         },
     ];
-    let mut two = tickets::<2>();
+    let mut two = [Ticket::NONE; 2];
     rig.refused("a live step, then a stale one", stale, |s, io, x| {
         s.sequence(io, x, &mixed, &mut two)
     });
@@ -111,7 +111,7 @@ fn past_the_plan_and_the_extent<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
         data_only: true,
     };
     let four = [sync; 4];
-    let mut ts = tickets::<4>();
+    let mut ts = [Ticket::NONE; 4];
     rig.refused("4 steps", big, |s, io, x| s.sequence(io, x, &four, &mut ts));
     // A page span must be a page of the receive area: the large buffer is
     // none, on any backend.
@@ -137,7 +137,7 @@ fn past_the_plan_and_the_extent<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
     );
     assert_eq!(rig.done(spanned), Ok(32));
     let three = [sync; 3];
-    let mut ts3 = tickets::<3>();
+    let mut ts3 = [Ticket::NONE; 3];
     let n = rig.call(|s, io, x| s.sequence(io, x, &three, &mut ts3));
     assert_eq!(n, Ok(3));
     for each in ts3 {
@@ -167,7 +167,7 @@ fn bad_paths<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
         rig.refused("rename from", bad, |s, io, _| s.rename(io, p, &ok));
         rig.refused("rename to", bad, |s, io, _| s.rename(io, &ok, p));
         let steps = [Step::Status { path: p }];
-        let mut ts = tickets::<1>();
+        let mut ts = [Ticket::NONE; 1];
         rig.refused("a step", bad, |s, io, x| s.sequence(io, x, &steps, &mut ts));
     }
     // Accepted: whatever the backend says of so long a name.
@@ -209,7 +209,7 @@ fn extents_that_cannot_be_held<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root
         len: 1,
         file_off: 0,
     }];
-    let mut ts = tickets::<1>();
+    let mut ts = [Ticket::NONE; 1];
     rig.refused("a step", stale, |s, io, x| {
         s.sequence(io, x, &steps, &mut ts)
     });

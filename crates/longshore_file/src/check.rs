@@ -73,16 +73,6 @@ pub fn some<V>(value: Option<V>, what: &str) -> V {
     }
 }
 
-/// Room for the tickets of a sequence of up to `N` steps. `Ticket` has no
-/// public constructor, so a caller has no other way to make the slice
-/// [`crate::Files::sequence`] writes into.
-pub const fn tickets<const N: usize>() -> [crate::Ticket; N] {
-    [crate::Ticket {
-        index: u32::MAX,
-        generation: 0,
-    }; N]
-}
-
 /// Block size of every check: the backends' and the extents'.
 pub const BLOCK: u32 = 4096;
 /// Bytes of an extent in the checks.

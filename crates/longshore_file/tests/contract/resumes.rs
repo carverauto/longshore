@@ -12,8 +12,8 @@
 use super::sim::{place, rig};
 use longshore_common::io::Op;
 use longshore_common::sim::{PlacedFault, SimIo};
-use longshore_file::check::{bytes, rw_create, tickets, Kind, Submitted, BLOCK};
-use longshore_file::{ErrorKind, FileError, Step};
+use longshore_file::check::{bytes, rw_create, Kind, Submitted, BLOCK};
+use longshore_file::{ErrorKind, FileError, Step, Ticket};
 
 const EIO: i32 = 5;
 
@@ -227,7 +227,7 @@ fn a_chain_broken_by_a_short_write_goes_on_in_order() {
     ];
     let mark = rig.io().submitted();
     place(&mut rig, 1, PlacedFault::ShortWrite);
-    let mut ts = tickets::<3>();
+    let mut ts = [Ticket::NONE; 3];
     let n = rig.call(|s, io, x| s.sequence(io, x, &steps, &mut ts));
     assert_eq!(n, Ok(3));
     let got = ts.map(|t| rig.done(t));

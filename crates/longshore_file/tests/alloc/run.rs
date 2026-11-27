@@ -8,8 +8,8 @@
 
 use longshore_common::io::{Io, OpenFlags};
 use longshore_common::sim::SimIo;
-use longshore_file::check::{rw_create, tickets, Rig, EXTENT};
-use longshore_file::{FileError, Span, Step};
+use longshore_file::check::{rw_create, Rig, EXTENT};
+use longshore_file::{FileError, Span, Step, Ticket};
 
 /// The paths of a run, made before it.
 pub struct Paths {
@@ -179,7 +179,7 @@ fn sequence<IO: Io>(
             file_off: 8192,
         },
     ];
-    let mut ts = tickets::<3>();
+    let mut ts = [Ticket::NONE; 3];
     let n = rig.call(|s, io, x| s.sequence(io, x, &steps, &mut ts));
     assert_eq!(n, Ok(3));
     for (t, want) in ts.into_iter().zip([4096, 0, 4096]) {
@@ -203,7 +203,7 @@ fn refusals<IO: Io>(
         data_only: true,
     };
     let four = [sync; 4];
-    let mut ts = tickets::<4>();
+    let mut ts = [Ticket::NONE; 4];
     rig.refused("steps", FileError::TooLarge, |s, io, x| {
         s.sequence(io, x, &four, &mut ts)
     });
