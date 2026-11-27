@@ -46,9 +46,9 @@
 //!                           (frame)
 //!
 //!   --tls FILE              rr and bulk over TLS 1.3, the certificate in FILE
-//!                           and its key in FILE.key, made if FILE is missing
-//!                           (on two machines: the peer makes them, the load
-//!                           is given a copy of FILE)
+//!                           and its key in FILE.key, made by the peer if FILE
+//!                           is missing (on two machines the load is given a
+//!                           copy of the peer's FILE; it makes none itself)
 //!   --provider P            aws-lc, ring or rustls seals the records (the
 //!                           first compiled in); sealed records are never
 //!                           sent zero-copy

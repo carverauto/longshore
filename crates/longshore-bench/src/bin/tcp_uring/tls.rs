@@ -5,9 +5,10 @@
 
 //! `--tls FILE`: both ends of a run speak TLS 1.3 through the transport's
 //! record layer, with the certificate in `FILE` (DER) and its key in
-//! `FILE.key` (PKCS#8 DER). An end that finds neither makes both, for the
-//! name [`NAME`]; on two machines the peer makes them and the load is
-//! given a copy of `FILE`.
+//! `FILE.key` (PKCS#8 DER). The accepting end makes both, for the name
+//! [`NAME`], when it finds no `FILE`; the connecting end only reads `FILE`,
+//! and fails if it is missing. On two machines the load is given a copy of
+//! the peer's `FILE`.
 
 use super::Opts;
 use crate::die::{die, OrDie};
@@ -49,10 +50,10 @@ pub(crate) fn server(o: &Opts) -> Option<Tls> {
     Some(Tls::new().with_server(setup))
 }
 
-/// What the connecting end trusts, if the run is over TLS.
+/// What the connecting end trusts, if the run is over TLS: the certificate
+/// the accepting end made, never one of its own.
 pub(crate) fn client(o: &Opts) -> Option<Tls> {
     let cert = o.tls.as_deref()?;
-    make_if_missing(cert);
     let setup = ClientSetup::with_roots_using(o.provider, &[&read(cert)]).or_die("client setup");
     Some(Tls::new().with_client(setup))
 }
