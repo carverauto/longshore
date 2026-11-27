@@ -11,6 +11,7 @@
 //! that uses it. The contract it keeps is in the OpenSpec change
 //! `add-file-crate` (`design.md`, "The contract").
 
+pub mod check;
 mod config;
 mod error;
 mod event;
