@@ -7,7 +7,7 @@
 //! the caller is told is what direct mode tells it, and every piece goes
 //! back.
 
-use super::paged::{none_out, read, settle, world};
+use super::paged::{none_out, read, settle, world, world_with, zc};
 use super::*;
 
 /// What the server's caller sees of a connection reading in `rx` to
@@ -83,5 +83,64 @@ fn the_end_of_the_stream_inside_a_frame_is_told_as_in_direct_mode() {
             assert_eq!(paged.0, frames);
             assert_eq!(paged, direct, "seed {seed}, cut at {cut}");
         }
+    }
+}
+
+/// One turn of a driver that ticks the backend and routes what came, but
+/// polls only the client's set.
+fn tick_without_server_poll(w: &mut World) {
+    let now = w.io.now_ns();
+    w.client.poll(&mut w.io, now);
+    if !w.ticking {
+        w.io.submit(TICK, Op::Timeout { nanos: MS / 4 }).unwrap();
+        w.ticking = true;
+    }
+    w.io.tick(true, &mut w.out).unwrap();
+    w.collect();
+}
+
+/// Connections that each send a header announcing a frame longer than
+/// the framing allows, to a set of one slot that is not polled between
+/// them: each ends, giving up the header's piece, and is closed, and the
+/// slot takes the next. However many there are, every piece goes back.
+#[test]
+fn headers_given_up_between_two_polls_go_back_however_many() {
+    let one = sizes(0, 1, 1).with_segments(8, 8192).with_zc(64, 8, 256);
+    for seed in 0..10 {
+        let mut w = world_with(seed, Faults::NONE, one);
+        let _: Listener = w.listen(ListenConfig::new(zc()));
+        for _ in 0..4 {
+            let c = w.client.connect(&mut w.io, ADDR, prefix()).unwrap();
+            let (mut up, mut s, mut sent) = (false, None, false);
+            for _ in 0..2_000 {
+                tick_without_server_poll(&mut w);
+                while let Some(e) = w.client.next_event() {
+                    up |= e == Event::Up(c);
+                }
+                if s.is_none() {
+                    if let Some(Event::Accepted { conn, .. }) = w.server.next_event() {
+                        s = Some(conn);
+                    }
+                }
+                if up && s.is_some() && !sent {
+                    w.client.send_bytes(&mut w.io, c, &[0xff; 4]).unwrap();
+                    sent = true;
+                }
+                if s.is_some_and(|s| !w.server.is_up(s)) {
+                    break;
+                }
+            }
+            let s = s.unwrap();
+            assert!(!w.server.is_up(s), "seed {seed}: the header never came");
+            w.server.close(&mut w.io, s).unwrap();
+            w.client.close(&mut w.io, c).unwrap();
+            for _ in 0..50 {
+                tick_without_server_poll(&mut w);
+            }
+        }
+        settle(&mut w);
+        while w.client.next_event().is_some() || w.server.next_event().is_some() {}
+        settle(&mut w);
+        none_out(&mut w);
     }
 }

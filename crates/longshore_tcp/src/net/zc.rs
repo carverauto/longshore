@@ -361,6 +361,14 @@ impl<T: Transport> Net<T> {
         }
     }
 
+    /// Give the headers' pieces given up back to the transport: after
+    /// every completion, so that however many a driver's turns give up
+    /// before the next `poll`, they do not pile up.
+    pub(super) fn return_headers(&mut self, d: &mut T::Driver) {
+        let Net { zc, t, .. } = self;
+        zc.drain_headers(|page, off, len| t.give_back_piece(d, page, off, len));
+    }
+
     /// Give the pieces that wait back to the transport, and free the runs
     /// nothing holds any more.
     pub(super) fn return_pieces(&mut self, d: &mut T::Driver) {
@@ -374,6 +382,8 @@ impl<T: Transport> Net<T> {
     /// `Net` dropped without it leaves its pieces out until the backend
     /// is dropped, and a second set on that backend a smaller area.
     pub fn give_back_all(&mut self, d: &mut T::Driver) {
+        // What waits goes first, so that the headers given up below fit.
+        self.return_pieces(d);
         for slot in 0..self.cfg.conns() {
             self.drop_zc(slot);
         }

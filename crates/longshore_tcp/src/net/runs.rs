@@ -148,8 +148,9 @@ impl Pages {
             pages_max: s.zc_pages,
             retired: vec![0; s.zc_frames as usize].into_boxed_slice(),
             retired_len: 0,
-            // A header a connection, and one more for a connection that
-            // ends again in its slot before the next `poll`.
+            // A header a connection: a slot holds one at a time, and what
+            // it gives up goes back with the completion it came in, or
+            // with the next call that has the driver. Twice that, to spare.
             returns: vec![(BufId::new(0), 0, 0); 2 * cfg.conns() as usize].into_boxed_slice(),
             returns_len: 0,
             headers: 0,
@@ -356,12 +357,17 @@ impl Pages {
         self.returns_len as u32
     }
 
-    /// Give every piece that waits to `back`, and free the retired runs:
-    /// their records, their tail blocks, their pages of the budget.
-    pub(super) fn drain(&mut self, mut back: impl FnMut(BufId, u32, u32)) {
+    /// Give the headers' pieces that wait to `back`.
+    pub(super) fn drain_headers(&mut self, mut back: impl FnMut(BufId, u32, u32)) {
         for (page, off, len) in &self.returns[..core::mem::take(&mut self.returns_len)] {
             back(*page, *off, *len);
         }
+    }
+
+    /// Give every piece that waits to `back`, and free the retired runs:
+    /// their records, their tail blocks, their pages of the budget.
+    pub(super) fn drain(&mut self, mut back: impl FnMut(BufId, u32, u32)) {
+        self.drain_headers(&mut back);
         for i in 0..core::mem::take(&mut self.retired_len) {
             let index = self.retired[i];
             let state = self.runs[index as usize];
