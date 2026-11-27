@@ -36,7 +36,7 @@ suggests.
 ## Layout
 
 
-The library is nine crates in `crates/`, and a tenth that gathers them.
+The library is ten crates in `crates/`, and an eleventh that gathers them.
 
 | Crate | Contents | Uses |
 |---|---|---|
@@ -49,7 +49,8 @@ The library is nine crates in `crates/`, and a tenth that gathers them.
 | `longshore_mailbox` | Bounded lock-free `Copy` MPSC mailboxes, `Io` wake/drain, generic `Pool`/waiters, and `CallFuture`/`block_on` | `longshore_common` |
 | `longshore_s3` | The store: operations, SigV4 and Azure Shared Key signing, retries, listing, credentials. `client`: a handle any thread can share, over one or more I/O threads that each run a store, with lent buffers. `crypto`: SHA-256 and HMAC-SHA256 | The seven above (optional `longshore_tls`), `ring` |
 | `longshore_tcp` | `Net`: a fixed set of TCP and Unix-domain connections and listeners with framing, frames lent in place, counted frame memory and optional TLS; `KernelTransport` over `Io`; the checks every backend runs | `longshore_common`, `longshore_stream`, optional `longshore_tls` |
-| `longshore` | No code. It re-exports the others as `longshore::io`, `sim`, `dns`, `checksum`, `stream`, `tls` (feature `tls`), `http`, `tcp`, `mailbox`, `store`, `client` and `crypto` | The nine above |
+| `longshore_file` | `Files`: a fixed set of files and operations over `Io`, with handles that cannot reach a reused slot, whole transfers, ordered sequences, buffers lent without copies, direct I/O checked before submission and one error type; file I/O only; the checks every backend runs | `longshore_common` |
+| `longshore` | No code. It re-exports the others as `longshore::io`, `sim`, `dns`, `checksum`, `stream`, `tls` (feature `tls`), `http`, `tcp`, `file`, `mailbox`, `store`, `client` and `crypto` | The ten above |
 
 A protocol crate does no I/O of its own. It submits operations to an `Io`
 and is fed their completions, so each one runs the same on the kernel and
