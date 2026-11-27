@@ -5,6 +5,7 @@
 
 //! A set on a simulator with a disk, and a loop that drives it.
 
+use crate::record::Rec;
 use longshore_common::io::extents::{Extent, Extents};
 use longshore_common::io::{Completions, Io, Limits, OpenFlags};
 use longshore_common::sim::{DiskConfig, Faults, SimIo};
@@ -23,7 +24,7 @@ pub fn base() -> Limits {
 }
 
 pub struct Rig {
-    pub io: SimIo,
+    pub io: Rec,
     pub files: Files,
     pub x: Extents,
     pub limits: Limits,
@@ -45,7 +46,7 @@ impl Rig {
                 .with_sector_size(4096),
         );
         Rig {
-            io,
+            io: Rec::new(io),
             files: Files::new(config, &limits),
             x: Extents::new(limits.aligned(0), limits.aligned_buffers()),
             limits,
@@ -141,4 +142,22 @@ pub fn rw() -> OpenFlags {
         .with_read(true)
         .with_write(true)
         .with_create(true)
+}
+
+/// A simulated disk of `sector` bytes a sector, for a rig's backend.
+pub fn disk(sector: u32) -> DiskConfig {
+    DiskConfig::BASE
+        .with_max_files(16)
+        .with_max_dirs(8)
+        .with_max_bytes_per_file(1 << 20)
+        .with_max_name_len(256)
+        .with_sector_size(sector)
+}
+
+/// Fills `e` with bytes that differ from block to block and within one:
+/// a resume that sends from the wrong place writes the wrong bytes.
+pub fn pattern(r: &mut Rig, e: Extent, seed: u8) {
+    for (i, v) in r.io.buf(e.buf()).iter_mut().enumerate() {
+        *v = ((i / 512) as u8).wrapping_mul(31) ^ (i as u8) ^ seed;
+    }
 }
