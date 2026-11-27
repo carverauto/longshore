@@ -42,6 +42,15 @@ fn a_socket_whose_sends_end_a_buffer_each_still_sends() {
     }
 }
 
+/// A socket past the slots the backend was built with is out of range, as
+/// on the ring: the caller's mistake, not ignored.
+#[test]
+#[should_panic(expected = "socket slot out of range")]
+fn a_socket_out_of_range_is_not_ignored() {
+    let mut io = PosixIo::new(LIMITS).unwrap();
+    io.end_sends(Sock::new(LIMITS.sockets_max()), true);
+}
+
 /// Up to `want` completions within two seconds: a refused send must fail
 /// the test, not leave its receive waiting for ever.
 fn within(io: &mut PosixIo, out: &mut Completions, want: usize) -> Vec<(u64, i32)> {

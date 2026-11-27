@@ -221,6 +221,7 @@ impl UringIo {
             area,
             gather: super::gather::Gather::new(&limits),
             cq_full: false,
+            cq_full_count: 0,
             slots: vec![slot; limits.ops_max as usize].into_boxed_slice(),
             sock_stream: vec![false; limits.sockets_max as usize].into_boxed_slice(),
             sock_eor: vec![false; limits.sockets_max as usize].into_boxed_slice(),

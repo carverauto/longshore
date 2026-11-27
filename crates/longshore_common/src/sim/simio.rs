@@ -141,6 +141,8 @@ pub struct Virtual {
     pub(super) packets: packets::Packets,
     /// A receive found no room to report in, this tick.
     pub(super) ring_full: bool,
+    /// How many times one did, ever.
+    pub(super) ring_full_count: u64,
     pub(super) accept_start: u32,
     pub(super) accept_len: u32,
     pub(super) keep_timing: Option<crate::io::KeepAlive>,
@@ -191,6 +193,7 @@ impl Virtual {
             area: area::Area::new(&limits, seed),
             packets: packets::Packets::new(&limits),
             ring_full: false,
+            ring_full_count: 0,
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
             keep_timing: None,

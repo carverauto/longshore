@@ -6,6 +6,7 @@
 //! Disk fault helpers: sector boundary arithmetic, misdirected-write offsets,
 //! persistent sector read errors, and placed-fault lookup for [`SimDisk`].
 
+use super::write::Bytes;
 use super::{DiskFaultCtx, PlacedEntry, PlacedFault, Prng, SimDisk};
 use crate::io::count_result;
 use crate::io::posix::errno::linux::EIO;
@@ -137,17 +138,18 @@ impl SimDisk {
         &mut self,
         ii: usize,
         file_off: u64,
-        data: &[u8],
+        data: &(impl Bytes + ?Sized),
         ctx: &mut DiskFaultCtx<'_>,
     ) -> i32 {
         let s = u64::from(self.sector_size);
-        let cut_len = if let Some((first, num_cuts)) = sector_cut_bounds(file_off, data.len(), s) {
+        let cut_len = if let Some((first, num_cuts)) = sector_cut_bounds(file_off, data.total(), s)
+        {
             (first + ctx.rng.below(num_cuts) * s - file_off) as usize
         } else {
             0
         };
         if cut_len > 0 {
-            self.commit_write(ii, file_off, &data[..cut_len]);
+            data.commit(self, ii, file_off, cut_len);
         }
         ctx.counters.short_write += 1;
         count_result(cut_len)
@@ -157,15 +159,15 @@ impl SimDisk {
         &mut self,
         ii: usize,
         file_off: u64,
-        data: &[u8],
+        data: &(impl Bytes + ?Sized),
         reported: bool,
         ctx: &mut DiskFaultCtx<'_>,
     ) -> i32 {
         let s = u64::from(self.sector_size);
-        if let Some((first, num_cuts)) = sector_cut_bounds(file_off, data.len(), s) {
+        if let Some((first, num_cuts)) = sector_cut_bounds(file_off, data.total(), s) {
             let cut_len = (first + ctx.rng.below(num_cuts) * s - file_off) as usize;
             if cut_len > 0 {
-                self.commit_write(ii, file_off, &data[..cut_len]);
+                data.commit(self, ii, file_off, cut_len);
             }
         }
         if reported {
@@ -173,7 +175,7 @@ impl SimDisk {
             -EIO
         } else {
             ctx.counters.torn_silent += 1;
-            count_result(data.len())
+            count_result(data.total())
         }
     }
 }

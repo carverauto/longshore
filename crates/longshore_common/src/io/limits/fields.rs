@@ -173,7 +173,9 @@ impl Limits {
     /// Pages of the receive area, which a zero-copy receive
     /// ([`crate::io::Op::ArmedRecvZc`]) delivers pieces of: buffers of
     /// [`Limits::PAGE`] bytes each, with ids from [`Limits::area_base`].
-    /// May be zero.
+    /// May be zero. The simulator keeps, besides the pages, two bytes for
+    /// each byte of them, to check every piece given back against what
+    /// is out: a piece can be a byte, so as many can be out.
     #[inline]
     pub const fn area_pages(self) -> u32 {
         self.area_pages

@@ -25,14 +25,6 @@ use crate::io::{ENOMEM, ENOSPC};
 /// What a returned piece's bytes are overwritten with.
 pub(in crate::sim) const RETURNED: u8 = 0xDD;
 
-/// A piece out: bytes `off..off + len` of page `page`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(in crate::sim) struct Piece {
-    page: u32,
-    off: u32,
-    len: u32,
-}
-
 /// The pages of the area and the pieces out of them.
 pub(in crate::sim) struct Area {
     /// The first buffer id of the area's pages.
@@ -53,8 +45,11 @@ pub(in crate::sim) struct Area {
     back_len: usize,
     /// Returns that are read back when this many wait.
     back_most: usize,
-    /// Every piece out, in no order.
-    out: Box<[Piece]>,
+    /// For each byte of the area, the length of the piece out that begins
+    /// there, or 0: pieces of a page do not overlap, as it is not written
+    /// again before the last is back, and a piece has a byte. Two bytes
+    /// for each byte of the area; and how many pieces are out.
+    out: Box<[u16]>,
     out_len: usize,
     /// For each socket, the page it fills and how far, if any; and
     /// whether its receive was left silent by a full completion ring.
@@ -83,16 +78,7 @@ impl Area {
             // A small number that the seed chooses, as the size of a
             // ring of returns that is read lazily.
             back_most: 1 + (seed % 7) as usize,
-            // A page backs at most a piece a byte.
-            out: vec![
-                Piece {
-                    page: 0,
-                    off: 0,
-                    len: 0
-                };
-                pages * Limits::PAGE as usize
-            ]
-            .into_boxed_slice(),
+            out: vec![0; pages * Limits::PAGE as usize].into_boxed_slice(),
             out_len: 0,
             at: vec![None; limits.sockets_max as usize].into_boxed_slice(),
             silent: vec![false; limits.sockets_max as usize].into_boxed_slice(),
@@ -110,6 +96,7 @@ impl Area {
         self.refs.fill(0);
         self.filling.fill(false);
         (self.pool_len, self.list_len, self.back_len, self.out_len) = (0, 0, 0, 0);
+        self.out.fill(0);
         for page in (0..pages as u32).rev() {
             self.copied[page as usize] = page as usize >= pages - pages / 4;
             self.home(page);
@@ -229,7 +216,7 @@ impl Area {
     /// Note a piece of `len` bytes at `off` of `page`.
     fn deliver(&mut self, page: u32, off: u32, len: u32) {
         self.refs[page as usize] += 1;
-        self.out[self.out_len] = Piece { page, off, len };
+        self.out[(page * Limits::PAGE + off) as usize] = len as u16;
         self.out_len += 1;
     }
 
@@ -237,17 +224,14 @@ impl Area {
     /// for a piece that is not out.
     fn back(&mut self, id: BufId, off: u32, len: u32) {
         let page = id.0 - self.base;
-        let piece = Piece { page, off, len };
-        let found = self.out[..self.out_len].iter().position(|p| *p == piece);
+        let at = (page * Limits::PAGE + off) as usize;
+        let found = off < Limits::PAGE && len > 0 && u32::from(self.out[at]) == len;
         assert!(
-            found.is_some(),
+            found,
             "a piece returned that is not out: {len} bytes of page {page} from {off}"
         );
-        let Some(at) = found else {
-            return;
-        };
+        self.out[at] = 0;
         self.out_len -= 1;
-        self.out[at] = self.out[self.out_len];
         self.refs[page as usize] -= 1;
         self.settle(page);
     }
@@ -299,6 +283,7 @@ impl Virtual {
         let full = self.rng.chance(self.faults.ring_full);
         if full {
             self.ring_full = true;
+            self.ring_full_count += 1;
             if self.rng.below(2) == 0 {
                 // Nothing fitted in this call.
                 return Some(Attempt::single(-ENOSPC));
@@ -310,11 +295,8 @@ impl Virtual {
         // A packet that begins here starts a page, unless, one time in
         // eight, it was joined to the one before; no piece runs from one
         // packet into the next.
-        let (head, waiting) = (
-            self.socks[sock.0 as usize].rx_head,
-            self.socks[sock.0 as usize].rx_len,
-        );
-        let (begins, firm, within) = self.packets.ahead(sock.0, head, waiting);
+        let waiting = self.socks[sock.0 as usize].rx_len;
+        let (begins, firm, within) = self.packets.ahead(sock.0, waiting);
         // A packet after a send that ended a buffer is never joined; the
         // draw is made only for the others, so traces without stay as
         // they were.

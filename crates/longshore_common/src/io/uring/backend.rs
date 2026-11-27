@@ -80,6 +80,10 @@ impl Io for UringIo {
         core::mem::take(&mut self.cq_full)
     }
 
+    fn ring_full_count(&self) -> u64 {
+        self.cq_full_count
+    }
+
     fn waker(&mut self) -> Option<std::sync::Arc<dyn crate::io::Wake>> {
         if self.wake_fd < 0 {
             self.wake_fd = unsafe { eventfd(0, EFD_CLOEXEC) };
@@ -237,7 +241,9 @@ impl Io for UringIo {
             let min_complete = if wait && out.is_empty() { 1 } else { 0 };
             let to_submit = self.ring.pending();
             let consumed = self.ring.enter(min_complete)?;
-            self.cq_full |= self.ring.cq_is_full();
+            let full = self.ring.cq_is_full();
+            self.cq_full |= full;
+            self.cq_full_count += u64::from(full);
             if consumed != to_submit {
                 return Err(io::Error::other(format!(
                     "io_uring_enter consumed {consumed} of {to_submit} queued submissions"
@@ -275,12 +281,13 @@ impl UringIo {
     #[inline]
     fn precheck(&mut self, op: &Op) -> Result<(), i32> {
         if op.is_file_op() {
-            let pool = &self.bufs[self.pool_base..];
-            self.files_table.check_op(op, pool, &self.limits)?;
             if matches!(op, Op::FileWriteSpans { .. }) && !self.gather.has_row() {
-                // As many gathered writes in flight as were given room.
+                // As many gathered writes in flight as were given room;
+                // before the list is looked at, as on the other backends.
                 return Err(-ENOBUFS);
             }
+            let pool = &self.bufs[self.pool_base..];
+            self.files_table.check_op(op, pool, &self.limits)?;
         }
         match *op {
             Op::ArmedAccept { listener } => {

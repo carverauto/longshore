@@ -16,7 +16,7 @@ use super::abi_macos::*;
 use super::errno::{self, to_linux_errno};
 use super::Posix;
 use crate::io::files::span_at;
-use crate::io::{Limits, Op};
+use crate::io::{count_result, Limits, Op};
 use core::ffi::c_void;
 
 /// A run of memory: `struct iovec`.
@@ -74,7 +74,7 @@ impl Posix {
         loop {
             let wrote = unsafe { pwritev(fd, self.gather.as_ptr(), n, off) };
             if wrote >= 0 {
-                return wrote as i32;
+                return count_result(wrote);
             }
             let e = os_errno();
             if e != OS_EINTR {

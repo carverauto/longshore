@@ -17,6 +17,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[global_allocator]
 static ALLOC: Guard = Guard;
 
+#[path = "recv_zc/faults.rs"]
 mod faults;
 
 const PAGES: u32 = 8;

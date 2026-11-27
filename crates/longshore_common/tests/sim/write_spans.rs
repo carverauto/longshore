@@ -31,10 +31,20 @@ const FILE: FileSlot = FileSlot::new(0);
 /// Buffer 0 holds the path, buffer 1 the list of spans.
 const LIST: BufId = BufId::new(1);
 
+#[path = "write_spans/faults.rs"]
+mod faults;
+
 /// A simulator with a file open in slot 0, for direct I/O or not.
 #[cfg(test)]
 fn opened(direct: bool) -> (SimIo, Completions) {
-    let mut io = SimIo::new(LIMITS, 9, Faults::NONE);
+    opened_with(9, OpenFlags::NONE.with_direct(direct))
+}
+
+/// A simulator of `seed` with a file open in slot 0, for reading and
+/// writing with `flags` besides.
+#[cfg(test)]
+fn opened_with(seed: u64, flags: OpenFlags) -> (SimIo, Completions) {
+    let mut io = SimIo::new(LIMITS, seed, Faults::NONE);
     io.setup_disk(
         DiskConfig::BASE
             .with_max_files(4)
@@ -45,11 +55,7 @@ fn opened(direct: bool) -> (SimIo, Completions) {
     let mut out = Completions::new(8);
     let path = b"log\0";
     io.buf(BufId::new(0))[..path.len()].copy_from_slice(path);
-    let flags = OpenFlags::NONE
-        .with_read(true)
-        .with_write(true)
-        .with_create(true)
-        .with_direct(direct);
+    let flags = flags.with_read(true).with_write(true).with_create(true);
     let open = Op::FileOpen {
         slot: FILE,
         path_buf: BufId::new(0),

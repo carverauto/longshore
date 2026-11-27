@@ -30,6 +30,8 @@ impl Virtual {
         if self.socks[s].state == SockState::Connecting {
             return None;
         }
+        // A new connection: what the slot was told before is not kept.
+        self.packets.forget(sock.0);
         let route = self.routes.iter().position(|r| r.addr == addr);
         let (addr, segment) = route.map_or((addr, 0), |k| {
             (self.routes[k].listener, self.routes[k].segment)
@@ -86,6 +88,7 @@ impl Virtual {
             s.reset = false;
             s.accepted_from = None;
         }
+        self.packets.forget(sock.0);
         if let Some(SimAddr::Ip(listening)) = addr {
             // The simulator has no client addresses: the listener's own
             // address and a port derived from the client's slot.
@@ -197,8 +200,9 @@ impl Virtual {
             }
             p.rx[(tail + k) % SOCK_BUF] = byte;
         }
+        let waiting = p.rx_len;
         p.rx_len += n;
-        self.packets.sent((sock.0, peer as u32), tail, n);
+        self.packets.sent((sock.0, peer as u32), waiting, n);
         self.area.wake(peer as u32);
         Some(count_result(n))
     }

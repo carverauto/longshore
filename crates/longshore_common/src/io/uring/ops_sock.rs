@@ -21,6 +21,7 @@ impl UringIo {
     ) -> Option<io_uring_sqe> {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         self.sock_stream[sock.0 as usize] = false;
+        self.sock_eor[sock.0 as usize] = false;
         let s = &mut self.slots[i as usize];
         s.state = State::Connecting;
         s.phase = PHASE_SOCKET;
@@ -63,6 +64,7 @@ impl UringIo {
     ) -> io_uring_sqe {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         self.sock_stream[sock.0 as usize] = false;
+        self.sock_eor[sock.0 as usize] = false;
         let (at, _) = self.limits.span(path_buf);
         let start = self.pool_base + at + path_off as usize;
         let slice = &self.bufs[start..start + path_len as usize];
@@ -99,6 +101,7 @@ impl UringIo {
         s.addr_len = size_of::<sockaddr_any>() as u32;
         let (addr, addr_len) = (&raw mut s.addr as u64, &raw mut s.addr_len as u64);
         self.sock_peer[sock.0 as usize] = None;
+        self.sock_eor[sock.0 as usize] = false;
         let mut sqe = self.fixed(listener);
         sqe.opcode = IORING_OP_ACCEPT;
         sqe.file_index = sock.0 + 1;

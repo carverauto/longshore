@@ -63,6 +63,7 @@ impl<W: World> Io for Engine<W> {
     }
 
     fn end_sends(&mut self, sock: Sock, on: bool) {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         self.world.end_sends(sock, on);
     }
 
@@ -204,6 +205,10 @@ impl<W: World> Io for Engine<W> {
 
     fn take_ring_full(&mut self) -> bool {
         self.world.take_ring_full()
+    }
+
+    fn ring_full_count(&self) -> u64 {
+        self.world.ring_full_count()
     }
 
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()> {

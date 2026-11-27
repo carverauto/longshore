@@ -28,7 +28,16 @@ const PACKETS: [u32; 3] = [700, 5000, 300];
 /// A simulator with `A` connected to `B`.
 #[cfg(test)]
 fn connected(seed: u64) -> (SimIo, Completions) {
+    connected_after(seed, false)
+}
+
+/// A simulator with `A` connected to `B`, both told before that their
+/// sends end a buffer, or not.
+#[cfg(test)]
+fn connected_after(seed: u64, ends: bool) -> (SimIo, Completions) {
     let mut io = SimIo::new(LIMITS, seed, Faults::NONE);
+    io.end_sends(A, ends);
+    io.end_sends(B, ends);
     let mut out = Completions::new(16);
     let _: SocketAddr = io.listen(LISTENER, ADDR).unwrap();
     let accept = Op::Accept {
@@ -51,10 +60,10 @@ fn connected(seed: u64) -> (SimIo, Completions) {
     (io, out)
 }
 
-/// Send the three packets from `A`, one after the other was taken.
+/// Send `lens` from `A`, one packet each, every one taken whole.
 #[cfg(test)]
-fn send_all(io: &mut SimIo, out: &mut Completions) {
-    for len in PACKETS {
+fn send(io: &mut SimIo, out: &mut Completions, lens: &[u32]) {
+    for &len in lens {
         let op = Op::Send {
             sock: A,
             buf: BufId::new(0),
@@ -74,6 +83,12 @@ fn send_all(io: &mut SimIo, out: &mut Completions) {
     }
 }
 
+/// Send the three packets from `A`, one after the other was taken.
+#[cfg(test)]
+fn send_all(io: &mut SimIo, out: &mut Completions) {
+    send(io, out, &PACKETS);
+}
+
 /// The lengths of the packets that were sent are kept, in order.
 #[test]
 fn every_send_is_a_packet_of_its_length() {
@@ -82,6 +97,48 @@ fn every_send_is_a_packet_of_its_length() {
     let mut lens = [0u32; 8];
     assert_eq!(io.last_packets(&mut lens), (3, 3));
     assert_eq!(&lens[..3], &PACKETS);
+}
+
+/// Receive the packets `lens` into the area at `B`, every piece given
+/// back as it comes: how many packets began, and how many of them a page.
+#[cfg(test)]
+fn receive(io: &mut SimIo, out: &mut Completions, lens: &[u32], seed: u64) -> (u32, u32) {
+    let (mut starts, mut at_page_start) = (0, 0);
+    let all: u32 = lens.iter().sum();
+    let credit = Op::ArmedRecvZc {
+        sock: B,
+        credit: all,
+    };
+    io.submit(RECV, credit).unwrap();
+    let (mut at, mut ended) = (0u32, false);
+    while !ended {
+        io.tick(true, out).unwrap();
+        while let Some(c) = out.pop() {
+            if !c.more() {
+                assert_eq!(c.result(), 0);
+                ended = true;
+                continue;
+            }
+            let len = c.result().unsigned_abs();
+            // Whether this piece begins a packet, and where the packet
+            // it lies in ends.
+            let bounds = lens.iter().scan(0, |sum, p| {
+                *sum += p;
+                Some(*sum)
+            });
+            let begins = at == 0 || bounds.clone().any(|bound| bound == at);
+            let within = bounds.clone().find(|bound| *bound > at).unwrap();
+            assert!(at + len <= within, "seed {seed}: a piece across packets");
+            if begins {
+                starts += 1;
+                at_page_start += u32::from(c.off() == 0);
+            }
+            at += len;
+            io.give_back_piece(c.buf().unwrap(), c.off(), len);
+        }
+    }
+    assert_eq!(at, all);
+    (starts, at_page_start)
 }
 
 /// What `runs` seeds of three packets show, the sender's sends ending a
@@ -93,50 +150,8 @@ fn starts_of_pages(ends: bool) -> (u32, u32) {
         let (mut io, mut out) = connected(seed);
         io.end_sends(A, ends);
         send_all(&mut io, &mut out);
-        let all: u32 = PACKETS.iter().sum();
-        io.submit(
-            RECV,
-            Op::ArmedRecvZc {
-                sock: B,
-                credit: all,
-            },
-        )
-        .unwrap();
-        let (mut at, mut ended) = (0u32, false);
-        while !ended {
-            io.tick(true, &mut out).unwrap();
-            while let Some(c) = out.pop() {
-                if !c.more() {
-                    assert_eq!(c.result(), 0);
-                    ended = true;
-                    continue;
-                }
-                let len = c.result().unsigned_abs();
-                // The packet this piece begins in, and where that ends.
-                let mut end = 0;
-                let begins = PACKETS.iter().any(|p| {
-                    let begin = end;
-                    end += p;
-                    begin == at
-                });
-                let within = PACKETS
-                    .iter()
-                    .scan(0, |sum, p| {
-                        *sum += p;
-                        Some(*sum)
-                    })
-                    .find(|bound| *bound > at)
-                    .unwrap();
-                assert!(at + len <= within, "seed {seed}: a piece across packets");
-                if begins {
-                    starts += 1;
-                    at_page_start += u32::from(c.off() == 0);
-                }
-                at += len;
-                io.give_back_piece(c.buf().unwrap(), c.off(), len);
-            }
-        }
-        assert_eq!(at, all);
+        let (s, p) = receive(&mut io, &mut out, &PACKETS, seed);
+        (starts, at_page_start) = (starts + s, at_page_start + p);
     }
     (starts, at_page_start)
 }
@@ -161,4 +176,41 @@ fn pieces_are_cut_from_packets_and_a_packet_starts_a_page() {
 #[test]
 fn a_packet_after_a_send_that_ended_a_buffer_always_starts_a_page() {
     assert_eq!(starts_of_pages(true), (240, 240));
+}
+
+/// A packet's start, once its bytes were taken, is behind for good: when
+/// the socket's queue comes round past the place it lay, it is not taken
+/// for the start of a packet again, and the packets that fill the queue
+/// still each start a page.
+#[test]
+fn a_taken_start_stays_behind_when_the_queue_comes_round() {
+    // 100 bytes, taken; then 65,500 more, which fill the queue round past
+    // where the first packet began.
+    let mut after = [8192u32; 8];
+    after[7] = 65_500 - 7 * 8192;
+    for seed in 0..20 {
+        let (mut io, mut out) = connected(seed);
+        io.end_sends(A, true);
+        send(&mut io, &mut out, &[100]);
+        assert_eq!(receive(&mut io, &mut out, &[100], seed), (1, 1));
+        send(&mut io, &mut out, &after);
+        let (starts, at_page_start) = receive(&mut io, &mut out, &after, seed);
+        assert_eq!((starts, at_page_start), (8, 8), "seed {seed}");
+    }
+}
+
+/// What a socket was told about its sends before it was connected or
+/// accepted is not carried into the connection: a new connection's sends
+/// end no buffer until it is told so, as on the kernel's backends.
+#[test]
+fn a_new_connection_does_not_keep_what_its_slot_was_told() {
+    let (mut starts, mut at_page_start) = (0, 0);
+    for seed in 0..80 {
+        let (mut io, mut out) = connected_after(seed, true);
+        send_all(&mut io, &mut out);
+        let (s, p) = receive(&mut io, &mut out, &PACKETS, seed);
+        (starts, at_page_start) = (starts + s, at_page_start + p);
+    }
+    assert_eq!(starts, 240);
+    assert!(at_page_start < 240, "a packet of A's was never joined");
 }

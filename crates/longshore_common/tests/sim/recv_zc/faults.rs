@@ -182,3 +182,47 @@ fn the_same_seed_gives_the_same_trace() {
     }
     assert_ne!(run(1).0, run(2).0);
 }
+
+/// The count of full rings rises with every tick that found the ring
+/// full, and with no other; reading it, or taking the flag, leaves it.
+#[test]
+fn the_count_of_full_rings_rises_on_each_and_reading_it_leaves_it() {
+    let (mut io, mut out) = connected(LIMITS, 5, Faults::NONE.with_ring_full(1_000_000));
+    send(&mut io, 60 * 251);
+    let (mut seen, mut fulls, mut armed) = (io.ring_full_count(), 0, false);
+    assert_eq!(seen, 0);
+    for _ in 0..40 {
+        if !armed {
+            let recv = Op::ArmedRecvZc {
+                sock: B,
+                credit: 251,
+            };
+            io.submit(RECV, recv).unwrap();
+            armed = true;
+        }
+        io.tick(false, &mut out).unwrap();
+        while let Some(c) = out.pop() {
+            if c.token() != RECV {
+                continue;
+            }
+            if c.more() {
+                // A piece, and then silence: cancelled, to be armed again.
+                io.give_back_piece(c.buf().unwrap(), c.off(), c.result().unsigned_abs());
+                io.submit(Token::new(40), Op::Cancel { target: RECV })
+                    .unwrap();
+            } else {
+                armed = false;
+            }
+        }
+        let count = io.ring_full_count();
+        assert_eq!(io.ring_full_count(), count, "read twice");
+        let full = io.take_ring_full();
+        assert_eq!(io.ring_full_count(), count, "after the flag was taken");
+        assert_eq!(count > seen, full, "{seen} then {count}");
+        (seen, fulls) = (count, fulls + u64::from(full));
+    }
+    assert!(
+        fulls > 10 && seen >= fulls,
+        "{fulls} ticks full, {seen} counted"
+    );
+}
