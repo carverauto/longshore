@@ -277,25 +277,27 @@ pub enum Step { Read{..}, Write{..}, WriteSpans{..}, Sync{..}, Reserve{..},
 pub enum Event { Done { ticket: Ticket, file: Option<File>, result: Result<u64, FileError> } }
 pub enum FileError { /* C10 */ }   pub enum ErrorKind { /* C10 without Partial */ }
 
+// The skeleton in crates/longshore_file/src/files.rs is the authority for
+// these signatures. `Range = (Extent, at: u32, len: u32)`; space ranges
+// are `(off: u64, len: u64)`; tuples keep every call under clippy's
+// argument limit without a lint exemption.
 impl Files {
-    pub fn open(&mut self, io: &mut impl Io, path: &str, flags: OpenFlags) -> Result<Ticket, FileError>;
-    pub fn close(&mut self, io: &mut impl Io, file: File) -> Result<Ticket, FileError>;
-    pub fn read_at(&mut self, io: &mut impl Io, x: &mut Extents, file: File, extent: Extent, at: u32, len: u32, file_off: u64) -> Result<Ticket, FileError>;
-    pub fn write_at(/* same */) -> Result<Ticket, FileError>;
-    pub fn write_spans(&mut self, io: &mut impl Io, x: &mut Extents, file: File, spans: &[Span], file_off: u64) -> Result<Ticket, FileError>;
-    pub fn sync(&mut self, io: &mut impl Io, file: File, data_only: bool) -> Result<Ticket, FileError>;
-    pub fn reserve(&mut self, io: &mut impl Io, file: File, off: u64, len: u64, keep_size: bool) -> Result<Ticket, FileError>;
-    pub fn punch(&mut self, io: &mut impl Io, file: File, off: u64, len: u64) -> Result<Ticket, FileError>;
-    pub fn status(&mut self, io: &mut impl Io, path: &str) -> Result<Ticket, FileError>;
-    pub fn rename(&mut self, io: &mut impl Io, from: &str, to: &str) -> Result<Ticket, FileError>;
-    pub fn unlink(&mut self, io: &mut impl Io, path: &str) -> Result<Ticket, FileError>;
-    pub fn mkdir(&mut self, io: &mut impl Io, path: &str) -> Result<Ticket, FileError>;
-    pub fn sequence(&mut self, io: &mut impl Io, x: &mut Extents, steps: &[Step], tickets: &mut [Ticket]) -> Result<usize, FileError>;
-    pub fn on_completion(&mut self, io: &mut impl Io, x: &mut Extents, c: Completion) -> bool;
-    pub fn poll(&mut self, io: &mut impl Io, x: &mut Extents);
+    pub fn open<IO: Io>(&mut self, io: &mut IO, path: &str, flags: OpenFlags) -> Result<Ticket, FileError>;
+    pub fn close<IO: Io>(&mut self, io: &mut IO, file: File) -> Result<Ticket, FileError>;
+    pub fn read_at<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, file: File, range: Range, file_off: u64) -> Result<Ticket, FileError>;
+    pub fn write_at<IO: Io>(/* as read_at */) -> Result<Ticket, FileError>;
+    pub fn write_spans<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, file: File, spans: &[Span], file_off: u64) -> Result<Ticket, FileError>;
+    pub fn sync<IO: Io>(&mut self, io: &mut IO, file: File, data_only: bool) -> Result<Ticket, FileError>;
+    pub fn reserve<IO: Io>(&mut self, io: &mut IO, file: File, range: (u64, u64), keep_size: bool) -> Result<Ticket, FileError>;
+    pub fn punch<IO: Io>(&mut self, io: &mut IO, file: File, range: (u64, u64)) -> Result<Ticket, FileError>;
+    pub fn status / unlink / mkdir<IO: Io>(&mut self, io: &mut IO, path: &str) -> Result<Ticket, FileError>;
+    pub fn rename<IO: Io>(&mut self, io: &mut IO, from: &str, to: &str) -> Result<Ticket, FileError>;
+    pub fn sequence<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, steps: &[Step<'_>], tickets: &mut [Ticket]) -> Result<usize, FileError>;
+    pub fn on_completion<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, c: Completion) -> bool;
+    pub fn poll<IO: Io>(&mut self, io: &mut IO, x: &mut Extents);
     pub fn next_event(&mut self) -> Option<Event>;
     pub fn power_lost(&mut self, x: &mut Extents);
-    pub fn usage(&self) -> FileUsage; // slots in use, waiting, broken holds
+    pub fn usage(&self) -> FileUsage; // files(), ops(), waiting(), broken_holds()
 }
 ```
 
