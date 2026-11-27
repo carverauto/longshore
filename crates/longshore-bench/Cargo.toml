@@ -6,10 +6,15 @@ version.workspace = true
 publish = false
 license.workspace = true
 
-# The check and benchmark programs in src/bin drive the rings, so they are
-# Linux-only (io_uring); elsewhere they build to a stub that uses none of
-# these. This is a tool crate; nothing ships from it. rustls and rcgen are
-# for the benchmark sink's TLS mode.
+# `file_bench` also runs on macOS, on the portable backend, so the library
+# is a dependency everywhere; `longshore::file` is `longshore_file`.
+[dependencies]
+longshore.workspace = true
+
+# The other check and benchmark programs in src/bin drive the rings, so they
+# are Linux-only (io_uring); elsewhere they build to a stub that uses none
+# of these. This is a tool crate; nothing ships from it. rustls and rcgen
+# are for the benchmark sink's TLS mode.
 [target.'cfg(target_os = "linux")'.dependencies]
 longshore = { workspace = true, features = ["sim", "aws-lc", "ring", "rustls"] }
 rustls.workspace = true
