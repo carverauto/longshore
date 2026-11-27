@@ -19,6 +19,7 @@ struct region { uint64_t user_addr, size; uint32_t flags, id; uint64_t mmap_offs
 struct offsets { uint32_t head, tail, rqes, resv2; uint64_t resv[2]; };
 struct ifq_reg { uint32_t if_idx, if_rxq, rq_entries, flags; uint64_t area_ptr, region_ptr; struct offsets offsets; uint32_t zcrx_id, rx_buf_len; uint64_t resv[3]; };
 int main(int argc, char **argv) {
+    if (argc < 3) { fprintf(stderr, "usage: zcprobe INTERFACE QUEUE [RX_BUF_LEN]\n"); return 2; }
     const char *ifn = argv[1]; unsigned q = atoi(argv[2]); unsigned buf = argc > 3 ? atoi(argv[3]) : 0;
     char params[120]; memset(params, 0, sizeof params);
     uint32_t *p = (uint32_t *)params; p[1] = 4096; /* cq_entries */
