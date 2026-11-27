@@ -23,8 +23,9 @@ pub enum FileError {
     NotOpen,
     /// On a direct-I/O file: a buffer, length or offset not whole blocks.
     Unaligned,
-    /// More spans or steps than planned, a range past its extent, or a
-    /// length of 0 where one is needed.
+    /// More spans or steps than planned, a range past its extent, a
+    /// transfer of more than `i32::MAX` bytes (what a backend's completion
+    /// counts), or a length of 0 where one is needed.
     TooLarge,
     /// A path longer than the plan allows, or with a NUL inside.
     BadPath,

@@ -35,7 +35,12 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(sizes: FileSizes) -> Rig {
-        let (limits, config) = FileConfig::plan(base(), sizes).unwrap();
+        Rig::with_base(base(), sizes)
+    }
+
+    /// As [`Rig::new`], the set planned onto `base` in place of [`base`].
+    pub fn with_base(base: Limits, sizes: FileSizes) -> Rig {
+        let (limits, config) = FileConfig::plan(base, sizes).unwrap();
         let mut io = SimIo::new(limits, 7, Faults::NONE);
         io.setup_disk(
             DiskConfig::BASE

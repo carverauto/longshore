@@ -218,7 +218,10 @@ On a direct-I/O file: each extent span is of the block-aligned class and
 starts at a block boundary; lengths and file offsets are whole blocks;
 otherwise `Unaligned`. On every file: `punch` is whole blocks, otherwise
 `Unaligned`; `reserve`
-and `punch` have `len > 0`; ranges lie inside their extents (`TooLarge`).
+and `punch` have `len > 0`; ranges lie inside their extents; a transfer
+(`read_at`, `write_at`, or a gathered write's spans together) moves at
+most `i32::MAX` bytes, since every backend counts a completion's bytes in
+an `i32` (`TooLarge`).
 
 ### C10 Errors and poisoning
 `FileError` is flat (no field of its own type): `Full`, `Stale`,
@@ -250,7 +253,10 @@ readable, only their durability is lost.
 ### C11 Refusals at the call
 `Full`, `Stale`, `Closing`, `Poisoned`, `NotOpen`, `Unaligned`, `TooLarge`,
 `BadPath`, `StaleExtent`, `TooManyHolds`. A refusal submits nothing, takes
-no slot and no hold.
+no slot and no hold. A transfer of more than `i32::MAX` bytes (C9) is
+refused `TooLarge` at the call, as a step too, so no backend is given
+one. A refused sequence leaves the tickets of the steps before the
+refused one `Ticket::NONE` in the caller's slice.
 
 ### C12 Power loss, and what is not detected
 `Files::power_lost(&mut Extents)` frees every file and operation slot,

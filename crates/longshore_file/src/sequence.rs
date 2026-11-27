@@ -43,9 +43,10 @@ impl Files {
             match self.accept_step(io, x, step) {
                 Ok(i) => tickets[k] = self.ticket(i),
                 Err(e) => {
-                    for t in &tickets[..k] {
+                    for t in &mut tickets[..k] {
                         self.release_holds(x, t.index);
                         self.untake(t.index);
+                        *t = Ticket::NONE;
                     }
                     return Err(e);
                 }

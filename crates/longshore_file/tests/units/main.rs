@@ -7,6 +7,8 @@
 //! the bounds, and the faults that end or resume an operation.
 
 mod bounds;
+#[cfg(test)]
+mod counts;
 mod faults;
 mod ops;
 mod plan;

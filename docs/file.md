@@ -286,9 +286,10 @@ each any operation but open and close, of any file or a path, and writes
 their tickets into `tickets` in order. Each step counts against its own
 file's share or the path slots, and the whole sequence is refused `Full`
 unless every step has room; every step is checked before anything is
-submitted, as a single call would be. The steps go to the backend as one
-chain (`IOSQE_IO_LINK` on the ring; the portable backend and the
-simulator order them themselves).
+submitted, as a single call would be, and a refused sequence leaves the
+tickets of the steps before the refused one `Ticket::NONE`. The steps go
+to the backend as one chain (`IOSQE_IO_LINK` on the ring; the portable
+backend and the simulator order them themselves).
 
 - Each step starts after the one before it is whole. When the backend
   ends a chain early because a transfer was short, the set waits for
@@ -356,7 +357,10 @@ every backend, including macOS, whose kernel would take it, and the
 simulator.
 
 On every file, `punch` takes whole blocks, `reserve` and `punch` take a
-length above 0, and a range must lie inside its extent (`TooLarge`).
+length above 0, a range must lie inside its extent, and a transfer
+(`read_at`, `write_at`, or a gathered write's spans together) moves at
+most `i32::MAX` bytes, since every backend counts a completion's bytes in
+an `i32` (`TooLarge`, as a step of a sequence too).
 
 A file system without direct I/O refuses the open with `EINVAL`, and the
 event carries `Invalid { errno }`.
@@ -446,7 +450,7 @@ the call, with nothing submitted:
 | `Poisoned` | A sync of the file failed, or a durable write was lost: only reads and `close` |
 | `NotOpen` | Not opened for this: a write of a read-only file, a read of a write-only one |
 | `Unaligned` | On a direct-I/O file, a buffer, length or offset that is not whole blocks |
-| `TooLarge` | More spans or steps than planned, a range past its extent, a length of 0 where one is needed |
+| `TooLarge` | More spans or steps than planned, a range past its extent, a transfer of more than `i32::MAX` bytes, a length of 0 where one is needed |
 | `BadPath` | A path longer than `path_max`, or with a NUL inside |
 | `StaleExtent`, `TooManyHolds` | An extent that cannot be held |
 
