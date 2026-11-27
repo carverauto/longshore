@@ -521,10 +521,20 @@ left it; with `--runs 3` the set goes first in runs 1 and 3.
 
 ## How it is checked
 
-A contract suite, generic over `IO: Io`, runs on `SimIo`, `PosixIo` and
-`UringIo` (`files_uring` on a real kernel). A model test drives seeded
-operations on the simulated disk with its faults, failed syncs, torn
-writes and power loss, and checks the contract's invariants after every
-step; a failure replays from its seed. The allocation guard checks that
-nothing allocates after `Files::new`. The full contract, its state tables
-and invariants are in `openspec/changes/add-file-crate/design.md`.
+| Suite | What it checks | Run |
+|---|---|---|
+| Contract (`longshore_file::check`) | Every operation and its result, whole transfers, sequences, every refusal submitting nothing, the per-file cap with other files still starting, path slots, first in first out, held-back close, direct-I/O alignment; generic over `IO: Io` | `cargo test -p longshore_file --test file_contract` (`SimIo`, `PosixIo`); `files_uring --dir DIR [--posix]` on a real kernel (`UringIo`, and `epoll`) |
+| Model | Seeded operations on the simulated disk in six campaigns (clean, reported and placed faults, failed syncs, torn writes with power loss, power loss, silent faults); invariants F1 to F10 after every step; a failure replays with `FILE_MODEL=campaign:seed` | `cargo test --release -p longshore_file --test file_model` (`FILE_MODEL_SEEDS=n` for more seeds) |
+| Allocation guard | Every operation, refusals, waiting work, a sequence, a held-back close, power loss and `power_lost`: nothing allocated after `Files::new` | `cargo test -p longshore_file --test file_alloc` |
+| Properties | The plan refuses or adds exactly what its table says and never lets one file take every slot; a write cut short any number of times ends whole; `Unaligned` exactly when a transfer is off a block | `cargo test -p longshore_file --test file_props` |
+| Units | Focused cases on a recording backend that logs every submission: a close goes only after the file's other operations, a refused call submits nothing, steps behind a path step wait | `cargo test -p longshore_file --test file_units` |
+
+Faults planted one at a time in the crate, and the suites that caught
+them, are in `crates/longshore_file/tests/README.md`, with the rows of the
+contract's tables no test reaches: errors no backend here can produce
+(`Denied`, a sync failing with an errno other than `EIO`, durable writes
+failing with `ENOSPC` or `EDQUOT`), generations wrapping, a short read
+before the end of the file, and some sequence steps. The contract, its
+state tables and invariants are in
+`openspec/changes/archive/2026-11-27-add-file-crate/design.md`; the
+requirements in `openspec/specs/file-io/spec.md`.

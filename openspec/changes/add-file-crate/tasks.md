@@ -22,11 +22,11 @@ change.
 - [x] 2.7 (independent review of groups 1 and 2: no fault with a correctly planned backend; seven findings fixed (bounded sub-block rewrites, durable writes poisoning only on lost writes, refused chains as plain errors, page spans checked, tokens one a record, a function under 70 lines) and nine faults the review planted that no test caught, each now caught by a named test; the contract brought in line) Review of group 2
 
 ## 3. Tests
-- [ ] 3.1 The contract suite, generic over `IO: Io`, run on `SimIo`, `PosixIo` (macOS and Linux) and `UringIo` (`file_uring`)
-- [ ] 3.2 The model test on the simulated disk: seeded operations, disk faults by rate and placed, failed syncs, torn writes and power loss, the invariants after every step, replay by seed
-- [ ] 3.3 Under the allocation guard: nothing allocated after build
-- [ ] 3.4 Property tests: the plan, resumed transfers, alignment checks
-- [ ] 3.5 Every row of the contract's tables reached by a test; deliberate faults in the crate caught (mutation spot-checks)
+- [x] 3.1 (`check::run_all`; `file_contract` on SimIo and PosixIo, `files_uring` on UringIo and epoll on a real kernel, which found a sequence fault on the ring: `statx` does not break its link, fixed by ending a chain after every path step) The contract suite, generic over `IO: Io`, run on `SimIo`, `PosixIo` (macOS and Linux) and `UringIo` (`file_uring`)
+- [x] 3.2 (six campaigns, F1 to F10 after every step, replay by seed; 1,000 seeds a campaign in release, 20,000 also passed) The model test on the simulated disk: seeded operations, disk faults by rate and placed, failed syncs, torn writes and power loss, the invariants after every step, replay by seed
+- [x] 3.3 (`file_alloc`: SimIo with power loss and `power_lost`, PosixIo without) Under the allocation guard: nothing allocated after build
+- [x] 3.4 (`file_props`, Hegel: the plan and the per-file guarantee, resumed writes, alignment) Property tests: the plan, resumed transfers, alignment checks
+- [x] 3.5 (`tests/README.md`: every table row with its tests, the rows no test reaches, and ten planted faults with the suites that caught each; the contract suite missed a removed per-file cap until a check with shared slots to spare was added; the model misses waiting work out of order, which the contract suite catches) Every row of the contract's tables reached by a test; deliberate faults in the crate caught (mutation spot-checks)
 - [ ] 3.6 Review of group 3
 
 ## 4. Measurement and documentation
