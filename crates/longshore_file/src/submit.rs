@@ -39,9 +39,10 @@ impl Files {
             && !r.work.is_read()
     }
 
-    /// What a blocked record ends with.
+    /// What a blocked record ends with: every byte the backend reported,
+    /// not the point it would resume from.
     pub(crate) fn blocked_error(&self, i: u32) -> FileError {
-        ended(self.recs[i as usize].done, ErrorKind::Poisoned)
+        ended(self.recs[i as usize].reach, ErrorKind::Poisoned)
     }
 
     /// The operation for what record `i` has left to do.
