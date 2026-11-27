@@ -191,7 +191,11 @@ want of its own resources all the same (another layer took room the plan
 gave the set), the refused step reports its own error as C10 maps it
 (`ENOBUFS` as `Os { errno }`), the others `Cancelled`, and no file is
 poisoned by it.
-Steps go to the backend as one chain. When the backend ends a chain early
+Steps go to the backend as chains: a chain ends after every path step
+(status, rename, unlink, mkdir), and the steps after it are submitted as a
+new chain only once it reported success, since the kernel does not break
+a link on every failed path operation (`statx` does not; found by the
+contract suite on `UringIo`). When the backend ends a chain early
 because a transfer was short, the set waits until every member has
 reported, resumes the short one, and submits it and the rest as a new
 chain. When a step fails, the steps after it report `Cancelled`. Only a
@@ -210,7 +214,8 @@ counted. No payload is copied.
 ### C9 Checks before submission
 On a direct-I/O file: each extent span is of the block-aligned class and
 starts at a block boundary; lengths and file offsets are whole blocks;
-otherwise `Unaligned`. On every file: `punch` is whole blocks; `reserve`
+otherwise `Unaligned`. On every file: `punch` is whole blocks, otherwise
+`Unaligned`; `reserve`
 and `punch` have `len > 0`; ranges lie inside their extents (`TooLarge`).
 
 ### C10 Errors and poisoning
@@ -230,8 +235,10 @@ backend reports unknown errors as `EIO`, the ring passes the kernel's, and
 a failed write-back can come as `ENOSPC`), except `Unsupported`, is
 `SyncFailed` and poisons the file; so does a write on a file opened for
 durable writes (`OpenFlags::with_dsync`) that fails with `EIO`, `ENOSPC` or
-`EDQUOT`, which is a failed sync and reports `SyncFailed`; other errors of
-such a write are reported as they are and do not poison. A Poisoned file's waiting operations end `Poisoned`, its transfers
+`EDQUOT`, which is a failed sync and reports `SyncFailed` (or `Partial {
+done, kind: SyncFailed }` when bytes were done); other errors of such a
+write are reported as they are and do not poison, and neither does a
+write that ends `NoProgress`. A Poisoned file's waiting operations end `Poisoned`, its transfers
 in progress end `Partial { done, kind: Poisoned }`, and its operations in
 flight report their own outcomes. Reads stay allowed: the bytes are
 readable, only their durability is lost.
@@ -262,7 +269,11 @@ which the crate leaves to its users.
 - F4 A file's operation slots in use never exceed `ops_per_file`; path
   operations use only path slots; every Open file has a slot it can use.
 - F5 The steps of a sequence each start after the one before is whole;
-  after a failed step the rest report `Cancelled`.
+  after a failed step the rest report `Cancelled`. Their events need not
+  come in step order: a step waiting behind an earlier one ends `Poisoned`
+  as soon as its file is poisoned, and the steps after it `Cancelled`,
+  before the earlier step reports; within one turn a poisoned file's
+  waiting operations may report before the failed sync that poisoned it.
 - F6 A Poisoned file submits nothing but reads and its close.
 - F7 With no silent fault on, a read returns, for each byte, what the last
   write that completed before the read was submitted put there, when no
@@ -271,9 +282,10 @@ which the crate leaves to its users.
   was written by a write that completed whole, followed by a sync of that
   file submitted after the write completed and reported success, with no
   failed sync of that file through any handle after the write, and the
-  file's name made durable by a good sync of its directory after its
-  create or rename (a write to a durable-write file counts as synced when
-  it completes).
+  file's name made durable: after its create, a good sync of its directory;
+  after a rename, good syncs of both the old and the new directory; and
+  every directory above it durable the same way (a write to a durable-write
+  file counts as synced when it completes).
 - F9 Nothing is allocated after `Files::new`, `power_lost` included.
 - F10 At rest with the event queue empty, every slot's state agrees with
   the events taken: no file slot Opening or Closing, no operation slot in
