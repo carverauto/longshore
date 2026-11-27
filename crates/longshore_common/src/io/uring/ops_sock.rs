@@ -158,8 +158,11 @@ impl UringIo {
             };
         if zero_copy {
             sqe.opcode = IORING_OP_SEND_ZC;
-            sqe.ioprio = IORING_RECVSEND_FIXED_BUF;
-            sqe.buf_index = self.buf_range[buf.0 as usize];
+            // A page of the receive area is not among the fixed buffers.
+            if !self.limits.is_page(buf) {
+                sqe.ioprio = IORING_RECVSEND_FIXED_BUF;
+                sqe.buf_index = self.buf_range[buf.0 as usize];
+            }
         } else {
             sqe.opcode = IORING_OP_SEND;
         }

@@ -77,6 +77,10 @@ struct Log {
     rows: Vec<Vec<BufId>>,
     free: Vec<u32>,
     file_off: u64,
+    /// Pages a write at most: what the list's small buffer has room for.
+    spans: usize,
+    /// Each page an `Op::FileWrite` of its own, not a gathered write.
+    plain: bool,
 }
 
 struct Run {
@@ -166,24 +170,34 @@ impl Run {
         while !log.waiting.is_empty() {
             let Some(row) = log.free.pop() else { return };
             let pages = &mut log.rows[row as usize];
-            let n = log.waiting.len().min(pages.capacity());
+            let n = log.waiting.len().min(if log.plain { 1 } else { log.spans });
             pages.extend(log.waiting.drain(..n));
-            let list = self.limits.small(row);
-            let at = self.io.buf(list);
-            for (k, page) in pages.iter().enumerate() {
-                let words = [page.get(), 0, PAGE];
-                for (w, word) in words.iter().enumerate() {
-                    at[k * 12 + w * 4..k * 12 + w * 4 + 4].copy_from_slice(&word.to_le_bytes());
-                }
-            }
             let len = n as u32 * PAGE;
-            let op = Op::FileWriteSpans {
-                slot: LOG,
-                list,
-                list_off: 0,
-                count: n as u32,
-                len,
-                file_off: log.file_off,
+            let op = if log.plain {
+                Op::FileWrite {
+                    slot: LOG,
+                    buf: pages[0],
+                    off: 0,
+                    len,
+                    file_off: log.file_off,
+                }
+            } else {
+                let list = self.limits.small(row);
+                let at = self.io.buf(list);
+                for (k, page) in pages.iter().enumerate() {
+                    let words = [page.get(), 0, PAGE];
+                    for (w, word) in words.iter().enumerate() {
+                        at[k * 12 + w * 4..k * 12 + w * 4 + 4].copy_from_slice(&word.to_le_bytes());
+                    }
+                }
+                Op::FileWriteSpans {
+                    slot: LOG,
+                    list,
+                    list_off: 0,
+                    count: n as u32,
+                    len,
+                    file_off: log.file_off,
+                }
             };
             log.file_off += u64::from(len);
             submit(&mut self.io, WRITE + u64::from(row), op);
@@ -239,7 +253,9 @@ fn open_log(run: &mut Run, path: &str, out: &mut Completions) {
         path_buf,
         path_off,
         path_len,
-        flags: flags.with_direct(true),
+        // A page is not a block-aligned buffer: written alone, it goes to
+        // a file without direct I/O, which takes any buffer.
+        flags: flags.with_direct(!run.log.as_ref().is_some_and(|l| l.plain)),
     };
     submit(&mut run.io, OPEN, op);
     run.io.tick(true, out).or_die("tick");
@@ -284,6 +300,8 @@ pub(super) fn main() {
             .collect(),
         free: (0..o.writes).rev().collect(),
         file_off: 0,
+        spans: o.spans as usize,
+        plain: o.plain,
     });
     let frame = Frame {
         len: o.frame,

@@ -30,6 +30,8 @@ pub(super) struct Opts {
     pub(super) file: Option<String>,
     pub(super) writes: u32,
     pub(super) spans: u32,
+    /// Each page an `Op::FileWrite` of its own.
+    pub(super) plain: bool,
 }
 
 extern "C" {
@@ -62,7 +64,7 @@ pub(super) fn thread_cpu() -> f64 {
 
 pub(super) fn parse() -> Opts {
     let usage = "usage: zc_uring check|log|refuse <interface> <queue> <address:port> \
-                 [--frame N] [--pages N] [--file PATH] [--writes N] [--spans N]";
+                 [--frame N] [--pages N] [--file PATH] [--writes N] [--spans N] [--plain]";
     let mut args = std::env::args().skip(1);
     let mut next = |what: &str| args.next().or_die(&format!("{what} missing; {usage}"));
     let mode = next("the mode");
@@ -81,8 +83,13 @@ pub(super) fn parse() -> Opts {
         file: None,
         writes: 4,
         spans: 256,
+        plain: false,
     };
     while let Some(flag) = args.next() {
+        if flag == "--plain" {
+            o.plain = true;
+            continue;
+        }
         let value = args.next().or_die(&format!("{flag} needs a value"));
         let n = || value.parse::<u32>().or_die(&format!("{flag}, a number"));
         match flag.as_str() {

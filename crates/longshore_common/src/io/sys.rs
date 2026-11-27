@@ -98,6 +98,8 @@ pub const IORING_OP_CLOSE: u8 = 19;
 pub const IORING_OP_STATX: u8 = 21;
 /// Read into a buffer that need not be registered.
 pub const IORING_OP_READ: u8 = 22;
+/// Write from a buffer that need not be registered.
+pub const IORING_OP_WRITE: u8 = 23;
 /// Directory descriptor that stands for the current directory.
 pub const AT_FDCWD: i32 = -100;
 /// `AT_FDCWD` as `IORING_OP_RENAMEAT` takes its new directory: in `sqe.len`, a

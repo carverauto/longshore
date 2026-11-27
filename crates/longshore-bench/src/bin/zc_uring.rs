@@ -18,6 +18,8 @@
 //!   --file PATH  log: where the pages go, opened for direct I/O
 //!   --writes N   log: gathered writes in flight (4)
 //!   --spans N    log: pages a write at most (256)
+//!   --plain      log: each page an Op::FileWrite of its own, not gathered,
+//!                to a file opened without direct I/O
 //!
 //! `check` accepts one connection and receives each frame as a credit of
 //! 256 bytes and then one of the rest, checks that a frame's first four

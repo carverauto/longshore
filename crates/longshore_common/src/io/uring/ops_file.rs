@@ -134,11 +134,15 @@ impl UringIo {
         (buf, off, len): (BufId, u32, u32),
         file_off: u64,
     ) -> io_uring_sqe {
-        let mut sqe = self.slot_sqe(i, slot, opcode);
+        // A page of the receive area is not among the fixed buffers.
+        let page = self.limits.is_page(buf);
+        let mut sqe = self.slot_sqe(i, slot, rw_opcode(opcode, page));
         sqe.off = file_off;
         sqe.addr = self.buf_ptr(buf, off, len);
         sqe.len = len;
-        sqe.buf_index = self.buf_range[buf.0 as usize];
+        if !page {
+            sqe.buf_index = self.buf_range[buf.0 as usize];
+        }
         sqe
     }
 
@@ -247,5 +251,16 @@ impl UringIo {
             off: sqe_off,
             ..Default::default()
         }
+    }
+}
+
+/// The opcode of a file read or write from a buffer: `fixed` as given for
+/// a registered buffer, its plain twin for a page of the receive area,
+/// which is not registered as one.
+pub(super) const fn rw_opcode(fixed: u8, page: bool) -> u8 {
+    match (fixed, page) {
+        (IORING_OP_READ_FIXED, true) => IORING_OP_READ,
+        (IORING_OP_WRITE_FIXED, true) => IORING_OP_WRITE,
+        _ => fixed,
     }
 }
