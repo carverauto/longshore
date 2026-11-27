@@ -103,7 +103,9 @@ pub enum SendError {
     Full,
     /// Longer than a send segment.
     TooLarge,
-    /// The frame is lent from the buffer ring: hold it first.
+    /// The frame is lent from the buffer ring, or lies in pages of the
+    /// receive area (`Rx::ZeroCopy`): hold it first, which copies it into
+    /// frame memory.
     NotHeld,
 }
 
