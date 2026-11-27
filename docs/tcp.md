@@ -318,7 +318,8 @@ packets of whole pages; see "Receiving into pages"); TCP still cuts a
 packet short when the peer's window says so; and a send taken short ends
 a buffer in the frame's middle. A frame that did not start a page is
 moved by its receiver once, as in direct mode; nothing else follows from
-it. macOS's TCP does not act on the mark.
+it. On macOS, whose TCP refuses the flag on a stream socket, the mark asks
+for nothing.
 
 ## TLS
 

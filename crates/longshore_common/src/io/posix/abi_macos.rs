@@ -33,8 +33,10 @@ pub const TCP_KEEPCNT: c_int = 0x102;
 pub const MSG_PEEK: c_int = 0x2;
 pub const MSG_DONTWAIT: c_int = 0x80;
 pub const MSG_SEND_FLAGS: c_int = MSG_DONTWAIT;
-/// macOS has `MSG_EOR` (0x8), and its TCP does not act on it.
-pub const MSG_EOR: c_int = 0x8;
+/// No flag: macOS has `MSG_EOR` (0x8), but its TCP refuses it on a
+/// stream socket with `EINVAL`, so ending a send's buffer asks for nothing
+/// here (`Io::end_sends` does nothing on macOS).
+pub const MSG_EOR: c_int = 0;
 pub const SHUT_RDWR: c_int = 2;
 
 pub const O_RDONLY: c_int = 0x0000;

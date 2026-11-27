@@ -15,6 +15,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 #[cfg(test)]
 #[path = "posix/both_directions.rs"]
 mod both_directions;
+#[cfg(test)]
+#[path = "posix/end_sends.rs"]
+mod end_sends;
 
 const LIMITS: Limits = Limits::BASE
     .with_sockets_max(12)
