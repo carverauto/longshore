@@ -252,7 +252,12 @@ impl<T: Transport> Net<T> {
         (s.off, s.len) = (s.off + n, s.len.saturating_sub(n));
         if s.len == 0 {
             self.pop_span(slot);
-            if core::mem::take(&mut self.conns[slot as usize].full) {
+            // A place in its queue is free. One that waits for a segment
+            // is told when a segment returns, which a segment a send
+            // still reads does not (`segment_returned`).
+            let c = &mut self.conns[slot as usize];
+            if c.full && !c.seg_listed {
+                c.full = false;
                 self.mark_writable(slot);
             }
         }
