@@ -25,7 +25,7 @@ fn rig(sector: u32) -> Rig<SimIo> {
     )
 }
 
-#[hegel::test]
+#[hegel::test(derandomize = true, database = None::<String>)]
 fn a_write_cut_short_any_number_of_times_ends_whole(tc: TestCase) {
     let sector = tc.draw(gs::sampled_from(vec![512u32, 4096]));
     let mut rig = rig(sector);
@@ -55,7 +55,7 @@ fn a_write_cut_short_any_number_of_times_ends_whole(tc: TestCase) {
     assert_eq!(rig.close(f), Ok(0));
 }
 
-#[hegel::test]
+#[hegel::test(derandomize = true, database = None::<String>)]
 fn a_direct_write_cut_short_ends_whole_or_without_progress(tc: TestCase) {
     let mut rig = rig(512);
     let flags = rw_create().with_empty(true).with_direct(true);
@@ -106,7 +106,7 @@ fn aligned(v: u64) -> bool {
     v.is_multiple_of(u64::from(BLOCK))
 }
 
-#[hegel::test]
+#[hegel::test(derandomize = true, database = None::<String>)]
 fn direct_io_is_refused_exactly_off_a_block(tc: TestCase) {
     let mut rig = rig(512);
     let f = rig.open("/align.dat", rw_create().with_direct(true));

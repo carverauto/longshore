@@ -34,7 +34,7 @@ fn refusals(s: (u32, u32, u32, u32, u32, u32), small: u32) -> Vec<ConfigError> {
     why
 }
 
-#[hegel::test]
+#[hegel::test(derandomize = true, database = None::<String>)]
 fn the_plan_refuses_or_adds_what_c2_says(tc: TestCase) {
     let s = (
         between(&tc, 0, 6),
@@ -101,7 +101,7 @@ fn the_plan_refuses_or_adds_what_c2_says(tc: TestCase) {
 /// On a set built from any plan that is taken: one file at its cap is
 /// `Full`, and every other file still starts one operation, and every
 /// path slot one path operation.
-#[hegel::test]
+#[hegel::test(derandomize = true, database = None::<String>)]
 fn no_file_takes_every_slot(tc: TestCase) {
     let files = between(&tc, 1, 4);
     let shared = between(&tc, 0, 4);

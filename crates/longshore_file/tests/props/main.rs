@@ -8,6 +8,9 @@
 //! `ops_per_file` never lets one file take every slot, on the plan and on
 //! a set built from it; transfers cut short any number of times end
 //! whole; direct-I/O alignment is checked exactly as C9 says.
+//!
+//! Every property draws from a seed derived from its name, so a run is the
+//! same each time, and keeps no database of examples in the crate.
 
 #[cfg(test)]
 mod plan;

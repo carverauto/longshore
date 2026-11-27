@@ -98,9 +98,10 @@ impl Run {
         let first_is_file_op = !matches!(plans.first(), Some(Plan::Status(_)) | None);
         self.maybe_place(why.is_empty() && room == Room::Must && first_is_file_op);
         let mut ts = [Ticket::NONE; STEPS_MAX as usize + 1];
-        let before = (self.rig.usage(), self.rig.io().submitted());
+        let before = (self.rig.usage(), self.rig.io().submitted(), self.holds());
         let got = sealed(|| self.rig.call(|s, io, x| s.sequence(io, x, &steps, &mut ts)));
-        self.judge("sequence", got.map(|_| ()), &why, room, before);
+        self.judge("sequence", got.map(|_| ()), &why, room, &before);
+        self.submitted_rightly();
         drop(steps);
         match got {
             Ok(k) => {
@@ -218,6 +219,7 @@ impl Run {
         what: What,
         extents: Vec<Extent>,
     ) {
+        self.fresh(t);
         let accepted = self.st.tick();
         let line = what.brief();
         self.note(format_args!(

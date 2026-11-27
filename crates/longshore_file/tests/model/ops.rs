@@ -150,6 +150,7 @@ impl Run {
     }
 
     pub fn pend(&mut self, t: longshore_file::Ticket, f: Option<File>, what: What, x: Vec<Extent>) {
+        self.fresh(t);
         let accepted = self.st.tick();
         self.note(format_args!(
             "  {t:?} of {f:?} at {accepted}: {}",
@@ -214,9 +215,20 @@ impl Run {
         let mut used = self.pages_busy;
         for _ in 0..n {
             let page = (0..super::world::PAGES).find(|p| !used[*p as usize]);
-            if let (Some(p), false, true) = (page, direct, self.chance(300_000)) {
-                let len = 1 + self.below(1500) as u32;
-                let off = self.below(u64::from(4096 - len)) as u32;
+            if let (Some(p), true) = (page, self.chance(300_000)) {
+                // On a direct-I/O file a page is a whole block, or now and
+                // then part of one, which is Unaligned (C9).
+                let (off, len) = match (direct, self.chance(50_000)) {
+                    (true, false) => (0, BLOCK),
+                    (true, true) => {
+                        bad = bad.or(Some(FileError::Unaligned));
+                        (512, 2048)
+                    }
+                    (false, _) => {
+                        let len = 1 + self.below(1500) as u32;
+                        (self.below(u64::from(4096 - len)) as u32, len)
+                    }
+                };
                 let bytes = self.data(len as usize);
                 let id = self.rig.limits().page(p);
                 self.rig.io().buf(id)[off as usize..(off + len) as usize].copy_from_slice(&bytes);

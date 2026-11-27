@@ -59,18 +59,13 @@ impl Run {
     /// open for a slot a handle holds, and nothing but reads and its close
     /// for a file poisoned by an event taken before.
     pub fn submitted_rightly(&mut self) {
-        let opening = self
-            .st
-            .pending
-            .iter()
-            .any(|p| matches!(p.what, What::Open { .. }));
         let from = self.mark;
         for s in self.rig.io().since(from) {
             let (kind, slot, _) = s.describe();
             let Some(slot) = slot else { continue };
             let h = self.st.handles.iter().find(|h| h.file.slot() == slot.get());
             match h {
-                None => assert!(kind == Kind::Open && opening, "F1: {s:?} for a free slot"),
+                None => assert!(kind == Kind::Open, "F1: {s:?} for a free slot"),
                 Some(h) => {
                     assert!(kind != Kind::Open, "F1: an open of a slot in use: {s:?}");
                     if h.poisoned {

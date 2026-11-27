@@ -62,6 +62,8 @@ pub struct Run {
     pub stats: Stats,
     /// The first submission not yet checked (F1, F6).
     pub mark: u64,
+    /// Tickets that ended with a power loss: none may come again (C12).
+    pub lost: Vec<Ticket>,
     /// Files an event of this turn said were poisoned.
     pub poison_due: Vec<longshore_file::File>,
     /// Steps left with the backend's room squeezed.
@@ -84,6 +86,7 @@ impl Run {
             mark: 0,
             squeeze: 0,
             poison_due: Vec::new(),
+            lost: Vec::new(),
             pages_busy: [false; super::world::PAGES as usize],
         }
     }
@@ -105,15 +108,35 @@ impl Run {
     /// Turn the backend once, sealed, and judge every event it brought.
     pub fn turn(&mut self) {
         self.turns += 1;
-        sealed(|| self.rig.turn());
+        sealed(|| self.rig.tick());
+        // One completion at a time: what the set submits while it takes
+        // one is held to the state its events leave (F1, F6).
+        while sealed(|| self.rig.complete_one()) {
+            self.take_events();
+            self.submitted_rightly();
+        }
+        sealed(|| self.rig.poll());
+        self.take_events();
         self.submitted_rightly();
         if self.rig.usage().waiting() > 0 {
             self.stats.waited += 1;
         }
+    }
+
+    /// Judge every event the set has.
+    fn take_events(&mut self) {
         while let Some((_, e)) = self.rig.pop_event() {
             self.on_event(e);
         }
         self.poison_seen();
+    }
+
+    /// The caller's extents and their holds now.
+    pub fn holds(&mut self) -> Vec<(Extent, Option<u16>)> {
+        let ours: Vec<Extent> = self.st.ours.iter().map(|(e, _)| *e).collect();
+        ours.into_iter()
+            .map(|e| (e, self.rig.x().holds(e)))
+            .collect()
     }
 
     /// Turn until nothing is in flight, with the backend's room back.
@@ -153,21 +176,23 @@ impl Run {
         room: Room,
         call: impl FnOnce(&mut Files, &mut Spy<SimIo>, &mut Extents) -> Result<Ticket, FileError>,
     ) -> Option<Ticket> {
-        let before = (self.rig.usage(), self.rig.io().submitted());
+        let before = (self.rig.usage(), self.rig.io().submitted(), self.holds());
         let got = sealed(|| self.rig.call(call));
-        self.judge(what, got.map(|_| ()), why, room, before);
+        self.judge(what, got.map(|_| ()), why, room, &before);
+        self.submitted_rightly();
         got.ok()
     }
 
     /// Whether `got` is what `why` and `room` allow; on a refusal, that
-    /// nothing changed since `before`.
+    /// nothing changed since `before`: no slot, no submission, and no hold
+    /// on any of the caller's extents, the ones the call named among them.
     pub fn judge(
         &mut self,
         what: &str,
         got: Result<(), FileError>,
         why: &[FileError],
         room: Room,
-        before: (longshore_file::FileUsage, u64),
+        before: &(longshore_file::FileUsage, u64, Vec<(Extent, Option<u16>)>),
     ) {
         let (sent, waiting) = (self.rig.io().submitted(), self.rig.usage().waiting());
         self.note(format_args!(
@@ -187,8 +212,8 @@ impl Run {
                     why.contains(&e) || full_ok,
                     "{what} refused {e:?}; allowed {why:?}, room {room:?}"
                 );
-                let after = (self.rig.usage(), self.rig.io().submitted());
-                assert_eq!(after, before, "{what}: the refusal changed the set");
+                let after = (self.rig.usage(), self.rig.io().submitted(), self.holds());
+                assert_eq!(&after, before, "{what}: the refusal changed the set");
                 self.stats.refused += 1;
                 if e == FileError::Full {
                     self.stats.full += 1;
@@ -217,6 +242,16 @@ impl Run {
         let n = self.rig.io().submitted() + 1;
         self.note(format_args!("  {fault:?} placed on submission {n}"));
         self.rig.io().inner_mut().place_disk_fault(n, fault);
+    }
+
+    /// A ticket just taken is none in flight and none lost with the power.
+    pub fn fresh(&self, t: Ticket) {
+        assert!(
+            !self.lost.contains(&t),
+            "C12: {t:?} ended with the power and came again"
+        );
+        let twice = self.st.pending.iter().any(|p| p.ticket == t);
+        assert!(!twice, "F2: {t:?} is in flight already");
     }
 
     /// Bytes of `len`, made from the run's generator.
