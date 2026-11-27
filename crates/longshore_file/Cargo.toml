@@ -1,0 +1,19 @@
+[package]
+name = "longshore_file"
+description = "File I/O over longshore I/O: one API on io_uring, kqueue/epoll and the simulator"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+readme = "README.md"
+autotests = false
+
+[dependencies]
+longshore_common.workspace = true
+
+[dev-dependencies]
+# Turns the simulator on for this crate's own tests.
+longshore_common = { workspace = true, features = ["sim"] }
+
+[lints]
+workspace = true

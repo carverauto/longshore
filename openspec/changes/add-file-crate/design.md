@@ -58,153 +58,246 @@ offer is a layer that owns the plumbing around them, as `longshore_tcp`'s
 
 ## The contract
 
-### C1 Layer
+Revised after its review (task 0.2): every point below rests on what the
+backends and the simulated disk do, with the file that shows it.
+
+### C1 Layer, and where the set submits
 `longshore_file` is a set of state machines over `longshore_common::io::Io`.
-It submits operations and takes completions; it never blocks, sleeps,
-spawns or reads a clock of its own. `Files::poll(io, now)` is its only
-place of submission besides the call that asked for an operation (which may
-submit at once if there is room).
+It never blocks, sleeps, spawns or reads a clock, and it has no timers. It
+submits in three places only: the call that asks for an operation (when it
+can go at once), `on_completion` (a resumed transfer, a held-back close, the
+next step of a sequence), and `poll` (work that waited for room).
 
 ### C2 Plan and bounds
-`FileSizes` names, and `FileConfig::plan(limits, sizes)` adds to `Limits`:
+`FileSizes::new(files, ops_per_file)` with setters `with_shared(n)`,
+`with_paths(n)`, `with_sequence_max(n)`, `with_spans_max(n)`,
+`with_token_base(t)`. `FileConfig::plan(limits, sizes) -> Result<(Limits,
+FileConfig), ConfigError>` adds to `limits`:
 
-| Size | What it bounds |
+| Count | Planned |
 |---|---|
-| `files` | open files at once (file slots) |
-| `ops` | operations in flight or waiting, in the whole set |
-| `ops_per_file` | operations of one file at once; 1 ≤ it ≤ `ops − files + 1` |
-| `sequence_max` | operations in one ordered sequence |
-| `paths` | operations naming a path at once (open, status, rename, unlink, mkdir), each holding a small buffer for its path |
-| `spans_max` | spans of one gathered write |
+| operation slots `ops` | `files` reserved (one a file slot) + `paths` (one a path operation) + `shared` |
+| `Limits::ops_max` | + `ops` |
+| `Limits::files_max` | + `files` |
+| `Limits::gather_ops` | + `ops` (a row for every operation slot), `gather_spans = max(existing, spans_max)` |
+| small buffers | + `files` (each file slot's path, for its open) + `paths` (each path operation's paths and status area) + `ops` (a span list for every operation slot) |
+| tokens | `tokens()` from `token_base`, one a slot (`FileConfig::tokens`) |
 
-**No file can take every slot.** Of the `ops` operation slots, `files` are
-reserved, one for each file slot, and the rest are shared. An open file
-uses its reserved slot first, then shared slots, up to `ops_per_file` at
-once. So every open file can always start an operation, whatever the
-others do, and one busy file holds at most `ops_per_file − 1` shared
-slots. The plan refuses sizes that break `1 ≤ ops_per_file ≤ ops −
-files + 1` (`ConfigError::Ops`). The backend's own room (`Limits::ops_max`,
-chains, gathered writes) is added by the plan for these counts.
+The small class's size is the pool's (shared with other layers, as
+`longshore_tcp` does): the plan refuses one that cannot hold a list of
+`spans_max` spans (12 bytes each) or a 256-byte status area and one byte of
+path. A path holds `path_max = (small_buffer_size − 256) / 2 − 1` bytes (two
+paths fit one buffer for a rename, the status area after them).
 
-### C3 A file handle
-`File { slot, generation }`. States of a slot:
+**No file can take every slot.** An open file uses its reserved slot first,
+then shared slots, up to `ops_per_file` at once; a path operation uses only
+its own path slots; a file's open uses its own path buffer and reserved
+slot. So every open file can always start one operation, path operations
+never take a file's share, and one busy file holds at most `ops_per_file −
+1` shared slots. Gather rows and span lists are one per operation slot, so
+no file's gathered writes can use up another's. The plan refuses:
+`ops_per_file` of 0 or above `shared + 1` (`ConfigError::Ops`),
+`sequence_max` above `ops_per_file` (`ConfigError::Sequence`), `spans_max`
+of 0 or above 1,024 (`ConfigError::Spans`), a small class too small
+(`ConfigError::ClassSize`).
+
+### C3 A file slot
+`File { slot, generation }`:
 
 | State | Entered by | Accepts | Left by |
 |---|---|---|---|
-| Free | build; a close's completion | `open` | `open` accepted → Opening |
-| Opening | `open` accepted | nothing but the open's completion | success → Open; failure → Free, the open's event carries the error |
-| Open | the open's success | every operation | `close` → Closing; a failed sync → Poisoned |
-| Poisoned | a sync of the file failed | `close` only; others refused with `FileError::Poisoned` | `close` → Closing |
-| Closing | `close` accepted | nothing | the close's completion, after every operation of the file has reported → Free, generation + 1 |
+| Free | build; a close's completion; a failed open; `power_lost` | `open` | `open` accepted → Opening |
+| Opening | `open` accepted | nothing | the open's completion: success → Open, failure → Free (generation + 1) |
+| Open | the open's success | every operation | `close` → Closing; a failed sync, or a failed write on a durable-write file → Poisoned |
+| Poisoned | as above | `read_at` and `close`; the rest `Poisoned` | `close` → Closing |
+| Closing | `close` accepted | nothing (`Closing`) | the close's completion → Free (generation + 1) |
 
-A handle whose generation is not the slot's is stale: `FileError::Stale`,
-and nothing is submitted.
+**Close is held back** until every other operation of the file has
+reported, then submitted in the file's reserved slot; `close` is never
+`Full`. A close error is reported in its event and the slot is freed all
+the same. Generations are `u32` and wrap.
 
-### C4 Tickets and events
-Each accepted operation gets `Ticket { index, generation }` of its
-operation slot. Its outcome is one `Event::Done { ticket, file, result }`
-with `result: Result<u64, FileError>` (bytes transferred, or 0 for
-operations without bytes). The event queue holds `ops` events, so it never
-overflows: an operation slot is freed only when its event is taken
-(`next_event`). Every ticket reports exactly once.
+### C4 Operations, tickets and events
+Each accepted operation takes an operation slot and returns `Ticket {
+index, generation }`. States of an operation slot:
+
+| State | Entered by | Left by |
+|---|---|---|
+| Free | build; its event taken; `power_lost` | accepted → Waiting or Submitted |
+| Waiting | accepted without room at the backend (`Busy`), or a sequence step behind an earlier one | room: → Submitted (first in, first out) |
+| Submitted | given to the backend | completion: whole → Reported; short → Resuming; failed → Reported |
+| Resuming | a short transfer, or a broken chain | every member of the broken chain reported → Submitted (the rest) |
+| Reported | its outcome decided | `next_event` returns its event → Free |
+
+The outcome is one `Event::Done { ticket, file: Option<File>, result:
+Result<u64, FileError> }`; `u64` is bytes transferred, the size for
+`status`, 0 otherwise; `file` is the new handle for `open`, the file for
+file operations, `None` for path operations. The event queue holds `ops`
+events; a slot is free only when its event is taken, so the queue never
+overflows. Waiting work goes first in, first out: a sequence waiting for
+room is not overtaken, so nothing waits for ever while room comes back.
 
 ### C5 Operations
-| Operation | Holds while in flight | Result |
-|---|---|---|
-| `open(path, OpenFlags)` | a path buffer | the `File`, via its event |
-| `close(file)` | – | 0 |
-| `read_at(file, extent, range, file_off)` | the extent | bytes read; fewer only at end of file |
-| `write_at(file, extent, range, file_off)` | the extent | bytes written: all, or an error |
-| `write_spans(file, spans, file_off)` | each span's extent, the set's list buffer | as `write_at` |
-| `sync(file, data_only)` | – | 0 |
-| `reserve(file, range, keep_size)`, `punch(file, range)` | – | 0 |
-| `status(path)` | a path buffer | the size, via a status the caller reads from the event |
-| `rename(from, to)`, `unlink(path)`, `mkdir(path)` | path buffers | 0 |
+| Operation | Needs | Holds while in flight | `u64` of the result |
+|---|---|---|---|
+| `open(path, OpenFlags)` | a free file slot | its path buffer | 0 (the `File` is in `file`) |
+| `close(file)` | – | – | 0 |
+| `read_at(file, extent, at, len, file_off)` | not opened write-only | the extent | bytes read; fewer only at end of file |
+| `write_at(file, extent, at, len, file_off)` | opened for writing | the extent | bytes written: all, or an error |
+| `write_spans(file, &[Span], file_off)` | opened for writing | each extent span; the slot's span list | as `write_at` |
+| `sync(file, data_only)` | – | – | 0 |
+| `reserve(file, off, len, keep_size)` | opened for writing, `len > 0` | – | 0 (best effort on macOS) |
+| `punch(file, off, len)` | opened for writing, `len > 0`, whole blocks | – | 0 |
+| `status(path)` | a path slot | its path buffer and status area | the size |
+| `rename(from, to)`, `unlink(path)`, `mkdir(path)` | a path slot | its path buffer | 0 |
 
-Paths are copied into the set's path buffers (a path is not payload).
+A directory is a file: `open` with `OpenFlags::with_directory` and `sync`
+it, to make a create or a rename durable. `Span` is `Span::Extent { extent,
+at, len }`, held by the set, or `Span::Page { page, off, len }`, a page of
+the receive area that the caller holds (`longshore_tcp`'s `WriteHold`)
+until the event: a received frame goes to a file without a copy. Paths are
+copied into path buffers (a path is not payload); a path longer than
+`path_max` or with a NUL inside is refused `BadPath`. There is no cancel:
+an operation the kernel never completes keeps its file Closing for ever.
 
 ### C6 Whole transfers
-A read or write completed short is resubmitted for the rest at once,
-keeping its ticket. A read that returns 0 bytes ends at end of file. An
-error ends the transfer; the event carries the error and, in
-`FileError::Partial { done, error }`, the bytes done before it.
+A short read or write is resumed for the rest from `on_completion`,
+keeping its ticket. Every resume moves at least one byte: a write that
+completes with 0 bytes, or a read with 0 before the end it asked for, ends
+the transfer (a read: at end of file; a write: `FileError::NoProgress`).
+On a direct-I/O file a short write resumes from what was written rounded
+down to a block (the same bytes rewritten from the same buffer), and a
+short read ending off a block boundary is the end of the file. An error
+ends the transfer with `FileError::Partial { done, kind }` when bytes were
+done, the plain error when none were.
 
 ### C7 Ordered sequences
-`sequence(&[step])` takes up to `sequence_max` steps of one file (any but
-`open` and `close`) and gives a ticket for each. They go to the backend as
-one chain. When the backend ends a chain early because a transfer was
-short, the set resumes that transfer and submits the rest of the sequence
-as a new chain, so a later step still starts only after the earlier one is
-whole. When a step fails, the rest report `FileError::Cancelled`. A
-sequence counts its steps against the file's and the set's slots.
+`sequence(&[Step]) -> Result<[Ticket], FileError>` (tickets written into a
+caller's slice) takes up to `sequence_max` steps; a step is any operation
+but `open` and `close`, of any file or a path. Each step counts against its
+own file's share or the path slots; the whole sequence is refused `Full`
+unless every step has room. The set pre-checks every step, so the backend
+never refuses the chain (a refusal would be a bug, reported `Invalid`).
+Steps go to the backend as one chain. When the backend ends a chain early
+because a transfer was short, the set waits until every member has
+reported, resumes the short one, and submits it and the rest as a new
+chain. When a step fails, the steps after it report `Cancelled`. Only a
+sequence orders operations: independent operations, even of one file, run
+in any order.
 
 ### C8 Memory
-Data buffers are `Extent`s of the caller's `Extents` (the pool's
-block-aligned class). The set takes a hold on each extent an operation
-names when it accepts the operation and releases it when the operation
-reports, so a buffer is never given out again while the kernel reads or
-writes it. The set's own buffers (paths, span lists) are planned in C2.
-No payload is copied.
+Extents are of the caller's `Extents` (block-aligned class), passed as
+`&mut Extents` to every call that names one, to `on_completion` and to
+`power_lost`. The set holds each extent an operation names from its
+acceptance to its report; a hold that fails is refused at the call
+(`StaleExtent`, `TooManyHolds`). If the set's own release fails (the caller
+released the set's hold), that is a broken invariant: debug-asserted and
+counted. No payload is copied.
 
-### C9 Direct I/O
-On a file opened with `OpenFlags::with_direct`, before anything is
-submitted: each buffer range starts at a block boundary of its extent, and
-each length and file offset is whole blocks (`Limits::block_size`);
-otherwise `FileError::Unaligned`. A resumed transfer stays aligned because
-backends cut direct transfers at block boundaries; if one does not, the
-rest is refused as `Unaligned` in the event.
+### C9 Checks before submission
+On a direct-I/O file: each extent span is of the block-aligned class and
+starts at a block boundary; lengths and file offsets are whole blocks;
+otherwise `Unaligned`. On every file: `punch` is whole blocks; `reserve`
+and `punch` have `len > 0`; ranges lie inside their extents (`TooLarge`).
 
-### C10 Errors
-| Backend result | `FileError` |
-|---|---|
-| `-ENOENT` | `NotFound` |
-| `-EEXIST` | `Exists` |
-| `-EACCES`, `-EPERM` | `Denied` |
-| `-ENOSPC`, `-EDQUOT` | `NoSpace` |
-| `-EIO` on a sync | `SyncFailed`, and the file becomes Poisoned |
-| `-EIO` otherwise | `Io` |
-| `-EINVAL` | `Invalid` |
-| `-ECANCELED` in a chain | `Cancelled` (or resumed, C7) |
-| anything else | `Os(errno)` |
+### C10 Errors and poisoning
+`FileError` is flat (no field of its own type): `Full`, `Stale`,
+`Closing`, `Poisoned`, `NotOpen`, `Unaligned`, `TooLarge`, `BadPath`,
+`StaleExtent`, `TooManyHolds`, `Cancelled`, `NoProgress`, `Partial { done,
+kind: ErrorKind }`, and the backend's: `NotFound` (`ENOENT`), `Exists`
+(`EEXIST`), `Denied` (`EACCES`, `EPERM`), `NoSpace` (`ENOSPC`, `EDQUOT`),
+`Unsupported` (`EOPNOTSUPP`), `SyncFailed { errno }`, `Io { errno }`,
+`Invalid { errno }` (`EINVAL`, `EBADF`: impossible after C9, a bug),
+`Os { errno }`. `ErrorKind` names the same without `Partial`.
 
-**A failed sync poisons the file**: the bytes written since its last good
-sync are of unknown state, and no later sync makes them durable (as the
-kernel may already have dropped them, and as the simulated disk models).
-The file then accepts only `close`; the caller recovers by its own means.
+**Poisoning.** Every failure of a sync, whatever its errno (the portable
+backend reports unknown errors as `EIO`, the ring passes the kernel's, and
+a failed write-back can come as `ENOSPC`), except `Unsupported`, is
+`SyncFailed` and poisons the file; so does any failed write on a file
+opened for durable writes (`OpenFlags::with_dsync`), which is a failed
+sync. A Poisoned file's waiting operations end `Poisoned`, its transfers
+in progress end `Partial { done, kind: Poisoned }`, and its operations in
+flight report their own outcomes. Reads stay allowed: the bytes are
+readable, only their durability is lost.
 
 ### C11 Refusals at the call
-`Full` (no operation slot for this file or the set, or no path buffer),
-`Stale`, `Poisoned`, `Closing`, `Unaligned`, `TooLarge` (more spans or
-steps than planned, a range past its extent), `NotOpen` (a read or write on
-a file opened without read or write). A refusal submits nothing and takes
-no slot.
+`Full`, `Stale`, `Closing`, `Poisoned`, `NotOpen`, `Unaligned`, `TooLarge`,
+`BadPath`, `StaleExtent`, `TooManyHolds`. A refusal submits nothing, takes
+no slot and no hold.
 
-### C12 What the crate does not detect
-Silent faults (a lost, torn or misdirected write reported as done, a
-flipped bit) are invisible without checksums of the bytes, which the crate
-leaves to its users. After a power loss the set is dropped with the
-backend; its user opens the files again and reads what survived.
+### C12 Power loss, and what is not detected
+`Files::power_lost(&mut Extents)` frees every file and operation slot,
+raises every generation, drops waiting work and releases every hold, and
+allocates nothing; the tickets in flight end without events. The caller
+calls it when its backend lost power (`SimIo::power_loss`) and then opens
+the files again. Silent faults (a lost, torn or misdirected write reported
+done, a flipped bit) are not detected: that takes checksums of the bytes,
+which the crate leaves to its users.
 
 ### Invariants, checked after every step of the model test
-- F1 No operation is submitted on a stale handle or a slot not Open
-  (or Closing, for the close itself).
-- F2 Every accepted ticket reports exactly once; no event names an
-  unknown ticket.
-- F3 Every extent named by an operation in flight is held by the set; no
-  hold of the set outlives its operation's event.
-- F4 A file's operations in flight never exceed `ops_per_file`; the set's
-  never exceed `ops`; every open file has an operation slot it can use.
-- F5 The steps of a sequence start in order, each after the one before is
-  whole; after a failed step the rest are cancelled.
-- F6 A file whose sync failed accepts nothing but `close`.
-- F7 A read returns the bytes of the last whole writes to that range, when
-  no silent fault is on.
-- F8 After a power loss, every byte an event reported synced (a sync that
-  succeeded after the write completed) is there when the files are read
-  again, when no silent fault is on.
-- F9 Nothing is allocated after `Files::new`.
-- F10 At rest (no operation in flight) every slot's state agrees with the
-  events taken: no slot Opening or Closing, no operation slot used.
+- F1 Nothing is submitted for a stale handle, or for a file slot not Open
+  or Poisoned (a read), but its own open and its held-back close.
+- F2 Every accepted ticket reports exactly once, unless `power_lost` ended
+  it; no event names an unknown ticket.
+- F3 Every extent named by an operation not yet reported is held by the
+  set; the set holds nothing for an operation that reported.
+- F4 A file's operation slots in use never exceed `ops_per_file`; path
+  operations use only path slots; every Open file has a slot it can use.
+- F5 The steps of a sequence each start after the one before is whole;
+  after a failed step the rest report `Cancelled`.
+- F6 A Poisoned file submits nothing but reads and its close.
+- F7 With no silent fault on, a read returns, for each byte, what the last
+  write that completed before the read was submitted put there, when no
+  write of that range is in flight.
+- F8 With no silent fault on, after a power loss every byte is there that
+  was written by a write that completed whole, followed by a sync of that
+  file submitted after the write completed and reported success, with no
+  failed sync of that file through any handle after the write, and the
+  file's name made durable by a good sync of its directory after its
+  create or rename (a write to a durable-write file counts as synced when
+  it completes).
+- F9 Nothing is allocated after `Files::new`, `power_lost` included.
+- F10 At rest with the event queue empty, every slot's state agrees with
+  the events taken: no file slot Opening or Closing, no operation slot in
+  use.
+
+### The API, for the parallel work
+```rust
+pub struct FileSizes;   // new(files, ops_per_file), with_shared, with_paths,
+                        // with_sequence_max, with_spans_max, with_token_base
+pub struct FileConfig;  // plan(limits, sizes) -> Result<(Limits, FileConfig), ConfigError>,
+                        // tokens(), token_base()
+pub enum ConfigError { Ops, Sequence, Spans, ClassSize, Tokens }
+pub struct Files;       // new(config, &limits)
+pub struct File { /* slot, generation */ }
+pub struct Ticket { /* index, generation */ }
+pub enum Span { Extent { extent, at, len }, Page { page, off, len } }
+pub enum Step { Read{..}, Write{..}, WriteSpans{..}, Sync{..}, Reserve{..},
+                Punch{..}, Status{..}, Rename{..}, Unlink{..}, Mkdir{..} }
+pub enum Event { Done { ticket: Ticket, file: Option<File>, result: Result<u64, FileError> } }
+pub enum FileError { /* C10 */ }   pub enum ErrorKind { /* C10 without Partial */ }
+
+impl Files {
+    pub fn open(&mut self, io: &mut impl Io, path: &str, flags: OpenFlags) -> Result<Ticket, FileError>;
+    pub fn close(&mut self, io: &mut impl Io, file: File) -> Result<Ticket, FileError>;
+    pub fn read_at(&mut self, io: &mut impl Io, x: &mut Extents, file: File, extent: Extent, at: u32, len: u32, file_off: u64) -> Result<Ticket, FileError>;
+    pub fn write_at(/* same */) -> Result<Ticket, FileError>;
+    pub fn write_spans(&mut self, io: &mut impl Io, x: &mut Extents, file: File, spans: &[Span], file_off: u64) -> Result<Ticket, FileError>;
+    pub fn sync(&mut self, io: &mut impl Io, file: File, data_only: bool) -> Result<Ticket, FileError>;
+    pub fn reserve(&mut self, io: &mut impl Io, file: File, off: u64, len: u64, keep_size: bool) -> Result<Ticket, FileError>;
+    pub fn punch(&mut self, io: &mut impl Io, file: File, off: u64, len: u64) -> Result<Ticket, FileError>;
+    pub fn status(&mut self, io: &mut impl Io, path: &str) -> Result<Ticket, FileError>;
+    pub fn rename(&mut self, io: &mut impl Io, from: &str, to: &str) -> Result<Ticket, FileError>;
+    pub fn unlink(&mut self, io: &mut impl Io, path: &str) -> Result<Ticket, FileError>;
+    pub fn mkdir(&mut self, io: &mut impl Io, path: &str) -> Result<Ticket, FileError>;
+    pub fn sequence(&mut self, io: &mut impl Io, x: &mut Extents, steps: &[Step], tickets: &mut [Ticket]) -> Result<usize, FileError>;
+    pub fn on_completion(&mut self, io: &mut impl Io, x: &mut Extents, c: Completion) -> bool;
+    pub fn poll(&mut self, io: &mut impl Io, x: &mut Extents);
+    pub fn next_event(&mut self) -> Option<Event>;
+    pub fn power_lost(&mut self, x: &mut Extents);
+    pub fn usage(&self) -> FileUsage; // slots in use, waiting, broken holds
+}
+```
 
 ## Risks / Trade-offs
 - An API that does too much becomes a storage engine → the non-goals above

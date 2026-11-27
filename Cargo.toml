@@ -6,6 +6,7 @@ members = [
     "crates/longshore_common",
     "crates/longshore_crc",
     "crates/longshore_dns",
+    "crates/longshore_file",
     "crates/longshore_http_client",
     "crates/longshore_mailbox",
     "crates/longshore_s3",
@@ -26,6 +27,7 @@ longshore = { path = "crates/longshore", version = "=0.2.0", default-features = 
 longshore_common = { path = "crates/longshore_common", version = "=0.2.0", default-features = false }
 longshore_crc = { path = "crates/longshore_crc", version = "=0.2.0", default-features = false }
 longshore_dns = { path = "crates/longshore_dns", version = "=0.2.0", default-features = false }
+longshore_file = { path = "crates/longshore_file", version = "=0.2.0", default-features = false }
 longshore_http_client = { path = "crates/longshore_http_client", version = "=0.2.0", default-features = false }
 longshore_mailbox = { path = "crates/longshore_mailbox", version = "=0.2.0", default-features = false }
 longshore_s3 = { path = "crates/longshore_s3", version = "=0.2.0", default-features = false }

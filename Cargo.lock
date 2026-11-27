@@ -708,6 +708,7 @@ dependencies = [
  "longshore_common",
  "longshore_crc",
  "longshore_dns",
+ "longshore_file",
  "longshore_http_client",
  "longshore_mailbox",
  "longshore_s3",
@@ -757,6 +758,13 @@ name = "longshore_dns"
 version = "0.2.0"
 dependencies = [
  "hegeltest",
+ "longshore_common",
+]
+
+[[package]]
+name = "longshore_file"
+version = "0.2.0"
+dependencies = [
  "longshore_common",
 ]
 

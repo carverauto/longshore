@@ -4,7 +4,7 @@ change.
 
 ## 0. The contract
 - [x] 0.1 (C1 to C12 and F1 to F10; the per-file bound as the user asked: a reserved operation slot for every file and a cap per file) `design.md`: the state tables of a file handle and of an operation, the table of every backend result against what the set does, the invariants, and an answer for every bound that can be reached
-- [ ] 0.2 Review of the contract; corrections made there first
+- [x] 0.2 (independent review: not ready; A1 to A11, B1 to B11, C1 to C13 and D folded into C1 to C12 and F1 to F10: direct-I/O resumes at blocks, durable-write failures and every failed sync poison, `power_lost`, a held-back close, path and gather shares per slot, operation and sequence state tables, a flat error type, receive-area pages as spans, the API) Review of the contract; corrections made there first
 
 ## 1. The crate and its plan
 - [ ] 1.1 `crates/longshore_file` (Apache headers, workspace lints), re-exported by `longshore` as `file`
