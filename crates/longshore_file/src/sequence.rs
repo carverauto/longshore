@@ -13,7 +13,7 @@
 //! itself and the rest.
 
 use crate::complete::Outcome;
-use crate::errno::{errno_of, ECANCELED};
+use crate::errno::{errno_of, error, ECANCELED};
 use crate::state::{OState, PathKind, Work, NONE};
 use crate::{FileError, Files, Step, Ticket};
 use longshore_common::io::extents::Extents;
@@ -131,6 +131,12 @@ impl Files {
 
     /// Every step of the chain led by `lead` has completed: reads them in
     /// order.
+    ///
+    /// A chain the backend refused at submission is told apart by its
+    /// lead: a backend runs the first step of a chain it took, so the lead
+    /// comes back `-ECANCELED` only when the backend refused a later step
+    /// and cancelled the rest with it. A lead the backend refused itself
+    /// reports its own errno as any failed step does.
     fn read_chain<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, lead: u32) {
         if self.recs[lead as usize].raw == -ECANCELED {
             self.refused(io, x, lead);
@@ -167,18 +173,18 @@ impl Files {
         }
     }
 
-    /// The backend refused the chain as a whole, which the set's checks
-    /// are there to prevent: the step it named reports `Invalid`, the rest
-    /// `Cancelled`.
+    /// The backend refused the chain as a whole: the step it named
+    /// reports its errno as a plain error (`Os` for a resource the backend
+    /// had none of, such as a gather row; `Invalid` for what the set's
+    /// checks are there to prevent), the rest `Cancelled`. Nothing ran, so
+    /// no file is poisoned.
     fn refused<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, lead: u32) {
         let mut r = lead;
         while r != NONE {
             let next = self.recs[r as usize].next;
             let res = self.recs[r as usize].raw;
             let e = if res < 0 && res != -ECANCELED {
-                FileError::Invalid {
-                    errno: errno_of(res),
-                }
+                error(errno_of(res))
             } else {
                 FileError::Cancelled
             };
