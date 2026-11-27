@@ -113,9 +113,13 @@ of 0 or above 1,024 (`ConfigError::Spans`), a small class too small
 | Closing | `close` accepted | nothing (`Closing`) | the close's completion → Free (generation + 1) |
 
 **Close is held back** until every other operation of the file has
-reported, then submitted in the file's reserved slot; `close` is never
-`Full`. A close error is reported in its event and the slot is freed all
-the same. Generations are `u32` and wrap.
+reported, then submitted in the file's reserved slot's room at the
+backend; `close` is never `Full`. Opens and closes have ticket records of
+their own, one a file slot (indexes `ops` to `ops + files − 1`), so a
+reserved slot still holding an untaken event never makes them wait. A
+Free file slot is opened again only once its close's (or failed open's)
+event has been taken. A close error is reported in its event and the slot
+is freed all the same. Generations are `u32` and wrap.
 
 ### C4 Operations, tickets and events
 Each accepted operation takes an operation slot and returns `Ticket {
@@ -166,8 +170,9 @@ keeping its ticket. Every resume moves at least one byte: a write that
 completes with 0 bytes, or a read with 0 before the end it asked for, ends
 the transfer (a read: at end of file; a write: `FileError::NoProgress`).
 On a direct-I/O file a short write resumes from what was written rounded
-down to a block (the same bytes rewritten from the same buffer), and a
-short read ending off a block boundary is the end of the file. An error
+down to a block (the same bytes rewritten from the same buffer); one that
+wrote less than a block ends `NoProgress`, so every resume moves at least
+a block. A short read ending off a block boundary is the end of the file. An error
 ends the transfer with `FileError::Partial { done, kind }` when bytes were
 done, the plain error when none were.
 
@@ -215,7 +220,7 @@ backend reports unknown errors as `EIO`, the ring passes the kernel's, and
 a failed write-back can come as `ENOSPC`), except `Unsupported`, is
 `SyncFailed` and poisons the file; so does any failed write on a file
 opened for durable writes (`OpenFlags::with_dsync`), which is a failed
-sync. A Poisoned file's waiting operations end `Poisoned`, its transfers
+sync and reports `SyncFailed`. A Poisoned file's waiting operations end `Poisoned`, its transfers
 in progress end `Partial { done, kind: Poisoned }`, and its operations in
 flight report their own outcomes. Reads stay allowed: the bytes are
 readable, only their durability is lost.
@@ -227,7 +232,8 @@ no slot and no hold.
 
 ### C12 Power loss, and what is not detected
 `Files::power_lost(&mut Extents)` frees every file and operation slot,
-raises every generation, drops waiting work and releases every hold, and
+raises every generation, drops waiting work and events not yet taken,
+releases every hold, and
 allocates nothing; the tickets in flight end without events. The caller
 calls it when its backend lost power (`SimIo::power_loss`) and then opens
 the files again. Silent faults (a lost, torn or misdirected write reported

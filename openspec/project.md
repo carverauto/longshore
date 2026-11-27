@@ -5,7 +5,8 @@ longshore is an object storage client in Rust built around Linux `io_uring`,
 with a portable POSIX readiness backend (`kqueue` on macOS, `epoll` on Linux
 hosts without `io_uring`). It moves large amounts of data with little CPU. It
 talks to Amazon S3, S3-compatible stores and Google Cloud Storage, and carries
-protocols that run straight over TCP. It is nine small crates, and a tenth,
+protocols that run straight over TCP, and does file I/O for programs that
+keep their own data on disk. It is ten small crates, and an eleventh,
 `longshore`, that gathers them under one name.
 
 ## Tech Stack
@@ -63,14 +64,16 @@ either redesigned or left out.
 - Every source file carries the Apache 2.0 header (`scripts/license-headers.py`)
 
 ### Architecture Patterns
-- Ten workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
+- Eleven workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
   (`checksum`), `longshore_dns` (`dns`), `longshore_stream` (`stream`),
   `longshore_http_client` (`http`), `longshore_tls` (`tls`, behind the
   default-on `tls` Cargo feature), `longshore_mailbox` (`mailbox`),
   `longshore_s3` (`store`, `crypto`, `client`), `longshore_tcp` (`tcp`:
-  `Net`, `KernelTransport`, the shared `check` suites), and the `longshore` facade
-  crate that re-exports them (plus `longshore-bench` for benchmarks and
-  real-kernel checks)
+  `Net`, `KernelTransport`, the shared `check` suites), `longshore_file`
+  (`file`: `Files`, a planned set of files and operations with whole
+  transfers, ordered sequences and one `FileError`), and the `longshore`
+  facade crate that re-exports them (plus `longshore-bench` for benchmarks
+  and real-kernel checks)
 - `Engine<W: World>` shares one `Io` contract state machine across
   `Virtual` (`SimIo`) and `Posix` (`PosixIo` via `kqueue` on macOS and
   `epoll` on Linux), alongside raw-syscall `UringIo` on Linux 6.1+
