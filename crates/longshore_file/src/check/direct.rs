@@ -15,9 +15,11 @@ use crate::{FileError, Span, Step};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::{BufId, Io, Limits};
 
-pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
+/// Whether the backend could open a file for direct I/O under `root`; the
+/// direct checks ran only then, and say so on standard error when not.
+pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) -> bool {
     punch_is_whole_blocks(make, root);
-    direct_io(make, root);
+    direct_io(make, root)
 }
 
 /// On a buffered file too, a punch off a block is `Unaligned`.
@@ -33,12 +35,18 @@ fn punch_is_whole_blocks<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str
     rig.at_rest(0);
 }
 
-fn direct_io<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
+fn direct_io<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) -> bool {
     let mut rig = Rig::new(make, limits(), sizes());
     let flags = rw_create().with_empty(true).with_direct(true);
     let f = match rig.try_open(&format!("{root}direct.dat"), flags) {
         Ok(f) => f,
-        Err(FileError::Invalid { .. } | FileError::Unsupported) => return,
+        Err(e @ (FileError::Invalid { .. } | FileError::Unsupported)) => {
+            eprintln!(
+                "longshore_file::check: no direct I/O under {root} ({e:?}): \
+                 the direct-I/O checks are LEFT OUT on this backend"
+            );
+            return false;
+        }
         Err(e) => fail(format_args!("a direct-I/O open: {e:?}")),
     };
     let block = u64::from(BLOCK);
@@ -51,6 +59,7 @@ fn direct_io<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     unaligned_refused(&mut rig, f);
     assert_eq!(rig.close(f), Ok(0));
     rig.at_rest(0);
+    true
 }
 
 /// Every way off a block, as a range, a span and a step.

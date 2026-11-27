@@ -99,12 +99,31 @@ fn write_sync_read_back<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str)
     let (a, b) = (bytes(1, 5000), bytes(2, 3000));
     assert_eq!(rig.write(f, &a, 0), Ok(5000));
     assert_eq!(rig.write(f, &b, 9000), Ok(3000));
+    let mark = rig.io().submitted();
     assert_eq!(rig.sync(f, true), Ok(0));
     assert_eq!(rig.sync(f, false), Ok(0));
+    let syncs: Vec<_> = rig
+        .io()
+        .since(mark)
+        .filter_map(|s| {
+            if let Op::FileSync { datasync, .. } = s.op() {
+                Some(datasync)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(syncs, [true, false], "data only, then data and metadata");
     let mut whole = a.clone();
     whole.resize(9000, 0);
     whole.extend_from_slice(&b);
+    assert_eq!(rig.read(f, 0, 12_000), (Ok(12_000), whole.clone()));
+    // Reads the backend completes short, before the end, are resumed.
+    rig.io().cut_reads(3);
     assert_eq!(rig.read(f, 0, 12_000), (Ok(12_000), whole));
+    rig.io().cut_reads(1);
+    assert_eq!(rig.read(f, 11_000, 4000), (Ok(1000), b[2000..].to_vec()));
+    rig.io().cut_reads(0);
     // Fewer only at the end of the file; none past it.
     assert_eq!(rig.read(f, 11_000, 4000), (Ok(1000), b[2000..].to_vec()));
     assert_eq!(rig.read(f, 12_000, 100), (Ok(0), Vec::new()));
@@ -182,6 +201,12 @@ fn space<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
 fn events_name_what_they_are_of<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     let mut rig = Rig::new(make, limits(), sizes());
     let p = format!("{root}named.dat");
+    // A failed open names no file.
+    let missing = format!("{root}named-missing.dat");
+    let ro = OpenFlags::NONE.with_read(true);
+    let failing = must(rig.call(|s, io, _| s.open(io, &missing, ro)), "open");
+    let failed = rig.wait(failing).1;
+    assert_eq!(failed, done(failing, None, Err(FileError::NotFound)));
     let opening = must(rig.call(|s, io, _| s.open(io, &p, rw_create())), "open");
     let Event::Done {
         ticket,

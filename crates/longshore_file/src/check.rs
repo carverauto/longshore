@@ -132,12 +132,29 @@ pub fn bytes(seed: u8, len: usize) -> Vec<u8> {
 /// Run every check of the contract on backends `make` builds, with files
 /// under `root` (a directory path ending in `/`, which must exist and be
 /// empty enough for the checks' names).
-pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
+pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) -> Ran {
     basics::run_all(make, root);
     transfers::run_all(make, root);
     sequences::run_all(make, root);
     refusals::run_all(make, root);
     bounds::run_all(make, root);
     closing::run_all(make, root);
-    direct::run_all(make, root);
+    Ran {
+        direct: direct::run_all(make, root),
+    }
+}
+
+/// What [`run_all`] could check on a backend.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Ran {
+    direct: bool,
+}
+
+impl Ran {
+    /// Whether the backend opened a file for direct I/O, so that the
+    /// direct-I/O checks ran. When it did not, they were left out, and a
+    /// message on standard error said so.
+    pub const fn direct(&self) -> bool {
+        self.direct
+    }
 }
