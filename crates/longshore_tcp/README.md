@@ -35,6 +35,9 @@ set is built, except the TLS handshake.
   of longshore's providers in the ring and direct receive modes.
 - `check::run_all`, the suite every transport passes, which a real kernel
   can run too.
+- The I/O layer it runs on comes with it: `longshore_tcp::io` (the
+  backends among it) and the names the set's calls take (`Limits`,
+  `Completion`, `Completions`, `Io`), so a program needs no other crate.
 
 ## Example
 
@@ -42,9 +45,9 @@ An echo server for frames with a four-byte length prefix. It sends each
 frame back from the memory that received it:
 
 ```rust
-use longshore_common::io::{Completions, Io, Limits};
 use longshore_tcp::{
-    Config, ConnOpts, Event, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, Sizes,
+    Completions, Config, ConnOpts, Event, Framing, HeaderFraming, Io, KernelTransport, Limits,
+    ListenConfig, Net, Sizes,
 };
 use std::net::SocketAddr;
 
