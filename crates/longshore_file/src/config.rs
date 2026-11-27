@@ -18,9 +18,10 @@ pub enum ConfigError {
     /// `spans_max` is 0 or above 1,024.
     Spans,
     /// The pool's small buffers cannot hold a span list of `spans_max`
-    /// spans, or a 256-byte status area and a path.
+    /// spans, or a 256-byte status area and a path; or the pool would have
+    /// more buffers than a `u32` names.
     ClassSize,
-    /// The set's tokens overflow, or a count does.
+    /// The set's tokens overflow, or a count of slots or operations does.
     Tokens,
 }
 
@@ -45,10 +46,12 @@ impl FileConfig {
         self.token_base
     }
 
-    /// How many backend tokens the set uses, from [`FileConfig::token_base`].
+    /// How many backend tokens the set uses, from [`FileConfig::token_base`]:
+    /// one an operation record, the operation slots and then one a file
+    /// slot for its open and close.
     pub const fn tokens(&self) -> u64 {
         let s = self.sizes;
-        (s.files as u64 + s.paths as u64 + s.shared as u64) * 2
+        s.files as u64 * 2 + s.paths as u64 + s.shared as u64
     }
 
     /// The longest path an operation takes, in bytes.

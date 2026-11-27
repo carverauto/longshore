@@ -212,8 +212,10 @@ impl Files {
                 Ok(len)
             }
             Span::Page { page, off, len } => {
-                let class = self.limits.is_page(page) || self.limits.is_aligned_buf(page);
-                self.check_buf(page, (off, len), direct, class)?;
+                if !self.limits.is_page(page) {
+                    return Err(FileError::TooLarge);
+                }
+                self.check_buf(page, (off, len), direct, true)?;
                 Ok(len)
             }
         }

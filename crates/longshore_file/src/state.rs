@@ -158,6 +158,8 @@ pub(crate) struct OpRec {
     pub(crate) work: Work,
     /// Bytes transferred so far.
     pub(crate) done: u64,
+    /// Resumes in a row of a direct write that wrote no whole block.
+    pub(crate) stalls: u8,
     pub(crate) result: Result<u64, FileError>,
     /// A sequence step's completion, kept until every step of its chain has
     /// completed.
@@ -178,6 +180,7 @@ impl OpRec {
         file_gen: 0,
         work: Work::Close,
         done: 0,
+        stalls: 0,
         result: Ok(0),
         raw: 0,
         lead: NONE,

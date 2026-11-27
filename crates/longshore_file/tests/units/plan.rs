@@ -32,7 +32,7 @@ fn the_plan_adds_what_the_table_says() {
     assert_eq!(l.small_buffer_size(), 4096);
     assert_eq!(l.aligned_buffers(), base().aligned_buffers());
     assert_eq!(c.token_base(), 1000);
-    assert_eq!(c.tokens(), u64::from(ops) * 2);
+    assert_eq!(c.tokens(), u64::from(ops) + 4);
     assert_eq!(c.path_max(), (4096 - 256) / 2 - 1);
     // More spans than any other layer asked for raise the backend's.
     let (wide, _) = FileConfig::plan(base(), FileSizes::new(1, 1).with_spans_max(300)).unwrap();

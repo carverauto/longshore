@@ -40,12 +40,14 @@ impl Ticket {
         generation: u32::MAX,
     };
 
-    /// The operation slot.
+    /// The operation record: the operation slots first (one reserved a
+    /// file slot, the path slots, the shared ones), then one a file slot
+    /// for its open and its close.
     pub const fn index(self) -> u32 {
         self.index
     }
 
-    /// The slot's generation when the operation was accepted.
+    /// The record's generation when the operation was accepted.
     pub const fn generation(self) -> u32 {
         self.generation
     }

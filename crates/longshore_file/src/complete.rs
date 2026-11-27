@@ -6,12 +6,16 @@
 //! A completion taken: what it means for its operation (contract C4, C5,
 //! C6, C10), and the report that ends an operation.
 
-use crate::errno::{ended, errno_of, error, sync_error, transfer_error};
+use crate::errno::{ended, errno_of, error, lost_write, sync_error, transfer_error};
 use crate::plan::STATUS_AREA;
 use crate::state::{FState, OState, PathKind, Work, NONE};
 use crate::{ErrorKind, FileError, Files};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::{file_size, Io};
+
+/// Resumes in a row of a direct write that wrote bytes but no whole block,
+/// before it ends `NoProgress`.
+const STALLS_MOST: u8 = 4;
 
 /// What a completion leaves of its operation.
 pub(crate) enum Outcome {
@@ -107,7 +111,7 @@ impl Files {
         let flags = self.files[r.file as usize].flags;
         let write = r.work.is_write();
         if res < 0 {
-            let durable = write && flags.dsync();
+            let durable = write && flags.dsync() && lost_write(errno_of(res));
             if durable {
                 self.poison(io, x, r.file);
             }
@@ -129,10 +133,14 @@ impl Files {
             } else {
                 total
             };
-            if n == 0 || next <= r.done {
+            if n == 0 || (next <= r.done && r.stalls >= STALLS_MOST) {
                 return Outcome::Done(Err(ended(r.done, ErrorKind::NoProgress)));
             }
-            self.recs[i as usize].done = next;
+            // Bytes written but no whole block: the same blocks again, a
+            // bounded number of times in a row.
+            let stalls = if next <= r.done { r.stalls + 1 } else { 0 };
+            let rec = &mut self.recs[i as usize];
+            (rec.done, rec.stalls) = (next.max(r.done), stalls);
             return Outcome::More;
         }
         if n == 0 || (flags.direct() && !total.is_multiple_of(bs)) {

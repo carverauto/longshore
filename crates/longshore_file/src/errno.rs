@@ -78,9 +78,18 @@ pub(crate) const fn ended(done: u64, kind: ErrorKind) -> FileError {
     }
 }
 
+/// Whether a write to a file opened for durable writes that failed with
+/// `errno` failed as a sync does, leaving earlier bytes of unknown state:
+/// an error of the medium (`EIO`, which the portable backend also reports
+/// for errors it does not know) or no room for the write-back (`ENOSPC`,
+/// `EDQUOT`). Any other errno is the write's own refusal.
+pub(crate) const fn lost_write(errno: i32) -> bool {
+    matches!(errno, EIO | ENOSPC | EDQUOT)
+}
+
 /// A transfer that failed with `errno` after `done` bytes; `durable` for
-/// a write to a file opened for durable writes, whose failure is a failed
-/// sync.
+/// a failed write to a file opened for durable writes that
+/// [`lost_write`] says is a failed sync.
 pub(crate) const fn transfer_error(done: u64, errno: i32, durable: bool) -> FileError {
     if durable {
         return ended(done, ErrorKind::SyncFailed { errno });

@@ -11,4 +11,9 @@ mod faults;
 mod ops;
 mod plan;
 #[cfg(test)]
+mod record;
+mod recorded;
+#[cfg(test)]
+mod review;
+#[cfg(test)]
 mod rig;

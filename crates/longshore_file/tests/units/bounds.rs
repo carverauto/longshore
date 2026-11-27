@@ -52,7 +52,7 @@ fn work_waits_for_room_first_in_first_out() {
     let sizes = FileSizes::new(2, 2);
     let mut r = Rig::new(sizes);
     let small: Limits = r.limits.with_ops_max(1);
-    r.io = SimIo::new(small, 7, Faults::NONE);
+    *r.io = SimIo::new(small, 7, Faults::NONE);
     r.io.setup_disk(
         DiskConfig::BASE
             .with_max_files(16)

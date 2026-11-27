@@ -11,7 +11,7 @@ use crate::plan::{SPAN_BYTES, STATUS_AREA};
 use crate::state::{OState, PathKind, Work, NONE};
 use crate::{ErrorKind, FileError, Files, Span};
 use longshore_common::io::extents::Extents;
-use longshore_common::io::{Busy, FileSlot, Io, Op, Token};
+use longshore_common::io::{BufId, Busy, FileSlot, Io, Op, Token};
 
 impl Files {
     /// The backend token of record `i`.
@@ -63,25 +63,13 @@ impl Files {
                 at,
                 len,
                 file_off,
-            } => Op::FileRead {
-                slot,
-                buf: extent.buf(),
-                off: at + done,
-                len: len - done,
-                file_off: file_off + r.done,
-            },
+            } => rw_op(false, slot, (extent.buf(), at, len, file_off), r.done),
             Work::Write {
                 extent,
                 at,
                 len,
                 file_off,
-            } => Op::FileWrite {
-                slot,
-                buf: extent.buf(),
-                off: at + done,
-                len: len - done,
-                file_off: file_off + r.done,
-            },
+            } => rw_op(true, slot, (extent.buf(), at, len, file_off), r.done),
             Work::Spans {
                 count,
                 len,
@@ -276,6 +264,34 @@ impl Files {
                 self.waiting.push_front(i);
                 return;
             }
+        }
+    }
+}
+
+/// A read or write of `len` bytes of `buf` from `at` at `file_off`, less
+/// the `done` bytes already moved.
+fn rw_op(
+    write: bool,
+    slot: FileSlot,
+    (buf, at, len, file_off): (BufId, u32, u32, u64),
+    done: u64,
+) -> Op {
+    let (off, rest, file_off) = (at + done as u32, len - done as u32, file_off + done);
+    if write {
+        Op::FileWrite {
+            slot,
+            buf,
+            off,
+            len: rest,
+            file_off,
+        }
+    } else {
+        Op::FileRead {
+            slot,
+            buf,
+            off,
+            len: rest,
+            file_off,
         }
     }
 }
