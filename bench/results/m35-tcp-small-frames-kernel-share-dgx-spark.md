@@ -25,6 +25,21 @@ pair: `donbot` receives on core 9 of its second interface's queue 19
   answering side on core 9, with `--wait sleep` and with `--wait spin` on
   both ends, three runs each.
 
+The receiver of the small-frame runs was started without `--frame 324`
+(a slip in `small.sh` then, fixed since), so it was sized for the default
+64 KiB frames: its eight entries in the JSONL record `"frame":65536`,
+while every sender's records `"frame":324`. The `rr` runs are not
+affected: both ends record 324. What it changed is the receiver's frame
+memory alone: 24 slots of 64 KiB rather than of 4 KiB, and the largest
+frame it would take. The frames on the wire, and so the packets, the
+bytes and the counts, are the senders' 324-byte frames, and the
+receiver's frame count is within 0.04 % of theirs. In ring mode a frame is read
+where it lies in a 4 KiB ring buffer, and only one split across two is
+put together in frame memory; in direct mode every frame is received into
+frame memory, so there the 324 bytes of each frame were spread over
+larger slots, more pages for the same bytes. Whether that cost direct
+mode anything was not measured; the runs were not repeated.
+
 ## Small frames, three shapes of traffic
 
 | Senders | Mode | Frames a second (millions) | Core 9 | Core 19 (queue) |
