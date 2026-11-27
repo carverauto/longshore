@@ -63,6 +63,7 @@ impl<W: World> Io for Engine<W> {
     }
 
     fn end_sends(&mut self, sock: Sock, on: bool) {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         self.world.end_sends(sock, on);
     }
 
