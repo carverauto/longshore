@@ -57,6 +57,9 @@ mod paged_faults;
 #[path = "net/paged_holds.rs"]
 mod paged_holds;
 #[cfg(test)]
+#[path = "net/paged_wake.rs"]
+mod paged_wake;
+#[cfg(test)]
 #[path = "net/pages.rs"]
 mod pages;
 #[cfg(test)]
