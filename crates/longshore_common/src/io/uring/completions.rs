@@ -45,7 +45,7 @@ impl UringIo {
             return None;
         }
         if opts {
-            if let Err(errno) = super::backend::apply_tcp_options(
+            if let Err(errno) = super::sockopts::apply_tcp_options(
                 fd,
                 self.no_delay,
                 self.keep_alive,
@@ -83,8 +83,8 @@ impl UringIo {
         }
         let mut measured = result;
         if result == 0 {
-            self.last_connect_opts = Some(super::backend::read_tcp_options(fd));
-            self.last_connect_timing = Some(super::backend::read_keep_timing(fd));
+            self.last_connect_opts = Some(super::sockopts::read_tcp_options(fd));
+            self.last_connect_timing = Some(super::sockopts::read_keep_timing(fd));
             if self.measure_segments {
                 let option = |level, name| {
                     let mut value: i32 = 0;

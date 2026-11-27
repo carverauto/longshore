@@ -34,6 +34,7 @@ mod ops_file;
 mod ops_sock;
 mod quiesce;
 mod setup;
+mod sockopts;
 mod split;
 #[cfg(test)]
 mod split_tests;

@@ -6,7 +6,7 @@
 //! A listening TCP socket with options the standard library does not
 //! offer before the bind: `SO_REUSEPORT` and the backlog.
 
-use super::backend::set_int;
+use super::sockopts::set_int;
 use crate::io::sys::*;
 use crate::io::ListenOpts;
 use core::ffi::c_int;
