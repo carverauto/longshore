@@ -1,9 +1,9 @@
 # The receive modes of `longshore_tcp`, and which one UltraGraphDB uses where
 
 `longshore_tcp` receives in one of three modes, chosen per listener or
-connection with `ConnOpts::with_rx`. Two exist (`Rx::Ring`, `Rx::Direct`);
-the third (`Rx::ZeroCopy`) is built by `add-tcp-zero-copy-receive` and
-measured through `longshore_tcp` in milestone 34. This note says what each does,
+connection with `ConnOpts::with_rx`: `Rx::Ring`, `Rx::Direct`, and
+`Rx::ZeroCopy`, which `add-tcp-zero-copy-receive` built and milestone 34
+measured through `longshore_tcp`. This note says what each does,
 what it costs, and which fits which traffic of a database node.
 
 The numbers are from two DGX Sparks over 200 GbE
@@ -67,10 +67,10 @@ answered). Where the database differs, the row changes with it.
 |---|---|---|---|
 | Queries and small writes from clients | Parsed and answered; a few hundred bytes | `Ring` | Fits a ring buffer; lent in place; fewest operations |
 | Bulk load from clients (Ingest) | Checked; its body goes into a Round frame at a block boundary, 256 bytes off from where it lay in its own frame | `Direct` with `with_body_at_block(4096)` | The body lands at a block and is logged from where it lies; zero-copy receive cannot give that shift |
-| Round frames from the leader, on a replica (stage 8) | Checked, then logged as received: the bytes on the wire are the bytes of the log | `ZeroCopy`, once built; `Direct` until then | Written as the pages lie when the frame lines up, moved once when not |
-| Payload relayed to another node unread | Sent on | `ZeroCopy`, once built | Nothing reads it, so the copy is pure cost |
+| Round frames from the leader, on a replica (stage 8) | Checked, then logged as received: the bytes on the wire are the bytes of the log | `ZeroCopy` where the frames line up (milestone 34: whole 4 KiB blocks, MTU 8244, a sender that sends each frame alone); `Direct` otherwise | Written as the pages lie when the frame lines up, moved once when not |
+| Payload relayed to another node unread | Sent on | `Direct`, sent with `send_lent` | Nothing reads it, so the copy is pure cost; a frame in pages cannot be sent as it lies (`SendError::NotHeld`), and `hold` would copy it |
 | Payload the node checks on arrival (a checksum over the body) | Read in full, then logged | `Direct` | Ready for the log as it lies; zero-copy would save a little on the read and pay the move for the log |
-| Large results streamed from another node into a query | Read by the query, not logged | `ZeroCopy`, once built; `Direct` until then | Read in place: a quarter less on the receiving thread |
+| Large results streamed from another node into a query | Read by the query, not logged | `ZeroCopy` where the frames line up; `Direct` otherwise | Read in place: a quarter less on the receiving thread |
 
 UltraGraphDB's protocol puts every body byte under a checksum the
 receiver must check, so its payload is always read once: the figures for
@@ -113,8 +113,8 @@ What these say together:
   long as its fast cache lasts: 13 GB/s against 13.8. A receiving thread
   then becomes the limit, at 5 to 7 GB/s with the kernel's copy and 8 to
   11 without it. That combination has not been run: the test program
-  does not keep writes in flight, and `longshore_tcp` has no zero-copy
-  receive yet.
+  does not keep writes in flight, and milestone 34 measured
+  `longshore_tcp`'s zero-copy receive without a disk.
 - **Sustained, this disk is the limit; in operation that is rare.** After
   about 236 GB at full rate it takes about 3 GB/s, less than one
   receiving thread delivers either way. Only the first import of a large
