@@ -130,19 +130,20 @@ them out of shell history and logs, and never reuse a key with a new SA.
 For AES-256-GCM the key is 36 bytes (`openssl rand -hex 36`); only
 AES-128 was tried on these cards.
 
-On the Sparks, for the first link:
+On the Sparks, for the first link (the addresses below are documentation
+addresses, RFC 5737; put the link's own in their place):
 
 | | host A, the sender | host B |
 |---|---|---|
 | host | roberto | donbot |
-| address | 10.100.32.2 | 10.100.32.1 |
+| address | 192.0.2.2 | 192.0.2.1 |
 | interface | `enp1s0f0np0` | `enp1s0f0np0` |
 | SPI of its outgoing SA | `0x1001` | `0x1002` |
 
-### On host A (10.100.32.2)
+### On host A (192.0.2.2)
 
 ```bash
-A=10.100.32.2; B=10.100.32.1; DEV=enp1s0f0np0
+A=192.0.2.2; B=192.0.2.1; DEV=enp1s0f0np0
 
 # The SA for what A sends: encrypted on A's card.
 sudo $IP xfrm state add src $A dst $B proto esp spi 0x1001 reqid 0x1001 \
@@ -165,13 +166,13 @@ sudo $IP xfrm policy add src $B/32 dst $A/32 dir in \
   offload packet dev $DEV
 ```
 
-### On host B (10.100.32.1): the mirror image
+### On host B (192.0.2.1): the mirror image
 
 The same two SAs with the same SPIs and keys; only the directions turn
 around.
 
 ```bash
-A=10.100.32.2; B=10.100.32.1; DEV=enp1s0f0np0
+A=192.0.2.2; B=192.0.2.1; DEV=enp1s0f0np0
 
 sudo $IP xfrm state add src $B dst $A proto esp spi 0x1002 reqid 0x1002 \
   mode transport aead 'rfc4106(gcm(aes))' $KEY_BA 128 \
@@ -214,9 +215,9 @@ The driver accepted packet offload if every SA and policy says
 
 ```bash
 sudo $IP -s xfrm state | grep -E '^src|offload'
-#   src 10.100.32.2 dst 10.100.32.1
+#   src 192.0.2.2 dst 192.0.2.1
 #           crypto offload parameters: dev enp1s0f0np0 dir out mode packet
-#   src 10.100.32.1 dst 10.100.32.2
+#   src 192.0.2.1 dst 192.0.2.2
 #           crypto offload parameters: dev enp1s0f0np0 dir in mode packet
 sudo $IP xfrm policy | grep -E '^src|dir|offload'
 #           crypto offload parameters: dev enp1s0f0np0 mode packet
@@ -229,7 +230,7 @@ Then send something and watch the card's counters move on both hosts:
 
 ```bash
 ethtool -S enp1s0f0np0 | grep -E 'ipsec_(rx|tx)_(pkts|bytes)|ipsec_.*drop'
-ping -c 5 10.100.32.1                       # from A
+ping -c 5 192.0.2.1                       # from A
 ethtool -S enp1s0f0np0 | grep -E 'ipsec_(rx|tx)_(pkts|bytes)|ipsec_.*drop'
 ```
 

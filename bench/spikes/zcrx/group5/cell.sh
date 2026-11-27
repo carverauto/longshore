@@ -3,15 +3,28 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License").
 # SPDX-License-Identifier: Apache-2.0
-# One cell on donbot: N receivers, receiver k on port 9311+k, queue 15+k
-# (interrupts on core 15+k), thread on core 5+k. Prints one JSON line with
-# each receiver's own line, and the CPU of the threads' and queues' cores
-# and the card's drop counters over the cell.
+# One cell on the receiving host: N receivers, receiver k on port 9311+k,
+# queue 15+k (interrupts on core 15+k), thread on core 5+k. Prints one JSON
+# line with each receiver's own line, and the CPU of the threads' and
+# queues' cores and the card's drop counters over the cell.
 # cell.sh MODE N SECS CONNS [ZC_SPARE] [KIND] [FRAME]
+#
+# Set in the environment, none of them defaulted (run.sh passes them on):
+#   IFACE       the interface under test
+#   DATA_IP     this host's address on it
+#   BENCH_BIN   the path of tcp_uring here
+# Milestone 34 ran it on the receiving DGX Spark through run.sh: IFACE the
+# second interface of its 200 GbE port, DATA_IP its address there,
+# BENCH_BIN a release build of tcp_uring in its copy of the tree.
 set -u
+usage="usage: IFACE=.. DATA_IP=.. BENCH_BIN=.. cell.sh MODE N SECS CONNS [ZC_SPARE] [KIND] [FRAME]"
+for v in IFACE DATA_IP BENCH_BIN; do
+  [ -n "${!v:-}" ] || { echo "$v is not set; $usage" >&2; exit 2; }
+done
+[ $# -ge 4 ] || { echo "$usage" >&2; exit 2; }
 MODE=$1 N=$2 SECS=$3 CONNS=$4 SPARE=${5:-16384} KIND=${6:-bulk} FRAME=${7:-65536}
-I=enP2p1s0f0np0
-B=$HOME/longshore-bench-src/target/release/tcp_uring
+I=$IFACE
+B=$BENCH_BIN
 busy() { # busy jiffies of the cores given, from /proc/stat: user, nice,
   # system, irq, softirq and steal; not idle, and not iowait, which counts a
   # thread asleep in io_uring_enter as busy
@@ -24,7 +37,7 @@ for k in $(seq 0 $((N-1))); do THREADS="$THREADS $((5+k))"; QUEUES="$QUEUES $((1
 D0=$(drops); T0=$(busy "$THREADS"); Q0=$(busy "$QUEUES"); S0=$(date +%s.%N)
 for k in $(seq 0 $((N-1))); do
   ZC=""; [ "$MODE" = zc ] && ZC="--zc-queue $I:$((15+k)) --zc-spare $SPARE"
-  sudo -n taskset -c $((5+k)) $B $KIND --listen 10.100.33.1:$((9311+k)) --rx $MODE $ZC --conns $CONNS --frame $FRAME --secs $SECS \
+  sudo -n taskset -c $((5+k)) $B $KIND --listen $DATA_IP:$((9311+k)) --rx $MODE $ZC --conns $CONNS --frame $FRAME --secs $SECS \
     > /tmp/g5p$k.json 2> /tmp/g5p$k.err &
 done
 wait
