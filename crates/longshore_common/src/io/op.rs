@@ -274,9 +274,13 @@ pub enum Op {
     /// sum of their lengths. A span may be of any buffer class, a page of
     /// the receive area among them. For a file opened for direct I/O
     /// every span is whole blocks of a block-aligned buffer or of a page,
-    /// from a block boundary in it. The spans' memory is read until the
-    /// write completes, not only when it is submitted: it must not change
-    /// before. Completes like [`Op::FileWrite`], possibly short.
+    /// from a block boundary in it. The spans' memory, and the list
+    /// itself, are read until the write completes, not only when it is
+    /// submitted: neither may change before (a backend may read the list
+    /// at submission, as the ring does, or when it writes, as the portable
+    /// backend and the simulator do). As many gathered writes may be in
+    /// flight as `Limits::gather_ops`; one more is refused with
+    /// `-ENOBUFS`. Completes like [`Op::FileWrite`], possibly short.
     FileWriteSpans {
         /// The open file.
         slot: FileSlot,
