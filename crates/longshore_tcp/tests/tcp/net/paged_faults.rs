@@ -8,7 +8,7 @@
 //! the kernel's copy. Frames are moved instead of kept, receives are
 //! armed again, and every frame arrives all the same.
 
-use super::paged::{exchange, mixed, none_out, paged, paired, settle, world_with};
+use super::paged::{exchange, mixed, none_out, paged, paired, settle, world_with, zc};
 use super::*;
 
 /// The set's counters of several runs added up: frames kept and moved,
@@ -178,7 +178,9 @@ fn a_frame_shorter_than_the_least_is_moved() {
 fn hold_until_dry(seed: u64) -> (Option<Why>, longshore_tcp::Paged) {
     let faults = Faults::NONE.with_copied(1_000_000);
     let mut w = small_area(seed, faults, paged(64, 32, 256), 8);
-    let (c, s) = paired(&mut w);
+    // Ten steps of the simulator without a page end the connection.
+    let _: Listener = w.listen(ListenConfig::new(zc().with_no_page_timeout_ns(MS)));
+    let (c, s) = w.connect(prefix());
     let frame = prefixed(8188, seed as u8);
     let (mut sent, mut held, mut closed) = (0, Vec::new(), None);
     for _ in 0..100_000 {
@@ -210,15 +212,53 @@ fn hold_until_dry(seed: u64) -> (Option<Why>, longshore_tcp::Paged) {
 }
 
 #[test]
-fn sixteen_ends_without_a_page_in_a_row_end_the_connection() {
+fn a_copy_path_dry_for_longer_than_the_timeout_ends_the_connection() {
     let mut ended = 0;
     for seed in 0..10 {
         let (closed, p) = hold_until_dry(seed);
         if closed.is_some() {
             assert_eq!(closed, Some(Why::Reset));
-            assert!(p.area_short() >= 16, "{p:?}");
+            assert!(p.area_short() > 0, "{p:?}");
             ended += 1;
         }
     }
     assert!(ended > 0, "the copy path never ran dry for long");
+}
+
+/// The copy path running dry for spells shorter than the timeout of one
+/// second, every frame released as it arrives: more ends without a page
+/// than the sixteen tries the bound once was, and the connection lives,
+/// since the bound is in time and a piece starts it again.
+#[test]
+fn a_copy_path_dry_for_less_than_the_timeout_keeps_the_connection() {
+    let mut beyond = 0;
+    for seed in 0..10 {
+        let faults = Faults::NONE.with_copied(1_000_000);
+        let mut w = small_area(seed, faults, paged(64, 32, 256), 8);
+        let (c, s) = paired(&mut w);
+        let frame = prefixed(8188, seed as u8);
+        let (mut sent, mut got) = (0, 0);
+        for _ in 0..200_000 {
+            if got == 60 {
+                break;
+            }
+            if sent < 60 && send(&mut w, c, &frame) {
+                sent += 1;
+            }
+            w.turn();
+            while w.client.next_event().is_some() {}
+            while let Some(e) = w.server.next_event() {
+                assert!(!matches!(e, Event::Closed { .. }), "seed {seed}: {e:?}");
+                while let Some(f) = w.server.next_frame(&mut w.io, s).unwrap() {
+                    got += 1;
+                    w.server.release(f);
+                }
+            }
+        }
+        assert_eq!(got, 60, "seed {seed}");
+        settle(&mut w);
+        none_out(&mut w);
+        beyond += u32::from(w.server.usage().pages().area_short() > 16);
+    }
+    assert!(beyond > 0, "never more than sixteen ends without a page");
 }

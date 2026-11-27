@@ -23,7 +23,7 @@
 //! landing, and the rest follows there.
 
 use super::cover::Col;
-use super::state::{best_effort, St, EV_READABLE, NONE, W_READ};
+use super::state::{best_effort, St, EV_READABLE, NEVER, NONE, W_READ};
 use super::Net;
 use crate::config::Rx;
 use crate::event::Why;
@@ -32,10 +32,6 @@ use crate::transport::Transport;
 use crate::Addr;
 use longshore_common::io::extents::Extent;
 use longshore_common::io::{BufId, Limits, ECANCELED, ENOMEM, ENOSPC};
-
-/// Ends of a receive for want of a page for the kernel's copy, in a row
-/// and with no byte between them, after which the connection ends.
-const NO_PAGE_MOST: u8 = 16;
 
 /// A piece as the transport reported it.
 #[derive(Clone, Copy)]
@@ -156,7 +152,7 @@ impl<T: Transport> Net<T> {
         self.cover(slot, Col::Data);
         let c = &mut self.conns[slot as usize];
         c.zc_want = c.zc_want.saturating_sub(piece.len);
-        c.no_page = 0;
+        c.no_page_since = NEVER;
         if c.st != St::Up {
             self.t.give_back_piece(d, piece.page, piece.off, piece.len);
             return;
@@ -293,11 +289,13 @@ impl<T: Transport> Net<T> {
         match result {
             0 => self.peer_finished(slot),
             r if r == -ENOMEM => {
-                // The kernel's copy found no page. Asked for again, a
-                // bounded number of times.
+                // The kernel's copy found no page. Asked for again, for a
+                // bounded time since the first such end without a byte.
                 self.zc.area_short += 1;
-                c.no_page += 1;
-                if c.no_page >= NO_PAGE_MOST {
+                if c.no_page_since == NEVER {
+                    c.no_page_since = self.now;
+                }
+                if self.now.saturating_sub(c.no_page_since) >= c.opts.no_page_timeout_ns {
                     return self.end(slot, Why::of(result));
                 }
                 self.add_work(slot, W_READ);
@@ -339,7 +337,7 @@ impl<T: Transport> Net<T> {
             core::mem::replace(&mut c.zc_run, NONE),
             core::mem::replace(&mut c.ready_run, NONE),
         ];
-        (c.zc_want, c.no_page) = (0, 0);
+        (c.zc_want, c.no_page_since) = (0, NEVER);
         if header != NONE {
             self.zc.headers -= 1;
             self.zc.queue(BufId::new(header), 0, hl);

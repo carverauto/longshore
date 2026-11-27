@@ -58,6 +58,7 @@ pub struct ConnOpts {
     pub(crate) connect_timeout_ns: u64,
     pub(crate) handshake_timeout_ns: u64,
     pub(crate) idle_timeout_ns: u64,
+    pub(crate) no_page_timeout_ns: u64,
     pub(crate) reconnect: Option<Reconnect>,
     pub(crate) half_close: bool,
     pub(crate) frame_on_packet: bool,
@@ -75,6 +76,7 @@ impl ConnOpts {
             connect_timeout_ns: 10_000_000_000,
             handshake_timeout_ns: 10_000_000_000,
             idle_timeout_ns: 0,
+            no_page_timeout_ns: 1_000_000_000,
             reconnect: None,
             half_close: false,
             frame_on_packet: false,
@@ -119,6 +121,19 @@ impl ConnOpts {
     #[must_use]
     pub const fn with_idle_timeout_ns(mut self, ns: u64) -> ConnOpts {
         self.idle_timeout_ns = ns;
+        self
+    }
+
+    /// With `Rx::ZeroCopy`: end the connection when its receives have
+    /// found no page for the kernel's copy for this long, with no byte
+    /// delivered in between (`Why::of(-ENOMEM)`); until then each is
+    /// asked for again at the next `poll`. One second by default. The
+    /// copy path can stay empty for good while the area is not, and
+    /// the bound is in time, not in tries, so that a program that polls
+    /// fast does not end a connection sooner than one that polls slowly.
+    #[must_use]
+    pub const fn with_no_page_timeout_ns(mut self, ns: u64) -> ConnOpts {
+        self.no_page_timeout_ns = ns;
         self
     }
 

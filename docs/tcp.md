@@ -229,7 +229,10 @@ recovers; it does not make the seconds go away. `Usage::pages` reports
 what the set holds; its `area_short` counts receives that ended because
 the kernel's own copy, for payload that did not arrive in the area, found
 no page. That is not the area running dry, which shows only in the card's
-counters (`ethtool -S IFACE`, `rx_out_of_buffer`).
+counters (`ethtool -S IFACE`, `rx_out_of_buffer`). Such a receive is asked
+for again at the next `poll`; a connection that finds no page for
+`ConnOpts::with_no_page_timeout_ns` (one second by default), with no byte
+in between, ends with `Why::of(-ENOMEM)`.
 
 **Before the set is dropped** while its backend lives on, call
 `Net::give_back_all`: the pages it holds go back to the card. Dropping

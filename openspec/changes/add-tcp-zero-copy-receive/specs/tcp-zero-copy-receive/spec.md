@@ -126,7 +126,7 @@ and each is counted where the program can see it.
 - **THEN** the frame is delivered whole all the same
 
 #### Scenario: The kernel's free pages never come back
-- **WHEN** a connection's receive ends for want of the kernel's free pages sixteen times in a row with nothing delivered
+- **WHEN** a connection's receives end for want of the kernel's free pages for longer than its no-page timeout, with nothing delivered in between
 - **THEN** the connection ends with an error, and the other connections go on
 
 ### Requirement: Memory at build

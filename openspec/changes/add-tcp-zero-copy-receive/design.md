@@ -471,14 +471,19 @@ frame is moved; nothing is wrong. Task 5.1 measures the share through
   `poll` for what is left of the credit, which is never 0 (a receive
   whose credit is used ended with 0, not with these); the last two are
   counted in `Usage` (C7); anything else ends the connection (`Why::of`).
-- **`-ENOMEM` is retried a bounded number of times.** Sixteen ends with
-  `-ENOMEM` in a row on one connection, with no byte delivered to it in
-  between, end the connection with `Why::of(-ENOMEM)`, as any receive
-  error does. Returning pages does not refill the list the copy path
-  draws from (K4), so without the bound a connection whose payload comes
-  by the copy path could be armed for ever against an empty list. Every
-  such end adds to `Usage::area_short`, which therefore says "the copy
-  path found no page", not "the area is empty"; `docs/tcp.md` says so.
+- **`-ENOMEM` is retried for a bounded time.** A connection whose
+  receives end with `-ENOMEM` for `ConnOpts::with_no_page_timeout_ns`
+  (*new*, one second by default) since the first such end, with no byte
+  delivered to it in between, ends with `Why::of(-ENOMEM)`, as any
+  receive error does. Returning pages does not refill the list the copy
+  path draws from (K4), so without the bound a connection whose payload
+  comes by the copy path could be armed for ever against an empty list.
+  The bound is in time, not in tries (review of group 3): a count of
+  sixteen tries ended connections whose program held nothing, while the
+  kernel had not yet read their returns, and sooner the faster the
+  program polled. Every such end adds to `Usage::area_short`, which
+  therefore says "the copy path found no page", not "the area is empty";
+  `docs/tcp.md` says so.
 - **A full completion ring part-way through a credit.** A turn in which
   the backend found the completion ring full is reported by the backend
   (`Io::ring_was_full`, *new*, true until the next `tick`). On such a
@@ -682,7 +687,7 @@ counters.
 | Room in the refill ring | Returns wait in the backend's queue; `tick` writes what fits and asks the kernel to take them (K6), repeating until the queue is empty | the same `tick` |
 | Room in the completion ring, nothing delivered in the call | The receive ends with `-ENOSPC` (K3) and is armed again on the next `poll` for the rest of its credit; `Usage::rearmed` (*new*) counts it | the next `poll` |
 | Room in the completion ring, part-way through a call | The receive stays armed and may be silent (K3, not settled); on a turn the backend found the ring full, the set cancels and arms again every receive of the mode with credit left (C5) | the cancel's end |
-| Free pages for the kernel's copy | The receive ends with `-ENOMEM` (K4); the backend flushes the refill ring, and the receive is armed again on the next `poll`; `Usage::area_short` counts it; sixteen in a row with nothing delivered end the connection (C5) | the copy path's list has a page again (when: task 2.0), or the connection ends |
+| Free pages for the kernel's copy | The receive ends with `-ENOMEM` (K4); the backend flushes the refill ring, and the receive is armed again on the next `poll`; `Usage::area_short` counts it; for `with_no_page_timeout_ns` with nothing delivered they end the connection (C5) | the copy path's list has a page again (when: task 2.0), or the connection ends |
 | Pages in the area | The card drops and TCP repairs (K7); kept from happening by C7 as far as the program can; seen in the card's counters | pages are returned, and some time after |
 
 ### C12 The simulator's model
@@ -697,7 +702,7 @@ pieces, up to the receive's credit and the room in its completions:
   all occur;
 - now and then a piece through the copy path (K4), taken from a free list
   of its own that returns do not refill and that can stay empty for a
-  seeded time, also for longer than sixteen armings: `-ENOMEM`;
+  seeded time, also for many armings in a row: `-ENOMEM`;
 - a completion ring it finds full, seeded: `-ENOSPC` when nothing was
   delivered in the call, and, part-way through a call, a receive left
   armed and silent until it is cancelled and armed again or, seeded, a

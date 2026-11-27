@@ -14,6 +14,9 @@ use longshore_common::io::extents::Extent;
 use longshore_common::io::BufId;
 use std::net::{Ipv4Addr, SocketAddr};
 
+/// No time: what `no_page_since` holds while receives find pages.
+pub(super) const NEVER: u64 = u64::MAX;
+
 pub(super) const NONE: u32 = u32::MAX;
 
 /// For a step that is tried again later, or does not matter, when it fails.
@@ -168,12 +171,13 @@ pub(super) struct ConnState {
     /// Receiving in pages: bytes the armed receive may still bring; the
     /// page of a header kept for the decision, the run of the frame that
     /// is arriving in its pages, and the run of a whole frame waiting to
-    /// be pulled, each or `NONE`; and ends for want of a page in a row.
+    /// be pulled, each or `NONE`; and when its receives began to find no
+    /// page for the kernel's copy, with no byte since, or `NEVER`.
     pub(super) zc_want: u32,
     pub(super) hdr_page: u32,
     pub(super) zc_run: u32,
     pub(super) ready_run: u32,
-    pub(super) no_page: u8,
+    pub(super) no_page_since: u64,
     /// Bytes moved out of ring buffers the caller did not pull in time.
     pub(super) backlog: Option<Extent>,
     pub(super) backlog_off: u32,
@@ -244,7 +248,7 @@ impl ConnState {
             hdr_page: NONE,
             zc_run: NONE,
             ready_run: NONE,
-            no_page: 0,
+            no_page_since: NEVER,
             backlog: None,
             backlog_off: 0,
             backlog_len: 0,
