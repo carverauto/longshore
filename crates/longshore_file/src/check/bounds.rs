@@ -15,6 +15,7 @@ use longshore_common::io::{Io, Limits};
 
 pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     one_file_at_its_cap(make, root);
+    the_cap_is_per_file(make, root);
     a_sequence_needs_room_for_every_step(make, root);
     waiting_goes_first_in_first_out(make, root);
 }
@@ -71,6 +72,35 @@ fn one_file_at_its_cap<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) 
     rig.at_rest(2);
     assert_eq!(rig.close(b), Ok(0));
     assert_eq!(rig.close(c), Ok(0));
+    rig.at_rest(0);
+}
+
+/// With shared slots to spare, a file at its cap is `Full` all the same,
+/// and another file still starts as many as its own cap.
+fn the_cap_is_per_file<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
+    let roomy = FileSizes::new(2, 2)
+        .with_shared(4)
+        .with_paths(1)
+        .with_sequence_max(2)
+        .with_spans_max(4);
+    let mut rig = Rig::new(make, limits(), roomy);
+    let a = rig.open(&format!("{root}per-file-a.dat"), rw_create());
+    let b = rig.open(&format!("{root}per-file-b.dat"), rw_create());
+    let mut ts = Vec::new();
+    for f in [a, a, b, b] {
+        ts.push(must(sync(&mut rig, f), "within the cap"));
+    }
+    rig.refused("a at its cap", FileError::Full, |s, io, _| {
+        s.sync(io, a, true)
+    });
+    rig.refused("b at its cap", FileError::Full, |s, io, _| {
+        s.sync(io, b, true)
+    });
+    for t in ts {
+        assert_eq!(rig.done(t), Ok(0));
+    }
+    assert_eq!(rig.close(a), Ok(0));
+    assert_eq!(rig.close(b), Ok(0));
     rig.at_rest(0);
 }
 

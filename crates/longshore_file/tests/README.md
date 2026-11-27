@@ -51,10 +51,11 @@ model was promised, F9 by sealing every call of the set and the backend.
 | Submitted | given to the backend | whole → Reported | every suite |
 | Submitted | | short → Resuming | `contract::resumes::a_short_write_is_resumed_for_the_rest`, `…a_short_direct_write_resumes_from_its_last_whole_block`, `props` (`a_write_cut_short_any_number_of_times_ends_whole`), `model` (Reported, SyncFails, Torn) |
 | Submitted | | failed → Reported | `contract::faults::the_disks_errors_map_to_one_type`, `model` |
-| Resuming | a short transfer | the rest → Submitted | as above |
+| Resuming | a short transfer | the rest → Submitted | writes: as above. A read short before the end of the file: **not reached**, no backend in the tests returns one |
 | Resuming | a broken chain | every member reported → the rest Submitted | `contract::resumes::a_chain_broken_by_a_short_write_goes_on_in_order` (two chains seen), `check::sequences::a_short_read_is_not_a_failure` (a read at the end of the file breaks the backend's chain on every backend) |
 | Reported | its outcome decided | `next_event` returns it → Free | every suite; F2 and F10 in `model` |
 | (queue) | the event queue never overflows | | `model` (every run's events, up to every slot at once) |
+| Waiting | the steps behind a path step of a sequence, until it reports | | `check::sequences::steps_behind_a_path_step_wait_for_it`, `check::sequences::a_failure_ends_the_rest` (after a failed status the steps behind it are not performed, on the ring too) |
 
 ## C5, operations
 
@@ -71,6 +72,8 @@ model was promised, F9 by sealing every call of the set and the backend.
 | `status(path)` | a path slot | path buffer, status area | the size | `check::basics::paths`, `check::bounds::one_file_at_its_cap` (a second path operation `Full`), `model` (size against the model) |
 | `rename`, `unlink`, `mkdir` | a path slot | path buffer | 0 | `check::basics::paths` (and `NotFound`, `Exists`), `check::sequences::steps_of_several_files_and_a_path` (a rename as a step), `model` (names, and their durability after power loss) |
 | (paths) | longer than `path_max` or a NUL → `BadPath` | | | `check::refusals::bad_paths` (every operation that names a path, and a step; a path of `path_max` bytes taken) |
+| (steps) | a sequence's steps of any operation but open and close | | `Write`, `Read`, `Sync`, `Status`: `check::sequences::*`, `model`; `Rename`: `check::sequences::steps_of_several_files_and_a_path`. **Not reached** as steps: `WriteSpans`, `Reserve`, `Punch`, `Unlink`, `Mkdir` |
+| (pages) | a `Span::Page` that is no page of the receive area is `TooLarge` | | `check::refusals::past_the_plan_and_the_extent` |
 | (directories) | a directory is a file, synced to make a create or rename durable | | | `check::basics::paths`, `contract::power::power_loss_keeps_what_was_synced_…`, `model` (F8: a name is promised once its directories are synced) |
 
 ## C10, errors and poisoning
@@ -90,7 +93,7 @@ model was promised, F9 by sealing every call of the set and the backend.
 | `StaleExtent` | `check::refusals::extents_that_cannot_be_held`, `model` |
 | `TooManyHolds` | `check::refusals::extents_that_cannot_be_held` |
 | `Cancelled` | `check::sequences::a_failure_ends_the_rest` (and the cancelled write not performed), `model` (F5) |
-| `NoProgress` | `contract::resumes::an_error_after_some_bytes_is_partial_and_none_is_no_progress` (a direct write cut inside its first block; the simulator never cuts a buffered write to nothing), `props` |
+| `NoProgress` | `contract::resumes::an_error_after_some_bytes_is_partial_and_none_is_no_progress` (a direct write cut inside a block five times in a row; four times and it is written whole; outcomes of random cuts held to C6's rule), `props` (`a_direct_write_cut_short_ends_whole_or_without_progress`). A buffered write that completes with 0 bytes: **not reached**, the simulator never cuts a buffered write to nothing |
 | `Partial { done, kind }` | `contract::resumes::an_error_after_some_bytes_…` (`Io` and `NoProgress` after some bytes), `model` |
 | `NotFound`, `Exists` | `check::basics::*`, `model` |
 | `NoSpace`, `Unsupported` | `contract::faults::the_disks_errors_map_to_one_type` (refused reserve and punch), `model` (Reported) |
@@ -98,8 +101,11 @@ model was promised, F9 by sealing every call of the set and the backend.
 | `Io { errno }` | `contract::faults::the_disks_errors_map_to_one_type` (read, buffered write, read error), `model` |
 | `Denied` | **not reached**: no backend in the tests refuses an open for want of permission (the Linux checks run as root) |
 | `Invalid { errno }` | **not reached**: impossible after the set's checks; nothing makes a backend refuse what they let through |
-| `Os { errno }` | `check::refusals::bad_paths` reaches a backend with a name too long, but only asserts the path was taken |
-| a failed sync poisons whatever its errno, except `Unsupported` | the poisoning: as above; the exception **not reached**: no backend in the tests fails a sync `EOPNOTSUPP` |
+| `Os { errno }` | **not asserted**: `check::refusals::bad_paths` sends a name too long to every backend, and checks only that the set took it |
+| a failed sync poisons whatever its errno, except `Unsupported` | the poisoning, with `EIO`: as above. **Not reached**: a sync failing with another errno, and the `Unsupported` exception (no backend in the tests fails a sync so) |
+| a durable write failing `EIO`, `ENOSPC`, `EDQUOT` poisons and is `SyncFailed`; other errnos are their plain error and do not poison | `EIO`: `contract::faults::a_failed_durable_write_poisons_…`, `model` (no durable write's `EIO` reported plain). **Not reached**: `ENOSPC`, `EDQUOT` and other errnos on a durable write (the simulated disk fails writes `EIO` only) |
+| a step the backend refuses for want of a resource reports its own error and does not poison | **not reached**: the set's plan leaves no backend short of gather rows or slots in the tests |
+| `NoSpace` from a write | **not reached**: only a refused reserve gives `NoSpace` in the tests |
 | a failed sync: the bytes since the last good sync are not made durable by a later one | `model` (F8 in SyncFails: no promise after a failed sync of the file) |
 | a failed buffered write does not poison | `contract::faults::a_failed_durable_write_poisons_and_a_failed_buffered_one_does_not`, `contract::faults::the_disks_errors_map_to_one_type` |
 | reads stay allowed on a poisoned file | `contract::faults::a_failed_sync_poisons_…` |
@@ -122,6 +128,31 @@ nothing, takes no slot and no hold, and reports nothing.
 | `BadPath` | `check::refusals::bad_paths`, `alloc` |
 | `StaleExtent` | `check::refusals::extents_that_cannot_be_held`, `model` |
 | `TooManyHolds` | `check::refusals::extents_that_cannot_be_held` |
+
+## Mutation spot-checks (task 3.5)
+
+Each fault below was planted alone in `crates/longshore_file/src`, all
+four suites run (the model in debug, forty seeds a campaign), and the
+fault taken out again. A suite that fails caught it.
+
+| Fault planted | Where | contract | model | props | alloc |
+|---|---|---|---|---|---|
+| the per-file cap removed | `accept.rs`, `take_op` | fails (`bounds::the_cap_is_per_file`) | fails | fails (`no_file_takes_every_slot`) | passes |
+| the close not held back | `files.rs`, `close` | fails | fails | passes | fails |
+| direct-I/O rounding removed | `complete.rs`, the resume's block | fails | fails | fails | passes |
+| a resume sent from the buffer's start | `submit.rs`, `rw_op` | fails | fails | fails | passes |
+| holds not released when an operation reports | `complete.rs`, `finish` | fails | fails | fails | passes |
+| a stale handle accepted (generation not checked) | `accept.rs`, `live` | fails | fails | passes | passes |
+| no poisoning on a failed sync | `complete.rs`, `poison` | fails | fails | passes | passes |
+| waiting work submitted last in, first out | `submit.rs`, `launch`, `launch_chain` | fails (`bounds::waiting_goes_first_in_first_out`) | passes | passes | passes |
+| `power_lost` leaves one hold | `events.rs`, `reset` | fails | fails | passes | fails |
+| a refusal that submits before refusing | `files.rs`, `close` of a stale handle | fails | fails | passes | passes |
+
+The contract suite caught all ten, the first only once
+`bounds::the_cap_is_per_file` was added: before, its cap check let the
+shared slots run out first. The model misses waiting work out of order:
+it checks what waits only through the outcomes, and its squeezed room
+seldom leaves two operations waiting at once.
 
 ## Replaying the model test
 

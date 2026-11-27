@@ -7,7 +7,7 @@
 //! and no hold, and reports nothing: a stale handle, ranges past their
 //! extents and lengths of 0 (C9), more spans or steps than planned, bad
 //! paths, stale extents, an extent with every hold taken, and no free file
-//! slot.
+//! slot; a page span that is not a page of the receive area.
 
 use super::{bytes, limits, must, rw_create, sizes, tickets, Rig, EXTENT};
 use crate::{FileError, Span, Step};
@@ -92,6 +92,16 @@ fn past_the_plan_and_the_extent<IO: Io>(make: &mut impl FnMut(Limits) -> IO, roo
     let four = [sync; 4];
     let mut ts = tickets::<4>();
     rig.refused("4 steps", big, |s, io, x| s.sequence(io, x, &four, &mut ts));
+    // A page span must be a page of the receive area: the large buffer is
+    // none, on any backend.
+    let not_a_page = [Span::Page {
+        page: longshore_common::io::BufId::new(0),
+        off: 0,
+        len: 8,
+    }];
+    rig.refused("not a page", big, |s, io, x| {
+        s.write_spans(io, x, f, &not_a_page, 0)
+    });
     // At the bounds themselves, accepted.
     rig.fill(e, 0, &bytes(1, EXTENT as usize));
     let last = (e, EXTENT - 10, 10);
