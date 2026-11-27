@@ -154,6 +154,29 @@ against 25.7. On Arm it makes no difference. Sealing a body over itself
 instead of into a separate buffer is 1.2 to 1.6 times faster on x86, and
 the client does not do that (`m25-aes-gcm-memory.md`).
 
+## Files on one thread
+
+`file_bench` writes and reads one file through `longshore::file` and
+through the raw file operations, on the same backend and buffers. On a
+Mac (Apple M3 Max, internal SSD, APFS) with the portable backend, the
+two were level: over 108 cells of write sizes from 4 KiB to 1 MiB, one to
+16 operations in flight, buffered and direct, three ways to sync and two
+orders of offsets, the set's median over the raw path's is 0.99 to 1.00
+in GB/s and 1.00 to 1.02 in the thread's CPU a GB, by write size and
+direction. Medians of three runs of one second a cell
+(`m36-file-bench-macos.md`).
+
+| Pass, direct I/O, 16 in flight, sequential | `longshore::file` | Raw operations |
+|---|---|---|
+| Write, 1 MiB, synced at the end | 5.95 GB/s | 5.97 GB/s |
+| Read, 1 MiB | 3.47 GB/s | 3.65 GB/s |
+| Write, 64 KiB, a sync every 16 writes | 2,298 writes a second | 2,301 |
+| Write, 64 KiB, each write durable (`O_DSYNC`) | 32,112 writes a second | 32,602 |
+
+On that machine a sync, which flushes the drive's cache, took 5 to 13 ms
+and set the rate of the synced rows. The ring backend on Linux is not
+measured yet.
+
 ## Compared with the talk
 
 The talk's figures are from its slides. Its hardware differs from ours and

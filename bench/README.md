@@ -53,6 +53,26 @@ HTTP PUT and GET throughput uses `http_uring` the same way, against its own
 S3 against a real bucket uses `s3_uring`; see the header of
 `crates/longshore-bench/src/bin/s3_uring.rs`.
 
+## File I/O (`file_bench`)
+
+One thread writes and reads one file through `longshore::file`, and
+through the raw `Op::File*` operations for comparison, on `UringIo`
+(Linux) or `PosixIo` (macOS and Linux). It prints one JSON line a pass:
+GB/s, operations a second, latency percentiles of the operations and of
+the syncs, and the thread's CPU-seconds a GB. See the header of
+`crates/longshore-bench/src/bin/file_bench.rs` for the options.
+
+```sh
+cargo build --release -p longshore-bench --bin file_bench
+./target/release/file_bench --backend posix --direct --write-size 64k --depth 16 \
+    --sync-every 16 --random --file-size 256m --secs 1 --runs 3 --path /tmp/fb/f.dat
+```
+
+The file is made, reserved and written once before the measured passes,
+and removed at the end. The two APIs run in turn on it, their order
+swapped every run. `file_uring --throughput` and `file_uring --bench`
+measure the raw operations alone on the ring.
+
 ## Repeating runs
 
 Every program prints one JSON line per run. A single short run is a rough

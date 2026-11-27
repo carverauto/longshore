@@ -60,9 +60,11 @@ bytes transferred, the size for `status`, 0 for the rest, or the error.
 `file` is the new handle for an open, the file for a file operation and
 `None` for a path operation. Every accepted ticket reports exactly once,
 unless `power_lost` ended it.
-The event queue holds as many events as there are operation slots, and a
-slot is free again only once its event has been taken, so the queue cannot
-overflow: not pulling events is the backpressure.
+Each accepted operation takes a record: an operation slot, or for an open
+or a close the file slot's own record. The event queue holds one event a
+record, `ops + files` in all, and a record is free again only once its
+event has been taken, so the queue cannot overflow: not pulling events is
+the backpressure.
 
 `x` is the caller's `Extents` over the block-aligned class of the pool
 (see "Memory"). It is passed to every call that names a buffer, and to
@@ -97,7 +99,7 @@ Four files with up to four operations each, a write and its sync as one
 sequence, and the loop that drives it:
 
 ```rust
-use longshore::file::{Event, FileConfig, FileSizes, Files, Step};
+use longshore::file::{Event, FileConfig, FileSizes, Files, Step, Ticket};
 use longshore::io::extents::Extents;
 use longshore::io::posix::PosixIo;
 use longshore::io::{Completions, Io, Limits, OpenFlags};
@@ -113,7 +115,7 @@ let mut x = Extents::new(limits.aligned(0), 16);
 let mut out = Completions::new(limits.ops_max() as usize);
 
 let flags = OpenFlags::NONE.with_write(true).with_create(true).with_direct(true);
-let opening = files.open(&mut io, "/srv/app/log", flags).unwrap();
+let _: Ticket = files.open(&mut io, "/srv/app/log", flags).unwrap();
 let file = loop {
     io.tick(true, &mut out).unwrap();
     while let Some(c) = out.pop() {
@@ -134,14 +136,13 @@ let steps = [
     Step::Write { file, extent, at: 0, len: 4096, file_off: 0 },
     Step::Sync { file, data_only: true },
 ];
-let mut tickets = [opening; 2]; // overwritten with the sequence's tickets
+let mut tickets = [Ticket::NONE; 2];
 let n = files.sequence(&mut io, &mut x, &steps, &mut tickets).unwrap();
 ```
 
 `n` is 2. The two events that follow name `tickets[0]` and `tickets[1]`;
-the second says whether the block is durable. `tickets` has no tickets of
-its own to start with: `Ticket` has no public constructor, so the slice is
-filled with any ticket the caller has, and overwritten.
+the second says whether the block is durable. `Ticket::NONE` only fills
+the slice: no operation is given it and no event names it.
 
 ## Sizing
 
@@ -160,12 +161,13 @@ returns both: build the backend from the `Limits` and the set from the
 
 What the plan adds, with `ops = files + paths + shared`:
 
-| `Limits` | Added |
+| Count | Added |
 |---|---|
 | `ops_max` | `ops` |
 | `files_max` | `files` |
 | `gather_ops`, `gather_spans` | `ops` rows; spans the larger of what was there and `spans_max` |
 | small buffers | `files` (a path for each file's open), `paths` (the paths and status area of each path operation), `ops` (a list of spans for each operation slot) |
+| tokens | `FileConfig::tokens()` from `token_base`, one a record: `ops` operation records, and one a file slot for its open and close, `ops + files` in all |
 
 The plan does not add block-aligned buffers: those are the caller's,
 sized with `Limits::with_aligned_buffers` and lent through `Extents`, so
@@ -204,15 +206,18 @@ never reaches the file opened in the slot next; generations wrap at
 
 | State | Accepts | Left by |
 |---|---|---|
-| Free | `open` | an open accepted → Opening |
+| Free | `open`, once the event of its last close or failed open has been taken | an open accepted → Opening |
 | Opening | nothing | the open's completion: success → Open; failure → Free |
-| Open | every operation | `close` → Closing; a failed sync, or a failed write of a file opened with `with_dsync` → Poisoned |
+| Open | every operation | `close` → Closing; a failed sync, or a write of a file opened with `with_dsync` that fails with `EIO`, `ENOSPC` or `EDQUOT` → Poisoned |
 | Poisoned | `read_at` and `close`; the rest are refused `Poisoned` | `close` → Closing |
 | Closing | nothing (`Closing`) | the close's completion → Free |
 
 A close is held back until every other operation of the file has
-reported, and is then submitted in the file's own slot, so `close` is
-never `Full`. A close that fails is reported in its event, and the slot is
+reported, and is then submitted in the room of the file's own slot at the
+backend, so `close` is never `Full`. Opens and closes have records of
+their own, one a file slot, so a file's own slot still holding an event
+not yet taken never makes them wait. Operations accepted before the close
+still run. A close that fails is reported in its event, and the slot is
 freed all the same.
 
 ## Operations
@@ -241,7 +246,8 @@ inside is refused `BadPath`.
 
 A gathered write takes up to `spans_max` spans, each `Span::Extent {
 extent, at, len }`, held by the set, or `Span::Page { page, off, len }`,
-a page of the receive area that the caller holds until the write's event
+a page of the receive area (any other buffer is refused `TooLarge`) that
+the caller holds until the write's event
 (`longshore::tcp`'s `WriteHold`). A frame received into pages
 (`Rx::ZeroCopy`) is so written to a file without a copy.
 
@@ -259,8 +265,11 @@ ends (a read) or an error ends it. The event says how much was moved.
   bytes ends `NoProgress`; a read that completes with 0 before the end it
   asked for has reached the end of the file, and reports what it read.
 - On a direct-I/O file, a short write resumes from what was written
-  rounded down to a block, rewriting the same bytes from the same buffer;
-  a short read that ends off a block boundary is the end of the file.
+  rounded down to a block, rewriting the same bytes from the same buffer.
+  One that wrote less than a block is written again from the same offset;
+  four such writes in a row with no whole block between them end
+  `NoProgress`, so resumes are bounded. A short read that ends off a block
+  boundary is the end of the file.
 - An error after some bytes were moved ends the transfer
   `Partial { done, kind }`; with none moved, the plain error.
 
@@ -284,6 +293,11 @@ simulator order them themselves).
   rest as a new chain.
 - When a step fails, the steps after it are not performed and report
   `Cancelled`. Every step reports.
+- The checks leave the backend nothing to refuse of the steps themselves.
+  Should it refuse the chain all the same for want of its own room
+  (another component took room the plan gave the set), the refused step
+  reports `Os { errno }`, the others `Cancelled`, and no file is poisoned
+  by it.
 - A sequence waiting for room is not overtaken: waiting work is submitted
   first in, first out.
 
@@ -363,9 +377,10 @@ its cache; only a sync flushes that.
 A failed sync poisons the file. Every failure of a sync is
 `SyncFailed { errno }`, whatever its errno, except `Unsupported`: a failed
 write-back can come as `EIO`, as `ENOSPC` or as another errno, and the
-portable backend reports what it does not know as `EIO`. Any failed write
-of a file opened with `with_dsync` is a failed sync too, and poisons the
-same way.
+portable backend reports what it does not know as `EIO`. A write of a
+file opened with `with_dsync` that fails with `EIO`, `ENOSPC` or `EDQUOT`
+is a failed sync too: it reports `SyncFailed` and poisons the same way.
+Other errors of such a write are reported as they are and do not poison.
 
 The reason is the kernel's. When write-back of a dirty page fails, Linux
 reports the error to the next sync and may then drop the page or mark it
@@ -387,7 +402,8 @@ file, or stop.
 On the simulator, `SimIo::power_loss` drops every operation in flight
 without a completion. `Files::power_lost(&mut x)` is the set's half of it:
 it frees every file and operation slot, raises every generation, drops
-waiting work and releases every hold, and allocates nothing. The tickets
+waiting work and the events not yet taken, releases every hold, and
+allocates nothing. The tickets
 in flight end without events and every handle is stale. The program then
 opens its files again and recovers.
 
@@ -430,15 +446,17 @@ Reported in an event:
 | Error | Meaning |
 |---|---|
 | `Cancelled` | A step of a sequence after one that failed |
-| `NoProgress` | A write that completed with no byte written |
+| `NoProgress` | A write that completed with no byte written, or on a direct-I/O file four in a row with no whole block |
 | `Partial { done, kind }` | A transfer ended by `kind` after `done` bytes |
 | `NotFound`, `Exists`, `Denied`, `NoSpace`, `Unsupported` | `ENOENT`; `EEXIST`; `EACCES` or `EPERM`; `ENOSPC` or `EDQUOT`; `EOPNOTSUPP` |
-| `SyncFailed { errno }` | A sync failed, and the file is Poisoned |
+| `SyncFailed { errno }` | A sync failed, or a durable write with `EIO`, `ENOSPC` or `EDQUOT`; the file is Poisoned |
 | `Io { errno }` | `EIO` outside a sync |
 | `Invalid { errno }` | `EINVAL` or `EBADF`: after the set's checks, a file system that refuses what was asked (direct I/O), or a bug |
 | `Os { errno }` | Any other errno |
 
-`ErrorKind`, inside `Partial`, names the same errors without `Partial`.
+`ErrorKind`, inside `Partial`, names the errors a transfer can end with
+after bytes were moved: `Poisoned`, `NoProgress`, `NoSpace`, `Unsupported`,
+`SyncFailed`, `Io`, `Invalid` and `Os`; any other comes as `Os { errno }`.
 
 `Files::usage()` reports the file slots and operation slots in use, the
 operations waiting for room, and `broken_holds`.
@@ -448,8 +466,28 @@ operations waiting for room, and `broken_holds`.
 The defaults of `FileSizes` are a shared slot for every file (with every
 file busy, two operation slots a file on average), four path slots,
 sequences as long as a file's share, and 64 spans a gathered write. None
-is from a measurement yet. `file_bench` in `crates/longshore-bench`
-measures the set against the raw operations on one thread:
+is from a measurement: the runs so far size the set themselves.
+
+What has been measured is the set's cost. On a Mac's portable backend,
+one file, writes and reads of 4 KiB to 1 MiB, one to 16 in flight,
+buffered and direct, synced at the end, every 16 writes or durable each,
+the set moved as many GB/s for as much CPU a GB as the raw operations: the
+median of the set over the raw path, over the 36 cells of each size and
+direction, is 0.99 to 1.00 in GB/s and 1.00 to 1.02 in CPU a GB, three
+runs of one second a cell; the cells where the two differ most differ both
+ways, and within the spread of each API's own runs
+(`bench/results/m36-file-bench-macos.md`). Costs of a few
+percent and the ring backend are not measured yet.
+
+How a program makes its writes durable is its own choice, and the
+crate's figures say nothing of it beyond the drive's: on that Mac a sync
+(`F_FULLFSYNC`) took 5 to 13 ms, so a sync every 16 writes held either
+API to 1,200 to 2,700 writes a second, while durable writes
+(`with_dsync`), which there do not flush the drive's cache, ran 4,000 to
+44,000 a second.
+
+`file_bench` in `crates/longshore-bench` measures the set against the raw
+operations on one thread:
 
 ```text
 file_bench [--backend uring|posix] [--api file|raw|both] [--phase write|read|both]
@@ -461,8 +499,7 @@ It prints one JSON line a pass, with GB/s, operations a second, the
 latency percentiles of the operations and of the syncs, and the thread's
 CPU-seconds a GB. The two APIs run in turn on the same file, their order
 swapped every run, since whichever runs second finds the file as the first
-left it. Results on a Mac and on a DGX Spark's NVMe are to be recorded in
-`bench/results/`.
+left it. The DGX Spark's NVMe, on the ring, is still to be measured.
 
 ## How it is checked
 
