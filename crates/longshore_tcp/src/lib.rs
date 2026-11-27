@@ -17,9 +17,9 @@
 //! sent back from the memory it was received into:
 //!
 //! ```
-//! use longshore_common::io::{Completions, Io, Limits};
 //! use longshore_tcp::{
-//!     Config, ConnOpts, Event, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, Sizes,
+//!     Completions, Config, ConnOpts, Event, Framing, HeaderFraming, Io, KernelTransport, Limits,
+//!     ListenConfig, Net, Sizes,
 //! };
 //! use std::net::SocketAddr;
 //!
@@ -93,3 +93,10 @@ pub use net::{Coverage, Frame, Net, Paged, Pages, Run, Spans, Usage, WriteHold};
 pub use transport::{
     Happened, Lend, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED,
 };
+
+/// The I/O layer the set runs on, from `longshore_common`: the backends,
+/// [`Limits`], the buffer pools and completions. Re-exported, with the
+/// names the set's own calls take, so that a program using this crate
+/// needs no other.
+pub use longshore_common::io;
+pub use longshore_common::io::{Completion, Completions, Io, Limits};
