@@ -222,13 +222,15 @@ freed all the same.
 
 ## Operations
 
+Each call takes the backend, `&mut io`, first; the table leaves it out.
+
 | Operation | Needs | The set holds while it is in flight | `u64` of the result |
 |---|---|---|---|
 | `open(path, flags)` | a free file slot | its path buffer | 0; the `File` is in `file` |
 | `close(file)` | – | – | 0 |
-| `read_at(file, x, (extent, at, len), file_off)` | not opened write-only | the extent | bytes read; fewer only at the end of the file |
-| `write_at(file, x, (extent, at, len), file_off)` | opened for writing | the extent | bytes written: all, or an error |
-| `write_spans(file, x, &[Span], file_off)` | opened for writing | each extent span; the slot's span list | as `write_at` |
+| `read_at(x, file, (extent, at, len), file_off)` | not opened write-only | the extent | bytes read; fewer only at the end of the file |
+| `write_at(x, file, (extent, at, len), file_off)` | opened for writing | the extent | bytes written: all, or an error |
+| `write_spans(x, file, &[Span], file_off)` | opened for writing | each extent span; the slot's span list | as `write_at` |
 | `sync(file, data_only)` | – | – | 0 |
 | `reserve(file, (off, len), keep_size)` | opened for writing, `len > 0` | – | 0; best effort on macOS |
 | `punch(file, (off, len))` | opened for writing, `len > 0`, whole blocks | – | 0 |
