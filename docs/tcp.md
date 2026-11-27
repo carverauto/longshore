@@ -4,7 +4,7 @@
 straight over TCP: replication, messaging, a database's own wire protocol.
 It gives a fixed set of connections and listeners, whole frames, and frame
 memory that a log and other connections can use without copying. This page
-describes the API, the two ways of receiving, TLS, and how to size it.
+describes the API, the three ways of receiving, TLS, and how to size it.
 
 ## What it is
 
@@ -220,7 +220,11 @@ found more closely. The backend's ring of returns is sized by the pieces that ca
 out, not by the area, so a large spare costs pages and nothing more. The
 plan gives no room for gathered writes: a program that writes frames in
 pages adds `Limits::with_gather(writes, pages a frame + 1)` itself, a
-write in flight a row. The plan also refuses a set with fewer frame buffers than
+write in flight a row. The area holds what one turn of the completion
+ring can bring, and the ring grows with every operation planned on the
+backend: plan a set of the mode after the components that add
+operations (files, an object storage client); a `Net` planned on top of
+it grows the area itself. The plan also refuses a set with fewer frame buffers than
 connections: every connection of the mode takes its frame memory before
 its body is asked for, so that a frame that falls out of step can always
 be moved at once.
@@ -247,7 +251,7 @@ of about 110 Gb/s, one receiving core
 |---|---|---|
 | Frames of whole 4 KiB blocks, MTU 8244, sender with `with_frame_on_packet` | `Rx::ZeroCopy` | 99.9 % of frames or more kept in their pages; the receiving thread's CPU a GB about 0.7 of direct mode's at 64 KiB and 0.6 at 1 MiB |
 | Large frames that do not line up (MTU 9000) | `Rx::Direct` | almost no frame lines up, and moving them costs zero-copy more: 1 MiB frames 0.134 CPU-s a GB direct against 0.18 |
-| Small frames, and requests and answers | `Rx::Ring` or `Rx::Direct` | no frame is kept below `zc_min_frame`, and zero-copy cost the most a frame and had a longer tail in two runs of three |
+| Small frames, and requests and answers | `Rx::Ring` or `Rx::Direct` | no frame is kept below `Sizes::with_zc_min_frame`, and zero-copy cost the most a frame and had a longer tail in two runs of three |
 
 Where the link or the sender sets the rate, the mode decides the CPU a
 GB, not the GB/s.
@@ -356,6 +360,9 @@ from the `Config`. Plan several components one on top of the other.
 | `with_spans(n)` | Queued sends per connection | 16 |
 | `with_zero_copy_min(bytes)` | Sends at least this long are zero-copy | 16 KiB |
 | `with_zero_copy_sends(per_connection, in_all)` | Zero-copy sends whose memory the kernel still reads, a connection and in the whole set; each is an operation of the backend until it is back | 4 and 256 |
+| `with_zc(pages, frames, pieces)` | Room for `Rx::ZeroCopy`: pages frames in pages may hold at once, such frames at once, records of their pieces; with pages, a frame buffer for every connection | 0, 0, 0 (no connection may ask for the mode) |
+| `with_zc_min_frame(bytes)` | A frame shorter than this is moved into frame memory, never kept in its pages | 4 KiB |
+| `with_zc_spare(pages)` | Pages of the area more, for what the kernel holds in the card's ring and the sockets' receive queues | 0 |
 | `with_tls(on)` | Room for TLS; segments are then at least `TLS_SEGMENT_MIN` (36 KiB) | off |
 | `with_token_base(base)` | The first of the set's tokens; it uses `Config::tokens()` of them | 0 |
 
