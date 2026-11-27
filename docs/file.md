@@ -547,8 +547,8 @@ Faults planted one at a time in the crate, and the suites that caught
 them, are in `crates/longshore_file/tests/README.md`, with the rows of the
 contract's tables no test reaches: errors no backend here can produce
 (`Denied`, a sync failing with an errno other than `EIO`, durable writes
-failing with `ENOSPC` or `EDQUOT`), generations wrapping, a short read
-before the end of the file, and some sequence steps. The contract, its
+failing with `ENOSPC` or `EDQUOT`), generations wrapping, and some
+sequence steps. The contract, its
 state tables and invariants are in
 `openspec/changes/archive/2026-11-27-add-file-crate/design.md`; the
 requirements in `openspec/specs/file-io/spec.md`.

@@ -118,9 +118,17 @@ fn write_sync_read_back<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str)
     whole.resize(9000, 0);
     whole.extend_from_slice(&b);
     assert_eq!(rig.read(f, 0, 12_000), (Ok(12_000), whole.clone()));
-    // Reads the backend completes short, before the end, are resumed.
+    // Reads the backend completes short, before the end, are resumed:
+    // halved three times, the read is sent four times at least.
     rig.io().cut_reads(3);
+    let first = rig.io().submitted();
     assert_eq!(rig.read(f, 0, 12_000), (Ok(12_000), whole));
+    let reads = rig
+        .io()
+        .since(first)
+        .filter(|s| matches!(s.op(), Op::FileRead { .. }))
+        .count();
+    assert!(reads >= 4, "a read cut three times sent {reads} times");
     rig.io().cut_reads(1);
     assert_eq!(rig.read(f, 11_000, 4000), (Ok(1000), b[2000..].to_vec()));
     rig.io().cut_reads(0);
