@@ -127,7 +127,7 @@ fn a_kept_frame_goes_to_disk_as_one_write_of_whole_blocks() {
             len += whole;
         }
         // The write's hold alone keeps the pages from here.
-        w.server.runs().hold(run_of).unwrap();
+        let write_hold = w.server.runs().hold(run_of).unwrap();
         w.server.release(f);
         let write = Op::FileWriteSpans {
             slot: FILE,
@@ -138,7 +138,7 @@ fn a_kept_frame_goes_to_disk_as_one_write_of_whole_blocks() {
             file_off: 0,
         };
         assert_eq!(run(&mut w, write), len.cast_signed());
-        assert_eq!(w.server.runs().release(run_of), Ok(true));
+        assert_eq!(w.server.runs().release(write_hold), Ok(true));
         let read = Op::FileRead {
             slot: FILE,
             buf: back.buf(),

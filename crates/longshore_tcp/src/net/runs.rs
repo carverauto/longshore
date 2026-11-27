@@ -29,6 +29,27 @@ pub struct Run {
     generation: u32,
 }
 
+/// A file write's hold on a run, from [`Pages::hold`], given back with
+/// [`Pages::release`], which takes it. It cannot be copied or made outside
+/// the `Net`: no write can give back another's, nor its own twice.
+#[must_use = "a hold never given back keeps the run's pages from the card"]
+#[derive(PartialEq, Eq, Debug)]
+pub struct WriteHold {
+    run: Run,
+    once: Once,
+}
+
+/// What makes a [`WriteHold`] move, not copy, wherever it goes.
+#[derive(PartialEq, Eq, Debug)]
+struct Once;
+
+impl WriteHold {
+    /// The run held.
+    pub const fn run(&self) -> Run {
+        self.run
+    }
+}
+
 /// One piece of a run: `len` bytes of `page` from `off`.
 #[derive(Clone, Copy)]
 pub(super) struct Rec {
@@ -140,18 +161,22 @@ impl Pages {
         }
     }
 
-    /// Add a hold to `run` for something outside the `Net` that reads its
+    /// A hold on `run` for something outside the `Net` that reads its
     /// pages: a file write, until it and its sync have completed.
-    pub fn hold(&mut self, run: Run) -> Result<(), NetError> {
+    pub fn hold(&mut self, run: Run) -> Result<WriteHold, NetError> {
         let state = self.live(run).ok_or(NetError::Stale)?;
         state.holds = state.holds.checked_add(1).ok_or(NetError::Stale)?;
-        Ok(())
+        Ok(WriteHold { run, once: Once })
     }
 
-    /// Drop a hold taken with [`Pages::hold`]. Whether the run's pages
-    /// went back with it: the caller's hold was gone already, and this
-    /// was the last of the others.
-    pub fn release(&mut self, run: Run) -> Result<bool, NetError> {
+    /// Give back a hold [`Pages::hold`] gave. Whether nothing holds the
+    /// run any longer: the caller's hold was gone already, and this was the
+    /// last of the others; its pages then go back to the card at the next
+    /// `poll`. Stale for a run the set gave back whole meanwhile
+    /// (`Net::give_back_all`).
+    pub fn release(&mut self, hold: WriteHold) -> Result<bool, NetError> {
+        // Taken apart, the hold is gone: it cannot be given back again.
+        let WriteHold { run, once: _spent } = hold;
         let state = self.live(run).ok_or(NetError::Stale)?;
         state.holds = state.holds.checked_sub(1).ok_or(NetError::Stale)?;
         Ok(self.settle(run.index))

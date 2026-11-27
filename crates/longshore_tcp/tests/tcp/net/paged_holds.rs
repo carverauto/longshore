@@ -57,7 +57,7 @@ fn a_write_holds_the_pages_past_the_callers_release() {
         let (f, sent) = one_in_pages(&mut w, pair);
         let run = f.run().unwrap();
         let spans: Vec<Span> = w.server.pages(&f).unwrap().collect();
-        w.server.runs().hold(run).unwrap();
+        let write = w.server.runs().hold(run).unwrap();
         w.server.release(f);
         settle(&mut w);
         // The write still reads them: the pieces are out, the bytes stay.
@@ -71,8 +71,9 @@ fn a_write_holds_the_pages_past_the_callers_release() {
         // The caller's hold is gone: its release and hold are stale.
         w.server.release(f);
         assert_eq!(w.server.hold(&mut w.io, f), Err(NetError::Stale));
-        assert_eq!(w.server.runs().release(run), Ok(true));
-        assert_eq!(w.server.runs().release(run), Err(NetError::Stale));
+        assert_eq!(w.server.runs().release(write), Ok(true));
+        // A second release of the write's hold cannot be written: it was
+        // moved into the first.
         settle(&mut w);
         none_out(&mut w);
     }
@@ -85,7 +86,7 @@ fn hold_copies_into_frame_memory_once_and_the_write_keeps_the_pages() {
         let pair = paired(&mut w);
         let (f, sent) = one_in_pages(&mut w, pair);
         let run = f.run().unwrap();
-        w.server.runs().hold(run).unwrap();
+        let write = w.server.runs().hold(run).unwrap();
         let copy = w.server.hold(&mut w.io, f).unwrap();
         assert!(copy.extent().is_some() && copy.run().is_none());
         // The run is no longer the caller's: only the write holds it.
@@ -95,7 +96,7 @@ fn hold_copies_into_frame_memory_once_and_the_write_keeps_the_pages() {
         w.server.release(f);
         settle(&mut w);
         assert!(out(&mut w) > 0);
-        assert_eq!(w.server.runs().release(run), Ok(true));
+        assert_eq!(w.server.runs().release(write), Ok(true));
         settle(&mut w);
         none_out(&mut w);
         assert_eq!(read(&mut w, &copy), Some(sent));
@@ -144,7 +145,7 @@ fn a_frame_of_a_closed_connection_stays_until_its_holds_are_gone() {
         let (c, s) = paired(&mut w);
         let (f, sent) = one_in_pages(&mut w, (c, s));
         let run = f.run().unwrap();
-        w.server.runs().hold(run).unwrap();
+        let write = w.server.runs().hold(run).unwrap();
         w.server.close(&mut w.io, s).unwrap();
         w.client.close(&mut w.io, c).unwrap();
         for _ in 0..1000 {
@@ -159,7 +160,7 @@ fn a_frame_of_a_closed_connection_stays_until_its_holds_are_gone() {
         w.server.release(f);
         settle(&mut w);
         assert!(out(&mut w) > 0, "the write still holds the run");
-        assert_eq!(w.server.runs().release(run), Ok(true));
+        assert_eq!(w.server.runs().release(write), Ok(true));
         settle(&mut w);
         none_out(&mut w);
     }
@@ -171,7 +172,7 @@ fn a_set_given_back_whole_returns_every_piece() {
         let mut w = world(seed, Faults::NONE);
         let pair = paired(&mut w);
         let (f, _) = one_in_pages(&mut w, pair);
-        w.server.runs().hold(f.run().unwrap()).unwrap();
+        let _write = w.server.runs().hold(f.run().unwrap()).unwrap();
         // And frames on their way, with pieces in runs and headers.
         for i in 0..3 {
             let _queued: bool = send(&mut w, pair.0, &prefixed(4092, i));
@@ -181,6 +182,38 @@ fn a_set_given_back_whole_returns_every_piece() {
         }
         w.server.give_back_all(&mut w.io);
         assert!(w.server.pages(&f).is_none());
+        assert_eq!(w.io.pieces_out(), (0, 0));
+    }
+}
+
+#[test]
+fn two_writes_hold_the_pages_until_both_are_done() {
+    for seed in 0..10 {
+        let mut w = world(seed, Faults::NONE);
+        let pair = paired(&mut w);
+        let (f, _) = one_in_pages(&mut w, pair);
+        let run = f.run().unwrap();
+        let first = w.server.runs().hold(run).unwrap();
+        let second = w.server.runs().hold(run).unwrap();
+        w.server.release(f);
+        assert_eq!(w.server.runs().release(first), Ok(false));
+        settle(&mut w);
+        assert!(out(&mut w) > 0, "the second write still reads the pages");
+        assert_eq!(w.server.runs().release(second), Ok(true));
+        settle(&mut w);
+        none_out(&mut w);
+    }
+}
+
+#[test]
+fn a_hold_given_back_after_the_set_gave_back_all_is_stale() {
+    for seed in 0..10 {
+        let mut w = world(seed, Faults::NONE);
+        let pair = paired(&mut w);
+        let (f, _) = one_in_pages(&mut w, pair);
+        let write = w.server.runs().hold(f.run().unwrap()).unwrap();
+        w.server.give_back_all(&mut w.io);
+        assert_eq!(w.server.runs().release(write), Err(NetError::Stale));
         assert_eq!(w.io.pieces_out(), (0, 0));
     }
 }

@@ -191,8 +191,10 @@ mode's bookkeeping: the mode pays only where frames line up.
 **Reading and holding.** `Net::pages(&frame)` yields the frame's spans in
 order, its whole pages and then its tail block; `Net::bytes` and
 `Frame::span` are `None` for such a frame, and `Frame::run()` names it. A
-file write takes a hold of its own with `net.runs().hold(run)` and gives it
-back with `net.runs().release(run)` when its write and sync are done; the
+file write takes a hold of its own with `net.runs().hold(run)`, a
+`WriteHold`, and gives that back with `net.runs().release(hold)` when its
+write and sync are done; a hold cannot be copied, so no write gives back
+another's, and one not given back keeps its pages from the card; the
 pages go back to the card when the caller has released the frame and no
 write holds it. `Op::FileWriteSpans` writes the spans as one gathered
 write, with direct I/O. `hold` copies a frame in pages into frame memory

@@ -51,7 +51,7 @@ mod zc;
 pub use cover::Coverage;
 pub use frames::Frame;
 pub use paged::Spans;
-pub use runs::{Pages, Run};
+pub use runs::{Pages, Run, WriteHold};
 pub use usage::{Paged, Usage};
 
 /// Connections and listeners over a transport `T`.

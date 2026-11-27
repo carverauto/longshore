@@ -500,9 +500,11 @@ frame is moved; nothing is wrong. Task 5.1 measures the share through
 ### C6 Holds, `Frame`, and writing a frame in pages
 - **Two kinds of hold.** A run has the **caller's hold**, one bit, set
   when `next_frame` delivers the frame, and a **count of other holds**,
-  one for each file write that takes one with `net.pages().hold(run)`
-  (*new*, the twin of `net.extents().hold(..)`), given back with
-  `net.pages().release(run)` (*new*) when its write and sync are done.
+  one for each file write that takes one with `net.runs().hold(run)`
+  (*new*, the twin of `net.extents().hold(..)`), which gives the write a
+  `WriteHold` that cannot be copied, given back with
+  `net.runs().release(hold)` (*new*) when its write and sync are done, so
+  that no write gives back another's hold (review of group 3).
   The caller gets the run of a frame from `Frame::run()` (*new*; `None`
   for a frame in frame memory). The run's pieces are returned, its tail
   block and its share of the page budget freed, and its generation
