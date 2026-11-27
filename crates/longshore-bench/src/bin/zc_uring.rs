@@ -7,9 +7,11 @@
 //! from `tcp_uring bulk`, received into the pages of an area registered for
 //! one receive queue of one interface.
 //!
-//!   zc_uring check  <interface> <queue> <address:port> [options]
-//!   zc_uring log    <interface> <queue> <address:port> --file PATH [options]
-//!   zc_uring refuse <interface> <queue> <address:port> [options]
+//! ```text
+//! zc_uring check  <interface> <queue> <address:port> [options]
+//! zc_uring log    <interface> <queue> <address:port> --file PATH [options]
+//! zc_uring refuse <interface> <queue> <address:port> [options]
+//! ```
 //!
 //!   --frame N    bytes a frame, as the sender's --frame (65536)
 //!   --pages N    pages of the area (16384: 64 MiB)
