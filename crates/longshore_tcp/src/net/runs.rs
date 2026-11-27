@@ -124,11 +124,16 @@ impl Pages {
             len: 0,
             tail: NONE,
         };
-        let recs = s.zc_pieces;
+        // Without pages no connection reads in them: no tables either.
+        let (frames, recs) = if s.zc_pages == 0 {
+            (0, 0)
+        } else {
+            (s.zc_frames, s.zc_pieces)
+        };
         Pages {
-            runs: vec![quiet; s.zc_frames as usize].into_boxed_slice(),
-            run_free: (0..s.zc_frames).rev().collect(),
-            run_free_len: s.zc_frames as usize,
+            runs: vec![quiet; frames as usize].into_boxed_slice(),
+            run_free: (0..frames).rev().collect(),
+            run_free_len: frames as usize,
             // Free records are chained through `next`.
             recs: (0..recs)
                 .map(|i| Rec {
@@ -140,13 +145,13 @@ impl Pages {
                 .collect(),
             rec_free: if recs == 0 { NONE } else { 0 },
             recs_out: 0,
-            tail_free: (0..s.zc_frames).rev().collect(),
-            tail_free_len: s.zc_frames as usize,
+            tail_free: (0..frames).rev().collect(),
+            tail_free_len: frames as usize,
             tail_first: cfg.tail_first,
             tails_per_buf: (s.frame_size / Limits::PAGE).max(1),
             budget: s.zc_pages,
             pages_max: s.zc_pages,
-            retired: vec![0; s.zc_frames as usize].into_boxed_slice(),
+            retired: vec![0; frames as usize].into_boxed_slice(),
             retired_len: 0,
             // A header a connection: a slot holds one at a time, and what
             // it gives up goes back with the completion it came in, or

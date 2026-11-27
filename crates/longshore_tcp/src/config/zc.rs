@@ -51,10 +51,21 @@ pub(super) fn check(s: &Sizes, conns: u32) -> Result<(), ConfigError> {
 
 /// `limits` with the receive area a set of `conns` connections asks for,
 /// and an operation a connection more: the cancel of a receive that a
-/// full completion ring left silent.
-pub(super) fn area(limits: Limits, s: &Sizes, conns: u32) -> Limits {
+/// full completion ring left silent. `base_ops` are the operations the
+/// limits had before the set's own.
+///
+/// A set without pages planned on top of an area grows it all the same:
+/// its operations lengthen the completion ring, and a turn can then bring
+/// two more pieces an operation to the sets of the mode below it.
+pub(super) fn area(limits: Limits, base_ops: u32, s: &Sizes, conns: u32) -> Limits {
     if s.zc_pages == 0 {
-        return limits;
+        if limits.area_pages() == 0 {
+            return limits;
+        }
+        let more = limits.ops_max().saturating_sub(base_ops).saturating_mul(2);
+        return limits
+            .with_area_pages(limits.area_pages().saturating_add(more))
+            .with_area_pieces(limits.area_pieces().saturating_add(more).min(PIECES_MOST));
     }
     let ops = limits.ops_max().saturating_add(conns);
     // What one turn can bring: a ring reports as many completions as it

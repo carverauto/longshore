@@ -102,19 +102,16 @@ impl Config {
     /// `Net::new`.
     pub fn plan(base: Limits, sizes: Sizes) -> Result<(Limits, Config), ConfigError> {
         let s = sizes;
+        let add = |a: u32, b: u32| a.checked_add(b).ok_or(ConfigError::TooSmall);
         let (conns, headers_per_buf) = Config::check(&base, &s)?;
         let header_bufs = conns.div_ceil(headers_per_buf);
         // With TLS, two buffers per connection follow the header areas.
         let tls_bufs = if s.tls { conns.saturating_mul(2) } else { 0 };
-        let small = s
-            .segments
-            .checked_add(header_bufs)
-            .and_then(|n| n.checked_add(tls_bufs))
-            .ok_or(ConfigError::TooSmall)?;
+        let small = add(add(s.segments, header_bufs)?, tls_bufs)?;
         let sock_base = base.sockets_max();
-        let socks = conns
-            .checked_add(s.listeners)
-            .ok_or(ConfigError::TooSmall)?;
+        let socks = add(conns, s.listeners)?;
+        // The tail blocks follow the frame buffers.
+        let tail_at = add(base.aligned_buffers(), s.frames)?;
         // Per connection: a receive, a send, and a connect, close, shutdown
         // or cancel; per listener: an accept and a close; and the
         // zero-copy sends whose memory is still read.
@@ -123,16 +120,16 @@ impl Config {
             .saturating_add(s.listeners.saturating_mul(2))
             .saturating_add(s.lent_most(conns));
         let mut limits = base
-            .with_sockets_max(sock_base + socks)
+            .with_sockets_max(add(sock_base, socks)?)
             .with_block_size(base.block_size().max(4096))
-            .with_aligned_buffers(base.aligned_buffers() + s.frames + zc::tail_bufs(&s))
+            .with_aligned_buffers(add(tail_at, zc::tail_bufs(&s))?)
             .with_aligned_buffer_size(s.frame_size)
-            .with_small_buffers(base.small_buffers() + small)
+            .with_small_buffers(add(base.small_buffers(), small)?)
             .with_small_buffer_size(s.segment_size)
             .with_ring_buffers(base.ring_buffers().max(s.ring_buffers))
             .with_ring_buffer_size(s.ring_buffer_size)
             .with_ops_max(base.ops_max().saturating_add(ops));
-        limits = zc::area(limits, &s, conns);
+        limits = zc::area(limits, base.ops_max(), &s, conns);
         if s.accepts > 0 {
             limits = limits
                 .with_accept_range_start(sock_base + s.listeners + s.connects)
@@ -150,7 +147,7 @@ impl Config {
             tls_first: BufId::new(0),
             ring_first: BufId::new(0),
             ring_count: 0,
-            tail_at: base.aligned_buffers() + s.frames,
+            tail_at,
             tail_first: BufId::new(0),
             tail_bufs: zc::tail_bufs(&s),
             area_first: BufId::new(0),

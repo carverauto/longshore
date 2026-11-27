@@ -148,6 +148,12 @@ impl Sizes {
     /// delivered as, at least two a frame in the usual case. All zero by
     /// default: no connection may then ask for the mode. With pages, a
     /// set needs a frame buffer for every connection it can have.
+    ///
+    /// The area is sized for what one turn of the backend's completion
+    /// ring can bring, which grows with its operations: plan such a set
+    /// after the other components of the backend that add operations
+    /// (files, an object storage client). A `Net` planned on top of it
+    /// grows the area by itself.
     #[must_use]
     pub const fn with_zc(mut self, pages: u32, frames: u32, pieces: u32) -> Sizes {
         (self.zc_pages, self.zc_frames, self.zc_pieces) = (pages, frames, pieces);
