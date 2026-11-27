@@ -21,8 +21,8 @@ NVMe), ext4. Measured 2026-11-27. Raw lines:
   the latency of a write or read, from submission to completion, of the
   first run (the histogram is within about 3 %).
 - Built from `add-file-crate` at 165bf19, before the fixes of the review
-  of groups 1 and 2, which do not touch the transfer path; the scripts:
-  `bench/spikes/zcrx/group5/`'s style, here a loop over the options above.
+  of groups 1 and 2, which do not touch the transfer path. The matrix is
+  `bench/spikes/file/fbm.sh`, run on `donbot` from its copy of the tree.
 - Ranges are the lowest and highest of the three runs.
 
 ## The ring, writes, one sync at the end
