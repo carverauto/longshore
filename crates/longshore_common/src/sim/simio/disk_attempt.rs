@@ -5,18 +5,20 @@
 
 //! Dispatch of file operations to [`SimDisk`], with placed faults applied.
 
+use super::write::Spans;
 use super::{faults, DiskFaultCtx, PlacedFault, SimDisk};
 use crate::io::files::STATX_SIZE;
 use crate::io::posix::errno::linux::{EBADF, EINVAL, EIO};
 use crate::io::{FileSlot, Limits, Op, OpenFlags};
 
 impl SimDisk {
-    /// The gathered write `op`: one write after another, as far as they
-    /// go. The memory of each span is read now, at the write's completion.
+    /// The gathered write `op`: one write of all its spans, which meets
+    /// one fault and, for a file opened with `dsync`, one sync at its end.
+    /// The memory of each span is read now, at the write's completion.
     fn write_spans(
         &mut self,
         op: &Op,
-        pool: &mut [u8],
+        pool: &[u8],
         limits: &Limits,
         placed: Option<PlacedFault>,
         ctx: &mut DiskFaultCtx<'_>,
@@ -30,24 +32,16 @@ impl SimDisk {
             ..
         } = *op
         else {
-            return -crate::io::EINVAL;
+            return -EINVAL;
         };
         let at = limits.range(list, list_off, count * 12).start;
-        let mut done = 0i32;
-        for i in 0..count {
-            let (buf, off, len) = crate::io::files::span_at(pool, at, i);
-            let r = limits.range(buf, off, len);
-            let to = file_off + u64::from(done.unsigned_abs());
-            let wrote = self.write(slot, pool, r, to, placed, ctx);
-            if wrote < 0 {
-                return if done == 0 { wrote } else { done };
-            }
-            done += wrote;
-            if wrote.unsigned_abs() < len {
-                break;
-            }
-        }
-        done
+        let spans = Spans {
+            pool,
+            limits,
+            at,
+            count,
+        };
+        self.write(slot, &spans, file_off, placed, ctx)
     }
 
     pub(in crate::sim::simio) fn attempt(
@@ -89,7 +83,7 @@ impl SimDisk {
                 file_off,
             } => {
                 let r = limits.range(buf, off, len);
-                self.write(slot, pool, r, file_off, placed, ctx)
+                self.write(slot, &pool[r], file_off, placed, ctx)
             }
             Op::FileWriteSpans { .. } => self.write_spans(op, pool, limits, placed, ctx),
             Op::FileSync { slot, .. } => self.attempt_sync(slot, placed, ctx),

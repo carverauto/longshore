@@ -52,6 +52,8 @@ mod ops;
 mod paths;
 #[path = "disk_types.rs"]
 mod types;
+#[path = "disk_write.rs"]
+mod write;
 
 pub use types::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
 pub(in crate::sim::simio) use types::{DiskFaultCtx, PlacedEntry};
