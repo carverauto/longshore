@@ -89,9 +89,9 @@ let (limits, files) = FileConfig::plan(limits, sizes).unwrap();
 
 A completion with a token of the set's range (`FileConfig::token_base`,
 `FileConfig::tokens`) is the set's. With `longshore::io::turn::Turn`, give
-the set's range as storage and the connections' as network: syncs are then
-handed out before the frames that arrived behind them, which makes the
-turn a group commit.
+the set's range as storage and the connections' as network: the set's
+completions of a batch are then handed out before the connections'. That
+orders a batch; it does not batch commits, which is the program's to do.
 
 ## An example
 
@@ -266,12 +266,15 @@ ends (a read) or an error ends it. The event says how much was moved.
   asked for has reached the end of the file, and reports what it read.
 - On a direct-I/O file, a short write resumes from what was written
   rounded down to a block, rewriting the same bytes from the same buffer.
-  One that wrote less than a block is written again from the same offset;
-  four such writes in a row with no whole block between them end
-  `NoProgress`, so resumes are bounded. A short read that ends off a block
-  boundary is the end of the file.
+  One that wrote less than a block is written again from the same offset,
+  at most four times in a row: a fifth write in a row with no whole block
+  ends `NoProgress`, so resumes are bounded. A short read that ends off a
+  block boundary is the end of the file.
 - An error after some bytes were moved ends the transfer
-  `Partial { done, kind }`; with none moved, the plain error.
+  `Partial { done, kind }`; with none moved, the plain error. A failed
+  write of a file opened with `with_dsync` that lost its bytes (see
+  "What a failed sync means") ends `Partial { done, kind: SyncFailed }`
+  when bytes were done before it.
 
 A program that wants the backend's short completions as they are uses
 `longshore_common`'s operations directly.
@@ -296,8 +299,9 @@ simulator order them themselves).
 - The checks leave the backend nothing to refuse of the steps themselves.
   Should it refuse the chain all the same for want of its own room
   (another component took room the plan gave the set), the refused step
-  reports `Os { errno }`, the others `Cancelled`, and no file is poisoned
-  by it.
+  reports the backend's errno as its plain error (`Os` for a resource the
+  backend had none of, `NoSpace`, `Invalid` and the rest as they map),
+  the others `Cancelled`, and no file is poisoned by it.
 - A sequence waiting for room is not overtaken: waiting work is submitted
   first in, first out.
 
@@ -361,10 +365,11 @@ event carries `Invalid { errno }`.
 
 A write that has completed is in the kernel's cache, not yet on stable
 storage. It is durable after a sync of its file that was asked for after
-the write completed and that reported success: `sync(file, true)` syncs
-the data and the metadata needed to read it back (`fdatasync`),
-`sync(file, false)` all of the file's metadata as well (`fsync`;
-`F_FULLFSYNC` on macOS, which also flushes the drive's cache). A file
+the write completed and that reported success: on Linux `sync(file,
+true)` syncs the data and the metadata needed to read it back
+(`fdatasync`), `sync(file, false)` all of the file's metadata as well
+(`fsync`). On macOS every sync is `F_FULLFSYNC`, whatever `data_only`
+says, which also flushes the drive's cache. A file
 opened with `with_dsync` makes each write durable when it completes, with
 no sync. A new file's name, or a renamed one, is durable once its
 directory has been synced after the create or rename.
@@ -379,8 +384,10 @@ A failed sync poisons the file. Every failure of a sync is
 write-back can come as `EIO`, as `ENOSPC` or as another errno, and the
 portable backend reports what it does not know as `EIO`. A write of a
 file opened with `with_dsync` that fails with `EIO`, `ENOSPC` or `EDQUOT`
-is a failed sync too: it reports `SyncFailed` and poisons the same way.
-Other errors of such a write are reported as they are and do not poison.
+is a failed sync too, a durable write lost: it reports `SyncFailed` (or
+`Partial { done, kind: SyncFailed }` when bytes were done before it) and
+poisons the same way. Other errors of such a write are reported as they
+are and do not poison.
 
 The reason is the kernel's. When write-back of a dirty page fails, Linux
 reports the error to the next sync and may then drop the page or mark it
@@ -389,9 +396,11 @@ So once a sync has failed, the bytes written since the last good sync are
 of unknown state, and no later sync makes them good.
 
 A Poisoned file accepts reads and its close, and refuses everything else
-`Poisoned`. Its operations waiting for room end `Poisoned`, its
-transfers being resumed end `Partial { done, kind: Poisoned }`, and its
-operations already in flight report their own outcomes. Reads stay
+`Poisoned`. Its operations waiting for room end `Poisoned` at once; a
+step of a sequence waiting for room ends so when its chain comes up for
+submission. Its transfers being resumed end `Partial { done, kind:
+Poisoned }`, and its operations already in flight report their own
+outcomes. Reads stay
 allowed because the bytes may still be readable; only their durability is
 lost. The program decides what follows: close the file and recover from
 what it knows was durable, rewrite the bytes from its own copy into a new
@@ -434,7 +443,7 @@ the call, with nothing submitted:
 | `Full` | No operation slot for this file or in the set, or no path slot |
 | `Stale` | The handle's file was closed |
 | `Closing` | The file is closing |
-| `Poisoned` | A sync of the file failed: only reads and `close` |
+| `Poisoned` | A sync of the file failed, or a durable write was lost: only reads and `close` |
 | `NotOpen` | Not opened for this: a write of a read-only file, a read of a write-only one |
 | `Unaligned` | On a direct-I/O file, a buffer, length or offset that is not whole blocks |
 | `TooLarge` | More spans or steps than planned, a range past its extent, a length of 0 where one is needed |
@@ -446,7 +455,7 @@ Reported in an event:
 | Error | Meaning |
 |---|---|
 | `Cancelled` | A step of a sequence after one that failed |
-| `NoProgress` | A write that completed with no byte written, or on a direct-I/O file four in a row with no whole block |
+| `NoProgress` | A write that completed with no byte written, or on a direct-I/O file a fifth write in a row with no whole block |
 | `Partial { done, kind }` | A transfer ended by `kind` after `done` bytes |
 | `NotFound`, `Exists`, `Denied`, `NoSpace`, `Unsupported` | `ENOENT`; `EEXIST`; `EACCES` or `EPERM`; `ENOSPC` or `EDQUOT`; `EOPNOTSUPP` |
 | `SyncFailed { errno }` | A sync failed, or a durable write with `EIO`, `ENOSPC` or `EDQUOT`; the file is Poisoned |
@@ -468,23 +477,32 @@ file busy, two operation slots a file on average), four path slots,
 sequences as long as a file's share, and 64 spans a gathered write. None
 is from a measurement: the runs so far size the set themselves.
 
-What has been measured is the set's cost. On a Mac's portable backend,
-one file, writes and reads of 4 KiB to 1 MiB, one to 16 in flight,
-buffered and direct, synced at the end, every 16 writes or durable each,
-the set moved as many GB/s for as much CPU a GB as the raw operations: the
-median of the set over the raw path, over the 36 cells of each size and
-direction, is 0.99 to 1.00 in GB/s and 1.00 to 1.02 in CPU a GB, three
-runs of one second a cell; the cells where the two differ most differ both
-ways, and within the spread of each API's own runs
-(`bench/results/m36-file-bench-macos.md`). Costs of a few
-percent and the ring backend are not measured yet.
+What has been measured is the set's cost against the raw operations, one
+file, one thread, three runs of one second a cell:
 
-How a program makes its writes durable is its own choice, and the
-crate's figures say nothing of it beyond the drive's: on that Mac a sync
+- On a Mac's portable backend (`bench/results/m36-file-bench-macos.md`;
+  writes and reads of 4 KiB to 1 MiB, one to 16 in flight, buffered and
+  direct, synced at the end, every 16 writes or durable each), reads cost
+  the set about 1 to 2 % more of the thread's CPU a GB: its median CPU a
+  GB is above the raw path's in 75 of 108 read cells and its GB/s below
+  in 70, in each of the three runs. That thread also runs the file
+  operations themselves, so the figure is a share of the kernel's work
+  and the set's together. Writes show no difference: the set is on the
+  worse side in 56 of 108 cells. Single cells vary more than that: in 34
+  of 432 pairs of a cell and a measure the two APIs' runs do not overlap,
+  25 of them against the set.
+- On a DGX Spark's NVMe (`bench/results/m37-file-bench-dgx-spark-nvme.md`;
+  direct I/O, sequential, 64 KiB and 1 MiB, depth 1 to 32 on the ring, 1
+  and 4 on `epoll`), the two paths' ranges overlap in throughput and CPU
+  a GB, with the caveats that file gives.
+
+How a program makes its writes durable is its own choice, and these
+figures say nothing of it beyond the drive's: on that Mac a sync
 (`F_FULLFSYNC`) took 5 to 13 ms, so a sync every 16 writes held either
 API to 1,200 to 2,700 writes a second, while durable writes
 (`with_dsync`), which there do not flush the drive's cache, ran 4,000 to
-44,000 a second.
+44,000 a second, leaving out the buffered 4 KiB sequential cells, whose
+passes stalled.
 
 `file_bench` in `crates/longshore-bench` measures the set against the raw
 operations on one thread:
@@ -499,7 +517,7 @@ It prints one JSON line a pass, with GB/s, operations a second, the
 latency percentiles of the operations and of the syncs, and the thread's
 CPU-seconds a GB. The two APIs run in turn on the same file, their order
 swapped every run, since whichever runs second finds the file as the first
-left it. The DGX Spark's NVMe, on the ring, is still to be measured.
+left it; with `--runs 3` the set goes first in runs 1 and 3.
 
 ## How it is checked
 

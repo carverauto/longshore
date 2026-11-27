@@ -158,13 +158,18 @@ the client does not do that (`m25-aes-gcm-memory.md`).
 
 `file_bench` writes and reads one file through `longshore::file` and
 through the raw file operations, on the same backend and buffers. On a
-Mac (Apple M3 Max, internal SSD, APFS) with the portable backend, the
-two were level: over 108 cells of write sizes from 4 KiB to 1 MiB, one to
-16 operations in flight, buffered and direct, three ways to sync and two
-orders of offsets, the set's median over the raw path's is 0.99 to 1.00
-in GB/s and 1.00 to 1.02 in the thread's CPU a GB, by write size and
-direction. Medians of three runs of one second a cell
-(`m36-file-bench-macos.md`).
+Mac (Apple M3 Max, internal SSD, APFS) with the portable backend, over
+108 cells of write sizes from 4 KiB to 1 MiB, one to 16 operations in
+flight, buffered and direct, three ways to sync and two orders of
+offsets, three runs of one second a cell (`m36-file-bench-macos.md`):
+
+- Reads cost the set about 1 to 2 % more of the thread's CPU a GB: its
+  median is above the raw path's in 75 of the 108 read cells, and its
+  GB/s below in 70, in each of the three runs. On that backend the thread
+  also does the kernel's work of every operation, so this is a share of
+  both together.
+- Writes show no difference: the set is on the worse side in 56 of 108
+  cells.
 
 | Pass, direct I/O, 16 in flight, sequential | `longshore::file` | Raw operations |
 |---|---|---|
@@ -173,9 +178,11 @@ direction. Medians of three runs of one second a cell
 | Write, 64 KiB, a sync every 16 writes | 2,298 writes a second | 2,301 |
 | Write, 64 KiB, each write durable (`O_DSYNC`) | 32,112 writes a second | 32,602 |
 
-On that machine a sync, which flushes the drive's cache, took 5 to 13 ms
-and set the rate of the synced rows. The ring backend on Linux is not
-measured yet.
+Medians of three runs. On that machine a sync, which flushes the drive's
+cache and blocks the thread, took 5 to 13 ms and set the rate of the
+synced row. On the ring, with direct I/O to a DGX Spark's NVMe, the two
+paths' ranges overlap (`m37-file-bench-dgx-spark-nvme.md`, with its own
+conditions).
 
 ## Compared with the talk
 
