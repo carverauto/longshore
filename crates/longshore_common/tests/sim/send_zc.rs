@@ -143,34 +143,60 @@ fn the_same_seed_gives_the_same_reports() {
     }
 }
 
-/// The peer reads what was sent though the sender's buffer is still held.
+/// The peer reads what was sent though the sender's buffer is still held:
+/// for a send that reports twice, the peer's receive completes no later
+/// than the send's last report, when its buffer is let go of.
 #[test]
 fn the_bytes_arrive_before_the_buffer_is_free() {
-    let (mut io, mut out) = connected(3);
-    io.submit(Token::new(10), send(0)).unwrap();
-    let recv = Op::Recv {
-        sock: B,
-        buf: BufId::new(1),
-        off: 0,
-        len: LEN,
-    };
-    io.submit(Token::new(20), recv).unwrap();
-    let (mut got, mut lasts) = (0, 0);
-    while got < TAKEN || lasts == 0 {
-        io.tick(true, &mut out).unwrap();
-        while let Some(c) = out.pop() {
-            match c.token().get() {
-                20 => got += c.result(),
-                _ => lasts += u32::from(!c.more()),
+    let mut held = 0;
+    for seed in 0..50 {
+        let (mut io, mut out) = connected(seed);
+        io.submit(Token::new(10), send(0)).unwrap();
+        let recv = Op::Recv {
+            sock: B,
+            buf: BufId::new(1),
+            off: 0,
+            len: LEN,
+        };
+        io.submit(Token::new(20), recv).unwrap();
+        let (mut got, mut reports) = (0, 0);
+        let (mut step, mut read_at, mut free_at) = (0u32, None, None);
+        while got < TAKEN || free_at.is_none() {
+            io.tick(true, &mut out).unwrap();
+            step += 1;
+            while let Some(c) = out.pop() {
+                match c.token().get() {
+                    20 => {
+                        got += c.result();
+                        read_at = read_at.or(Some(step));
+                    }
+                    _ => {
+                        reports += 1;
+                        if !c.more() {
+                            free_at = Some(step);
+                        }
+                    }
+                }
             }
+            assert!(
+                got == 0 || got >= TAKEN,
+                "seed {seed}: a receive of {got} bytes without faults"
+            );
         }
-        if got < TAKEN && got > 0 {
-            panic!("a receive of {got} bytes without faults");
+        let (sent, read) = io.buf_pair(BufId::new(0), BufId::new(1));
+        assert_eq!(sent[..LEN as usize], read[..LEN as usize], "seed {seed}");
+        if reports == 2 {
+            held += 1;
+            assert!(
+                read_at <= free_at,
+                "seed {seed}: read at {read_at:?}, free at {free_at:?}"
+            );
         }
     }
-    let (sent, read) = io.buf_pair(BufId::new(0), BufId::new(1));
-    assert_eq!(sent[..LEN as usize], read[..LEN as usize]);
-    assert_eq!(lasts, 1);
+    assert!(
+        held > 0,
+        "no seed gave a send that held its buffer past its first report"
+    );
 }
 
 /// Writing bytes a send still reads would put other bytes on a real
