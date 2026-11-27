@@ -23,3 +23,5 @@ mod recorded;
 mod review;
 #[cfg(test)]
 mod rig;
+#[cfg(test)]
+mod spy;

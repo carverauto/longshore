@@ -10,12 +10,14 @@
 use super::kind::{describe, Kind};
 use core::cell::Cell;
 use longshore_common::io::{
-    BufId, Busy, Completion, Completions, FileId, FileSlot, Io, Op, Sock, Token,
+    BufId, Busy, Completion, Completions, FileId, FileSlot, Io, KeepAlive, ListenOpts, Op, Sock,
+    Token, Wake,
 };
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
-/// The most completions one `tick` of a check may hold.
+/// The completions one `tick` of a check's rig holds.
 pub const STAGED: usize = 64;
 
 /// One operation given to the backend.
@@ -191,6 +193,24 @@ impl<IO: Io> Spy<IO> {
         self.results[(n % self.results.len() as u64) as usize]
     }
 
+    /// Gives back room taken for `n` operations the backend refused.
+    fn give_room(&mut self, n: u32) {
+        if let Some(left) = self.room {
+            self.room = Some(left + n);
+        }
+    }
+
+    /// A new completion as the checks see it: a read's cut, and recorded.
+    fn take(&mut self, got: Completion) -> Completion {
+        let c = self.cut(got);
+        let at = (self.completed % self.results.len() as u64) as usize;
+        self.results[at] = Some((c.token(), c.result()));
+        if !c.more() {
+            self.completed += 1;
+        }
+        c
+    }
+
     fn take_room(&mut self, n: u32) -> Result<(), Busy> {
         match self.room {
             Some(left) if left < n => {
@@ -249,20 +269,72 @@ impl<IO: Io> Io for Spy<IO> {
         self.inner.listen_unix(sock, path)
     }
 
+    fn listen_with(
+        &mut self,
+        sock: Sock,
+        addr: SocketAddr,
+        opts: ListenOpts,
+    ) -> io::Result<SocketAddr> {
+        self.inner.listen_with(sock, addr, opts)
+    }
+
+    fn no_delay(&mut self, on: bool) {
+        self.inner.no_delay(on);
+    }
+
+    fn end_sends(&mut self, sock: Sock, on: bool) {
+        self.inner.end_sends(sock, on);
+    }
+
+    fn keep_alive(&mut self, on: bool) {
+        self.inner.keep_alive(on);
+    }
+
+    fn keep_alive_timing(&mut self, timing: Option<KeepAlive>) {
+        self.inner.keep_alive_timing(timing);
+    }
+
+    fn peer_addr(&self, sock: Sock) -> Option<SocketAddr> {
+        self.inner.peer_addr(sock)
+    }
+
     fn give_back(&mut self, id: BufId) {
         self.inner.give_back(id);
     }
 
+    fn give_back_piece(&mut self, page: BufId, off: u32, len: u32) {
+        self.inner.give_back_piece(page, off, len);
+    }
+
+    fn take_ring_full(&mut self) -> bool {
+        self.inner.take_ring_full()
+    }
+
+    fn measure_segment_sizes(&mut self, on: bool) {
+        self.inner.measure_segment_sizes(on);
+    }
+
+    fn waker(&mut self) -> Option<Arc<dyn Wake>> {
+        self.inner.waker()
+    }
+
     fn submit(&mut self, token: Token, op: Op) -> Result<(), Busy> {
         self.take_room(1)?;
-        self.inner.submit(token, op)?;
+        if let Err(busy) = self.inner.submit(token, op) {
+            self.give_room(1);
+            return Err(busy);
+        }
         self.record(token, op, None);
         Ok(())
     }
 
     fn submit_chain(&mut self, ops: &[(Token, Op)]) -> Result<(), Busy> {
-        self.take_room(ops.len() as u32)?;
-        self.inner.submit_chain(ops)?;
+        let n = ops.len() as u32;
+        self.take_room(n)?;
+        if let Err(busy) = self.inner.submit_chain(ops) {
+            self.give_room(n);
+            return Err(busy);
+        }
         let chain = self.chains;
         self.chains += 1;
         for (i, (token, op)) in ops.iter().enumerate() {
@@ -275,26 +347,12 @@ impl<IO: Io> Io for Spy<IO> {
         self.ticks += 1;
         let before = out.len();
         self.inner.tick(wait, out)?;
-        // Take every completion out, in order, record the new ones (those
-        // after the first `before`), and put them all back as they were.
-        let mut staged = [None::<Completion>; STAGED];
-        let mut n = 0;
-        while n < STAGED {
-            match out.pop() {
-                Some(c) => staged[n] = Some(c),
-                None => break,
-            }
-            n += 1;
-        }
-        for (i, got) in staged[..n].iter().flatten().enumerate() {
-            let c = if i >= before { self.cut(*got) } else { *got };
-            if i >= before {
-                let at = (self.completed % self.results.len() as u64) as usize;
-                self.results[at] = Some((c.token(), c.result()));
-                if !c.more() {
-                    self.completed += 1;
-                }
-            }
+        // Each completion in turn from the front to the back, so that
+        // after one round they are in their order again, however many: the
+        // new ones (those after the first `before`) recorded on the way.
+        for i in 0..out.len() {
+            let Some(got) = out.pop() else { break };
+            let c = if i >= before { self.take(got) } else { got };
             out.push(c);
         }
         Ok(())
