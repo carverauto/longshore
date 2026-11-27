@@ -245,6 +245,7 @@ impl UringIo {
             if let Ok(slot) = u32::try_from(c.res) {
                 if slot < self.limits.sockets_max {
                     self.sock_peer[slot as usize] = None;
+                    self.sock_eor[slot as usize] = false;
                     self.sock_stream[slot as usize] = true;
                 }
             }

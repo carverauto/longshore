@@ -28,7 +28,16 @@ const PACKETS: [u32; 3] = [700, 5000, 300];
 /// A simulator with `A` connected to `B`.
 #[cfg(test)]
 fn connected(seed: u64) -> (SimIo, Completions) {
+    connected_after(seed, false)
+}
+
+/// A simulator with `A` connected to `B`, both told before that their
+/// sends end a buffer, or not.
+#[cfg(test)]
+fn connected_after(seed: u64, ends: bool) -> (SimIo, Completions) {
     let mut io = SimIo::new(LIMITS, seed, Faults::NONE);
+    io.end_sends(A, ends);
+    io.end_sends(B, ends);
     let mut out = Completions::new(16);
     let _: SocketAddr = io.listen(LISTENER, ADDR).unwrap();
     let accept = Op::Accept {
@@ -188,4 +197,20 @@ fn a_taken_start_stays_behind_when_the_queue_comes_round() {
         let (starts, at_page_start) = receive(&mut io, &mut out, &after, seed);
         assert_eq!((starts, at_page_start), (8, 8), "seed {seed}");
     }
+}
+
+/// What a socket was told about its sends before it was connected or
+/// accepted is not carried into the connection: a new connection's sends
+/// end no buffer until it is told so, as on the kernel's backends.
+#[test]
+fn a_new_connection_does_not_keep_what_its_slot_was_told() {
+    let (mut starts, mut at_page_start) = (0, 0);
+    for seed in 0..80 {
+        let (mut io, mut out) = connected_after(seed, true);
+        send_all(&mut io, &mut out);
+        let (s, p) = receive(&mut io, &mut out, &PACKETS, seed);
+        (starts, at_page_start) = (starts + s, at_page_start + p);
+    }
+    assert_eq!(starts, 240);
+    assert!(at_page_start < 240, "a packet of A's was never joined");
 }

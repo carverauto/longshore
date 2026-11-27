@@ -40,6 +40,7 @@ impl Virtual {
                 (s.peer_wr_shut, s.wr_shut, s.rd_shut) = (false, false, false);
                 s.reset = false;
             }
+            self.packets.forget(slot_idx);
             Some(Attempt {
                 result: count_result(slot_idx),
                 more: true,
@@ -119,6 +120,8 @@ impl Virtual {
         if self.socks[s].state == SockState::Connecting {
             return None;
         }
+        // A new connection: what the slot was told before is not kept.
+        self.packets.forget(sock.0);
         let mut buf = [0u8; 108];
         buf[..path_with_nul.len()].copy_from_slice(path_with_nul);
         let target = SimAddr::Unix(buf, path_with_nul.len() as u8);
