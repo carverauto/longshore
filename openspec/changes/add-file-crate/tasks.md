@@ -8,17 +8,17 @@ change.
 
 ## 1. The crate and its plan
 - [ ] 1.1 `crates/longshore_file` (Apache headers, workspace lints), re-exported by `longshore` as `file`
-- [ ] 1.2 `FileSizes`, `FileConfig::plan` adding file slots, operations, tokens and chain room to `Limits`, with typed refusals for what does not fit
-- [ ] 1.3 `Files::new`, handles with generations, tickets, `on_completion`, `poll`, `next_event`
+- [x] 1.2 (`src/plan.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): `plan::*`, the table's counts and every refusal) `FileSizes`, `FileConfig::plan` adding file slots, operations, tokens and chain room to `Limits`, with typed refusals for what does not fit
+- [x] 1.3 (`src/files.rs`, `state.rs`, `accept.rs`, `events.rs`; open and close records of each file slot's own, `Ticket::NONE` for sequence slices; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): stale handles, events once, usage at rest) `Files::new`, handles with generations, tickets, `on_completion`, `poll`, `next_event`
 - [ ] 1.4 Review of group 1
 
 ## 2. Operations
-- [ ] 2.1 Open and close, with every flag of `OpenFlags`; status, rename, unlink, mkdir
-- [ ] 2.2 Read and write at an offset, resumed to the whole transfer; gathered writes
-- [ ] 2.3 Sync (data, and data and metadata), reserve, punch
-- [ ] 2.4 Ordered sequences on the backend's chains
-- [ ] 2.5 Buffers through `Extents`, held while an operation uses them; direct-I/O alignment checked before submission
-- [ ] 2.6 One `FileError`, and the failed-sync semantics of the contract
+- [x] 2.1 (file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): open, close held back, directory open and sync, status, rename, unlink, mkdir, a failed open; flags beyond read, write, create, direct, directory and dsync passed through, not tested one by one) Open and close, with every flag of `OpenFlags`; status, rename, unlink, mkdir
+- [x] 2.2 (`src/complete.rs`, `submit.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): placed and rated short writes resumed, buffered and direct, an error part-way as `Partial`, a gathered write in order) Read and write at an offset, resumed to the whole transfer; gathered writes
+- [x] 2.3 (file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): sync of data and of metadata; reserve and punch, checked at the call and run on the simulated disk) Sync (data, and data and metadata), reserve, punch
+- [x] 2.4 (`src/sequence.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): write, sync, rename in order; a short write resumed in a new chain; a failed sync cancelling the rest; refusals whole) Ordered sequences on the backend's chains
+- [x] 2.5 (`src/accept.rs`, `buffers.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): holds counted during and released after, stale extents refused, direct-I/O alignment refused before submission) Buffers through `Extents`, held while an operation uses them; direct-I/O alignment checked before submission
+- [x] 2.6 (`src/errno.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): a failed sync and a failed durable write `SyncFailed` and poisoning, reads still taken, power loss keeping what was synced) One `FileError`, and the failed-sync semantics of the contract
 - [ ] 2.7 Review of group 2
 
 ## 3. Tests
