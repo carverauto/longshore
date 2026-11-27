@@ -36,11 +36,13 @@ impl<T: Transport> Net<T> {
     ) -> Result<Listener, NetError> {
         let addr: Addr = addr.into();
         self.now = self.t.now_ns(d);
-        if !self.fits(&cfg.conn) {
-            return Err(NetError::Framing);
-        }
+        // TLS first, as `connect_tls` asks: the mode is refused with it
+        // whether or not the set could read in pages.
         if cfg.tls {
             self.fits_tls(&cfg.conn, false)?;
+        }
+        if !self.fits(&cfg.conn) || Self::zc_refuses(&cfg.conn, &addr, cfg.reuse_port) {
+            return Err(NetError::Framing);
         }
         // A slot whose failed bind is still to be reported keeps its handle.
         let unused = |l: &ListenerState| l.st == LSt::Free && l.failed.is_none();
@@ -222,17 +224,20 @@ impl<T: Transport> Net<T> {
         let state = &self.listeners[l as usize];
         let (cfg, listening) = (state.cfg, live && state.st == LSt::Listening);
         let by = self.lgens.listener(l);
-        let unix = matches!(state.addr, Addr::Unix(_));
+        let copied = super::pins::copies_anyway(&state.addr);
         let seed = self.cfg.sizes.seed ^ u64::from(slot);
         let c = &mut self.conns[slot as usize];
         c.renew(cfg.conn, seed);
         c.accepted_by = if live { by } else { Listener::NONE };
-        c.unix = unix;
+        c.copied = copied;
         c.sock = Socket::Open;
         c.last_active = self.now;
+        if cfg.conn.frame_on_packet {
+            self.t.end_sends(d, slot);
+        }
         if !listening {
             // Accepted while the listener was closing: not a connection.
-            c.st = St::Refused;
+            self.conns[slot as usize].st = St::Refused;
             self.gens.retire(slot);
             self.begin_close(slot, false);
             return;
@@ -345,7 +350,9 @@ impl<T: Transport> Net<T> {
     }
 
     /// Stop accepting and report [`Event::Drained`] once every queued send
-    /// has gone, or at `until_ns` at the latest. Connections stay open.
+    /// has gone and the memory of every zero-copy send is back, which is
+    /// when the peer has acknowledged it, or at `until_ns` at the latest.
+    /// Connections stay open.
     pub fn drain(&mut self, d: &mut T::Driver, until_ns: u64) {
         self.draining = Some(until_ns);
         self.drain_reported = false;

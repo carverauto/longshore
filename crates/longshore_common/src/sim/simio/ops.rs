@@ -43,6 +43,21 @@ impl Virtual {
         }
     }
 
+    /// A send on `sock`, a datagram's or a stream's.
+    fn send_either(
+        &mut self,
+        sock: Sock,
+        pool: &mut [u8],
+        limits: &Limits,
+        span: (BufId, u32, u32),
+    ) -> Option<i32> {
+        if self.is_udp(sock) {
+            self.sim_udp_send(sock, pool, limits, span)
+        } else {
+            self.sim_send(sock, pool, limits, span)
+        }
+    }
+
     /// Try to make progress on one operation. `None` means not ready yet.
     pub(super) fn attempt_op(
         &mut self,
@@ -52,9 +67,13 @@ impl Virtual {
         file_op_num: u64,
     ) -> Option<i32> {
         match *op {
-            Op::Timeout { .. } | Op::AwaitWake | Op::Cancel { .. } => {
-                unreachable!("resolved by Engine")
-            }
+            Op::Timeout { .. }
+            | Op::AwaitWake
+            | Op::Cancel { .. }
+            | Op::ConnectUnix { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. } => unreachable!("resolved before this"),
             Op::Connect { sock, addr } => self.sim_connect(sock, addr),
             Op::ReadFile {
                 file,
@@ -70,14 +89,13 @@ impl Virtual {
                 off,
                 len,
                 ..
-            } => {
-                let span = (buf, off, len);
-                if self.is_udp(sock) {
-                    self.sim_udp_send(sock, pool, limits, span)
-                } else {
-                    self.sim_send(sock, pool, limits, span)
-                }
             }
+            | Op::SendZc {
+                sock,
+                buf,
+                off,
+                len,
+            } => self.send_either(sock, pool, limits, (buf, off, len)),
             Op::Recv {
                 sock,
                 buf,
@@ -103,6 +121,7 @@ impl Virtual {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -110,9 +129,6 @@ impl Virtual {
             | Op::FileRename { .. }
             | Op::FileUnlink { .. }
             | Op::FileMkdir { .. } => Some(self.sim_file_op(op, pool, limits, file_op_num)),
-            Op::ConnectUnix { .. } | Op::ArmedAccept { .. } | Op::ArmedRecv { .. } => {
-                unreachable!("handled above")
-            }
         }
     }
 

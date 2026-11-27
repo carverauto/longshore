@@ -37,6 +37,8 @@ pub use limits::Limits;
 pub use op::Op;
 #[cfg(unix)]
 pub mod posix;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod refill;
 pub mod scenario;
 pub mod segment;
 pub use segment::Segment;
@@ -173,6 +175,12 @@ pub const EMFILE: i32 = 24;
 pub const ENAMETOOLONG: i32 = 36;
 /// No buffer is available.
 pub const ENOBUFS: i32 = 105;
+/// Linux `EOPNOTSUPP`: the backend has no such operation.
+pub const EOPNOTSUPP: i32 = 95;
+/// Linux `ENOMEM`: no memory, here no page of the receive area.
+pub const ENOMEM: i32 = 12;
+/// Linux `ENOSPC`: no room, here in the completions.
+pub const ENOSPC: i32 = 28;
 /// The socket is not connected.
 pub const ENOTCONN: i32 = 107;
 /// The value is too large for its type.
@@ -243,6 +251,13 @@ pub trait Io {
     /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected
     /// from now on. Ignored for UDP and Unix-domain sockets.
     fn no_delay(&mut self, _on: bool) {}
+    /// Mark every send on the connected TCP socket `sock` from now on as
+    /// the end of what goes into one of the kernel's buffers (`MSG_EOR`):
+    /// nothing later is joined to it, so the next send begins a packet of
+    /// its own. Until the socket is closed. A backend that cannot does
+    /// nothing, and so does the portable backend on macOS, whose TCP
+    /// refuses the flag on a stream socket.
+    fn end_sends(&mut self, _sock: Sock, _on: bool) {}
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected
     /// from now on. Ignored for UDP and Unix-domain sockets.
     fn keep_alive(&mut self, _on: bool) {}
@@ -261,6 +276,28 @@ pub trait Io {
     /// Return a buffer-ring buffer named in an [`Op::ArmedRecv`] completion
     /// back to the backend's ring without submitting an operation.
     fn give_back(&mut self, id: BufId);
+    /// Return a piece an [`Op::ArmedRecvZc`] completion delivered, `len`
+    /// bytes of `page` from `off`, without submitting an operation. Every
+    /// piece is returned once, as it was delivered; its bytes are not read
+    /// after that. A backend without a receive area has no pieces, and
+    /// does nothing.
+    fn give_back_piece(&mut self, _page: BufId, _off: u32, _len: u32) {}
+    /// Whether the backend found no room to report completions at some
+    /// point since this was last asked, in any number of [`Io::tick`]s: an
+    /// [`Op::ArmedRecvZc`] with credit left may then stay silent though
+    /// bytes wait in its socket. Asking clears it.
+    fn take_ring_full(&mut self) -> bool {
+        false
+    }
+    /// How many times the backend has found no room to report completions
+    /// since it was built: a count that only grows, which reading does not
+    /// clear, nor [`Io::take_ring_full`]. Each of several callers sharing
+    /// one backend keeps the count it last saw, and knows the ring was full
+    /// since then when it has grown. A backend whose ring is never full
+    /// says 0.
+    fn ring_full_count(&self) -> u64 {
+        0
+    }
     /// Ask for the segment sizes of each TCP connection opened from now on:
     /// a connect that succeeds then completes with an encoded [`Segment`]
     /// in place of 0. May be changed at any time. A backend that cannot measure

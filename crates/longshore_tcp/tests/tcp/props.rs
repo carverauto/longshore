@@ -14,7 +14,9 @@ use longshore_common::io::extents::{Extent, ExtentError, Extents};
 use longshore_common::io::{BufId, Limits};
 use longshore_common::sim::{Faults, SimIo};
 use longshore_tcp::check::{fail, must, prefixed, sizes, World};
-use longshore_tcp::{Addr, Conn, ConnOpts, Framing, HeaderFraming, ListenConfig, Listener, Rx};
+use longshore_tcp::{
+    Addr, Conn, ConnOpts, Framing, HeaderFraming, ListenConfig, Listener, NetError, Rx,
+};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 fn addr() -> Addr {
@@ -151,6 +153,104 @@ fn frames_survive_any_framing_and_any_cut_of_the_stream(tc: TestCase) {
         got.len(),
         frames.len()
     );
+}
+
+/// Asked for, in direct mode: every frame lies so that its body starts at
+/// a block of its memory, whatever the framing, the block and the cut of
+/// the stream; and its bytes are the bytes sent.
+#[hegel::test]
+fn a_body_lies_at_a_block_in_direct_mode(tc: TestCase) {
+    let (plain, body_max, packed) = any_framing(&tc);
+    let block = tc.draw(gs::sampled_from(vec![8u32, 64, 512, 4096]));
+    let framing = must(plain.with_body_at_block(block), "a block");
+    let count = between(&tc, 1, 6);
+    let frames: Vec<Vec<u8>> = (0..count)
+        .map(|i| frame(packed, between(&tc, 0, body_max.min(700)), i as u8))
+        .collect();
+    let stream: Vec<u8> = frames.concat();
+    let server = ConnOpts::new(Framing::Header(framing)).with_rx(Rx::Direct);
+    let (mut w, c, s) = world(u64::from(count), ConnOpts::new(Framing::Bytes), server);
+    let (mut at, mut got) = (0, Vec::new());
+    let turn = |world: &mut World<SimIo>, into: &mut Vec<Vec<u8>>| {
+        world.turn();
+        while world.client().0.next_event().is_some() {}
+        while world.server().0.next_event().is_some() {}
+        for (lent, bytes) in world.pull_all(s) {
+            assert_eq!(
+                lent.span().unwrap().off(),
+                framing.lead(),
+                "where the frame lies"
+            );
+            let body_at = lent.span().unwrap().off() + packed[0];
+            assert_eq!(body_at % block, 0, "the body lies at {body_at}");
+            into.push(bytes);
+            world.server().0.release(lent);
+        }
+    };
+    while at < stream.len() {
+        let piece = (between(&tc, 1, 400) as usize).min(stream.len() - at);
+        let _waited: bool = send(&mut w, c, &stream[at..at + piece]);
+        at += piece;
+        for _ in 0..between(&tc, 0, 3) {
+            turn(&mut w, &mut got);
+        }
+    }
+    for _ in 0..200 {
+        if got.len() == frames.len() {
+            break;
+        }
+        turn(&mut w, &mut got);
+    }
+    for _ in 0..20 {
+        turn(&mut w, &mut got);
+    }
+    assert!(got == frames, "{} of {} frames", got.len(), frames.len());
+}
+
+/// A body at a block is direct mode's: ring mode refuses it, whatever the
+/// lead; so does frame memory that cannot hold the lead and the largest
+/// frame, or is not whole blocks.
+#[test]
+fn a_body_at_a_block_is_refused_where_it_cannot_be_given() {
+    let header = |max_frame| {
+        must(
+            HeaderFraming::new(256, 40, 4, false, true, max_frame),
+            "framing",
+        )
+    };
+    let at = |framing: HeaderFraming, block| must(framing.with_body_at_block(block), "a block");
+    assert_eq!(
+        (header(4352).lead(), at(header(4352), 4096).lead()),
+        (0, 3840)
+    );
+    assert!(
+        header(4352).with_body_at_block(3000).is_err(),
+        "not a power of two"
+    );
+    // Two slots to connect from, both free; frame memory of 8,192 bytes.
+    let mut w = World::new(
+        &mut |l| SimIo::new(l, 1, Faults::NONE),
+        Limits::BASE,
+        sizes(2, 0, 0),
+        sizes(0, 1, 1),
+    );
+    let (net, io) = w.client();
+    let mut open = |framing, rx| {
+        let opts = ConnOpts::new(Framing::Header(framing)).with_rx(rx);
+        net.connect(io, addr(), opts).map(|_| ())
+    };
+    let refused = Err(NetError::Framing);
+    // The lead and the largest frame fill frame memory exactly: taken.
+    assert_eq!(open(at(header(4352), 4096), Rx::Direct), Ok(()));
+    // A byte more does not fit.
+    assert_eq!(open(at(header(4353), 4096), Rx::Direct), refused);
+    // Ring mode, with a lead and with none (a header of a whole block).
+    assert_eq!(open(at(header(4352), 4096), Rx::Ring), refused);
+    assert_eq!(open(at(header(4352), 256), Rx::Ring), refused);
+    // Frame memory is not whole blocks of 16,384 bytes.
+    assert_eq!(open(at(header(4352), 16_384), Rx::Direct), refused);
+    // Without the option, ring mode takes the same framing.
+    assert_eq!(open(header(4352), Rx::Ring), Ok(()));
 }
 
 /// Without framing a stream arrives as the bytes that were sent, in

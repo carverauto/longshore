@@ -61,6 +61,10 @@ name = "io_posix_files"
 path = "tests/io/posix_files.rs"
 
 [[test]]
+name = "io_area_refused"
+path = "tests/io/area_refused.rs"
+
+[[test]]
 name = "guard_death"
 path = "tests/guard/death.rs"
 
@@ -115,6 +119,22 @@ path = "tests/sim/packet.rs"
 [[test]]
 name = "sim_wal"
 path = "tests/sim/wal.rs"
+
+[[test]]
+name = "sim_send_zc"
+path = "tests/sim/send_zc.rs"
+
+[[test]]
+name = "sim_recv_zc"
+path = "tests/sim/recv_zc.rs"
+
+[[test]]
+name = "sim_packets"
+path = "tests/sim/packets.rs"
+
+[[test]]
+name = "sim_write_spans"
+path = "tests/sim/write_spans.rs"
 
 [package.metadata.docs.rs]
 # io_uring is Linux only, and the simulator is part of the documented API.

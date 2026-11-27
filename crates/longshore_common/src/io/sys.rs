@@ -13,8 +13,10 @@ use core::ffi::{c_int, c_long, c_uint, c_void};
 
 mod layout;
 mod sock;
+mod zcrx;
 pub use layout::*;
 pub use sock::*;
+pub use zcrx::*;
 
 /// System call number of `io_uring_setup`.
 pub const SYS_IO_URING_SETUP: c_long = 425;
@@ -96,6 +98,8 @@ pub const IORING_OP_CLOSE: u8 = 19;
 pub const IORING_OP_STATX: u8 = 21;
 /// Read into a buffer that need not be registered.
 pub const IORING_OP_READ: u8 = 22;
+/// Write from a buffer that need not be registered.
+pub const IORING_OP_WRITE: u8 = 23;
 /// Directory descriptor that stands for the current directory.
 pub const AT_FDCWD: i32 = -100;
 /// `AT_FDCWD` as `IORING_OP_RENAMEAT` takes its new directory: in `sqe.len`, a

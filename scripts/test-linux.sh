@@ -27,7 +27,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 IMAGE="rust:1-bookworm"
-PROGRAMS="contract_uring server_uring tcp_uring file_uring echo_uring http_uring dns_uring client_uring"
+PROGRAMS="contract_uring server_uring tcp_uring file_uring files_uring echo_uring http_uring dns_uring client_uring"
 FAULT_PROGRAMS="client_faults uring_faults"
 
 e2e_bin() {

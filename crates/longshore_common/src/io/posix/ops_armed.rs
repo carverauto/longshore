@@ -50,6 +50,7 @@ impl Posix {
                         result: count_result(slot_idx),
                         more: true,
                         buf: None,
+                        off: 0,
                     })
                 } else {
                     let lin = linger {
@@ -134,6 +135,7 @@ impl Posix {
                     result: n as i32,
                     more: true,
                     buf: Some(buf_id),
+                    off: 0,
                 });
             }
             if n == 0 {

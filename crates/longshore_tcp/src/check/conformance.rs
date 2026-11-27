@@ -21,6 +21,9 @@
 //!   and is reported once; on a protected slot so does a receive into the
 //!   transport's own memory, also when a close ends it (what `Net` falls
 //!   back to when the buffer ring has nothing for a connection);
+//! - a zero-copy receive brings its bytes as pieces of pages, never more
+//!   than its credit, and ends once (on a rig whose backend has a
+//!   receive area: [`run_zc`]);
 //! - a TLS handshake that was started is reported once, as ended, also
 //!   when its connection is closed under it (on a rig that has TLS).
 //!
@@ -28,12 +31,14 @@
 //! the driver. [`run_all`] is the kernel transport's own.
 
 mod kernel;
+mod lent;
+mod pieces;
 mod receive;
 mod refusal;
 mod secured;
 
 use super::{fail, must};
-use crate::transport::{Happened, Listening, Span, Transport};
+use crate::transport::{Happened, Lend, Listening, Span, Transport};
 use crate::{Addr, ServerName};
 use longshore_common::io::{Io, Limits};
 use std::net::SocketAddr;
@@ -41,7 +46,8 @@ use std::net::SocketAddr;
 pub use kernel::KernelRig;
 
 /// A transport with one listener slot (0), two connection slots for
-/// connects (0 and 1), and at least two that accepts fill.
+/// connects (0 and 1), at least two that accepts fill, and room for
+/// three sends of a slot lent until released, numbered 0 to 2.
 pub trait Rig {
     /// The transport checked.
     type T: Transport;
@@ -106,9 +112,12 @@ pub(super) fn of_slot(h: &Happened, slot: u32) -> bool {
         | Happened::Secured { slot: s, .. }
         | Happened::Accepted { slot: s, .. }
         | Happened::RingData { slot: s, .. }
+        | Happened::Piece { slot: s, .. }
         | Happened::RecvEnded { slot: s, .. }
         | Happened::Received { slot: s, .. }
         | Happened::Sent { slot: s, .. }
+        | Happened::Taken { slot: s, .. }
+        | Happened::Released { slot: s, .. }
         | Happened::ShutDown { slot: s, .. }
         | Happened::Closed { slot: s } => s == slot,
         Happened::AcceptFailed { slot: s, .. } => s == Some(slot),
@@ -169,7 +178,7 @@ fn every_operation_is_reported_once<R: Rig>(rig: &mut R) {
     let (from, into) = (rig.span(0, 100), rig.span(1, 4096));
     with(rig, |t, d| {
         t.bytes(d, from.buf())[..100].fill(0x5a);
-        must(t.send(d, 0, from, false), "send");
+        must(t.send(d, 0, from, Lend::No), "send");
     });
     let sent = |h: &Happened| {
         matches!(
@@ -266,7 +275,7 @@ fn sends_go_on_after_the_peers_end<R: Rig>(rig: &mut R) {
     }
     with(rig, |t, d| {
         t.bytes(d, from.buf())[..300].fill(0xa5);
-        must(t.send(d, s, from, false), "send after the peer's end");
+        must(t.send(d, s, from, Lend::No), "send after the peer's end");
     });
     let sent = |h: &Happened| matches!(h, Happened::Sent { slot, result: 300 } if *slot == s);
     until(rig, &mut seen, "the send after the peer's end", |all| {
@@ -283,8 +292,10 @@ pub fn check<R: Rig>(rig: &mut impl FnMut() -> R) {
     closes_of_empty_and_connecting_slots(&mut rig());
     sends_go_on_after_the_peers_end(&mut rig());
     refusal::a_refused_operation_changes_nothing(&mut rig());
+    lent::a_lent_send_is_reported_and_released_once(&mut rig());
     receive::a_single_receive_follows_an_armed_one(&mut rig());
     receive::a_kept_receive_is_reported_once(&mut rig());
+    pieces::a_zero_copy_receive_keeps_to_its_credit(&mut rig());
     secured::a_handshake_is_reported_once(&mut rig());
     secured::a_close_under_a_handshake_ends_it(&mut rig());
 }
@@ -293,6 +304,13 @@ pub fn check<R: Rig>(rig: &mut impl FnMut() -> R) {
 /// (port 0 lets the system choose).
 pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
     check(&mut || KernelRig::new(make, addr));
+}
+
+/// The statement on zero-copy receives, on a backend from `make` that is
+/// given a receive area: the simulator's, or a ring's on a queue set up
+/// for it. [`run_all`] checks that a backend without one refuses them.
+pub fn run_zc<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr) {
+    pieces::a_zero_copy_receive_keeps_to_its_credit(&mut KernelRig::new_zc(make, addr));
 }
 
 /// [`run_all`] on a kernel transport that has TLS with `certs`, and with

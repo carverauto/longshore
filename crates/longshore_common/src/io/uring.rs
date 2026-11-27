@@ -18,12 +18,15 @@ use std::io;
 use std::net::{SocketAddr, TcpListener};
 use std::os::fd::IntoRawFd;
 
+mod area;
 mod backend;
 mod completions;
 mod completions_steps;
 #[cfg(feature = "fault-injection")]
 mod fault;
+mod gather;
 mod listen;
+mod mapped;
 #[cfg(feature = "fault-injection")]
 pub use fault::Fault;
 mod ops;
@@ -31,6 +34,10 @@ mod ops_file;
 mod ops_sock;
 mod quiesce;
 mod setup;
+mod sockopts;
+mod split;
+#[cfg(test)]
+mod split_tests;
 #[cfg(test)]
 mod tests;
 
@@ -51,6 +58,8 @@ enum State {
     ArmedAccept,
     /// Armed multishot receive in flight.
     ArmedRecv,
+    /// Armed zero-copy receive in flight.
+    ArmedRecvZc,
     /// Zero-copy send in flight (waiting for send result and/or notif).
     SendZc,
     /// A timer. Its normal expiry arrives as `-ETIME`.
@@ -96,6 +105,9 @@ struct Slot {
     phase: u64,
     /// A cancel has been submitted for this operation. See `Op::Cancel`.
     cancel_requested: bool,
+    /// A zero-copy send that reports its result as soon as it has one,
+    /// and its end apart. See `Op::SendZc`.
+    reports_taken: bool,
     // Kernel reads these while the operation is in flight, so they live here.
     addr: sockaddr_any,
     addr_len: u32,
@@ -105,6 +117,9 @@ struct Slot {
     ts: timespec,
     /// Where the kernel puts the eventfd's counter.
     wake_count: u64,
+    /// The row of the table of vectors a gathered write reads, or
+    /// [`gather::NO_ROW`].
+    row: u32,
 }
 
 pub(super) struct ReadyQueue {
@@ -161,13 +176,25 @@ impl ReadyQueue {
 pub struct UringIo {
     ring: ManuallyDrop<Ring>,
     limits: Limits,
-    bufs: Box<[u8]>,
+    /// Mapped by the backend, never an allocator's: the kernel may read
+    /// and the card write it until the ring's exit work is done.
+    bufs: mapped::Mapped,
     pool_base: usize,
     buf_range: Box<[u16]>,
     buf_ring: Option<BufRing>,
     ring_in_ring: Box<[bool]>,
+    /// The receive area registered with the kernel, if one was asked for.
+    area: Option<area::Area>,
+    /// The vectors of gathered writes.
+    gather: gather::Gather,
+    /// The completion queue was found full in this tick.
+    cq_full: bool,
+    /// How many times it was found full, ever.
+    cq_full_count: u64,
     slots: Box<[Slot]>,
     sock_stream: Box<[bool]>,
+    /// Per socket slot: every send ends a buffer (`Io::end_sends`).
+    sock_eor: Box<[bool]>,
     /// Per socket slot: the peer's address, for a socket accepted with a
     /// single accept.
     sock_peer: Box<[Option<SocketAddr>]>,
@@ -243,11 +270,13 @@ impl UringIo {
     /// because it may still be in use.
     fn leak(&mut self) {
         let _: &mut [Slot] = Box::leak(core::mem::take(&mut self.slots));
-        let _: &mut [u8] = Box::leak(core::mem::take(&mut self.bufs));
+        core::mem::forget(core::mem::take(&mut self.bufs));
         let _: &mut timespec = Box::leak(core::mem::take(&mut self.quiet_ts));
         let _: &mut [u16] = Box::leak(core::mem::take(&mut self.buf_range));
         core::mem::forget(self.buf_ring.take());
         let _: &mut [bool] = Box::leak(core::mem::take(&mut self.ring_in_ring));
+        core::mem::forget(self.area.take());
+        let _: &mut [iovec] = Box::leak(core::mem::take(&mut self.gather.vectors));
         let _: &mut [(u32, Completion)] = Box::leak(core::mem::take(&mut self.ready.items));
         core::mem::forget(core::mem::take(&mut self.files));
     }

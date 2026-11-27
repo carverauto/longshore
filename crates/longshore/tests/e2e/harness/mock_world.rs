@@ -51,9 +51,9 @@ impl OpKind {
             Op::ConnectUnix { .. } => Self::ConnectUnix,
             Op::Accept { .. } => Self::Accept,
             Op::ArmedAccept { .. } => Self::ArmedAccept,
-            Op::Send { .. } => Self::Send,
+            Op::Send { .. } | Op::SendZc { .. } => Self::Send,
             Op::Recv { .. } => Self::Recv,
-            Op::ArmedRecv { .. } => Self::ArmedRecv,
+            Op::ArmedRecv { .. } | Op::ArmedRecvZc { .. } => Self::ArmedRecv,
             Op::RecvNow { .. } => Self::RecvNow,
             Op::Shutdown { .. } => Self::Shutdown,
             Op::Close { .. } => Self::Close,
@@ -64,7 +64,7 @@ impl OpKind {
             Op::FileOpen { .. } => Self::FileOpen,
             Op::FileClose { .. } => Self::FileClose,
             Op::FileRead { .. } => Self::FileRead,
-            Op::FileWrite { .. } => Self::FileWrite,
+            Op::FileWrite { .. } | Op::FileWriteSpans { .. } => Self::FileWrite,
             Op::FileSync { .. } => Self::FileSync,
             Op::FileReserve { .. } => Self::FileReserve,
             Op::FilePunch { .. } => Self::FilePunch,
@@ -196,8 +196,10 @@ impl TestWorld {
             | Op::Accept { listener: sock, .. }
             | Op::ArmedAccept { listener: sock }
             | Op::Send { sock, .. }
+            | Op::SendZc { sock, .. }
             | Op::Recv { sock, .. }
             | Op::ArmedRecv { sock }
+            | Op::ArmedRecvZc { sock, .. }
             | Op::RecvNow { sock, .. }
             | Op::Shutdown { sock, .. }
             | Op::Close { sock } => Some(sock),
@@ -209,6 +211,7 @@ impl TestWorld {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -287,7 +290,9 @@ impl World for TestWorld {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -299,6 +304,7 @@ impl World for TestWorld {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -323,7 +329,9 @@ impl World for TestWorld {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -336,6 +344,7 @@ impl World for TestWorld {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

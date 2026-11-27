@@ -62,6 +62,11 @@ impl<W: World> Io for Engine<W> {
         self.world.no_delay(on);
     }
 
+    fn end_sends(&mut self, sock: Sock, on: bool) {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        self.world.end_sends(sock, on);
+    }
+
     fn keep_alive(&mut self, on: bool) {
         self.world.keep_alive(on);
     }
@@ -72,6 +77,20 @@ impl<W: World> Io for Engine<W> {
             "give_back requires a ring buffer"
         );
         self.world.give_back(id);
+    }
+
+    fn give_back_piece(&mut self, page: BufId, off: u32, len: u32) {
+        assert!(
+            self.limits.is_page(page) && u64::from(off) + u64::from(len) <= u64::from(Limits::PAGE),
+            "give_back_piece requires a piece of a page of the receive area"
+        );
+        self.world.give_back_piece(
+            page,
+            off,
+            len,
+            &mut self.bufs[self.pool_base..],
+            &self.limits,
+        );
     }
 
     fn measure_segment_sizes(&mut self, on: bool) {
@@ -88,7 +107,15 @@ impl<W: World> Io for Engine<W> {
         }
         if op.is_file_op() {
             let pool = &self.bufs[self.pool_base..];
-            if let Err(errno) = self.files.check_op(&op, pool, &self.limits) {
+            // As many gathered writes in flight as the backend has room
+            // for, as on the ring, whose kernel reads a row of vectors.
+            let full = matches!(op, Op::FileWriteSpans { .. }) && self.gather_rows() == 0;
+            let checked = if full {
+                Err(-crate::io::ENOBUFS)
+            } else {
+                self.files.check_op(&op, pool, &self.limits)
+            };
+            if let Err(errno) = checked {
                 self.ready.push(Completion::new(token, errno));
                 return Ok(());
             }
@@ -122,6 +149,8 @@ impl<W: World> Io for Engine<W> {
             last_delivered_step: 0,
             unix_path,
             unix_len,
+            taken: None,
+            taken_sum: 0,
         });
         Ok(())
     }
@@ -133,8 +162,9 @@ impl<W: World> Io for Engine<W> {
         if self.pending.len() + self.ready.len() + ops.len() > self.limits.ops_max as usize {
             return Err(Busy);
         }
+        let rows = self.gather_rows();
         let pool = &self.bufs[self.pool_base..];
-        if let Err((bad_idx, errno)) = self.files.check_chain(ops, pool, &self.limits) {
+        if let Err((bad_idx, errno)) = self.files.check_chain(ops, pool, &self.limits, rows) {
             for (idx, &(token, _)) in ops.iter().enumerate() {
                 self.ready.push(Completion::new(
                     token,
@@ -166,9 +196,19 @@ impl<W: World> Io for Engine<W> {
                 last_delivered_step: 0,
                 unix_path: [0u8; 108],
                 unix_len: 0,
+                taken: None,
+                taken_sum: 0,
             });
         }
         Ok(())
+    }
+
+    fn take_ring_full(&mut self) -> bool {
+        self.world.take_ring_full()
+    }
+
+    fn ring_full_count(&self) -> u64 {
+        self.world.ring_full_count()
     }
 
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()> {

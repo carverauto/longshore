@@ -202,7 +202,8 @@ impl<IO: Io> Replicated<IO> {
             return;
         };
         let (span, held) = (frame.span(), frame.extent());
-        let Some(ext) = held.filter(|_| span.off() == 0 && r.frame.is_none()) else {
+        let at_start = span.is_some_and(|s| s.off() == 0);
+        let (Some(ext), Some(span)) = (held.filter(|_| at_start && r.frame.is_none()), span) else {
             fail(format_args!(
                 "round {i}: not one frame at the start of an extent"
             ));

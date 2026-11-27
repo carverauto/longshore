@@ -18,6 +18,8 @@ impl Faults {
         delay: 0,
         udp_drop: 0,
         reorder: 0,
+        copied: 0,
+        ring_full: 0,
     };
 
     /// The reports of a closed socket's operations come in another order.
@@ -132,6 +134,38 @@ impl Faults {
     #[inline]
     pub const fn with_udp_drop(mut self, udp_drop: u32) -> Self {
         self.udp_drop = udp_drop;
+        self
+    }
+
+    /// A piece of a zero-copy receive is one the kernel copied: it lies
+    /// in a page of the area's own free list, which is not the card's
+    /// pool, is not refilled by a returned page before the returns are
+    /// read, and can be empty for a while: the receive then ends with
+    /// `-ENOMEM`.
+    #[inline]
+    pub const fn copied(self) -> u32 {
+        self.copied
+    }
+
+    /// This value with [`Faults::copied`] set to `copied`.
+    #[inline]
+    pub const fn with_copied(mut self, copied: u32) -> Self {
+        self.copied = copied;
+        self
+    }
+
+    /// A zero-copy receive finds no room to report a piece: it ends with
+    /// `-ENOSPC`, or, having reported one, stays silent until it is
+    /// cancelled and armed again or its peer sends more.
+    #[inline]
+    pub const fn ring_full(self) -> u32 {
+        self.ring_full
+    }
+
+    /// This value with [`Faults::ring_full`] set to `ring_full`.
+    #[inline]
+    pub const fn with_ring_full(mut self, ring_full: u32) -> Self {
+        self.ring_full = ring_full;
         self
     }
 }

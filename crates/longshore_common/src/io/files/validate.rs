@@ -35,6 +35,17 @@ pub(super) fn check_non_lifecycle(
             let direct = slot_ok(slot)?;
             check_rw(limits, direct, buf, off, len, file_off)
         }
+        Op::FileWriteSpans {
+            slot,
+            list,
+            list_off,
+            count,
+            len,
+            file_off,
+        } => {
+            let direct = slot_ok(slot)?;
+            check_spans(pool, limits, direct, (list, list_off, count), len, file_off)
+        }
         Op::FileSync { slot, .. } | Op::FileReserve { slot, .. } => {
             let _: bool = slot_ok(slot)?;
             Ok(())
@@ -62,7 +73,9 @@ pub(super) fn check_non_lifecycle(
         | Op::Accept { .. }
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
+        | Op::ArmedRecvZc { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }
@@ -115,7 +128,9 @@ fn check_path_op(op: &Op, pool: &[u8], limits: &Limits) -> Result<(), i32> {
         | Op::Accept { .. }
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
+        | Op::ArmedRecvZc { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }
@@ -128,6 +143,7 @@ fn check_path_op(op: &Op, pool: &[u8], limits: &Limits) -> Result<(), i32> {
         | Op::FileClose { .. }
         | Op::FileRead { .. }
         | Op::FileWrite { .. }
+        | Op::FileWriteSpans { .. }
         | Op::FileSync { .. }
         | Op::FileReserve { .. }
         | Op::FilePunch { .. } => Err(-EINVAL),
@@ -177,12 +193,62 @@ fn check_rw(
     Ok(())
 }
 
+/// One span of a gathered write's list: `(buffer, offset, length)` number
+/// `i` of the list in `pool` at `at`.
+pub(crate) fn span_at(pool: &[u8], at: usize, i: u32) -> (BufId, u32, u32) {
+    let word = |k: usize| {
+        let from = at + i as usize * 12 + 4 * k;
+        u32::from_le_bytes([pool[from], pool[from + 1], pool[from + 2], pool[from + 3]])
+    };
+    (BufId(word(0)), word(1), word(2))
+}
+
+/// A gathered write's list lies in the pool, its spans do, their lengths
+/// add up to `len`, and for direct I/O each is whole blocks from a block
+/// boundary of a block-aligned buffer or a page of the receive area.
+fn check_spans(
+    pool: &[u8],
+    limits: &Limits,
+    direct: bool,
+    (list, list_off, count): (BufId, u32, u32),
+    len: u32,
+    file_off: u64,
+) -> Result<(), i32> {
+    if count > limits.gather_spans {
+        // More spans than a gathered write was given room for at build.
+        return Err(-EINVAL);
+    }
+    let bytes = count.checked_mul(12).filter(|n| *n != 0).ok_or(-EINVAL)?;
+    check_buf_range(limits, list, list_off, bytes)?;
+    let at = limits.range(list, list_off, bytes).start;
+    let bs = u64::from(limits.block_size);
+    if direct && (bs == 0 || !file_off.is_multiple_of(bs)) {
+        return Err(-EINVAL);
+    }
+    let mut sum = 0u64;
+    for i in 0..count {
+        let (buf, off, part) = span_at(pool, at, i);
+        check_buf_range(limits, buf, off, part)?;
+        let whole =
+            u64::from(off).is_multiple_of(bs.max(1)) && u64::from(part).is_multiple_of(bs.max(1));
+        if direct && !((limits.is_aligned_buf(buf) || limits.is_page(buf)) && whole) {
+            return Err(-EINVAL);
+        }
+        sum += u64::from(part);
+    }
+    if sum != u64::from(len) {
+        return Err(-EINVAL);
+    }
+    Ok(())
+}
+
 pub(super) fn slot_of(op: &Op) -> Option<FileSlot> {
     match *op {
         Op::FileOpen { slot, .. }
         | Op::FileClose { slot }
         | Op::FileRead { slot, .. }
         | Op::FileWrite { slot, .. }
+        | Op::FileWriteSpans { slot, .. }
         | Op::FileSync { slot, .. }
         | Op::FileReserve { slot, .. }
         | Op::FilePunch { slot, .. } => Some(slot),
@@ -192,7 +258,9 @@ pub(super) fn slot_of(op: &Op) -> Option<FileSlot> {
         | Op::Accept { .. }
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
+        | Op::ArmedRecvZc { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }

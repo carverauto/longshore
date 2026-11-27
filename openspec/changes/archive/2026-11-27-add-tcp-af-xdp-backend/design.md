@@ -51,9 +51,10 @@ M3 Max VM; on download the kernel's receive copy dominates.
   under loss, GB/s per core and p99 latency in the packet simulator and on
   the NICs, and the size of the changes needed. A dependency is adopted
   only with a benchmark in `bench/results/` (principle 7).
-- **zcrx in the same study**: io_uring zero-copy receive keeps kernel TCP
-  and removes the receive copy; if it gets close to AF_XDP on these NICs,
-  it becomes an option of the kernel transport on kernels that have it.
+- **zcrx first, in a change of its own**: io_uring zero-copy receive keeps
+  kernel TCP and removes the receive copy. It is built and measured in
+  `add-tcp-zero-copy-receive`; this change is weighed against its numbers
+  before it starts (task 0.0).
 
 ## Method
 The review of `add-tcp-crate` found about two dozen faults, nearly all of

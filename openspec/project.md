@@ -5,7 +5,8 @@ longshore is an object storage client in Rust built around Linux `io_uring`,
 with a portable POSIX readiness backend (`kqueue` on macOS, `epoll` on Linux
 hosts without `io_uring`). It moves large amounts of data with little CPU. It
 talks to Amazon S3, S3-compatible stores and Google Cloud Storage, and carries
-protocols that run straight over TCP. It is nine small crates, and a tenth,
+protocols that run straight over TCP, and does file I/O for programs that
+keep their own data on disk. It is ten small crates, and an eleventh,
 `longshore`, that gathers them under one name.
 
 ## Tech Stack
@@ -63,14 +64,16 @@ either redesigned or left out.
 - Every source file carries the Apache 2.0 header (`scripts/license-headers.py`)
 
 ### Architecture Patterns
-- Ten workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
+- Eleven workspace crates: `longshore_common` (`io`, `sim`), `longshore_crc`
   (`checksum`), `longshore_dns` (`dns`), `longshore_stream` (`stream`),
   `longshore_http_client` (`http`), `longshore_tls` (`tls`, behind the
   default-on `tls` Cargo feature), `longshore_mailbox` (`mailbox`),
   `longshore_s3` (`store`, `crypto`, `client`), `longshore_tcp` (`tcp`:
-  `Net`, `KernelTransport`, the shared `check` suites), and the `longshore` facade
-  crate that re-exports them (plus `longshore-bench` for benchmarks and
-  real-kernel checks)
+  `Net`, `KernelTransport`, the shared `check` suites), `longshore_file`
+  (`file`: `Files`, a planned set of files and operations with whole
+  transfers, ordered sequences and one `FileError`), and the `longshore`
+  facade crate that re-exports them (plus `longshore-bench` for benchmarks
+  and real-kernel checks)
 - `Engine<W: World>` shares one `Io` contract state machine across
   `Virtual` (`SimIo`) and `Posix` (`PosixIo` via `kqueue` on macOS and
   `epoll` on Linux), alongside raw-syscall `UringIo` on Linux 6.1+
@@ -98,7 +101,7 @@ either redesigned or left out.
   zero-allocation WAL recovery under `alloc_guard`)
 - Shared generic `IO: Io` contract, file, chain, and server-networking tests
   across `SimIo`, `PosixIo` (`kqueue`/`epoll`), and `UringIo` (`contract_uring`,
-  `file_uring`, `server_uring`, `tcp_uring`), plus `fault-injection` stale-readiness and
+  `file_uring`, `files_uring`, `server_uring`, `tcp_uring`), plus `fault-injection` stale-readiness and
   ring-failure checks (`client_faults`, `uring_faults`)
 - Concurrency model checks via `scripts/test-model.sh` (`--cfg longshore_model`
   with `loom` for `longshore_mailbox` `mailbox_model` and `longshore_s3`
@@ -129,7 +132,12 @@ either redesigned or left out.
   and `RLIMIT_NOFILE >= sockets_max + files_max`. On 6.1, `FileSync`,
   `FileReserve`, `FilePunch`, `FileRename`, `FileUnlink`, `FileMkdir`, and
   creating/emptying `FileOpen` execute on kernel `io-wq` workers; truncate
-  and directory listing are intentionally omitted.
+  and directory listing are intentionally omitted. The one exception to the
+  `<= 6.1` features is `longshore_tcp`'s `Rx::ZeroCopy` (io_uring zero-copy
+  receive), which needs Linux 7.0 (the flush of returns), `CAP_NET_ADMIN`,
+  and a card queue with header and data split; building a backend with a
+  receive area refuses, naming what is missing, anywhere else, and the
+  other receive modes run on 6.1.
 - macOS (`kqueue`) and Linux `Builder::portable` (`epoll`) run on `PosixIo`
   (without zero-copy sends or registered buffers; macOS refuses core pinning
   with `BuildError::Setting` and runs file ops synchronously via `F_NOCACHE`,
@@ -137,8 +145,10 @@ either redesigned or left out.
   with `tls(true)` when the `tls` feature is disabled returns
   `BuildError::Setting` naming `tls`. Other platforms build the crate and
   run the simulator, while `Builder::build` returns `BuildError::Unsupported`.
-- Not planned: HTTP/2 (object stores gain nothing from it over pooled
-  HTTP/1.1 connections and S3 does not offer it), interactive sign-in flows
+- Not planned: kernel bypass (AF_XDP and a user-space TCP stack; io_uring
+  zero-copy receive over the kernel's TCP does better on the large frames
+  a database moves, milestones 34 and 35), HTTP/2 (object stores gain
+  nothing from it over pooled HTTP/1.1 connections and S3 does not offer it), interactive sign-in flows
   such as SSO, and Azure Blob Storage until an account is available to test
   against.
 

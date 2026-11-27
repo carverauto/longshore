@@ -104,6 +104,7 @@ fn quiesce_opcode(state: State) -> Option<u8> {
         | State::Accept
         | State::ArmedAccept
         | State::ArmedRecv
+        | State::ArmedRecvZc
         | State::SendZc
         | State::Wake
         | State::AwaitResult

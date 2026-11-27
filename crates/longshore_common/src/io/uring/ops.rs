@@ -22,6 +22,7 @@ impl UringIo {
             Op::Accept { listener, sock } => self.prep_accept(i, listener, sock),
             Op::ArmedAccept { listener } => self.prep_armed_accept(i, listener),
             Op::ArmedRecv { sock } => self.prep_armed_recv(i, sock),
+            Op::ArmedRecvZc { sock, credit } => self.prep_armed_recv_zc(i, sock, credit),
             Op::Send {
                 sock,
                 buf,
@@ -29,6 +30,15 @@ impl UringIo {
                 len,
                 zero_copy,
             } => self.prep_send(i, sock, (buf, off, len), zero_copy),
+            Op::SendZc {
+                sock,
+                buf,
+                off,
+                len,
+            } => {
+                self.slots[i as usize].reports_taken = true;
+                self.prep_send(i, sock, (buf, off, len), true)
+            }
             Op::Recv {
                 sock,
                 buf,
@@ -56,6 +66,7 @@ impl UringIo {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

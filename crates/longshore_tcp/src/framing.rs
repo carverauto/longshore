@@ -20,6 +20,8 @@ pub enum FramingError {
     Field,
     /// `max_frame` is smaller than the header, or does not fit the length field.
     MaxFrame,
+    /// The block a body is to start at is not a power of two.
+    Block,
 }
 
 /// Why a header does not describe an acceptable frame.
@@ -40,6 +42,8 @@ pub struct HeaderFraming {
     big_endian: bool,
     len_counts_header: bool,
     max_frame: u32,
+    /// The block the body is to start at a boundary of; zero for none.
+    body_block: u32,
 }
 
 impl HeaderFraming {
@@ -83,7 +87,47 @@ impl HeaderFraming {
             big_endian,
             len_counts_header,
             max_frame,
+            body_block: 0,
         })
+    }
+
+    /// The same framing, with a frame received in direct mode laid so
+    /// that its body, not its header, starts at a multiple of `block` in
+    /// the frame's memory: the frame starts [`HeaderFraming::lead`] bytes
+    /// into it. For a body that goes to a direct-I/O write from where it
+    /// lies. `block` is a power of two, the block of the file the body
+    /// goes to; frame memory must be whole blocks of it and hold the lead
+    /// and the largest frame. Under TLS the body lies at the block too,
+    /// though a record that also carries the header is opened in the
+    /// connection's own memory and moved there.
+    pub const fn with_body_at_block(mut self, block: u32) -> Result<HeaderFraming, FramingError> {
+        if !block.is_power_of_two() {
+            return Err(FramingError::Block);
+        }
+        self.body_block = block;
+        Ok(self)
+    }
+
+    /// The block the body is to start at a boundary of, when
+    /// [`HeaderFraming::with_body_at_block`] asked for one.
+    #[inline]
+    pub const fn body_block(&self) -> Option<u32> {
+        if self.body_block == 0 {
+            None
+        } else {
+            Some(self.body_block)
+        }
+    }
+
+    /// Bytes in front of a frame in its memory, so that its body starts
+    /// at a block boundary; zero unless
+    /// [`HeaderFraming::with_body_at_block`] asked for it.
+    #[inline]
+    pub const fn lead(&self) -> u32 {
+        if self.body_block == 0 {
+            return 0;
+        }
+        (self.body_block - self.header_len % self.body_block) % self.body_block
     }
 
     /// A four-byte big-endian prefix giving the length of what follows it.

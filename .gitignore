@@ -10,3 +10,6 @@ ctx/
 
 .idea/
 .code/
+
+# Hegel's database of failing examples, left by property tests
+.hegel/

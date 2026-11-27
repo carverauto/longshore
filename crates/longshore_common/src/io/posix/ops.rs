@@ -54,12 +54,19 @@ impl Posix {
             Op::Connect { sock, addr } => self.attempt_connect(sock, addr),
             Op::ConnectUdp { sock, addr } => self.attempt_connect_udp(sock, addr),
             Op::Accept { listener, sock } => self.attempt_accept(listener, sock),
+            // A zero-copy send is copied here, and so reports once.
             Op::Send {
                 sock,
                 buf,
                 off,
                 len,
                 ..
+            }
+            | Op::SendZc {
+                sock,
+                buf,
+                off,
+                len,
             } => self.attempt_send(sock, pool, limits.range(buf, off, len)),
             Op::Recv {
                 sock,
@@ -85,6 +92,7 @@ impl Posix {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -92,7 +100,10 @@ impl Posix {
             | Op::FileRename { .. }
             | Op::FileUnlink { .. }
             | Op::FileMkdir { .. } => self.attempt_file_op(op, pool, limits),
-            Op::ConnectUnix { .. } | Op::ArmedAccept { .. } | Op::ArmedRecv { .. } => {
+            Op::ConnectUnix { .. }
+            | Op::ArmedAccept { .. }
+            | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. } => {
                 unreachable!("handled above")
             }
         }
@@ -237,14 +248,15 @@ impl Posix {
         range: core::ops::Range<usize>,
     ) -> Option<i32> {
         let idx = sock.0 as usize;
-        let fd = self.socks[idx].fd;
+        let (fd, eor) = (self.socks[idx].fd, self.socks[idx].eor);
         if fd < 0 {
             return Some(-errno::linux::EPIPE);
         }
+        let flags = MSG_SEND_FLAGS | if eor { MSG_EOR } else { 0 };
         let ptr: *const c_void = pool[range.clone()].as_ptr().cast();
         let len = range.len();
         loop {
-            let n = unsafe { send(fd, ptr, len, MSG_SEND_FLAGS) };
+            let n = unsafe { send(fd, ptr, len, flags) };
             if n >= 0 {
                 return Some(n as i32);
             }

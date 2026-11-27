@@ -14,6 +14,9 @@ use longshore_common::io::extents::Extent;
 use longshore_common::io::BufId;
 use std::net::{Ipv4Addr, SocketAddr};
 
+/// No time: what `no_page_since` holds while receives find pages.
+pub(super) const NEVER: u64 = u64::MAX;
+
 pub(super) const NONE: u32 = u32::MAX;
 
 /// For a step that is tried again later, or does not matter, when it fails.
@@ -37,6 +40,8 @@ pub(super) const W_SHUT: u8 = 1 << 3;
 pub(super) const W_CONNECT: u8 = 1 << 4;
 pub(super) const W_REFUSE: u8 = 1 << 5;
 pub(super) const W_ADMIT: u8 = 1 << 6;
+/// The cancel of a receive a full completion ring may have left silent.
+pub(super) const W_WAKE: u8 = 1 << 7;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum St {
@@ -115,8 +120,9 @@ pub(super) struct ConnState {
     pub(super) parked_by: Option<Listener>,
     /// Where to dial again.
     pub(super) peer: Option<Addr>,
-    /// A Unix-domain socket: never sent from without a copy.
-    pub(super) unix: bool,
+    /// A Unix-domain socket or a loopback address: the kernel copies
+    /// what is sent there whatever it is asked, so nothing is lent.
+    pub(super) copied: bool,
     pub(super) backoff: Backoff,
     pub(super) last_active: u64,
     pub(super) ev: u8,
@@ -164,6 +170,16 @@ pub(super) struct ConnState {
     pub(super) asm_len: u32,
     /// A whole frame in frame memory, waiting to be pulled.
     pub(super) ready: Option<(Extent, u32)>,
+    /// Receiving in pages: bytes the armed receive may still bring; the
+    /// page of a header kept for the decision, the run of the frame that
+    /// is arriving in its pages, and the run of a whole frame waiting to
+    /// be pulled, each or `NONE`; and when its receives began to find no
+    /// page for the kernel's copy, with no byte since, or `NEVER`.
+    pub(super) zc_want: u32,
+    pub(super) hdr_page: u32,
+    pub(super) zc_run: u32,
+    pub(super) ready_run: u32,
+    pub(super) no_page_since: u64,
     /// Bytes moved out of ring buffers the caller did not pull in time.
     pub(super) backlog: Option<Extent>,
     pub(super) backlog_off: u32,
@@ -178,6 +194,12 @@ pub(super) struct ConnState {
     pub(super) tx_head: u32,
     pub(super) tx_len: u32,
     pub(super) sending: bool,
+    /// The pin of the send in flight, or `NONE`.
+    pub(super) send_pin: u32,
+    /// Zero-copy sends reported whose memory the transport still reads.
+    pub(super) pins: u32,
+    /// Where the search for a free pin starts.
+    pub(super) pin_next: u32,
     pub(super) full: bool,
     /// Listed among the connections waiting for a send segment.
     pub(super) seg_listed: bool,
@@ -194,7 +216,7 @@ impl ConnState {
             st: St::Free,
             opts,
             peer: None,
-            unix: false,
+            copied: false,
             backoff: Backoff::new(1, 1, 0, seed),
             last_active: 0,
             ev: 0,
@@ -224,6 +246,11 @@ impl ConnState {
             asm_have: 0,
             asm_len: 0,
             ready: None,
+            zc_want: 0,
+            hdr_page: NONE,
+            zc_run: NONE,
+            ready_run: NONE,
+            no_page_since: NEVER,
             backlog: None,
             backlog_off: 0,
             backlog_len: 0,
@@ -234,6 +261,9 @@ impl ConnState {
             tx_head: 0,
             tx_len: 0,
             sending: false,
+            send_pin: NONE,
+            pins: 0,
+            pin_next: 0,
             full: false,
             seg_listed: false,
             shut: false,
@@ -258,9 +288,11 @@ impl ConnState {
         self.hdr_have > 0 || (self.asm.is_some() && self.asm_have > 0)
     }
 
-    /// Whether an operation of this connection is still with the transport.
+    /// Whether an operation of this connection is still with the
+    /// transport: a zero-copy send whose memory it still reads is one.
     pub(super) fn in_flight(&self) -> bool {
         self.sending
+            || self.pins > 0
             || self.recv_busy
             || self.armed
             || self.connecting

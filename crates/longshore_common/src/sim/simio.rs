@@ -16,12 +16,14 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+mod area;
 mod disk;
 mod faults;
 pub use disk::{DiskConfig, DiskFaultCounters, DiskFaults, PlacedFault};
 mod ops;
 mod ops_armed;
 mod ops_net;
+mod packets;
 mod world;
 
 /// Fault probabilities, in parts per million, evaluated per attempt.
@@ -35,6 +37,8 @@ pub struct Faults {
     pub(crate) delay: u32,
     pub(crate) udp_drop: u32,
     pub(crate) reorder: u32,
+    pub(crate) copied: u32,
+    pub(crate) ring_full: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -131,6 +135,14 @@ pub struct Virtual {
     pub(super) ring_free: Box<[u16]>,
     pub(super) ring_free_len: usize,
     pub(super) ring_in_free: Box<[bool]>,
+    /// The receive area's pages and the pieces out of them.
+    pub(super) area: area::Area,
+    /// Where the packets waiting in each socket begin.
+    pub(super) packets: packets::Packets,
+    /// A receive found no room to report in, this tick.
+    pub(super) ring_full: bool,
+    /// How many times one did, ever.
+    pub(super) ring_full_count: u64,
     pub(super) accept_start: u32,
     pub(super) accept_len: u32,
     pub(super) keep_timing: Option<crate::io::KeepAlive>,
@@ -178,6 +190,10 @@ impl Virtual {
             ring_free: (0..limits.ring_buffers as u16).rev().collect(),
             ring_free_len: ring_count,
             ring_in_free: vec![true; ring_count].into_boxed_slice(),
+            area: area::Area::new(&limits, seed),
+            packets: packets::Packets::new(&limits),
+            ring_full: false,
+            ring_full_count: 0,
             accept_start: limits.accept_range_start,
             accept_len: limits.accept_range_len,
             keep_timing: None,
@@ -205,6 +221,8 @@ impl Virtual {
         }
         self.ring_free_len = n;
         self.ring_in_free.fill(true);
+        self.area.reset();
+        self.packets.reset();
         if let Some(disk) = self.disk.as_mut() {
             disk.power_loss(&mut self.rng);
         }
@@ -220,6 +238,20 @@ impl SimIo {
     /// `faults` says how often the network misbehaves.
     pub fn new(limits: Limits, seed: u64, faults: Faults) -> SimIo {
         Engine::with_world(limits, Virtual::new(limits, seed, faults))
+    }
+
+    /// Pieces of the receive area that are out, and pages with a piece
+    /// out, by the simulator's own count: for a test that does not trust
+    /// the counters of the code it tests.
+    pub fn pieces_out(&mut self) -> (usize, usize) {
+        self.world_mut().area.out()
+    }
+
+    /// The lengths of the last stream packets sent, oldest first, into
+    /// `into` (at most 256 are kept): how many were written there, and how
+    /// many were ever sent. Every send on a stream socket is one packet.
+    pub fn last_packets(&mut self, into: &mut [u32]) -> (usize, u64) {
+        self.world_mut().packets.last(into)
     }
 
     /// Preallocate the virtual disk tables. Test setup, so it allocates once.

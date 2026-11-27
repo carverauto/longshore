@@ -34,6 +34,7 @@ pub const MSG_PEEK: c_int = 0x2;
 pub const MSG_DONTWAIT: c_int = 0x40;
 pub const MSG_NOSIGNAL: c_int = 0x4000;
 pub const MSG_SEND_FLAGS: c_int = MSG_NOSIGNAL | MSG_DONTWAIT;
+pub const MSG_EOR: c_int = 0x80;
 pub const SHUT_RDWR: c_int = 2;
 
 pub const O_RDONLY: c_int = 0;

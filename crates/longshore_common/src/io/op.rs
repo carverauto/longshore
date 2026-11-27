@@ -69,6 +69,36 @@ pub enum Op {
         /// The connected socket.
         sock: Sock,
     },
+    /// Receive bytes on `sock` straight into pages of the receive area
+    /// ([`Limits::area_pages`](super::Limits::area_pages)), without a copy
+    /// by the backend where it can: at most `credit` bytes, which is never
+    /// 0. Each completion with bytes is a piece: `result > 0` bytes of the
+    /// page [`Completion::buf`](super::Completion::buf) from
+    /// [`Completion::off`](super::Completion::off), with `more: true`. A
+    /// page can lie behind several pieces, of this receive and of the
+    /// socket's next. Each piece stays the caller's until it is returned
+    /// with [`Io::give_back_piece`](super::Io::give_back_piece); the page
+    /// is not written again before every piece of it is back.
+    ///
+    /// The last completion has `more: false`: `0` when `credit` bytes were
+    /// delivered, and also when the peer finished first, which the caller
+    /// tells apart by the bytes it was given; `-ENOSPC` when the backend
+    /// had no room to report a piece and `-ENOMEM` when it had no page for
+    /// one, both with what was delivered still good and the rest to be
+    /// asked for again; or the socket's error. After a turn in which
+    /// [`Io::take_ring_full`](super::Io::take_ring_full) says so, a receive
+    /// with credit left may stay silent until the peer sends again: cancel
+    /// it and arm it again for the rest. Refused with `-ENOBUFS` by a
+    /// backend built without an area. Counts toward `Limits::ops_max`
+    /// until its last completion.
+    ArmedRecvZc {
+        /// The connected socket.
+        sock: Sock,
+        /// The most bytes to deliver before the receive ends; not 0, which
+        /// the ring refuses with `-EINVAL` (the kernel would take it for no
+        /// limit) and which fails a simulated run.
+        credit: u32,
+    },
     /// Send `len` bytes of buffer `buf` starting at `off`. May complete short.
     Send {
         /// The connected socket.
@@ -82,6 +112,39 @@ pub enum Op {
         /// Send straight from the buffer, where the backend can. The operation
         /// then completes only once the kernel has released the buffer.
         zero_copy: bool,
+    },
+    /// Send `len` bytes of buffer `buf` starting at `off` straight from the
+    /// buffer, where the backend can, and say when the bytes were taken
+    /// apart from when the buffer is free again. May be taken short.
+    ///
+    /// A backend that sends from the buffer reports twice under the
+    /// operation's token: a first completion with `more: true` and the
+    /// bytes taken as soon as they were taken, so that the next send on
+    /// the socket can follow at once, and a last completion with
+    /// `more: false` and the same result once the backend no longer reads
+    /// the buffer. Over a network that is when the peer has acknowledged
+    /// the bytes. A backend that copies, and a send that fails before
+    /// anything was taken, report once, with `more: false`.
+    ///
+    /// The bytes sent must not be written before the last completion;
+    /// other bytes of the same buffer may be. The last completions of
+    /// several such sends on one socket come in no fixed order, nor in a
+    /// fixed order with the first completions of later sends. A close of
+    /// the socket gives each its last completion like any other operation
+    /// in flight. Counts toward `Limits::ops_max` until its last
+    /// completion.
+    ///
+    /// [`Op::Send`] with `zero_copy` is the same send reported once, at
+    /// the end.
+    SendZc {
+        /// The connected socket.
+        sock: Sock,
+        /// The pool buffer to send from.
+        buf: BufId,
+        /// Where the bytes start in `buf`.
+        off: u32,
+        /// How many bytes to send.
+        len: u32,
     },
     /// Receive up to `len` bytes into buffer `buf` at `off`. 0 means end of stream.
     Recv {
@@ -202,6 +265,34 @@ pub enum Op {
         /// Where the bytes start in `buf`.
         off: u32,
         /// The most bytes to write.
+        len: u32,
+        /// Where in the file to write to.
+        file_off: u64,
+    },
+    /// Write `len` bytes to `slot` at `file_off` as one write gathered from
+    /// `count` spans of the pool, in order. The list of spans lies in
+    /// `list` from `list_off`, twelve bytes a span: a buffer's id, an
+    /// offset in it and a length, each a little-endian `u32`; `len` is the
+    /// sum of their lengths. A span may be of any buffer class, a page of
+    /// the receive area among them. For a file opened for direct I/O
+    /// every span is whole blocks of a block-aligned buffer or of a page,
+    /// from a block boundary in it. The spans' memory, and the list
+    /// itself, are read until the write completes, not only when it is
+    /// submitted: neither may change before (a backend may read the list
+    /// at submission, as the ring does, or when it writes, as the portable
+    /// backend and the simulator do). As many gathered writes may be in
+    /// flight as `Limits::gather_ops`; one more is refused with
+    /// `-ENOBUFS`. Completes like [`Op::FileWrite`], possibly short.
+    FileWriteSpans {
+        /// The open file.
+        slot: FileSlot,
+        /// The pool buffer the list of spans lies in.
+        list: BufId,
+        /// Where the list starts in `list`.
+        list_off: u32,
+        /// How many spans it has; not 0.
+        count: u32,
+        /// The bytes of all spans together.
         len: u32,
         /// Where in the file to write to.
         file_off: u64,

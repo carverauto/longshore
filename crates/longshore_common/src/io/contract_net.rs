@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 mod accept;
 mod recv;
 mod recv_idle;
+mod send_zc;
 mod shutdown;
 mod unix;
 mod unix_closed;
@@ -291,6 +292,7 @@ pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, addr: SocketAddr, un
     recv::run_all(make, addr);
     recv_idle::run_all(make, addr);
     shutdown::run_all(make, addr);
+    send_zc::run_all(make, addr);
     unix::run_all(make, addr, unix_path);
     unix_closed::run_all(make, unix_path);
 }

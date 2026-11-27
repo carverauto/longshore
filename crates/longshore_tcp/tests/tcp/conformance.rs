@@ -9,7 +9,7 @@
 
 use longshore_common::io::posix::PosixIo;
 use longshore_common::sim::{Faults, SimIo};
-use longshore_tcp::check::conformance::run_all;
+use longshore_tcp::check::conformance::{run_all, run_zc};
 use std::net::SocketAddr;
 
 #[test]
@@ -20,6 +20,18 @@ fn the_kernel_transport_conforms_on_the_simulator_in_every_order_of_reports() {
         run_all(&mut |limits| SimIo::new(limits, seed, faults), addr);
     }
     run_all(&mut |limits| SimIo::new(limits, 1, Faults::NONE), addr);
+}
+
+#[test]
+fn zero_copy_receives_conform_on_the_simulators_area_with_its_faults() {
+    let addr: SocketAddr = "192.0.2.7:7000".parse().unwrap();
+    for seed in 0..200 {
+        let faults = Faults::NONE
+            .with_reorder(400_000)
+            .with_copied(100_000)
+            .with_ring_full(100_000);
+        run_zc(&mut |limits| SimIo::new(limits, seed, faults), addr);
+    }
 }
 
 #[test]

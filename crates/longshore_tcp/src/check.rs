@@ -211,6 +211,9 @@ impl<IO: Io> World<IO> {
             Class::Storage => storage.push_back(c),
             Class::Network => {
                 // Kind 1 of a connection's tokens is its send.
+                // (A zero-copy send that
+                // outlives its report has a token of its own and is not counted:
+                // the worlds counted here send nothing that long.)
                 *sends += u32::from(c.token().get() % 8 == 1);
                 if !(client.on_completion(io, c) || server.on_completion(io, c)) {
                     fail(format_args!("a completion nobody claimed: {c:?}"));

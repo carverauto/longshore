@@ -57,8 +57,14 @@ impl<T: Transport> Net<T> {
     /// The next frame of `slot`, if one can be cut and lent right now.
     fn pull(&mut self, d: &mut T::Driver, slot: u32) -> Option<Frame> {
         loop {
+            let run = core::mem::replace(&mut self.conns[slot as usize].ready_run, NONE);
+            if run != NONE {
+                let len = self.zc.deliver(run);
+                return Some(self.deliver(d, slot, Mem::Pages(self.zc.run(run)), 0, len));
+            }
             if let Some((ext, len)) = self.conns[slot as usize].ready.take() {
-                return Some(self.deliver(d, slot, Mem::Extent(ext), 0, len));
+                let lead = self.lead(slot);
+                return Some(self.deliver(d, slot, Mem::Extent(ext), lead, len));
             }
             let Some(src) = self.source(slot) else {
                 if self.header_whole(slot) {
@@ -95,14 +101,14 @@ impl<T: Transport> Net<T> {
     /// connection's budget and reading on where that is due.
     fn deliver(&mut self, d: &mut T::Driver, slot: u32, mem: Mem, off: u32, len: u32) -> Frame {
         let conn = self.gens.conn(slot);
-        if matches!(mem, Mem::Extent(_)) {
+        if matches!(mem, Mem::Extent(_) | Mem::Pages(_)) {
             let c = &mut self.conns[slot as usize];
             c.held = c.held.saturating_add(len);
             if c.held >= c.opts.held_max {
                 self.pause(d, slot);
             }
         }
-        if self.conns[slot as usize].opts.rx == Rx::Direct {
+        if matches!(self.conns[slot as usize].opts.rx, Rx::Direct | Rx::ZeroCopy) {
             self.start_reading(d, slot);
         }
         Frame {
@@ -116,7 +122,10 @@ impl<T: Transport> Net<T> {
     /// Whether `slot` has received bytes the caller has not pulled.
     pub(super) fn has_input(&self, slot: u32) -> bool {
         let c = &self.conns[slot as usize];
-        c.ready.is_some() || self.source(slot).is_some() || self.header_whole(slot)
+        c.ready.is_some()
+            || c.ready_run != NONE
+            || self.source(slot).is_some()
+            || self.header_whole(slot)
     }
 
     /// Whether a ring connection's header area holds a whole header whose

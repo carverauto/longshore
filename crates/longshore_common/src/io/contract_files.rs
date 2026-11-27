@@ -12,6 +12,7 @@ use crate::io::{
 
 mod ops;
 mod refusals;
+mod spans;
 
 pub(crate) fn base_limits() -> Limits {
     Limits::BASE
@@ -170,6 +171,7 @@ pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root_dir: &str) {
     ops::run_all(make, root_dir);
     mkdir_rename_unlink_status(make, root_dir);
     refusals::run_all(make, root_dir);
+    spans::run_all(make, root_dir);
 }
 
 fn mkdir_rename_unlink_status<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {

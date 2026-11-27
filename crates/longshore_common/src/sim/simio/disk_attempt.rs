@@ -5,12 +5,45 @@
 
 //! Dispatch of file operations to [`SimDisk`], with placed faults applied.
 
+use super::write::Spans;
 use super::{faults, DiskFaultCtx, PlacedFault, SimDisk};
 use crate::io::files::STATX_SIZE;
 use crate::io::posix::errno::linux::{EBADF, EINVAL, EIO};
 use crate::io::{FileSlot, Limits, Op, OpenFlags};
 
 impl SimDisk {
+    /// The gathered write `op`: one write of all its spans, which meets
+    /// one fault and, for a file opened with `dsync`, one sync at its end.
+    /// The memory of each span is read now, at the write's completion.
+    fn write_spans(
+        &mut self,
+        op: &Op,
+        pool: &[u8],
+        limits: &Limits,
+        placed: Option<PlacedFault>,
+        ctx: &mut DiskFaultCtx<'_>,
+    ) -> i32 {
+        let Op::FileWriteSpans {
+            slot,
+            list,
+            list_off,
+            count,
+            file_off,
+            ..
+        } = *op
+        else {
+            return -EINVAL;
+        };
+        let at = limits.range(list, list_off, count * 12).start;
+        let spans = Spans {
+            pool,
+            limits,
+            at,
+            count,
+        };
+        self.write(slot, &spans, file_off, placed, ctx)
+    }
+
     pub(in crate::sim::simio) fn attempt(
         &mut self,
         op: &Op,
@@ -50,8 +83,9 @@ impl SimDisk {
                 file_off,
             } => {
                 let r = limits.range(buf, off, len);
-                self.write(slot, pool, r, file_off, placed, ctx)
+                self.write(slot, &pool[r], file_off, placed, ctx)
             }
+            Op::FileWriteSpans { .. } => self.write_spans(op, pool, limits, placed, ctx),
             Op::FileSync { slot, .. } => self.attempt_sync(slot, placed, ctx),
             Op::FileReserve {
                 slot,
@@ -74,7 +108,9 @@ impl SimDisk {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -166,7 +202,9 @@ impl SimDisk {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -179,6 +217,7 @@ impl SimDisk {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. } => -EINVAL,

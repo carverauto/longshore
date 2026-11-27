@@ -8,12 +8,12 @@
 use super::cover::Col;
 use super::state::{
     Socket, St, EV_ACCEPTED, EV_DOWN, EV_FINISHED, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE,
-    NONE, W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
+    NONE, W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT, W_WAKE,
 };
 use super::Net;
 use crate::addr::{Addr, ServerName};
 use crate::backoff::Backoff;
-use crate::config::ConnOpts;
+use crate::config::{ConnOpts, Rx};
 use crate::event::{Event, NetError, Why};
 use crate::framing::Framing;
 use crate::handle::{Conn, Listener};
@@ -23,12 +23,33 @@ use std::net::SocketAddr;
 impl<T: Transport> Net<T> {
     /// Whether `opts` fits the sizes this `Net` was built with.
     pub(super) fn fits(&self, opts: &ConnOpts) -> bool {
+        if !self.fits_zc(opts) {
+            return false;
+        }
         match opts.framing {
             Framing::Bytes => true,
             Framing::Header(h) => {
+                // A body at a block is direct mode's: only there has
+                // every frame memory of its own. That memory is whole
+                // blocks, so that a write padded to the block stays in it.
+                let (lead, size) = (h.lead() as usize, self.cfg.sizes.frame_size);
+                let at_block = h
+                    .body_block()
+                    .is_none_or(|block| opts.rx == Rx::Direct && size.is_multiple_of(block));
                 h.header_len() <= self.cfg.sizes.header_max as usize
-                    && h.max_frame() <= self.cfg.sizes.frame_size as usize
+                    && lead + h.max_frame() <= size as usize
+                    && at_block
             }
+        }
+    }
+
+    /// Where a frame of `slot` starts in frame memory of its own: behind
+    /// the lead its framing asks for, in direct mode.
+    pub(super) fn lead(&self, slot: u32) -> u32 {
+        let opts = &self.conns[slot as usize].opts;
+        match opts.framing {
+            Framing::Header(h) if opts.rx == Rx::Direct => h.lead(),
+            Framing::Header(_) | Framing::Bytes => 0,
         }
     }
 
@@ -54,7 +75,7 @@ impl<T: Transport> Net<T> {
     ) -> Result<Conn, NetError> {
         // Deadlines count from now, not from the last `poll`.
         self.now = self.t.now_ns(d);
-        if !self.fits(&opts) {
+        if !self.fits(&opts) || Self::zc_refuses(&opts, &addr, false) {
             return Err(NetError::Framing);
         }
         let top = self.free_len.checked_sub(1).ok_or(NetError::NoSlots)?;
@@ -64,7 +85,7 @@ impl<T: Transport> Net<T> {
         let c = &mut self.conns[slot as usize];
         c.renew(opts, seed);
         c.peer = Some(addr);
-        c.unix = matches!(addr, Addr::Unix(_));
+        c.copied = super::pins::copies_anyway(&addr);
         if let Some(r) = opts.reconnect {
             c.backoff = Backoff::new(r.base_ns, r.max_ns, r.jitter_per_mille, seed);
         }
@@ -112,6 +133,9 @@ impl<T: Transport> Net<T> {
 
     /// The connection in `slot` is ready for the caller.
     pub(super) fn connected(&mut self, d: &mut T::Driver, slot: u32) {
+        if self.conns[slot as usize].opts.frame_on_packet {
+            self.t.end_sends(d, slot);
+        }
         let c = &mut self.conns[slot as usize];
         c.st = St::Up;
         c.last_active = self.now;
@@ -213,6 +237,9 @@ impl<T: Transport> Net<T> {
         }
         if want & W_SHUT != 0 {
             self.shut_if_sent(d, slot);
+        }
+        if want & W_WAKE != 0 {
+            self.wake(d, slot);
         }
         if want & W_READ != 0 {
             self.resume_reading(d, slot);

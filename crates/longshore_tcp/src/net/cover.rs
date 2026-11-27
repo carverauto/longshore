@@ -32,6 +32,7 @@ pub(super) enum Col {
     Deadline,
     EventPulled,
     Accepted,
+    Released,
 }
 
 impl Col {
@@ -82,7 +83,7 @@ impl Coverage {
     ];
 
     /// The events, in the order of the table's columns.
-    pub const EVENTS: [&'static str; 15] = [
+    pub const EVENTS: [&'static str; 16] = [
         "close()",
         "shutdown_write()",
         "a send",
@@ -98,6 +99,7 @@ impl Coverage {
         "deadline",
         "event pulled",
         "accepted into the slot",
+        "Released",
     ];
 
     /// The listener states, in the order of their table's rows.

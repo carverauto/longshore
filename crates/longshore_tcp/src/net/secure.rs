@@ -41,7 +41,8 @@ impl<T: Transport> Net<T> {
     /// Whether a connection with `opts` can be protected on the connecting
     /// side (`client`) or the accepting side.
     pub(super) fn fits_tls(&self, opts: &ConnOpts, client: bool) -> Result<(), NetError> {
-        if !self.cfg.sizes.tls || !self.t.can_secure(client) {
+        // Records are not frames: the mode has nothing to lend.
+        if !self.cfg.sizes.tls || !self.t.can_secure(client) || opts.rx == Rx::ZeroCopy {
             return Err(NetError::NoTls);
         }
         // A record is opened whole, into frame memory, and a frame that

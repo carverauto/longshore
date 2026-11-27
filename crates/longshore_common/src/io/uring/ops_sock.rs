@@ -21,6 +21,7 @@ impl UringIo {
     ) -> Option<io_uring_sqe> {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         self.sock_stream[sock.0 as usize] = false;
+        self.sock_eor[sock.0 as usize] = false;
         let s = &mut self.slots[i as usize];
         s.state = State::Connecting;
         s.phase = PHASE_SOCKET;
@@ -63,6 +64,7 @@ impl UringIo {
     ) -> io_uring_sqe {
         assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
         self.sock_stream[sock.0 as usize] = false;
+        self.sock_eor[sock.0 as usize] = false;
         let (at, _) = self.limits.span(path_buf);
         let start = self.pool_base + at + path_off as usize;
         let slice = &self.bufs[start..start + path_len as usize];
@@ -99,6 +101,7 @@ impl UringIo {
         s.addr_len = size_of::<sockaddr_any>() as u32;
         let (addr, addr_len) = (&raw mut s.addr as u64, &raw mut s.addr_len as u64);
         self.sock_peer[sock.0 as usize] = None;
+        self.sock_eor[sock.0 as usize] = false;
         let mut sqe = self.fixed(listener);
         sqe.opcode = IORING_OP_ACCEPT;
         sqe.file_index = sock.0 + 1;
@@ -150,11 +153,19 @@ impl UringIo {
         let mut sqe = self.fixed(sock);
         sqe.addr = self.buf_ptr(buf, off, len);
         sqe.len = len;
-        sqe.op_flags = MSG_NOSIGNAL;
+        sqe.op_flags = MSG_NOSIGNAL
+            | if self.sock_eor[sock.0 as usize] {
+                MSG_EOR
+            } else {
+                0
+            };
         if zero_copy {
             sqe.opcode = IORING_OP_SEND_ZC;
-            sqe.ioprio = IORING_RECVSEND_FIXED_BUF;
-            sqe.buf_index = self.buf_range[buf.0 as usize];
+            // A page of the receive area is not among the fixed buffers.
+            if !self.limits.is_page(buf) {
+                sqe.ioprio = IORING_RECVSEND_FIXED_BUF;
+                sqe.buf_index = self.buf_range[buf.0 as usize];
+            }
         } else {
             sqe.opcode = IORING_OP_SEND;
         }
@@ -228,6 +239,7 @@ impl UringIo {
             }
         }
         self.sock_peer[sock.0 as usize] = None;
+        self.sock_eor[sock.0 as usize] = false;
         if core::mem::replace(&mut self.sock_stream[sock.0 as usize], false) {
             self.push(io_uring_sqe {
                 opcode: IORING_OP_SHUTDOWN,

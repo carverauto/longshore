@@ -90,12 +90,27 @@ impl World for Virtual {
         self.no_delay = on;
     }
 
+    fn end_sends(&mut self, sock: Sock, on: bool) {
+        self.packets.end_sends(sock.0, on);
+    }
+
     fn keep_alive(&mut self, on: bool) {
         self.keep_alive = on;
     }
 
     fn give_back(&mut self, id: BufId) {
         self.give_back_ring(id);
+    }
+
+    fn give_back_piece(
+        &mut self,
+        page: BufId,
+        off: u32,
+        len: u32,
+        pool: &mut [u8],
+        limits: &Limits,
+    ) {
+        self.give_back_piece_of(page, off, len, pool, limits);
     }
 
     fn waker(&mut self, woken: Arc<AtomicBool>) -> Option<Arc<dyn Wake>> {
@@ -118,13 +133,36 @@ impl World for Virtual {
         self.rng.chance(self.faults.delay)
     }
 
+    fn linger(&mut self, _op: &Op) -> u64 {
+        // One zero-copy send in eight reports once, as a kernel's may. The
+        // others keep their buffer for one to six steps, each its own
+        // number, so that several on one socket let go in any order.
+        if self.rng.below(8) == 0 {
+            0
+        } else {
+            1 + self.rng.below(6)
+        }
+    }
+
     fn late(&mut self) -> bool {
         // Nothing is drawn when it is off: existing traces stay as they are.
         // Never certain, or a close would be put off for ever.
         self.rng.chance(self.faults.reorder.min(REORDER_MOST))
     }
 
+    fn take_ring_full(&mut self) -> bool {
+        core::mem::take(&mut self.ring_full)
+    }
+
+    fn ring_full_count(&self) -> u64 {
+        self.ring_full_count
+    }
+
     fn on_submit(&mut self, op: &Op) -> u64 {
+        if let Op::ArmedRecvZc { sock, .. } = *op {
+            // Armed anew: what a full ring silenced is over.
+            self.area.leave(sock.0, false);
+        }
         if op.is_file_op() {
             self.file_op_seq += 1;
             self.file_op_seq
@@ -157,11 +195,13 @@ impl World for Virtual {
         match *op {
             Op::ArmedAccept { listener } => self.attempt_accept_armed(listener),
             Op::ArmedRecv { sock } => self.attempt_recv_armed(sock, pool, limits),
+            Op::ArmedRecvZc { sock, credit } => self.attempt_recv_zc(sock, credit, pool, limits),
             Op::Connect { .. }
             | Op::ConnectUnix { .. }
             | Op::ConnectUdp { .. }
             | Op::Accept { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -174,6 +214,7 @@ impl World for Virtual {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

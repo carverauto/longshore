@@ -45,7 +45,7 @@ impl UringIo {
             return None;
         }
         if opts {
-            if let Err(errno) = super::backend::apply_tcp_options(
+            if let Err(errno) = super::sockopts::apply_tcp_options(
                 fd,
                 self.no_delay,
                 self.keep_alive,
@@ -83,8 +83,8 @@ impl UringIo {
         }
         let mut measured = result;
         if result == 0 {
-            self.last_connect_opts = Some(super::backend::read_tcp_options(fd));
-            self.last_connect_timing = Some(super::backend::read_keep_timing(fd));
+            self.last_connect_opts = Some(super::sockopts::read_tcp_options(fd));
+            self.last_connect_timing = Some(super::sockopts::read_keep_timing(fd));
             if self.measure_segments {
                 let option = |level, name| {
                     let mut value: i32 = 0;
@@ -134,6 +134,11 @@ impl UringIo {
         let s = &mut self.slots[i as usize];
         out.push(Completion::new(Token(s.token), result));
         s.state = State::Free;
+        let row = core::mem::replace(&mut s.row, super::gather::NO_ROW);
+        if row != super::gather::NO_ROW {
+            // A gathered write is done with its vectors.
+            self.gather.release(row);
+        }
         self.free.push(i);
     }
 
@@ -151,6 +156,7 @@ impl UringIo {
             result,
             more,
             buf,
+            off: 0,
         });
         if !more {
             s.state = State::Free;
@@ -188,6 +194,7 @@ impl UringIo {
         let state = self.slots[i as usize].state;
         match dispatch_cqe(state, c.flags) {
             CqeDispatch::SendZc => self.on_send_zc_cqe(i, state, &c, out),
+            CqeDispatch::RecvZc => self.on_recv_zc_cqe(i, &c, out),
             CqeDispatch::Armed { more, read_buf } => self.on_armed_cqe(i, &c, more, read_buf, out),
             CqeDispatch::Single => self.on_single_cqe(i, state, &c, out),
         }
@@ -195,6 +202,7 @@ impl UringIo {
 
     /// A zero-copy send reports its result and, separately, the notification
     /// that the kernel no longer reads the buffer; it finishes on the later.
+    /// An [`Op::SendZc`] also says so when its result comes first.
     #[inline]
     fn on_send_zc_cqe(&mut self, i: u32, state: State, c: &io_uring_cqe, out: &mut Completions) {
         if c.flags & IORING_CQE_F_NOTIF != 0 {
@@ -213,6 +221,9 @@ impl UringIo {
             }
             s.result = c.res;
             s.state = State::AwaitNotif;
+            if s.reports_taken {
+                out.push(Completion::new(Token(s.token), c.res).with_more(true));
+            }
             return;
         }
         self.finish(i, c.res, out)
@@ -234,6 +245,7 @@ impl UringIo {
             if let Ok(slot) = u32::try_from(c.res) {
                 if slot < self.limits.sockets_max {
                     self.sock_peer[slot as usize] = None;
+                    self.sock_eor[slot as usize] = false;
                     self.sock_stream[slot as usize] = true;
                 }
             }
@@ -302,6 +314,7 @@ impl UringIo {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum CqeDispatch {
     SendZc,
+    RecvZc,
     Armed { more: bool, read_buf: bool },
     Single,
 }
@@ -309,6 +322,7 @@ pub(super) enum CqeDispatch {
 pub(super) fn dispatch_cqe(state: State, flags: u32) -> CqeDispatch {
     match state {
         State::SendZc | State::AwaitNotif | State::AwaitResult => CqeDispatch::SendZc,
+        State::ArmedRecvZc => CqeDispatch::RecvZc,
         State::ArmedAccept => CqeDispatch::Armed {
             more: flags & IORING_CQE_F_MORE != 0,
             read_buf: false,

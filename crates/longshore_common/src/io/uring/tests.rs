@@ -48,6 +48,11 @@ fn cqe_dispatch_uses_slot_state_before_cqe_more_flag() {
             read_buf: true,
         }
     );
+    // A zero-copy receive's pieces and its end both go to its own path,
+    // which reads where the bytes lie from the entry's second half.
+    for flags in [IORING_CQE_F_MORE, 0] {
+        assert_eq!(dispatch_cqe(State::ArmedRecvZc, flags), CqeDispatch::RecvZc);
+    }
 }
 
 #[test]
@@ -73,4 +78,16 @@ fn empty_buffer_completions_return_to_ring_without_exposing_buf_id() {
         None
     );
     assert_eq!(returned, None);
+}
+
+#[test]
+fn a_page_of_the_area_is_read_and_written_by_address_not_as_a_fixed_buffer() {
+    use super::ops_file::rw_opcode;
+    assert_eq!(rw_opcode(IORING_OP_WRITE_FIXED, true), IORING_OP_WRITE);
+    assert_eq!(rw_opcode(IORING_OP_READ_FIXED, true), IORING_OP_READ);
+    assert_eq!(
+        rw_opcode(IORING_OP_WRITE_FIXED, false),
+        IORING_OP_WRITE_FIXED
+    );
+    assert_eq!(rw_opcode(IORING_OP_READ_FIXED, false), IORING_OP_READ_FIXED);
 }

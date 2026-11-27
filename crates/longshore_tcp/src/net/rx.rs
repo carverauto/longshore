@@ -65,12 +65,14 @@ impl<T: Transport> Net<T> {
                 }
             }
             Rx::Direct => self.read_direct(d, slot),
+            Rx::ZeroCopy => self.read_zc(d, slot),
         }
     }
 
     /// Post the next receive of a direct connection: the rest of a header,
     /// or the rest of a frame.
     fn read_direct(&mut self, d: &mut T::Driver, slot: u32) {
+        let lead = self.lead(slot);
         let c = &self.conns[slot as usize];
         if c.recv_busy || c.ready.is_some() {
             return;
@@ -80,7 +82,7 @@ impl<T: Transport> Net<T> {
             return;
         }
         let into = match (c.opts.framing, c.asm) {
-            (_, Some(ext)) => Span::new(ext.buf(), c.asm_have, c.asm_len - c.asm_have),
+            (_, Some(ext)) => Span::new(ext.buf(), lead + c.asm_have, c.asm_len - c.asm_have),
             (Framing::Header(h), None) if c.hdr_have < h.header_len() as u32 => {
                 let (buf, off) = self.header_area(slot);
                 Span::new(buf, off + c.hdr_have, h.header_len() as u32 - c.hdr_have)
@@ -130,8 +132,9 @@ impl<T: Transport> Net<T> {
         let Some(ext) = self.extents.take() else {
             return false;
         };
+        let lead = self.lead(slot) as usize;
         let (src, dst) = self.t.bytes_pair(d, hbuf, ext.buf());
-        dst[..hl].copy_from_slice(&src[hoff as usize..hoff as usize + hl]);
+        dst[lead..lead + hl].copy_from_slice(&src[hoff as usize..hoff as usize + hl]);
         let c = &mut self.conns[slot as usize];
         c.hdr_have = 0;
         if frame_len == hl {
@@ -280,7 +283,9 @@ impl<T: Transport> Net<T> {
             return;
         }
         c.paused = true;
-        if c.armed && !c.cancelling {
+        // A receive of a connection that reads in pages runs on: its
+        // credit has a place for every byte it can bring.
+        if c.armed && !c.cancelling && c.opts.rx != Rx::ZeroCopy {
             // Once for an armed receive: a caller that pulls again and
             // again before the next turn stops reading each time. If the
             // driver has no room, the receive simply runs on until the
@@ -313,6 +318,7 @@ impl<T: Transport> Net<T> {
         (c.backlog_off, c.backlog_len, c.paused) = (0, 0, false);
         (c.unopened, c.cut_off, c.dry) = (false, false, false);
         c.cancelling = false;
+        self.drop_zc(slot);
         for ext in held.into_iter().flatten() {
             // Net's own hold; frames the caller pulled keep theirs.
             best_effort(self.extents.release(ext));

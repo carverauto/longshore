@@ -24,6 +24,13 @@ pub struct Sizes {
     pub(crate) header_max: u32,
     pub(crate) spans: u32,
     pub(crate) zero_copy_min: u32,
+    pub(crate) zero_copy_sends: u32,
+    pub(crate) zero_copy_sends_in_all: u32,
+    pub(crate) zc_pages: u32,
+    pub(crate) zc_frames: u32,
+    pub(crate) zc_pieces: u32,
+    pub(crate) zc_min_frame: u32,
+    pub(crate) zc_spare: u32,
     pub(crate) tls: bool,
     pub(crate) token_base: u64,
     pub(crate) seed: u64,
@@ -35,7 +42,8 @@ impl Sizes {
     /// listeners accept, `listeners` listeners. Defaults for the rest: 64
     /// frames of 1 MiB, 64 send segments of 64 KiB, 64 ring buffers of
     /// 16 KiB, headers up to 256 bytes, 16 queued sends per connection,
-    /// zero-copy sends from 16 KiB, tokens from 0.
+    /// zero-copy sends from 16 KiB, four of them a connection and 256 in
+    /// all whose memory the kernel may still read, tokens from 0.
     pub const fn new(connects: u32, accepts: u32, listeners: u32) -> Sizes {
         Sizes {
             connects,
@@ -50,6 +58,13 @@ impl Sizes {
             header_max: 256,
             spans: 16,
             zero_copy_min: 16 << 10,
+            zero_copy_sends: 4,
+            zero_copy_sends_in_all: 256,
+            zc_pages: 0,
+            zc_frames: 0,
+            zc_pieces: 0,
+            zc_min_frame: 4096,
+            zc_spare: 0,
             tls: false,
             token_base: 0,
             seed: 0x6c6f_6e67_7368_6f72,
@@ -99,6 +114,80 @@ impl Sizes {
     pub const fn with_zero_copy_min(mut self, bytes: u32) -> Sizes {
         self.zero_copy_min = bytes;
         self
+    }
+
+    /// Zero-copy sends whose memory the kernel still reads: how many a
+    /// connection may have, and how many all connections together. A
+    /// zero-copy send is reported as soon as its bytes are taken, so that
+    /// the next follows at once; its memory comes back when the peer has
+    /// acknowledged the bytes. With `per_connection` of its own out, or
+    /// `in_all` out in the set, a connection sends with a copy until one
+    /// comes back. Each is an operation of the backend until then, and
+    /// `in_all` (or `per_connection` for every connection, if that is
+    /// fewer) is what the set adds to the backend's operations for them.
+    /// With `per_connection` 0 a connection has one zero-copy send at a
+    /// time and waits for its memory before the next: a send every round
+    /// trip. The default of four is from runs between two machines over
+    /// a 200 Gb/s card (`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`):
+    /// four carried as much as any number tried and about halved the
+    /// sending thread's CPU against one, with which most sends are
+    /// copied; eight was slower in two cases of nine. Nothing is lent
+    /// to a loopback address or a Unix-domain socket, where the kernel
+    /// copies whatever it is asked.
+    #[must_use]
+    pub const fn with_zero_copy_sends(mut self, per_connection: u32, in_all: u32) -> Sizes {
+        (self.zero_copy_sends, self.zero_copy_sends_in_all) = (per_connection, in_all);
+        self
+    }
+
+    /// Room for `Rx::ZeroCopy`, the receive mode that lends a frame in the
+    /// pages of the backend's receive area it arrived in: `pages` pages
+    /// that frames in pages may hold at once, arriving or lent; `frames`
+    /// such frames at once, each with a block of its own for its last,
+    /// partial block; and `pieces` records of what a frame's pages were
+    /// delivered as, at least two a frame in the usual case. All zero by
+    /// default: no connection may then ask for the mode. With pages, a
+    /// set needs a frame buffer for every connection it can have.
+    ///
+    /// The area is sized for what one turn of the backend's completion
+    /// ring can bring, which grows with its operations: plan such a set
+    /// after the other components of the backend that add operations
+    /// (files, an object storage client). A `Net` planned on top of it
+    /// grows the area by itself.
+    #[must_use]
+    pub const fn with_zc(mut self, pages: u32, frames: u32, pieces: u32) -> Sizes {
+        (self.zc_pages, self.zc_frames, self.zc_pieces) = (pages, frames, pieces);
+        self
+    }
+
+    /// A frame shorter than `bytes` is never lent in its pages: it is
+    /// moved into frame memory, so that small frames do not hold a page
+    /// each. One page by default.
+    #[must_use]
+    pub const fn with_zc_min_frame(mut self, bytes: u32) -> Sizes {
+        self.zc_min_frame = bytes;
+        self
+    }
+
+    /// Pages of the receive area beyond what the set can account for:
+    /// for what the kernel holds in the card's ring and in the receive
+    /// queues of sockets, which a program cannot count. An area that runs
+    /// dry stops every connection of its queue, for seconds.
+    #[must_use]
+    pub const fn with_zc_spare(mut self, pages: u32) -> Sizes {
+        self.zc_spare = pages;
+        self
+    }
+
+    /// The most zero-copy sends a set of `conns` connections has whose
+    /// memory is still read.
+    pub(crate) const fn lent_most(&self, conns: u32) -> u32 {
+        let each = conns.saturating_mul(self.zero_copy_sends);
+        if each < self.zero_copy_sends_in_all {
+            each
+        } else {
+            self.zero_copy_sends_in_all
+        }
     }
 
     /// Room for TLS: two more buffers of the segment size for every

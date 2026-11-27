@@ -14,6 +14,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::io;
 
 pub(crate) mod buf_ring;
+mod zcrx;
 
 struct Map {
     ptr: *mut c_void,
@@ -67,6 +68,11 @@ pub struct Ring {
     cq_head: *const AtomicU32,
     cq_tail: *const AtomicU32,
     cq_mask: u32,
+    cq_entries: u32,
+    /// 1 when a completion entry is 32 bytes (`IORING_SETUP_CQE32`), else 0.
+    cq_shift: u32,
+    /// The second half of the entry `pop` took last, on such a ring.
+    extra: u64,
     cqes: *const io_uring_cqe,
     enters: u64,
 }
@@ -119,8 +125,9 @@ impl Ring {
 
     fn map(fd: c_int, p: io_uring_params) -> io::Result<Ring> {
         let sq_len = p.sq_off.array as usize + p.sq_entries as usize * 4;
-        let cq_len =
-            p.cq_off.cqes as usize + p.cq_entries as usize * core::mem::size_of::<io_uring_cqe>();
+        let cq_shift = u32::from(p.flags & IORING_SETUP_CQE32 != 0);
+        let cq_len = p.cq_off.cqes as usize
+            + ((p.cq_entries as usize * core::mem::size_of::<io_uring_cqe>()) << cq_shift);
         let single = p.features & IORING_FEAT_SINGLE_MMAP != 0;
         let sq_map = Map::new(
             fd,
@@ -160,6 +167,9 @@ impl Ring {
                 cq_head: cq.at(p.cq_off.head),
                 cq_tail: cq.at(p.cq_off.tail),
                 cq_mask: *cq.at::<u32>(p.cq_off.ring_mask),
+                cq_entries: p.cq_entries,
+                cq_shift,
+                extra: 0,
                 cqes: cq.at(p.cq_off.cqes),
                 _sq_map: sq_map,
                 _cq_map: cq_map,
@@ -262,9 +272,34 @@ impl Ring {
             if head == tail {
                 return None;
             }
-            let cqe = self.cqes.add((head & self.cq_mask) as usize).read();
+            // An entry of 32 bytes is two of 16: the second half follows.
+            let at = ((head & self.cq_mask) as usize) << self.cq_shift;
+            let cqe = self.cqes.add(at).read();
+            if self.cq_shift != 0 {
+                self.extra = self.cqes.add(at + 1).cast::<u64>().read();
+            }
             (*self.cq_head).store(head.wrapping_add(1), Ordering::Release);
             Some(cqe)
+        }
+    }
+
+    /// The first eight bytes of the second half of the entry [`Ring::pop`]
+    /// took last, on a ring of 32-byte entries: where a zero-copy
+    /// receive's bytes lie.
+    #[inline]
+    #[must_use]
+    pub const fn extra(&self) -> u64 {
+        self.extra
+    }
+
+    /// Whether the completion queue holds as many entries as it has: the
+    /// kernel had no room to post another.
+    #[inline]
+    pub fn cq_is_full(&self) -> bool {
+        unsafe {
+            let head = (*self.cq_head).load(Ordering::Relaxed);
+            let tail = (*self.cq_tail).load(Ordering::Acquire);
+            tail.wrapping_sub(head) >= self.cq_entries
         }
     }
 

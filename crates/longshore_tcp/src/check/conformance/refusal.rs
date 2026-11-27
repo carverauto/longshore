@@ -7,7 +7,7 @@
 
 use super::{count, of_slot, pair, receive, settle, until, with, Rig};
 use crate::check::{fail, must};
-use crate::transport::{Happened, Refused, Transport};
+use crate::transport::{Happened, Lend, Refused, Transport};
 
 /// With no room in the driver a send, a receive, a shutdown and a close
 /// are refused, and have changed nothing: nothing is reported for them,
@@ -22,7 +22,7 @@ pub(super) fn a_refused_operation_changes_nothing<R: Rig>(rig: &mut R) {
     let refused = with(rig, |t, d| {
         t.bytes(d, from.buf())[..100].fill(0x3c);
         [
-            t.send(d, 0, from, false),
+            t.send(d, 0, from, Lend::No),
             t.recv_into(d, s, into).map(|_| ()),
             t.shutdown_write(d, 0),
             t.close(d, s),
@@ -40,7 +40,7 @@ pub(super) fn a_refused_operation_changes_nothing<R: Rig>(rig: &mut R) {
     }
     // Each works now, once. The receive gets one send's bytes: the
     // refused send sent none.
-    with(rig, |t, d| must(t.send(d, 0, from, false), "send"));
+    with(rig, |t, d| must(t.send(d, 0, from, Lend::No), "send"));
     let sent = |h: &Happened| matches!(h, Happened::Sent { slot: 0, .. });
     until(rig, &mut seen, "the send", |all| count(all, sent) == 1);
     if receive(rig, &mut seen, s, into) != 100 {

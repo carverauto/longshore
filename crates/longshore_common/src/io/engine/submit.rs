@@ -8,9 +8,33 @@
 use super::*;
 
 impl<W: World> Engine<W> {
+    /// How many more gathered writes may be in flight: `Limits::gather_ops`
+    /// less those not yet completed.
+    pub(super) fn gather_rows(&self) -> usize {
+        let flying = self
+            .pending
+            .iter()
+            .filter(|p| matches!(p.op, Op::FileWriteSpans { .. }))
+            .count();
+        (self.limits.gather_ops as usize).saturating_sub(flying)
+    }
+
     /// Checks a socket operation's preconditions before it is queued. Returns
     /// the Unix-domain path it carries (empty for every other operation), or
     /// the errno it completes with at once.
+    /// A zero-copy receive has a credit, and a backend with an area.
+    fn precheck_recv_zc(&self, sock: Sock, credit: u32) -> Result<([u8; 108], u8), i32> {
+        assert!(sock.0 < self.limits.sockets_max, "socket slot out of range");
+        assert!(
+            credit != 0,
+            "a zero-copy receive is never armed with a credit of 0"
+        );
+        if self.limits.area_pages == 0 {
+            return Err(-ENOBUFS);
+        }
+        Ok(([0u8; 108], 0))
+    }
+
     pub(super) fn socket_precheck(&self, op: &Op) -> Result<([u8; 108], u8), i32> {
         match *op {
             Op::ArmedAccept { listener } => {
@@ -30,6 +54,7 @@ impl<W: World> Engine<W> {
                 }
                 Ok(([0u8; 108], 0))
             }
+            Op::ArmedRecvZc { sock, credit } => self.precheck_recv_zc(sock, credit),
             Op::ConnectUnix {
                 sock,
                 path_buf,
@@ -54,6 +79,7 @@ impl<W: World> Engine<W> {
             | Op::ConnectUdp { .. }
             | Op::Accept { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -66,6 +92,7 @@ impl<W: World> Engine<W> {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -86,7 +113,9 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -98,6 +127,7 @@ impl<W: World> Engine<W> {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -130,7 +160,9 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -142,6 +174,7 @@ impl<W: World> Engine<W> {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }

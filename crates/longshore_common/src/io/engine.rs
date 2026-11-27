@@ -22,6 +22,7 @@ use std::sync::Arc;
 mod backend;
 mod step;
 mod submit;
+mod taken;
 #[cfg(test)]
 mod tests;
 
@@ -31,6 +32,8 @@ pub struct Attempt {
     pub(crate) result: i32,
     pub(crate) more: bool,
     pub(crate) buf: Option<BufId>,
+    /// Where the bytes start in `buf`: a piece of a zero-copy receive.
+    pub(crate) off: u32,
 }
 
 impl Attempt {
@@ -40,6 +43,7 @@ impl Attempt {
             result,
             more: false,
             buf: None,
+            off: 0,
         }
     }
 }
@@ -71,6 +75,8 @@ pub trait World {
     fn listen_unix(&mut self, sock: Sock, path: &str) -> io::Result<()>;
     /// Enable or disable `TCP_NODELAY` on TCP sockets listened or connected from now on.
     fn no_delay(&mut self, _on: bool) {}
+    /// Mark every send on `sock` as ending a buffer, as `Io::end_sends`.
+    fn end_sends(&mut self, _sock: Sock, _on: bool) {}
     /// Enable or disable `SO_KEEPALIVE` on TCP sockets listened or connected from now on.
     fn keep_alive(&mut self, _on: bool) {}
     /// The probe timing that goes with `keep_alive`.
@@ -79,8 +85,29 @@ pub trait World {
     fn peer_addr(&self, _sock: Sock) -> Option<SocketAddr> {
         None
     }
+    /// Whether a receive found no room to report in since this was last
+    /// asked; asking clears it.
+    fn take_ring_full(&mut self) -> bool {
+        false
+    }
+    /// How many times a receive found no room to report in, ever; as
+    /// `Io::ring_full_count`.
+    fn ring_full_count(&self) -> u64 {
+        0
+    }
     /// Return a buffer-ring buffer back to the world's ring.
     fn give_back(&mut self, _id: BufId) {}
+    /// Return a piece of the receive area, `len` bytes of `page` from
+    /// `off`, to a world that has one.
+    fn give_back_piece(
+        &mut self,
+        _page: BufId,
+        _off: u32,
+        _len: u32,
+        _pool: &mut [u8],
+        _limits: &Limits,
+    ) {
+    }
     /// Ask to measure TCP segment sizes on future connects, if supported.
     fn measure_segment_sizes(&mut self, _on: bool) {}
     /// Build a cross-thread wake handle tied to `woken`, if supported.
@@ -107,6 +134,13 @@ pub trait World {
     fn closed(&mut self, sock: Sock);
     /// Wait when `tick(true, ...)` has no completions yet.
     fn wait(&mut self, deadline: Option<u64>, only_timers: bool, idle: u32) -> io::Result<()>;
+
+    /// How many steps this world goes on reading the buffer of an
+    /// [`Op::SendZc`] whose bytes it has just taken. Zero for a world that
+    /// copied them: the send then reports once.
+    fn linger(&mut self, _op: &Op) -> u64 {
+        0
+    }
 
     /// Whether a report that is due now comes in a later step instead: the
     /// end of an operation its socket's close cancelled, or a close before
@@ -173,6 +207,11 @@ pub(crate) struct Pending {
     pub(crate) last_delivered_step: u64,
     pub(crate) unix_path: [u8; 108],
     pub(crate) unix_len: u8,
+    /// For an [`Op::SendZc`] whose bytes were taken: the bytes, and the
+    /// step from which the world no longer reads its buffer.
+    pub(crate) taken: Option<(i32, u64)>,
+    /// What those bytes hashed to when they were taken.
+    pub(crate) taken_sum: u64,
 }
 
 /// [`crate::io::Io`] implementation backed by a [`World`].
@@ -244,7 +283,24 @@ impl Attempt {
     /// buffer an armed receive selected.
     #[inline]
     pub const fn new(result: i32, more: bool, buf: Option<BufId>) -> Self {
-        Self { result, more, buf }
+        Self {
+            result,
+            more,
+            buf,
+            off: 0,
+        }
+    }
+
+    /// A piece of a zero-copy receive: `result` bytes of `page` from `off`,
+    /// with more to follow.
+    #[inline]
+    pub const fn piece(result: i32, page: BufId, off: u32) -> Self {
+        Self {
+            result,
+            more: true,
+            buf: Some(page),
+            off,
+        }
     }
 
     /// A byte count or 0 on success, or a negated Linux errno.

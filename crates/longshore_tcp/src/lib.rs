@@ -89,5 +89,7 @@ pub use handle::{Conn, Generations, Listener};
 #[cfg(feature = "tls-core")]
 pub use kernel::Tls;
 pub use kernel::{KernelTransport, PhaseCoverage};
-pub use net::{Coverage, Frame, Net, Usage};
-pub use transport::{Happened, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED};
+pub use net::{Coverage, Frame, Net, Paged, Pages, Run, Spans, Usage, WriteHold};
+pub use transport::{
+    Happened, Lend, Listening, Opened, Refused, Role, Span, Transport, TLS_FAILED,
+};

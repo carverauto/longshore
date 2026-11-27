@@ -154,6 +154,38 @@ against 25.7. On Arm it makes no difference. Sealing a body over itself
 instead of into a separate buffer is 1.2 to 1.6 times faster on x86, and
 the client does not do that (`m25-aes-gcm-memory.md`).
 
+## Files on one thread
+
+`file_bench` writes and reads one file through `longshore::file` and
+through the raw file operations, on the same backend and buffers. On a
+Mac (Apple M3 Max, internal SSD, APFS) with the portable backend, over
+108 cells of write sizes from 4 KiB to 1 MiB, one to 16 operations in
+flight, buffered and direct, three ways to sync and two orders of
+offsets, three runs of one second a cell (`m36-file-bench-macos.md`):
+
+- Reads cost the set about 1 to 2 % more of the thread's CPU a GB: its
+  median is above the raw path's in 75 of the 108 read cells, and its
+  GB/s below in 70, in each of the three runs. On that backend the thread
+  also does the kernel's work of every operation, so this is a share of
+  both together.
+- Writes show no difference: the set is on the worse side in 56 of 108
+  cells.
+
+| Pass, direct I/O, 16 in flight, sequential | `longshore::file` | Raw operations |
+|---|---|---|
+| Write, 1 MiB, synced at the end | 5.95 GB/s | 5.97 GB/s |
+| Read, 1 MiB | 3.47 GB/s | 3.65 GB/s |
+| Write, 64 KiB, a sync every 16 writes | 2,298 writes a second | 2,301 |
+| Write, 64 KiB, each write durable (`O_DSYNC`) | 32,112 writes a second | 32,602 |
+
+Medians of three runs. On that machine a sync, which flushes the drive's
+cache and blocks the thread, took 5 to 13 ms and set the rate of the
+synced row. With direct I/O to a DGX Spark's NVMe, on the ring and on
+`epoll`, the two paths are within a few per cent in nearly every cell:
+of 50, the three runs' GB/s ranges are apart in 4 (three for the set, one
+for raw) and the CPU-a-GB ranges in 5 (three with the set lower, two
+higher) (`m37-file-bench-dgx-spark-nvme.md`, with its own conditions).
+
 ## Compared with the talk
 
 The talk's figures are from its slides. Its hardware differs from ours and

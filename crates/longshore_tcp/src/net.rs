@@ -21,7 +21,7 @@
 //! nothing can overflow and not pulling is itself backpressure.
 
 use crate::addr::ServerName;
-use crate::config::{Config, ConnOpts};
+use crate::config::{Config, ConnOpts, Rx};
 use crate::deadline::Deadlines;
 use crate::event::Event;
 use crate::framing::Framing;
@@ -36,17 +36,23 @@ mod cover;
 mod ending;
 mod frames;
 mod listen;
+mod paged;
+mod pins;
 mod pull;
+mod runs;
 mod rx;
 mod secure;
 mod spill;
 mod state;
 mod tx;
 mod usage;
+mod zc;
 
 pub use cover::Coverage;
 pub use frames::Frame;
-pub use usage::Usage;
+pub use paged::Spans;
+pub use runs::{Pages, Run, WriteHold};
+pub use usage::{Paged, Usage};
 
 /// Connections and listeners over a transport `T`.
 pub struct Net<T: Transport> {
@@ -59,9 +65,21 @@ pub struct Net<T: Transport> {
     spans: Box<[TxSpan]>,
     listeners: Box<[ListenerState]>,
     extents: Extents,
+    /// Frames in pages (`Rx::ZeroCopy`): their runs, tail blocks, budget.
+    zc: Pages,
     /// Free send segments, as a stack of indexes.
     segs: Box<[u32]>,
     segs_len: usize,
+    /// Per connection, a place for each zero-copy send whose memory the
+    /// transport may still read: what the send keeps.
+    pins: Box<[Option<Keep>]>,
+    /// How many of them are out, in all.
+    pins_out: u32,
+    /// Per send segment: the zero-copy sends that still read it, and
+    /// whether its span is gone, so that it returns to the pool with the
+    /// last of them.
+    seg_pins: Box<[u32]>,
+    seg_parked: Box<[bool]>,
     /// Connections refused a send segment because none was free, as a
     /// ring: one is told each time a segment returns.
     seg_waiters: Box<[u32]>,
@@ -95,12 +113,16 @@ pub struct Net<T: Transport> {
     draining: Option<u64>,
     drained_owed: bool,
     drain_reported: bool,
-    /// Connections with sends queued.
+    /// Connections with sends queued, or with the memory of a zero-copy
+    /// send still out.
     tx_busy: u32,
     /// With TLS: the server name of each connection the caller opened.
     names: Box<[ServerName]>,
     /// Which cells of the state table were reached, in debug builds.
     coverage: Coverage,
+    /// The driver's count of full completion rings when `poll` last
+    /// looked (`Transport::ring_full_count`).
+    ring_full_seen: u64,
 }
 
 impl<T: Transport> Net<T> {
@@ -141,8 +163,13 @@ impl<T: Transport> Net<T> {
             spans: vec![quiet; (conns * s.spans) as usize].into_boxed_slice(),
             listeners: vec![unused; s.listeners as usize].into_boxed_slice(),
             extents: Extents::new(cfg.frame_first, s.frames),
+            zc: Pages::new(&cfg),
             segs: (0..s.segments).rev().collect(),
             segs_len: s.segments as usize,
+            pins: vec![None; (conns * s.zero_copy_sends) as usize].into_boxed_slice(),
+            pins_out: 0,
+            seg_pins: vec![0; s.segments as usize].into_boxed_slice(),
+            seg_parked: vec![false; s.segments as usize].into_boxed_slice(),
             seg_waiters: vec![0; conns as usize].into_boxed_slice(),
             seg_wait_head: 0,
             seg_wait_len: 0,
@@ -168,6 +195,7 @@ impl<T: Transport> Net<T> {
             tx_busy: 0,
             names: vec![ServerName::NONE; names].into_boxed_slice(),
             coverage: Coverage::NONE,
+            ring_full_seen: 0,
         }
     }
 
@@ -186,6 +214,13 @@ impl<T: Transport> Net<T> {
     /// while a file write or anything else outside the `Net` uses it.
     pub fn extents(&mut self) -> &mut Extents {
         &mut self.extents
+    }
+
+    /// Holds of frames in pages: add a hold to a frame's run
+    /// ([`Frame::run`]) while a file write reads its pages, and drop it
+    /// when the write and its sync have completed.
+    pub fn runs(&mut self) -> &mut Pages {
+        &mut self.zc
     }
 
     /// Feed one completion of the driver. `false` when it is not the
@@ -214,9 +249,23 @@ impl<T: Transport> Net<T> {
                 len,
                 armed,
             } => self.on_ring_data(d, slot, buf, len, armed),
-            Happened::RecvEnded { slot, result } => self.on_recv_ended(slot, result),
+            Happened::Piece {
+                slot,
+                page,
+                off,
+                len,
+            } => self.on_piece(d, slot, zc::Piece { page, off, len }),
+            Happened::RecvEnded { slot, result } => {
+                if self.conns[slot as usize].opts.rx == Rx::ZeroCopy {
+                    self.on_zc_ended(d, slot, result);
+                } else {
+                    self.on_recv_ended(slot, result);
+                }
+            }
             Happened::Received { slot, result } => self.on_received(d, slot, result),
-            Happened::Sent { slot, result } => self.on_sent(d, slot, result),
+            Happened::Sent { slot, result } => self.on_sent(d, slot, result, false),
+            Happened::Taken { slot, result } => self.on_sent(d, slot, result, true),
+            Happened::Released { slot, id } => self.on_released(slot, id),
             Happened::ShutDown { slot, result } => self.on_shut_down(slot, result),
             Happened::Closed { slot } => {
                 self.cover(slot, cover::Col::Closed);
@@ -225,6 +274,7 @@ impl<T: Transport> Net<T> {
             }
             Happened::ListenerClosed { listener } => self.on_listener_closed(listener),
         }
+        self.return_headers(d);
         true
     }
 
@@ -239,6 +289,8 @@ impl<T: Transport> Net<T> {
             self.t.give_back(d, self.returns[i]);
         }
         self.returns_len = 0;
+        self.return_pieces(d);
+        self.wake_silent(d);
         let conns = self.cfg.conns();
         while let Some(slot) = self.deadlines.next_due(now_ns) {
             if slot < conns {
@@ -257,6 +309,8 @@ impl<T: Transport> Net<T> {
             self.conns[slot as usize].working = false;
             self.do_work(d, slot);
         }
+        // What this turn's work gave up goes back within the turn.
+        self.return_pieces(d);
         if let Some(until) = self.draining {
             if !self.drain_reported && (self.tx_busy == 0 || now_ns >= until) {
                 self.drain_reported = true;

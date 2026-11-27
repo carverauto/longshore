@@ -18,6 +18,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[path = "net/accepting.rs"]
 mod accepting;
 #[cfg(test)]
+#[path = "net/alone.rs"]
+mod alone;
+#[cfg(test)]
 #[path = "net/ending.rs"]
 mod ending;
 #[cfg(test)]
@@ -39,6 +42,30 @@ mod lifecycle;
 #[path = "net/listening.rs"]
 mod listening;
 #[cfg(test)]
+#[path = "net/paged.rs"]
+mod paged;
+#[cfg(test)]
+#[path = "net/paged_disk.rs"]
+mod paged_disk;
+#[cfg(test)]
+#[path = "net/paged_ends.rs"]
+mod paged_ends;
+#[cfg(test)]
+#[path = "net/paged_faults.rs"]
+mod paged_faults;
+#[cfg(test)]
+#[path = "net/paged_holds.rs"]
+mod paged_holds;
+#[cfg(test)]
+#[path = "net/paged_wake.rs"]
+mod paged_wake;
+#[cfg(test)]
+#[path = "net/pages.rs"]
+mod pages;
+#[cfg(test)]
+#[path = "net/pins.rs"]
+mod pins;
+#[cfg(test)]
 #[path = "net/slots.rs"]
 mod slots;
 
@@ -56,12 +83,17 @@ type SimNet = Net<KernelTransport<SimIo>>;
 
 struct World {
     io: SimIo,
+    /// What the backend was built with.
+    limits: Limits,
     client: SimNet,
     server: SimNet,
     out: Completions,
     /// Sends completed, for counting how many it took.
     sends: u32,
     ticking: bool,
+    /// Ticks of the backend a turn, the first waiting: more than one is a
+    /// driver that ticks again before it polls the sets.
+    ticks: u32,
 }
 
 #[cfg(test)]
@@ -87,11 +119,13 @@ impl World {
         let (limits, scfg) = Config::plan(l1, server).unwrap();
         World {
             io: SimIo::new(limits, seed, faults),
+            limits,
             client: Net::new(KernelTransport::new(&ccfg), ccfg, &limits),
             server: Net::new(KernelTransport::new(&scfg), scfg, &limits),
             out: Completions::new(64),
             sends: 0,
             ticking: false,
+            ticks: 1,
         }
     }
 
@@ -106,13 +140,23 @@ impl World {
             self.io.submit(TICK, Op::Timeout { nanos: MS / 4 }).unwrap();
             self.ticking = true;
         }
-        self.io.tick(true, &mut self.out).unwrap();
+        for k in 0..self.ticks {
+            self.io.tick(k == 0, &mut self.out).unwrap();
+            self.collect();
+        }
+    }
+
+    /// Route what a tick brought.
+    fn collect(&mut self) {
         while let Some(c) = self.out.pop() {
             if c.token() == TICK {
                 self.ticking = false;
                 continue;
             }
             // Kind 1 of a connection's tokens is its send.
+            // (A zero-copy send that
+            // outlives its report has a token of its own and is not counted:
+            // the worlds counted here send nothing that long.)
             self.sends += u32::from(c.token().get() % 8 == 1);
             let taken = self.client.on_completion(&mut self.io, c)
                 || self.server.on_completion(&mut self.io, c);
@@ -151,7 +195,12 @@ impl World {
 
     /// One more connection to the listener, both ends up.
     fn connect(&mut self, opts: ConnOpts) -> (Conn, Conn) {
-        let c = self.client.connect(&mut self.io, ADDR, opts).unwrap();
+        self.connect_to(ADDR, opts)
+    }
+
+    /// A connection to a listener at `addr`, both ends up.
+    fn connect_to(&mut self, addr: SocketAddr, opts: ConnOpts) -> (Conn, Conn) {
+        let c = self.client.connect(&mut self.io, addr, opts).unwrap();
         let (mut up, mut accepted) = (false, None);
         self.until(|_, _, e| {
             match e {

@@ -11,231 +11,15 @@
 //! already has for files and other clients, and records which ranges of the
 //! result belong to the `Net`.
 
-use crate::framing::Framing;
 pub use crate::sizes::{Sizes, TLS_SEGMENT_MIN};
+
+mod error;
+mod opts;
+mod zc;
+
+pub use error::ConfigError;
 use longshore_common::io::{BufId, Limits};
-
-/// How a connection reads.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rx {
-    /// From the backend's shared buffer ring: a frame lying whole in one
-    /// ring buffer is lent in place until the next `poll`; one that spans
-    /// buffers is assembled in frame memory. For many connections with
-    /// small frames.
-    Ring,
-    /// Each frame straight into frame memory: its header, then its body.
-    /// No frame is copied; two receives per frame. For large frames.
-    Direct,
-}
-
-/// When and how often a lost connection is dialled again.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Reconnect {
-    pub(crate) base_ns: u64,
-    pub(crate) max_ns: u64,
-    pub(crate) jitter_per_mille: u32,
-}
-
-impl Reconnect {
-    /// Wait `base_ns`, doubling per attempt up to `max_ns`, each wait
-    /// shortened by a random share of up to `jitter_per_mille` thousandths.
-    pub const fn new(base_ns: u64, max_ns: u64, jitter_per_mille: u32) -> Reconnect {
-        assert!(base_ns > 0 && max_ns >= base_ns && jitter_per_mille <= 1000);
-        Reconnect {
-            base_ns,
-            max_ns,
-            jitter_per_mille,
-        }
-    }
-}
-
-/// How one connection behaves; given to `connect`, and to `listen` for the
-/// connections it accepts.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ConnOpts {
-    pub(crate) framing: Framing,
-    pub(crate) rx: Rx,
-    pub(crate) held_max: u32,
-    pub(crate) connect_timeout_ns: u64,
-    pub(crate) handshake_timeout_ns: u64,
-    pub(crate) idle_timeout_ns: u64,
-    pub(crate) reconnect: Option<Reconnect>,
-    pub(crate) half_close: bool,
-}
-
-impl ConnOpts {
-    /// Frames cut by `framing`, read from the buffer ring, up to 4 MiB of
-    /// frame memory held before reading pauses, a 10 s connect timeout, no
-    /// idle timeout, no reconnecting.
-    pub const fn new(framing: Framing) -> ConnOpts {
-        ConnOpts {
-            framing,
-            rx: Rx::Ring,
-            held_max: 4 << 20,
-            connect_timeout_ns: 10_000_000_000,
-            handshake_timeout_ns: 10_000_000_000,
-            idle_timeout_ns: 0,
-            reconnect: None,
-            half_close: false,
-        }
-    }
-
-    /// With this way of reading.
-    #[must_use]
-    pub const fn with_rx(mut self, rx: Rx) -> ConnOpts {
-        self.rx = rx;
-        self
-    }
-
-    /// Stop reading while the caller holds this many bytes of the
-    /// connection's frames in frame memory; resume when releases bring it
-    /// under. At least 1.
-    #[must_use]
-    pub const fn with_held_max(mut self, bytes: u32) -> ConnOpts {
-        assert!(bytes > 0);
-        self.held_max = bytes;
-        self
-    }
-
-    /// Give a connect up after this long; 0 for no limit.
-    #[must_use]
-    pub const fn with_connect_timeout_ns(mut self, ns: u64) -> ConnOpts {
-        self.connect_timeout_ns = ns;
-        self
-    }
-
-    /// End an accepted connection whose TLS handshake has not finished
-    /// after this long; 0 waits for ever. For a connection the caller
-    /// opens, the connect timeout covers the handshake too.
-    #[must_use]
-    pub const fn with_handshake_timeout_ns(mut self, ns: u64) -> ConnOpts {
-        self.handshake_timeout_ns = ns;
-        self
-    }
-
-    /// Close a connection on which nothing was sent or received for this
-    /// long; 0 for no limit.
-    #[must_use]
-    pub const fn with_idle_timeout_ns(mut self, ns: u64) -> ConnOpts {
-        self.idle_timeout_ns = ns;
-        self
-    }
-
-    /// Keep the connection open for sending after its peer has finished
-    /// its stream in order: `Event::Finished` says so, and the connection
-    /// ends when the caller shuts its own side down or closes it. Without
-    /// this the end of the peer's stream ends the connection.
-    #[must_use]
-    pub const fn with_half_close(mut self, on: bool) -> ConnOpts {
-        self.half_close = on;
-        self
-    }
-
-    /// Dial again after the connection is lost or a connect fails, keeping
-    /// the handle. For `connect` only.
-    #[must_use]
-    pub const fn with_reconnect(mut self, reconnect: Option<Reconnect>) -> ConnOpts {
-        self.reconnect = reconnect;
-        self
-    }
-}
-
-/// How a listener listens and what it does with what it accepts.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ListenConfig {
-    pub(crate) conn: ConnOpts,
-    pub(crate) reuse_port: bool,
-    pub(crate) backlog: u32,
-    pub(crate) limit: u32,
-    pub(crate) peer_addr: bool,
-    pub(crate) bind_retry_ns: u64,
-    pub(crate) tls: bool,
-}
-
-impl ListenConfig {
-    /// Accepted connections behave as `conn` says; the port to itself, a
-    /// backlog of 128, no connection limit, no peer addresses, no bind retry.
-    pub const fn new(conn: ConnOpts) -> ListenConfig {
-        ListenConfig {
-            conn,
-            reuse_port: false,
-            backlog: 128,
-            limit: u32::MAX,
-            peer_addr: false,
-            bind_retry_ns: 0,
-            tls: false,
-        }
-    }
-
-    /// Protect accepted connections with TLS: each is announced once its
-    /// handshake is done. Needs `Sizes::with_tls` and a transport with a
-    /// server setup; in ring mode also frame memory of two buffers at
-    /// least, each holding a record. `listen` answers
-    /// `NetError::NoTls` or `NetError::Framing` otherwise.
-    #[must_use]
-    pub const fn with_tls(mut self, on: bool) -> ListenConfig {
-        self.tls = on;
-        self
-    }
-
-    /// Share the port with listeners on other threads (`SO_REUSEPORT`).
-    #[must_use]
-    pub const fn with_reuse_port(mut self, on: bool) -> ListenConfig {
-        self.reuse_port = on;
-        self
-    }
-
-    /// Let this many connections wait to be accepted.
-    #[must_use]
-    pub const fn with_backlog(mut self, backlog: u32) -> ListenConfig {
-        assert!(backlog > 0);
-        self.backlog = backlog;
-        self
-    }
-
-    /// Hold at most this many connections; one more at a time is accepted
-    /// only to be refused, after the caller has had the chance to send it
-    /// one frame.
-    #[must_use]
-    pub const fn with_limit(mut self, connections: u32) -> ListenConfig {
-        self.limit = connections;
-        self
-    }
-
-    /// Report each accepted connection's peer address. Costs one accept
-    /// operation per connection in place of one armed accept for all.
-    #[must_use]
-    pub const fn with_peer_addr(mut self, on: bool) -> ListenConfig {
-        self.peer_addr = on;
-        self
-    }
-
-    /// When the address is in use, keep trying to bind for this long
-    /// (a process killed a moment ago may still hold it).
-    #[must_use]
-    pub const fn with_bind_retry_ns(mut self, ns: u64) -> ListenConfig {
-        self.bind_retry_ns = ns;
-        self
-    }
-}
-
-/// Why [`Config::plan`] refused.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ConfigError {
-    /// No connections, or a count or size of zero where one is needed.
-    Zero,
-    /// The backend's `Limits` already reserve an accept range; armed
-    /// accepts need it for this `Net`.
-    AcceptRangeTaken,
-    /// The backend already has block-aligned or small buffers of another
-    /// size, or a buffer ring of another shape: a class has one size.
-    ClassSize,
-    /// `frame_size` is not a multiple of the backend's block size.
-    FrameAlignment,
-    /// A segment is too small for `header_max` (or, with TLS, smaller than
-    /// `TLS_SEGMENT_MIN`), or a count overflows.
-    TooSmall,
-}
+pub use opts::{ConnOpts, ListenConfig, Reconnect, Rx};
 
 /// A `Net`'s share of the backend: built by [`Config::plan`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -260,6 +44,14 @@ pub struct Config {
     pub(crate) tls_first: BufId,
     pub(crate) ring_first: BufId,
     pub(crate) ring_count: u32,
+    /// Position of the first buffer of tail blocks in the block-aligned
+    /// class, behind the frame buffers, and its id; how many buffers.
+    pub(crate) tail_at: u32,
+    pub(crate) tail_first: BufId,
+    pub(crate) tail_bufs: u32,
+    /// The backend's receive area: its first page and how many it has.
+    pub(crate) area_first: BufId,
+    pub(crate) area_count: u32,
 }
 
 impl Config {
@@ -300,6 +92,7 @@ impl Config {
         if headers_per_buf == 0 || (s.tls && s.segment_size < TLS_SEGMENT_MIN) {
             return Err(ConfigError::TooSmall);
         }
+        zc::check(s, conns)?;
         Ok((conns, headers_per_buf))
     }
 
@@ -309,34 +102,34 @@ impl Config {
     /// `Net::new`.
     pub fn plan(base: Limits, sizes: Sizes) -> Result<(Limits, Config), ConfigError> {
         let s = sizes;
+        let add = |a: u32, b: u32| a.checked_add(b).ok_or(ConfigError::TooSmall);
         let (conns, headers_per_buf) = Config::check(&base, &s)?;
         let header_bufs = conns.div_ceil(headers_per_buf);
         // With TLS, two buffers per connection follow the header areas.
         let tls_bufs = if s.tls { conns.saturating_mul(2) } else { 0 };
-        let small = s
-            .segments
-            .checked_add(header_bufs)
-            .and_then(|n| n.checked_add(tls_bufs))
-            .ok_or(ConfigError::TooSmall)?;
+        let small = add(add(s.segments, header_bufs)?, tls_bufs)?;
         let sock_base = base.sockets_max();
-        let socks = conns
-            .checked_add(s.listeners)
-            .ok_or(ConfigError::TooSmall)?;
+        let socks = add(conns, s.listeners)?;
+        // The tail blocks follow the frame buffers.
+        let tail_at = add(base.aligned_buffers(), s.frames)?;
         // Per connection: a receive, a send, and a connect, close, shutdown
-        // or cancel; per listener: an accept and a close.
+        // or cancel; per listener: an accept and a close; and the
+        // zero-copy sends whose memory is still read.
         let ops = conns
             .saturating_mul(3)
-            .saturating_add(s.listeners.saturating_mul(2));
+            .saturating_add(s.listeners.saturating_mul(2))
+            .saturating_add(s.lent_most(conns));
         let mut limits = base
-            .with_sockets_max(sock_base + socks)
+            .with_sockets_max(add(sock_base, socks)?)
             .with_block_size(base.block_size().max(4096))
-            .with_aligned_buffers(base.aligned_buffers() + s.frames)
+            .with_aligned_buffers(add(tail_at, zc::tail_bufs(&s))?)
             .with_aligned_buffer_size(s.frame_size)
-            .with_small_buffers(base.small_buffers() + small)
+            .with_small_buffers(add(base.small_buffers(), small)?)
             .with_small_buffer_size(s.segment_size)
             .with_ring_buffers(base.ring_buffers().max(s.ring_buffers))
             .with_ring_buffer_size(s.ring_buffer_size)
             .with_ops_max(base.ops_max().saturating_add(ops));
+        limits = zc::area(limits, base.ops_max(), &s, conns);
         if s.accepts > 0 {
             limits = limits
                 .with_accept_range_start(sock_base + s.listeners + s.connects)
@@ -354,9 +147,20 @@ impl Config {
             tls_first: BufId::new(0),
             ring_first: BufId::new(0),
             ring_count: 0,
+            tail_at,
+            tail_first: BufId::new(0),
+            tail_bufs: zc::tail_bufs(&s),
+            area_first: BufId::new(0),
+            area_count: 0,
         }
         .resolved(&limits);
         Ok((limits, config))
+    }
+
+    /// The backend's receive area, as resolved: its first page and how
+    /// many it has. Frames in pages lie there, but for their tail blocks.
+    pub const fn area(&self) -> (BufId, u32) {
+        (self.area_first, self.area_count)
     }
 
     /// Connections in all: those the `Net` opens and those it accepts.
@@ -367,6 +171,16 @@ impl Config {
     /// Tokens the `Net` uses, from `Sizes::with_token_base` up: route a
     /// completion with a token in that range to `Net::on_completion`.
     pub const fn tokens(&self) -> u64 {
+        // A multiple of eight, so that the next set's tokens say their
+        // kind as this one's do.
+        let lent = self.conns() as u64 * self.sizes.zero_copy_sends as u64;
+        self.lent_tokens() + lent.next_multiple_of(8)
+    }
+
+    /// How far above the first token those of the zero-copy sends
+    /// reported twice start: `Sizes::with_zero_copy_sends` a connection,
+    /// behind the eight of every connection and listener.
+    pub(crate) const fn lent_tokens(&self) -> u64 {
         (self.conns() as u64 + self.sizes.listeners as u64) * 8
     }
 
@@ -389,6 +203,11 @@ impl Config {
         }
         self.ring_first = BufId::new(limits.ring_base());
         self.ring_count = limits.ring_buffers();
+        if self.tail_bufs > 0 {
+            self.tail_first = limits.aligned(self.tail_at);
+        }
+        self.area_first = BufId::new(limits.area_base());
+        self.area_count = limits.area_pages();
         self
     }
 

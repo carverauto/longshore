@@ -1,0 +1,42 @@
+[package]
+name = "longshore_file"
+description = "File I/O over longshore I/O: one API on io_uring, kqueue/epoll and the simulator"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository = "https://github.com/carverauto/longshore"
+readme = "README.md"
+autotests = false
+
+[dependencies]
+longshore_common.workspace = true
+
+[dev-dependencies]
+# Turns the simulator on for this crate's own tests.
+longshore_common = { workspace = true, features = ["sim"] }
+hegeltest.workspace = true
+# The spec's scenario of a file set sharing a ring with connections.
+longshore_tcp.workspace = true
+
+[[test]]
+name = "file_units"
+path = "tests/units/main.rs"
+
+[[test]]
+name = "file_contract"
+path = "tests/contract/main.rs"
+
+[[test]]
+name = "file_model"
+path = "tests/model/main.rs"
+
+[[test]]
+name = "file_alloc"
+path = "tests/alloc/main.rs"
+
+[[test]]
+name = "file_props"
+path = "tests/props/main.rs"
+
+[lints]
+workspace = true

@@ -263,6 +263,8 @@
 //!   `longshore_stream` and `longshore_http_client`.
 //! - [`tcp`], from `longshore_tcp`: connections for protocols that run
 //!   straight over TCP.
+//! - [`file`](mod@file), from `longshore_file`: file I/O, one API on every
+//!   backend.
 //! - `tls` (with a TLS provider feature), from `longshore_tls`: TLS 1.3
 //!   handshake and record layer.
 //! - [`checksum`], from `longshore_crc`.
@@ -279,6 +281,7 @@ pub use longshore_common::io;
 pub use longshore_common::sim;
 pub use longshore_crc as checksum;
 pub use longshore_dns as dns;
+pub use longshore_file as file;
 pub use longshore_http_client as http;
 pub use longshore_mailbox as mailbox;
 pub use longshore_s3 as store;

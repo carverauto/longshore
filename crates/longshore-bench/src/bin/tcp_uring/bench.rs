@@ -16,15 +16,53 @@
 //!   --conns N               connections (1)
 //!   --body N                rr: bytes behind the 256-byte header (64)
 //!   --frame N               bulk: bytes a frame (65536)
-//!   --rx ring|direct        receive mode of both ends (ring)
+//!   --rx ring|direct|zc     receive mode of both ends (ring); zc is the
+//!                           peer's alone (--listen), in pages of a card's
+//!                           queue, the load then receiving direct
+//!   --zc-queue IFACE:QUEUE  zc: the interface and receive queue to register
+//!   --zc-spare PAGES        zc: area pages beyond what the set counts (16384)
 //!   --ring N                bytes a ring buffer (4096)
 //!   --zc-min N              sends at least this long are zero-copy (16384)
+//!   --zc-sends N            zero-copy sends a connection may have with their
+//!                           memory still out, 256 in all; 0: the next send
+//!                           waits for the last one's memory (4)
+//!   --frame-on-packet on|off  each frame a send of its own, TCP_NODELAY on
+//!                           (off)
 //!   --segment N             bytes a send segment (65536)
 //!   --wait sleep|spin       wait for completions, or turn without waiting
 //!   --sync fsync|dsync      path: sync after each write, or open the log
 //!                           so that a write is durable when it completes
 //!   --dir PATH              path: where the log goes (a file system with
 //!                           direct I/O; the temporary directory)
+//!   --header N              path: a block is the body of a frame, behind
+//!                           a header of N bytes with the frame's length
+//!                           at 40, as UltraGraphDB's (0: a block is the
+//!                           whole frame, behind a four-byte prefix)
+//!   --body-at block|frame   path, with a header: the node receives a
+//!                           frame so that its body lies at a block
+//!                           boundary and writes it from there, or
+//!                           receives it at the start of its memory and
+//!                           moves the body to a block before the write
+//!                           (frame)
+//!
+//!   --tls FILE              rr and bulk over TLS 1.3, the certificate in FILE
+//!                           and its key in FILE.key, made by the peer if FILE
+//!                           is missing (on two machines the load is given a
+//!                           copy of the peer's FILE; it makes none itself)
+//!   --provider P            aws-lc, ring or rustls seals the records (the
+//!                           first compiled in); sealed records are never
+//!                           sent zero-copy
+//!
+//!   --listen ADDR:PORT      be the peer alone, at this address, until every
+//!                           connection of the run has come and closed
+//!   --connect ADDR:PORT     be the load alone, against a peer elsewhere
+//!
+//! With `--listen` and `--connect` the two ends run on two machines, with
+//! the same options otherwise: the peer first, and a peer for every run.
+//! A peer whose load has not come and gone a minute after the run's time
+//! ends as failed. Each prints a line of its
+//! own; the load's has no figures of the peer, and counts as carried what
+//! it sent.
 //!
 //! `--wait` is for both threads. The time measured starts when every
 //! connection is up, and ends before any is closed. The CPU figures are of
@@ -38,18 +76,20 @@
 
 use crate::die::{die, OrDie};
 use longshore::io::{Completion, Completions, Io, Limits, Op, Token};
-use longshore::tcp::{
-    Config, Conn, ConnOpts, Event, Framing, HeaderFraming, KernelTransport, ListenConfig, Net, Rx,
-    SendError, Sizes,
-};
+use longshore::tcp::{Config, Conn, Event, KernelTransport, ListenConfig, Net, SendError, Sizes};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
 mod load;
+mod opts;
 mod path;
+mod stop;
+mod tls;
+
+pub(crate) use opts::Opts;
+pub(crate) use stop::Stop;
 
 /// What a run measures.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -62,145 +102,9 @@ pub(crate) enum Kind {
     Path,
 }
 
-/// The block a log node writes: a frame of `path`, prefix included.
+/// The block a log node writes: a frame of `path`, prefix included, or
+/// the body behind its header.
 pub(crate) const BLOCK: u32 = 4096;
-
-/// What a run is asked to be.
-#[derive(Clone)]
-pub(crate) struct Opts {
-    pub(crate) kind: Kind,
-    pub(crate) dsync: bool,
-    pub(crate) dir: String,
-    pub(crate) epoll: bool,
-    pub(crate) secs: u64,
-    pub(crate) conns: u32,
-    pub(crate) body: u32,
-    pub(crate) frame: u32,
-    pub(crate) rx: Rx,
-    pub(crate) ring: u32,
-    pub(crate) zc_min: u32,
-    pub(crate) segment: u32,
-    pub(crate) spin: bool,
-}
-
-impl Opts {
-    /// The length of every frame of the run, its four-byte prefix included.
-    pub(crate) const fn frame_len(&self) -> u32 {
-        match self.kind {
-            Kind::Rr => 4 + HEADER + self.body,
-            Kind::Bulk => self.frame,
-            Kind::Path => BLOCK,
-        }
-    }
-
-    fn parse(cmd: &str, mut args: impl Iterator<Item = String>) -> Opts {
-        let kind = match cmd {
-            "bulk" => Kind::Bulk,
-            "path" => Kind::Path,
-            _ => Kind::Rr,
-        };
-        let mut o = Opts {
-            kind,
-            dsync: false,
-            dir: std::env::temp_dir().to_string_lossy().into_owned(),
-            epoll: false,
-            secs: 3,
-            conns: 1,
-            body: 64,
-            frame: 65_536,
-            rx: Rx::Ring,
-            ring: 4096,
-            zc_min: 16_384,
-            segment: 65_536,
-            spin: false,
-        };
-        while let Some(flag) = args.next() {
-            let value = args.next().or_die(&format!("{flag} needs a value"));
-            let number = || {
-                value
-                    .parse::<u32>()
-                    .ok()
-                    .or_die(&format!("{flag} takes a number"))
-            };
-            match flag.as_str() {
-                "--backend" => o.epoll = pick(&flag, &value, "uring", "epoll"),
-                "--secs" => o.secs = u64::from(number()),
-                "--conns" => o.conns = number().max(1),
-                "--body" => o.body = number(),
-                "--frame" => o.frame = number().max(8),
-                "--rx" if pick(&flag, &value, "ring", "direct") => o.rx = Rx::Direct,
-                "--rx" => o.rx = Rx::Ring,
-                "--ring" => o.ring = number().max(64),
-                "--zc-min" => o.zc_min = number(),
-                "--segment" => o.segment = number(),
-                "--wait" => o.spin = pick(&flag, &value, "sleep", "spin"),
-                "--sync" => o.dsync = pick(&flag, &value, "fsync", "dsync"),
-                "--dir" => o.dir.clone_from(&value),
-                other => die(format_args!("unknown flag {other}")),
-            }
-        }
-        if o.kind == Kind::Path && o.conns > 500 {
-            // A replica is sent every source's block; its queue of sends
-            // holds two for each, up to the thousand a connection can.
-            die("path takes up to 500 connections");
-        }
-        o
-    }
-
-    /// Connections of a run: with `path`, three replicas beside the
-    /// sources.
-    pub(crate) fn lines(&self) -> u32 {
-        self.conns + if self.kind == Kind::Path { 3 } else { 0 }
-    }
-
-    /// Sends a connection can have queued. A replica of a log node is
-    /// sent every source's block, all of them at once when their writes
-    /// complete together: its queue holds two for each source.
-    fn spans(&self) -> u32 {
-        if self.kind == Kind::Path {
-            (2 * self.conns + 8).clamp(16, 1024)
-        } else {
-            16
-        }
-    }
-
-    /// The pools of one end: `connects` it opens, `accepts` it takes.
-    fn sizes(&self, connects: u32, accepts: u32) -> Sizes {
-        let frame = self.frame_len();
-        let many = (2 * self.lines()).clamp(16, 8192);
-        Sizes::new(connects, accepts, u32::from(accepts > 0))
-            .with_frames(many, frame.next_multiple_of(4096))
-            .with_segments(many, self.segment.max(frame))
-            .with_ring((4 * self.lines()).clamp(64, 16_384), self.ring)
-            .with_spans(self.spans())
-            .with_zero_copy_min(self.zc_min)
-    }
-
-    pub(crate) fn conn_opts(&self) -> ConnOpts {
-        let framing = HeaderFraming::length_prefix(self.frame_len())
-            .ok()
-            .or_die("framing");
-        ConnOpts::new(Framing::Header(framing)).with_rx(self.rx)
-    }
-
-    /// The options of the peer's ends. A log node receives each block at
-    /// the start of frame memory of its own, to write it from there.
-    fn peer_opts(&self) -> ConnOpts {
-        if self.kind == Kind::Path {
-            self.conn_opts().with_rx(Rx::Direct)
-        } else {
-            self.conn_opts()
-        }
-    }
-}
-
-/// Whether `value` is `yes` rather than `no`; anything else is refused.
-fn pick(flag: &str, value: &str, no: &str, yes: &str) -> bool {
-    if value != no && value != yes {
-        die(format_args!("{flag} takes {no} or {yes}"));
-    }
-    value == yes
-}
 
 /// The header a request carries behind its length prefix, as UltraGraphDB's.
 pub(crate) const HEADER: u32 = 256;
@@ -221,11 +125,26 @@ pub(crate) struct Side<IO: Io> {
 impl<IO: Io> Side<IO> {
     /// A side with room for a file and `files` file operations at once
     /// beside the set's own, if `files` is not zero.
-    fn new(make: impl FnOnce(Limits) -> IO, sizes: Sizes, spin: bool, files: u32) -> Side<IO> {
-        let base = Limits::BASE.with_files_max(u32::from(files > 0));
+    fn new(
+        make: impl FnOnce(Limits) -> IO,
+        sizes: Sizes,
+        (spin, no_delay): (bool, bool),
+        (files, area): (u32, Option<(u32, u32)>),
+        tls: Option<longshore::tcp::Tls>,
+    ) -> Side<IO> {
+        let mut base = Limits::BASE.with_files_max(u32::from(files > 0));
+        if let Some((interface, queue)) = area {
+            base = base.with_area_queue(interface, queue);
+        }
         let (limits, config) = Config::plan(base, sizes).ok().or_die("plan");
-        let io = make(limits.with_ops_max(limits.ops_max() + 2 + files));
-        let net = Net::new(KernelTransport::new(&config), config, &limits);
+        let mut io = make(limits.with_ops_max(limits.ops_max() + 2 + files));
+        // A frame on a packet of its own: no short packet held back.
+        io.no_delay(no_delay);
+        let transport = match tls {
+            Some(tls) => KernelTransport::new(&config).with_tls(tls),
+            None => KernelTransport::new(&config),
+        };
+        let net = Net::new(transport, config, &limits);
         Side {
             io,
             net,
@@ -265,6 +184,11 @@ pub(crate) struct Peer {
     pub(crate) frames: u64,
     pub(crate) bytes: u64,
     pub(crate) cpu: f64,
+    /// From the first frame to the stop.
+    pub(crate) secs: f64,
+    /// With `--rx zc`: frames lent in their pages, and moved.
+    pub(crate) kept: u64,
+    pub(crate) moved: u64,
 }
 
 /// CPU time of the calling thread, in seconds.
@@ -292,49 +216,85 @@ pub(crate) fn run(cmd: &str, args: impl Iterator<Item = String>) {
     }
 }
 
-/// The peer on a thread of its own, then the load on this one.
+/// The peer's end: a set that listens at `at`, and where it does.
+fn listening<IO: Io>(
+    o: &Opts,
+    make: impl FnOnce(Limits) -> IO,
+    at: SocketAddr,
+) -> (Side<IO>, SocketAddr) {
+    let files = if o.kind == Kind::Path { o.lines() } else { 0 };
+    let mut side = Side::new(
+        make,
+        o.sizes(0, o.lines()),
+        (o.spin, o.frame_on_packet),
+        (files, o.zc_queue),
+        tls::server(o),
+    );
+    // Every connection of the run is opened at once.
+    let how = ListenConfig::new(o.peer_opts())
+        .with_backlog(o.lines().max(128))
+        .with_tls(o.tls.is_some());
+    let listener = side.net.listen(&mut side.io, at, how).ok().or_die("listen");
+    let addr = side
+        .net
+        .listener_addr(listener)
+        .or_die("the listener's address");
+    (side, addr)
+}
+
+/// Be the peer of the run until `stop` says so.
+fn serve<IO: Io>(side: &mut Side<IO>, stop: &Stop, o: &Opts) -> Peer {
+    if o.kind == Kind::Path {
+        path::serve(side, stop, o)
+    } else {
+        load::serve(side, stop)
+    }
+}
+
+/// The peer on a thread of its own, then the load on this one; or one of
+/// the two alone, with the other on another machine.
 fn measure<IO: Io, M: FnOnce(Limits) -> IO + Send + 'static>(o: &Opts, make: impl Fn() -> M) {
-    let stop = Arc::new(AtomicBool::new(false));
+    if let Some(at) = o.listen {
+        let (mut side, addr) = listening(o, make(), at);
+        eprintln!("tcp_uring: listening at {addr}");
+        // The load has a minute to start and to end beside its run.
+        let patience = Duration::from_secs(o.secs + 60);
+        let seen = serve(&mut side, &Stop::after_within(o.lines(), patience), o);
+        return load::report_peer(o, &seen);
+    }
+    if let Some(addr) = o.connect {
+        let mut side = Side::new(
+            make(),
+            o.sizes(o.lines(), 0),
+            (o.spin, o.frame_on_packet),
+            (0, None),
+            tls::client(o),
+        );
+        let done = load::drive(&mut side, o, addr);
+        return load::report(o, &done, &Peer::default());
+    }
+    let stop = Arc::new(Stop::after(0));
     let (tell, told) = mpsc::channel();
     let (peer_make, peer_stop, at_peer) = (make(), Arc::clone(&stop), o.clone());
     let peer = std::thread::spawn(move || {
-        let files = if at_peer.kind == Kind::Path {
-            at_peer.lines()
-        } else {
-            0
-        };
-        let mut side = Side::new(
-            peer_make,
-            at_peer.sizes(0, at_peer.lines()),
-            at_peer.spin,
-            files,
-        );
         let any = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        // Every connection of the run is opened at once.
-        let how = ListenConfig::new(at_peer.peer_opts()).with_backlog(at_peer.lines().max(128));
-        let listener = side
-            .net
-            .listen(&mut side.io, any, how)
-            .ok()
-            .or_die("listen");
-        let addr = side
-            .net
-            .listener_addr(listener)
-            .or_die("the listener's address");
+        let (mut side, addr) = listening(&at_peer, peer_make, any);
         tell.send(addr).ok().or_die("the peer's address");
-        if at_peer.kind == Kind::Path {
-            path::serve(&mut side, &peer_stop, &at_peer)
-        } else {
-            load::serve(&mut side, &peer_stop)
-        }
+        serve(&mut side, &peer_stop, &at_peer)
     });
     let addr = told
         .recv_timeout(Duration::from_secs(10))
         .ok()
         .or_die("the peer");
-    let mut side = Side::new(make(), o.sizes(o.lines(), 0), o.spin, 0);
+    let mut side = Side::new(
+        make(),
+        o.sizes(o.lines(), 0),
+        (o.spin, o.frame_on_packet),
+        (0, None),
+        tls::client(o),
+    );
     let done = load::drive(&mut side, o, addr);
-    stop.store(true, Ordering::Release);
+    stop.tell();
     let seen = peer.join().ok().or_die("the peer thread");
     load::report(o, &done, &seen);
 }

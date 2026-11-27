@@ -4,7 +4,7 @@
 straight over TCP: replication, messaging, a database's own wire protocol.
 It gives a fixed set of connections and listeners, whole frames, and frame
 memory that a log and other connections can use without copying. This page
-describes the API, the two ways of receiving, TLS, and how to size it.
+describes the API, the three ways of receiving, TLS, and how to size it.
 
 ## What it is
 
@@ -16,7 +16,7 @@ client and several sets can therefore share one backend and one thread.
 `T` is the transport. `KernelTransport<IO>` carries the set over the
 kernel's TCP and Unix-domain stream sockets through the `Io` trait, so the
 same program runs on `UringIo`, on `PosixIo` (`kqueue`, `epoll`) and in the
-simulator. A kernel-bypass transport is planned behind the same API.
+simulator. Kernel bypass is not planned (`openspec/project.md`).
 
 Everything is allocated when the set is built. After that nothing
 allocates, except rustls during a TLS handshake.
@@ -88,7 +88,8 @@ deadline is due.
   connections it accepts.
 - `shutdown_write` finishes after what is queued, and receiving goes on;
   `close` ends at once, with no event; `drain` stops accepting and reports
-  `Event::Drained` when queued sends have gone or its deadline passes.
+  `Event::Drained` when queued sends have gone and the memory of every
+  zero-copy send is back, or its deadline passes.
 - `is_up` says a connection has both directions open; `can_send` says a
   send would be accepted, which is also true of a half-closed connection.
 - A call on a connection that is not open for it fails with `NotUp`: a
@@ -107,7 +108,7 @@ delivers bytes as they arrive.
 
 ## Receiving
 
-A received frame is lent where it lies. There are two modes, per
+A received frame is lent where it lies. There are three modes, per
 connection:
 
 - `Rx::Ring`: one armed receive delivers into a ring of buffers shared by
@@ -121,6 +122,143 @@ connection:
   the frame's own memory, at the start of a block-aligned buffer. Nothing
   is copied, and the frame can go to a direct-I/O write as it is. This is
   the mode for large frames and for frames that are logged.
+- `Rx::ZeroCopy` (Linux 7.0, the ring backend, a network card that splits
+  headers from payload): direct mode, with the kernel's copy gone for the
+  frames that allow it. The card writes payload into pages of a receive
+  area the backend registered for one receive queue; a frame whose first
+  byte starts a page, and whose blocks each lie in one page, is lent in
+  those pages (a *frame in pages*, read with `Net::pages`), its last,
+  partial block copied into a zero-padded block of its own. Any other
+  frame is moved once into frame memory and is then what direct mode
+  gives. See "Receiving into pages" below.
+
+A log that wants a frame's body, not its header, at a block boundary asks
+for it in the framing: `HeaderFraming::with_body_at_block(4096)`. In
+direct mode the frame then starts `lead()` bytes into its memory (3,840
+for a 256-byte header), so that the body starts at a block and goes to a
+direct-I/O write from where it lies; `Frame::span` says where. Name the
+block of the file the body goes to. Frame memory must be whole blocks of
+it and hold the lead and the largest frame, and ring mode refuses the
+option: there a frame has no memory of its own. Under TLS the body lies
+at the block as well, but a record that carries the header with the body
+is opened in the connection's own memory and moved from there, as in
+direct mode without the option. Measured between two machines with
+`tcp_uring path`, it saves the move a log would make: about 5 % of the
+log node's CPU a block, three runs each, anywhere from 3 to 9 % by run
+(`bench/results/m31-tcp-zero-copy-receive-spike-dgx-spark.md`).
+
+## Receiving into pages
+
+`Rx::ZeroCopy` keeps the kernel's TCP and takes away its copy of every
+received byte: between two DGX Sparks that copy was nearly all a
+receiving thread did (`bench/results/m30-tcp-dgx-spark-pair-200gbe-aarch64.md`).
+It is for traffic whose frames go on as they lie, the replication of a log
+above all.
+
+**What the operator sets** on the receiving machine, as root, for the
+interface and queue the backend is built for (`Limits::with_area_queue`):
+
+```
+ethtool -G IFACE tcp-data-split on          # headers apart from payload
+ethtool -K IFACE ntuple on
+ethtool -X IFACE equal N                    # queues 0..N-1 for other traffic
+ethtool -N IFACE flow-type tcp4 dst-ip ADDR dst-port PORT action N
+ip link set IFACE mtu 8244                  # on both ends: two pages a packet
+```
+
+The program needs `CAP_NET_ADMIN`. A refused registration says what the
+card reports of its header-and-data split, asked over ethtool netlink (the
+ConnectX-7's driver reports it while it is on, and not at all while it is
+off). Building the backend refuses, naming what is missing, on a kernel without the feature or without the flush of
+returns (Linux 7.0), without the capability, on a queue that does not split
+headers (or does not exist), and past the memory-lock limit. The flow rule
+must steer the listener's port to the queue, and nothing else may reach
+it; a connection of the mode on a port shared between rings
+(`with_reuse_port`), on a Unix-domain address, with TLS, with
+`Framing::Bytes` or with `with_body_at_block` is refused when it is opened.
+
+**When a frame is lent in its pages.** Its first byte must start a page,
+which takes all three of these: packets that carry a whole number of
+pages (MTU 8244 gives 8,192 bytes), frames that are whole 4 KiB blocks,
+and a sender that ends a buffer at each frame (`with_frame_on_packet`,
+below). Measured: 99.8 to 100 % of frames then started a page; with frames
+of any other length, almost none did, whatever the sender does, because
+the card lays the payloads of a run of packets back to back
+(`bench/results/m31-tcp-zero-copy-receive-spike-dgx-spark.md`). A frame
+that does not line up is moved once, at the cost direct mode has plus the
+mode's bookkeeping: the mode pays only where frames line up.
+
+**Reading and holding.** `Net::pages(&frame)` yields the frame's spans in
+order, its whole pages and then its tail block; `Net::bytes` and
+`Frame::span` are `None` for such a frame, and `Frame::run()` names it. A
+file write takes a hold of its own with `net.runs().hold(run)`, a
+`WriteHold`, and gives that back with `net.runs().release(hold)` when its
+write and sync are done; a hold cannot be copied, so no write gives back
+another's, and one not given back keeps its pages from the card; the
+pages go back to the card when the caller has released the frame and no
+write holds it. `Op::FileWriteSpans` writes the spans as one gathered
+write, with direct I/O. `hold` copies a frame in pages into frame memory
+once, for a caller that must keep or send it: a frame in pages cannot be
+sent as it lies (`SendError::NotHeld`). Every frame of the mode must be
+released, as in direct mode.
+
+**Sizing.** `Sizes::with_zc(pages, frames, pieces)` gives the set its
+budget: pages that frames in pages may hold at once, such frames at once,
+and records of how their pages were delivered (a page and two more a
+frame). A frame that finds the budget spent is moved, never kept waiting.
+`Config::plan` asks the backend for an area of the budget, a page a
+connection, what one turn can bring, and `with_zc_spare` pages more for
+what the kernel holds and no program can count: the card's ring and pool
+and the sockets' receive queues. A rule of thumb for the spare is the
+card's receive ring entries (`ethtool -g IFACE`) times the pages a packet
+fills (two at MTU 8244), plus each connection's receive buffer in pages.
+On the DGX Spark's ConnectX-7, with a ring of 1,024 entries at MTU 8244,
+an area of about 200 pages took no frame at all, one of about 1,200 was
+starved and dropped packets, and one of about 4,300 ran as one of 16,000;
+the line between lies somewhere from 1,200 to 4,300 pages and was not
+found more closely. The backend's ring of returns is sized by the pieces that can be
+out, not by the area, so a large spare costs pages and nothing more. The
+plan gives no room for gathered writes: a program that writes frames in
+pages adds `Limits::with_gather(writes, pages a frame + 1)` itself, a
+write in flight a row. The area holds what one turn of the completion
+ring can bring, and the ring grows with every operation planned on the
+backend: plan a set of the mode after the components that add
+operations (files, an object storage client); a `Net` planned on top of
+it grows the area itself. The plan also refuses a set with fewer frame buffers than
+connections: every connection of the mode takes its frame memory before
+its body is asked for, so that a frame that falls out of step can always
+be moved at once.
+
+**The one failure to size against.** An area that runs dry stops every
+flow of its queue: the card has nowhere to put payload, drops it, and the
+senders' retransmission brings it back seconds later, with no word to the
+program. The backend asks the kernel to read the returned pages whenever
+the thread is about to sleep or a turn brought nothing, so that a dry area
+recovers; it does not make the seconds go away. `Usage::pages` reports
+what the set holds; its `area_short` counts receives that ended because
+the kernel's own copy, for payload that did not arrive in the area, found
+no page. That is not the area running dry, which shows only in the card's
+counters (`ethtool -S IFACE`, `rx_out_of_buffer`). Such a receive is asked
+for again at the next `poll`; a connection that finds no page for
+`ConnOpts::with_no_page_timeout_ns` (one second by default), with no byte
+in between, ends with `Why::of(-ENOMEM)`.
+
+**Which mode, as measured** on a DGX Spark's ConnectX-7, one interface
+of about 110 Gb/s, one receiving core
+(`bench/results/m34-tcp-receive-modes-dgx-spark.md`):
+
+| Traffic | Mode | Why |
+|---|---|---|
+| Frames of whole 4 KiB blocks, MTU 8244, sender with `with_frame_on_packet` | `Rx::ZeroCopy` | 99.9 % of frames or more kept in their pages; the receiving thread's CPU a GB about 0.7 of direct mode's at 64 KiB and 0.6 at 1 MiB |
+| Large frames that do not line up (MTU 9000) | `Rx::Direct` | almost no frame lines up, and moving them costs zero-copy more: 1 MiB frames 0.134 CPU-s a GB direct against 0.18 |
+| Small frames, and requests and answers | `Rx::Ring` or `Rx::Direct` | no frame is kept below `Sizes::with_zc_min_frame`, and zero-copy cost the most a frame and had a longer tail in two runs of three |
+
+Where the link or the sender sets the rate, the mode decides the CPU a
+GB, not the GB/s.
+
+**Before the set is dropped** while its backend lives on, call
+`Net::give_back_all`: the pages it holds go back to the card. Dropping
+the backend takes every page back by itself.
 
 ## Frame memory and holds
 
@@ -147,6 +285,45 @@ waited for one longest. A connection that sends again without waiting,
 and is not refused, has seen the room for itself and is not told. Sends
 above
 `Sizes::with_zero_copy_min` are zero-copy on TCP without TLS.
+
+A zero-copy send is reported as soon as the kernel has taken its bytes,
+and the connection's next send follows at once. The kernel goes on
+reading the memory until the peer has acknowledged the bytes; until then
+the memory is pinned: a send segment stays out of the pool though its
+place in the queue is free, and frame memory keeps one more hold. A
+connection has so many such sends out at most, and the set so many in
+all (`Sizes::with_zero_copy_sends`, 4 and 256), and a connection sends
+with a copy while either is reached. Each is an operation of the
+backend while it is out, so the second number is what the set adds to
+`Limits::ops_max` for them. Its slot is not free, and a drain not
+done, before their memory is back. With `with_zero_copy_sends(0, 0)` a
+connection waits for the memory of each zero-copy send before the next,
+which over a network is one send a round trip: measured between two
+machines, 64 KiB sends then carried about 1 GB/s where copied ones
+carried 6, and 5.6 to 6.1 with the default
+(`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`).
+
+A connection with `ConnOpts::with_frame_on_packet` sends every frame as
+a send of its own: a frame is not put into a segment behind another, and
+the next frame's send begins when the transport has taken the last
+frame whole, which for a zero-copy send is its first report, not the
+return of its memory. Every send of the connection is marked as the end
+of one of the kernel's buffers (`MSG_EOR`, through `Io::end_sends`), to
+which nothing later is joined: the next frame begins a packet of its
+own. It is for a peer that receives into pages (`Rx::ZeroCopy`), which
+can lend a frame where it lies only when the frame starts a page. A
+frame then takes a segment however short it is, so segments are counted
+in frames. Switch Nagle's algorithm off on the backend
+(`Io::no_delay(true)`), or the kernel holds a short last packet back.
+
+What it cannot give: a frame begins a packet, but begins a page only if
+every frame before it filled whole pages (frames of whole 4 KiB blocks,
+packets of whole pages; see "Receiving into pages"); TCP still cuts a
+packet short when the peer's window says so; and a send taken short ends
+a buffer in the frame's middle. A frame that did not start a page is
+moved by its receiver once, as in direct mode; nothing else follows from
+it. On macOS, whose TCP refuses the flag on a stream socket, the mark asks
+for nothing.
 
 ## TLS
 
@@ -182,6 +359,10 @@ from the `Config`. Plan several components one on top of the other.
 | `with_header_max(bytes)` | The longest header | 256 |
 | `with_spans(n)` | Queued sends per connection | 16 |
 | `with_zero_copy_min(bytes)` | Sends at least this long are zero-copy | 16 KiB |
+| `with_zero_copy_sends(per_connection, in_all)` | Zero-copy sends whose memory the kernel still reads, a connection and in the whole set; each is an operation of the backend until it is back | 4 and 256 |
+| `with_zc(pages, frames, pieces)` | Room for `Rx::ZeroCopy`: pages frames in pages may hold at once, such frames at once, records of their pieces; with pages, a frame buffer for every connection | 0, 0, 0 (no connection may ask for the mode) |
+| `with_zc_min_frame(bytes)` | A frame shorter than this is moved into frame memory, never kept in its pages | 4 KiB |
+| `with_zc_spare(pages)` | Pages of the area more, for what the kernel holds in the card's ring and the sockets' receive queues | 0 |
 | `with_tls(on)` | Room for TLS; segments are then at least `TLS_SEGMENT_MIN` (36 KiB) | off |
 | `with_token_base(base)` | The first of the set's tokens; it uses `Config::tokens()` of them | 0 |
 
@@ -223,9 +404,13 @@ that is cheap.
 - **I1 Slot ownership.** A connection slot is owned by at most one
   connection; it is freed only when its close has completed and nothing is
   in flight for it.
-- **I2 One in flight.** Per connection at most one send, one receive (or
-  one armed receive), and one of connect, handshake, shutdown and close.
-  Per listener at most one accept and one close.
+- **I2 One in flight.** Per connection at most one send not yet
+  reported, one receive (or one armed receive), and one of connect,
+  handshake, shutdown and close. Per listener at most one accept and one
+  close. Zero-copy sends that were reported and whose memory the
+  transport still reads are in flight too, up to
+  `Sizes::with_zero_copy_sends` a connection and in all, each told apart
+  by a number of its own.
 - **I3 Quiet when free.** Nothing is in flight, queued or held for a slot
   that is `Free` or `Backoff`.
 - **I4 Handles.** A retired handle reaches nothing. A handle the caller
@@ -247,9 +432,14 @@ that is cheap.
   until the caller shuts it down or closes it; with the option off the
   peer's end is the connection's end.
 - **I8 Memory.** Every extent, segment and ring buffer has exactly one of:
-  free, or held with a count that equals its holders. Counts never go
+  free, or held with a count that equals its holders. A zero-copy send
+  whose memory the transport still reads is a holder. Counts never go
   below zero or wrap. With no connection open and no frame held, every
   pool is full.
+- **I8a Bytes in flight.** No byte is written while a send still reads
+  it: a segment a zero-copy send reads is in no queue that can grow into
+  the bytes it sent and is not in the pool, and frame memory it reads is
+  held.
 - **I9 Deadlines.** A slot has a deadline only in a state whose row has
   one, and `next_deadline` is the earliest of them.
 - **I10 Wakes.** Whoever was refused for lack of room (`Full`, a paused
@@ -275,6 +465,15 @@ Runs on hosts with 200 and 300 Gb/s cards are to settle them.
   little.
 - **Send segments: 64 KiB.** Larger ones gained nothing.
 - **Zero-copy from 16 KiB.** Unchanged: loopback cannot tell.
+- **Four zero-copy sends a connection with their memory out.** Measured
+  between two machines over a 200 Gb/s card
+  (`bench/results/m32-tcp-zero-copy-send-dgx-spark-pair.md`): four
+  carried as much as any number tried and about halved the sending
+  thread's CPU against one, with which most sends are copied; eight was
+  slower in two cases of nine. Nothing is lent to a loopback address
+  or a Unix-domain socket: the kernel copies there whatever it is
+  asked, and zero-copy sends over loopback carried less than copied
+  ones (eight out: 7.5 against 11 GB/s).
 - **How a log is made durable, and whether a thread waits or spins:** no
   default. On the container's virtual disk the two ways of syncing could
   not be told apart. A single connection was answered in 24 µs with both
@@ -295,8 +494,4 @@ allocation guard and once per TLS provider. See
 
 ## Not there yet
 
-- Figures from a network card: `tcp_uring rr`, `bulk` and `path` measure,
-  and what there is so far is loopback in a container.
-- The AF_XDP transport. The simulated packet link it is to be tested on
-  is there (`longshore::sim::PacketLink`).
 - Stopping an armed accept when the accept range is full.

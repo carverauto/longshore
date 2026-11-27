@@ -8,6 +8,15 @@
 use super::*;
 use crate::io::trace::fold;
 
+/// Whether the engine resolves `op` itself, asking the world nothing: it
+/// is visited whatever the world says is ready.
+fn resolved_here(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Timeout { .. } | Op::Cancel { .. } | Op::AwaitWake | Op::ArmedRecvZc { credit: 0, .. }
+    )
+}
+
 impl<W: World> Engine<W> {
     pub(super) fn record_trace(&mut self, c: Completion) {
         let now = self.world.now_ns();
@@ -20,6 +29,10 @@ impl<W: World> Engine<W> {
         if c.more || c.buf.is_some() {
             let buf = c.buf.map_or(u64::MAX, |b| u64::from(b.0));
             fold(&mut self.trace, &[u64::from(c.more), buf]);
+        }
+        if c.off != 0 {
+            // A piece inside its page: traces without one stay as they were.
+            fold(&mut self.trace, &[u64::from(c.off)]);
         }
     }
 
@@ -50,8 +63,11 @@ impl<W: World> Engine<W> {
                 .then_some(0)
                 .map(Attempt::single),
             Op::Cancel { .. } => Some(Attempt::single(self.resolve_cancel(p.cancel_target))),
+            // Its credit is used up: the receive ends, as at a stream's end.
+            Op::ArmedRecvZc { credit: 0, .. } => Some(Attempt::single(0)),
             Op::FileRead { slot, .. }
             | Op::FileWrite { slot, .. }
+            | Op::FileWriteSpans { slot, .. }
             | Op::FileSync { slot, .. }
             | Op::FileReserve { slot, .. }
             | Op::FilePunch { slot, .. }
@@ -81,7 +97,9 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -132,15 +150,16 @@ impl<W: World> Engine<W> {
                 i = idx + 1;
                 continue;
             }
-            let ready = if p.cancelled || p.chain_aborted {
+            let ready = if let Some((result, free_from)) = p.taken {
+                // A zero-copy send whose bytes went: its last report.
+                self.let_go(&p, result, free_from)
+            } else if p.cancelled || p.chain_aborted {
                 if p.attached {
                     self.world.release(&p.op);
                 }
                 Some(Attempt::single(-ECANCELED))
             } else {
-                let visit = p.fresh
-                    || matches!(p.op, Op::Timeout { .. } | Op::Cancel { .. } | Op::AwaitWake)
-                    || self.world.is_ready(&p.op);
+                let visit = p.fresh || resolved_here(&p.op) || self.world.is_ready(&p.op);
                 self.pending[idx].fresh = false;
                 if !visit {
                     i = idx + 1;
@@ -149,7 +168,9 @@ impl<W: World> Engine<W> {
                 if self.world.hold(&p.op) {
                     None
                 } else {
-                    self.resolve_or_attempt(&p)
+                    let got = self.resolve_or_attempt(&p);
+                    self.spend(idx, &p, got);
+                    self.take(idx, &p, got)
                 }
             };
             if self.deliver(idx, p, ready, out) {
@@ -188,7 +209,13 @@ impl<W: World> Engine<W> {
         ready: Option<Attempt>,
         out: &mut Completions,
     ) -> bool {
-        let Some(Attempt { result, more, buf }) = ready else {
+        let Some(Attempt {
+            result,
+            more,
+            buf,
+            off,
+        }) = ready
+        else {
             if self.world.claimed(&p.op) {
                 self.pending[idx].attached = true;
             }
@@ -199,6 +226,7 @@ impl<W: World> Engine<W> {
             result,
             more,
             buf,
+            off,
         };
         if more {
             self.pending[idx].last_delivered_step = self.step_seq;
@@ -226,7 +254,9 @@ impl<W: World> Engine<W> {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -237,6 +267,7 @@ impl<W: World> Engine<W> {
             | Op::Cancel { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. }
@@ -303,10 +334,12 @@ fn op_socket(op: &Op) -> Option<Sock> {
         | Op::Accept { listener: s, .. }
         | Op::ArmedAccept { listener: s }
         | Op::Send { sock: s, .. }
+        | Op::SendZc { sock: s, .. }
         | Op::Recv { sock: s, .. }
         | Op::RecvNow { sock: s, .. }
         | Op::Shutdown { sock: s, .. }
-        | Op::ArmedRecv { sock: s } => Some(s),
+        | Op::ArmedRecv { sock: s }
+        | Op::ArmedRecvZc { sock: s, .. } => Some(s),
         Op::Close { .. }
         | Op::AwaitWake
         | Op::ReadFile { .. }
@@ -316,6 +349,7 @@ fn op_socket(op: &Op) -> Option<Sock> {
         | Op::FileClose { .. }
         | Op::FileRead { .. }
         | Op::FileWrite { .. }
+        | Op::FileWriteSpans { .. }
         | Op::FileSync { .. }
         | Op::FileReserve { .. }
         | Op::FilePunch { .. }
@@ -329,7 +363,7 @@ fn op_socket(op: &Op) -> Option<Sock> {
 /// Whether a file read or write moved fewer bytes than it asked for.
 fn is_short_rw(op: &Op, result: i32) -> bool {
     match *op {
-        Op::FileRead { len, .. } | Op::FileWrite { len, .. } => {
+        Op::FileRead { len, .. } | Op::FileWrite { len, .. } | Op::FileWriteSpans { len, .. } => {
             u32::try_from(result).is_ok_and(|done| done < len)
         }
         Op::Connect { .. }
@@ -338,7 +372,9 @@ fn is_short_rw(op: &Op, result: i32) -> bool {
         | Op::Accept { .. }
         | Op::ArmedAccept { .. }
         | Op::ArmedRecv { .. }
+        | Op::ArmedRecvZc { .. }
         | Op::Send { .. }
+        | Op::SendZc { .. }
         | Op::Recv { .. }
         | Op::RecvNow { .. }
         | Op::Shutdown { .. }

@@ -105,6 +105,7 @@ impl Posix {
                 len,
                 file_off,
             } => Some(self.file_write(slot, pool, limits.range(buf, off, len), file_off)),
+            Op::FileWriteSpans { .. } => Some(self.file_write_spans(op, pool, limits)),
             Op::FileSync { slot, datasync } => Some(self.file_sync(slot, datasync)),
             Op::FileReserve {
                 slot,
@@ -127,7 +128,9 @@ impl Posix {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -187,7 +190,9 @@ impl Posix {
             | Op::Accept { .. }
             | Op::ArmedAccept { .. }
             | Op::ArmedRecv { .. }
+            | Op::ArmedRecvZc { .. }
             | Op::Send { .. }
+            | Op::SendZc { .. }
             | Op::Recv { .. }
             | Op::RecvNow { .. }
             | Op::Shutdown { .. }
@@ -200,6 +205,7 @@ impl Posix {
             | Op::FileClose { .. }
             | Op::FileRead { .. }
             | Op::FileWrite { .. }
+            | Op::FileWriteSpans { .. }
             | Op::FileSync { .. }
             | Op::FileReserve { .. }
             | Op::FilePunch { .. } => unreachable!("not a path op"),

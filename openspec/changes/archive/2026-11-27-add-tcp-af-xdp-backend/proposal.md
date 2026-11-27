@@ -1,5 +1,13 @@
 # Change: Kernel bypass for longshore_tcp through AF_XDP, tuned for 200 and 300 Gb/s
 
+**Closed 2026-11-27, not to be built.** Milestones 34 and 35 left one
+case: small messages each in a packet of its own, at well over 400,000 a
+second a core pair or round trips well under 25 µs. That is the traffic
+of trading systems and exchanges sending order messages. A database moves
+query results and inserts across many frames, where io_uring zero-copy
+receive over the kernel's TCP already does better than this design could
+(it moves every payload once). The text below is kept as it stood.
+
 ## Why
 At 200 and 300 Gb/s a NIC delivers 25 to 37.5 GB/s. Kernel TCP spends each
 core on the receive copy (`copy_to_user` was 58% of the client on an HTTPS
@@ -13,6 +21,39 @@ concept.
 
 Third of three changes (`add-tcp-crate`, `add-tcp-simulation-and-
 benchmarks`, this). The API from change 1 does not change.
+
+**Held behind `add-tcp-zero-copy-receive`.** Measured between two DGX
+Sparks (milestone 30), kernel TCP fills a 200 Gb/s link with four to eight
+receiving cores, and the receive copy is what those cores do. io_uring
+zero-copy receive removes that copy and keeps the kernel's TCP, so it is
+built and measured first. This change starts only if those numbers leave
+something for a user-space stack to win, and its case is then restated
+from them (task 0.0).
+
+**The case, restated from `add-tcp-zero-copy-receive`** (milestones 31
+and 34, one interface of a Spark's port, about 110 Gb/s; milestone 34 as
+corrected by its review):
+
+- *Large frames: no case.* With zero-copy receive the kernel's TCP keeps
+  99.9 % of frames of whole pages in the area, and the receiving thread
+  spends 0.124 to 0.125 CPU-s a GB on 64 KiB frames and 0.076 to 0.093
+  on 1 MiB, against direct mode's 0.174 and 0.149 to 0.156. This change's
+  own design moves every payload once from UMEM into frame memory, the
+  cost of a move like direct mode's: on large frames it would be dearer
+  than zero-copy receive, not cheaper.
+- *Small frames: not shown either way.* 324-byte frames came to 282,000
+  to 403,000 a second a core, with the queue's core nearly busy, the
+  card dropping packets, and every sender sending one frame at a time
+  (`with_frame_on_packet`); request and answer took a median of 31 to
+  35 µs. Where the cost of a small frame lies (the sender's pacing, the
+  kernel's work a packet, system calls, the set's own work a frame) was
+  not measured; only the last two are what a user-space stack removes,
+  and the set's own it can cut in place.
+
+So the measurements gave this change no case on large frames. Milestone
+35 then ran the 324-byte cells again without the sender's option, with a
+profile: batched small frames reach 11.3 million a second a core with the
+kernel's TCP; only one small frame a packet leaves a case (task 0.0).
 
 ## What Changes
 - `XdpTransport` behind the `Transport` seam, its `Driver` the core's
@@ -45,9 +86,6 @@ benchmarks`, this). The API from change 1 does not change.
   queue (source ports chosen against the NIC's RSS hash, or flow rules);
   neighbour (ARP/NDP) and route data read from the kernel.
 - TLS through the `longshore_tls` record layer, which does no I/O.
-- io_uring zero-copy receive (`zcrx`, Linux 6.15+) evaluated in the same
-  benchmarks as an option for kernel TCP; its payload lands in pages the
-  kernel chooses, so it too is followed by the one move into an extent.
 - Tuning on physical hosts with 200 and 300 Gb/s NICs: queues, ring and
   batch sizes, busy polling, interrupt placement, huge pages, NUMA, core
   pinning; profiles and results in `bench/results/`.
@@ -74,4 +112,5 @@ benchmarks`, this). The API from change 1 does not change.
   floor from the features it uses (AF_XDP multi-buffer needs 6.6) and
   refuses below it.
 - Depends on `add-tcp-crate` and `add-tcp-simulation-and-benchmarks`
-  (packet-level simulator and baselines)
+  (packet-level simulator and baselines), and on the results of
+  `add-tcp-zero-copy-receive`
