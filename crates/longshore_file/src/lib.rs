@@ -44,3 +44,11 @@ pub use files::{Files, Range};
 pub use handle::{File, Ticket};
 pub use sizes::FileSizes;
 pub use span::{Span, Step};
+
+/// The I/O layer the set runs on, from `longshore_common`: the backends,
+/// [`Limits`], the buffer pools and completions. Re-exported, with the
+/// names the set's own calls take, so that a program using this crate
+/// needs no other.
+pub use longshore_common::io;
+pub use longshore_common::io::extents::Extents;
+pub use longshore_common::io::{Completion, Completions, Io, Limits, OpenFlags};
