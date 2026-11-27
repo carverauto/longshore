@@ -207,6 +207,10 @@ impl<W: World> Io for Engine<W> {
         self.world.take_ring_full()
     }
 
+    fn ring_full_count(&self) -> u64 {
+        self.world.ring_full_count()
+    }
+
     fn tick(&mut self, wait: bool, out: &mut Completions) -> io::Result<()> {
         let mut idle = 0u32;
         loop {

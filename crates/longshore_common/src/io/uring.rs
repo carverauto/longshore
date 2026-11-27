@@ -189,6 +189,8 @@ pub struct UringIo {
     gather: gather::Gather,
     /// The completion queue was found full in this tick.
     cq_full: bool,
+    /// How many times it was found full, ever.
+    cq_full_count: u64,
     slots: Box<[Slot]>,
     sock_stream: Box<[bool]>,
     /// Per socket slot: every send ends a buffer (`Io::end_sends`).

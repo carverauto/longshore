@@ -154,6 +154,10 @@ impl World for Virtual {
         core::mem::take(&mut self.ring_full)
     }
 
+    fn ring_full_count(&self) -> u64 {
+        self.ring_full_count
+    }
+
     fn on_submit(&mut self, op: &Op) -> u64 {
         if let Op::ArmedRecvZc { sock, .. } = *op {
             // Armed anew: what a full ring silenced is over.

@@ -299,6 +299,7 @@ impl UringIo {
         }
         if c.res == -ENOSPC {
             self.cq_full = true;
+            self.cq_full_count += 1;
         }
         self.finish(i, c.res, out);
     }

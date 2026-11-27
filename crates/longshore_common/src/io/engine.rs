@@ -90,6 +90,11 @@ pub trait World {
     fn take_ring_full(&mut self) -> bool {
         false
     }
+    /// How many times a receive found no room to report in, ever; as
+    /// `Io::ring_full_count`.
+    fn ring_full_count(&self) -> u64 {
+        0
+    }
     /// Return a buffer-ring buffer back to the world's ring.
     fn give_back(&mut self, _id: BufId) {}
     /// Return a piece of the receive area, `len` bytes of `page` from

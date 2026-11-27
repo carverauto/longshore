@@ -289,6 +289,15 @@ pub trait Io {
     fn take_ring_full(&mut self) -> bool {
         false
     }
+    /// How many times the backend has found no room to report completions
+    /// since it was built: a count that only grows, which reading does not
+    /// clear, nor [`Io::take_ring_full`]. Each of several callers sharing
+    /// one backend keeps the count it last saw, and knows the ring was full
+    /// since then when it has grown. A backend whose ring is never full
+    /// says 0.
+    fn ring_full_count(&self) -> u64 {
+        0
+    }
     /// Ask for the segment sizes of each TCP connection opened from now on:
     /// a connect that succeeds then completes with an encoded [`Segment`]
     /// in place of 0. May be changed at any time. A backend that cannot measure

@@ -283,6 +283,7 @@ impl Virtual {
         let full = self.rng.chance(self.faults.ring_full);
         if full {
             self.ring_full = true;
+            self.ring_full_count += 1;
             if self.rng.below(2) == 0 {
                 // Nothing fitted in this call.
                 return Some(Attempt::single(-ENOSPC));
