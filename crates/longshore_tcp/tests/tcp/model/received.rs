@@ -105,6 +105,12 @@ impl Run {
             h.got_own += 1;
         }
         let (choice, room) = ((uid + seq) % 4, self.held_room(server));
+        if own && choice == 1 && room && frame.run().is_some() {
+            // Kept in its pages, as it lies, and released some steps on:
+            // the checks after every step see pages held across turns.
+            self.sides[side].held.push(frame);
+            return Ok(());
+        }
         let (set, backend) = self.net(server);
         if choice == 0 || !own {
             sealed(|| set.release(frame));

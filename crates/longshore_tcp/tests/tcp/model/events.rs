@@ -206,7 +206,7 @@ impl Run {
             for server in [false, true] {
                 self.pull_events(server, u32::MAX)?;
                 while !self.sides[usize::from(server)].held.is_empty() {
-                    self.release_one(server);
+                    self.release_one(server)?;
                 }
                 for at in 0..self.sides[usize::from(server)].handles.len() {
                     alive += self.wind_down(server, at)?;
@@ -244,7 +244,7 @@ impl Run {
             for server in [false, true] {
                 self.pull_events(server, u32::MAX)?;
                 while !self.sides[usize::from(server)].held.is_empty() {
-                    self.release_one(server);
+                    self.release_one(server)?;
                 }
                 for at in 0..self.sides[usize::from(server)].handles.len() {
                     let h = self.sides[usize::from(server)].handles[at];

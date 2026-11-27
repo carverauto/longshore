@@ -160,10 +160,7 @@ impl Run {
             Kind::Close => self.close(server, step.a),
             Kind::CloseListener => self.close_listener(step.a),
             Kind::Shutdown => self.shutdown(server, step.a),
-            Kind::Release => {
-                self.release_one(server);
-                Ok(())
-            }
+            Kind::Release => self.release_one(server),
         }
     }
 
@@ -368,11 +365,19 @@ impl Run {
             .map(|(at, _)| at)
     }
 
-    pub(crate) fn release_one(&mut self, server: bool) {
+    /// Release the frame held last. A frame kept in its pages is still
+    /// there to read until then, whatever its connection did (Z9).
+    pub(crate) fn release_one(&mut self, server: bool) -> Result<(), String> {
         if let Some(frame) = self.sides[usize::from(server)].held.pop() {
             let (net, _) = self.net(server);
+            if frame.run().is_some() && sealed(|| net.pages(&frame)).is_none() {
+                return Err(format!(
+                    "{frame:?}, kept in its pages, was taken back before its release"
+                ));
+            }
             sealed(|| net.release(frame));
         }
+        Ok(())
     }
 
     pub(crate) const fn held_room(&self, server: bool) -> bool {
