@@ -19,6 +19,7 @@ pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     a_failure_ends_the_rest(make, root);
     a_short_read_is_not_a_failure(make, root);
     steps_of_several_files_and_a_path(make, root);
+    steps_behind_a_path_step_wait_for_it(make, root);
 }
 
 /// Run `steps` as a sequence; the result of each, in step order, and
@@ -188,5 +189,42 @@ fn steps_of_several_files_and_a_path<IO: Io>(make: &mut impl FnMut(Limits) -> IO
     rig.release(e);
     assert_eq!(rig.close(f), Ok(0));
     assert_eq!(rig.close(g), Ok(0));
+    rig.at_rest(0);
+}
+
+/// The chain ends at a path step: the steps behind it wait, not given to
+/// the backend, until it has reported success, and go then as a chain of
+/// their own (a backend need not end a chain at a failed path operation:
+/// the ring does not).
+fn steps_behind_a_path_step_wait_for_it<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
+    let mut rig = Rig::new(make, limits(), sizes());
+    let p = format!("{root}behind.dat");
+    let f = rig.open(&p, rw_create().with_empty(true));
+    let e = rig.extent();
+    rig.fill(e, 0, &bytes(8, 512));
+    let steps = [
+        Step::Status { path: &p },
+        write_step(f, e, 512, 0),
+        Step::Sync {
+            file: f,
+            data_only: true,
+        },
+    ];
+    let mark = rig.io().submitted();
+    let mut ts = tickets::<3>();
+    let n = rig.call(|s, io, x| s.sequence(io, x, &steps, &mut ts));
+    assert_eq!(n, Ok(3));
+    assert_eq!(rig.io().submitted(), mark + 1, "only the status went");
+    assert_eq!(rig.usage().waiting(), 2, "the steps behind it wait");
+    let got = ts.map(|t| rig.done(t));
+    assert_eq!(got, [Ok(0), Ok(512), Ok(0)]);
+    let sent: Vec<_> = rig.io().since(mark).collect();
+    let kinds: Vec<Kind> = sent.iter().map(|s| s.describe().0).collect();
+    assert_eq!(kinds, [Kind::Status, Kind::Write, Kind::Sync], "{sent:?}");
+    assert!(
+        sent[1].chain().is_some() && sent[1].chain().map(|c| c.0) == sent[2].chain().map(|c| c.0)
+    );
+    rig.release(e);
+    assert_eq!(rig.close(f), Ok(0));
     rig.at_rest(0);
 }
