@@ -180,6 +180,12 @@ impl<IO: Io> Rig<IO> {
         fail(format_args!("never settled: {:?}", self.usage()))
     }
 
+    /// The oldest event kept and its place in the order of all events;
+    /// taken from the rig. Allocates nothing.
+    pub fn pop_event(&mut self) -> Option<(u64, Event)> {
+        (!self.events.is_empty()).then(|| self.events.remove(0))
+    }
+
     /// The events kept so far, oldest first; taken from the rig.
     pub fn take_events(&mut self) -> Vec<(u64, Event)> {
         core::mem::take(&mut self.events)
