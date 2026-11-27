@@ -16,7 +16,7 @@ client and several sets can therefore share one backend and one thread.
 `T` is the transport. `KernelTransport<IO>` carries the set over the
 kernel's TCP and Unix-domain stream sockets through the `Io` trait, so the
 same program runs on `UringIo`, on `PosixIo` (`kqueue`, `epoll`) and in the
-simulator. A kernel-bypass transport is planned behind the same API.
+simulator. Kernel bypass is not planned (`openspec/project.md`).
 
 Everything is allocated when the set is built. After that nothing
 allocates, except rustls during a TLS handshake.
