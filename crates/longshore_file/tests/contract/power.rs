@@ -52,6 +52,17 @@ fn power_loss_keeps_what_was_synced_and_ends_what_was_in_flight() {
     rig.release(e);
     let again = rig.open("/kept.dat", OpenFlags::NONE.with_read(true));
     assert!(again.slot() != f.slot() || again.generation() != f.generation());
+    // A ticket taken now is none that ended with the power: its slot's
+    // generation rose (C12).
+    let e2 = rig.extent();
+    let read = must(
+        rig.call(|s, io, x| s.read_at(io, x, again, (e2, 0, 6000), 0)),
+        "a read after the power loss",
+    );
+    assert_eq!(read.index(), lost.index(), "the same operation slot");
+    assert!(read != lost, "{read:?} is the ticket lost with the power");
+    assert_eq!(rig.done(read), Ok(6000));
+    rig.release(e2);
     assert_eq!(rig.read(again, 0, 6000), (Ok(6000), kept));
     assert_eq!(rig.close(again), Ok(0));
     rig.at_rest(0);
@@ -113,5 +124,43 @@ fn a_page_of_the_receive_area_is_a_span() {
     assert_eq!(rig.read(f, 50, 2200), (Ok(2200), want));
     rig.release(e);
     assert_eq!(rig.close(f), Ok(0));
+    direct_pages(&mut rig);
     rig.at_rest(0);
+}
+
+/// On a direct-I/O file a page span is checked as an extent span is: a
+/// whole page from its start is taken, one from inside the page is
+/// `Unaligned`.
+fn direct_pages(rig: &mut Rig<longshore_common::sim::SimIo>) {
+    let d = rig.open(
+        "/paged-direct.dat",
+        rw_create().with_empty(true).with_direct(true),
+    );
+    let page = rig.limits().page(0);
+    rig.io()
+        .inner_mut()
+        .buf(page)
+        .copy_from_slice(&bytes(9, 4096));
+    let off_block = [Span::Page {
+        page,
+        off: 512,
+        len: 2048,
+    }];
+    rig.refused(
+        "a page span off a block",
+        FileError::Unaligned,
+        |s, io, x| s.write_spans(io, x, d, &off_block, 0),
+    );
+    let whole = [Span::Page {
+        page,
+        off: 0,
+        len: 4096,
+    }];
+    let t = must(
+        rig.call(|s, io, x| s.write_spans(io, x, d, &whole, 4096)),
+        "a whole page",
+    );
+    assert_eq!(rig.done(t), Ok(4096));
+    assert_eq!(rig.read(d, 4096, 4096), (Ok(4096), bytes(9, 4096)));
+    assert_eq!(rig.close(d), Ok(0));
 }

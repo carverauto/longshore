@@ -46,5 +46,6 @@ pub fn place(rig: &mut Rig<SimIo>, ahead: u64, fault: PlacedFault) {
 
 #[test]
 fn the_contract_holds_on_the_simulator() {
-    check::run_all(&mut sim, "/");
+    let ran = check::run_all(&mut sim, "/");
+    assert!(ran.direct(), "the simulator has direct I/O");
 }

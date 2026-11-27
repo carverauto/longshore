@@ -22,5 +22,8 @@ mod power;
 mod resumes;
 
 #[cfg(test)]
+mod ring;
+
+#[cfg(test)]
 #[cfg(unix)]
 mod posix;
