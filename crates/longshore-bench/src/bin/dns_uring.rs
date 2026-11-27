@@ -93,15 +93,18 @@ fn main() {
         .with_family(family)
         .with_prefer_large_segments(None)
         .with_refresh_ns(30_000_000_000)
-        .with_timeout_ns(1_000_000_000),
+        // 3 s per answer: a slow forwarding resolver, such as a container
+        // runtime's DNS proxy, can take well over 1 s to answer.
+        .with_timeout_ns(3_000_000_000),
     )
     .unwrap_or_else(|e| die::die(e));
     let mut out = Completions::new(8);
     let t0 = io.now_ns();
     r.start(&mut io);
     sealed(|| {
-        // One full pass over the hosts, or 5 seconds.
-        while r.cycles() == 0 && io.now_ns() - t0 < 5_000_000_000 {
+        // One full pass over the hosts, or 15 seconds: room for slow
+        // answers, inside the 30 s limit scripts/linux-checks.sh sets.
+        while r.cycles() == 0 && io.now_ns() - t0 < 15_000_000_000 {
             io.tick(true, &mut out).or_die("tick");
             while let Some(c) = out.pop() {
                 let _: bool = r.on_completion(&mut io, c);
