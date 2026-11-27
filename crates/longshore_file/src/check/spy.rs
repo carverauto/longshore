@@ -310,6 +310,10 @@ impl<IO: Io> Io for Spy<IO> {
         self.inner.take_ring_full()
     }
 
+    fn ring_full_count(&self) -> u64 {
+        self.inner.ring_full_count()
+    }
+
     fn measure_segment_sizes(&mut self, on: bool) {
         self.inner.measure_segment_sizes(on);
     }
