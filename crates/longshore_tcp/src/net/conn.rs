@@ -8,7 +8,7 @@
 use super::cover::Col;
 use super::state::{
     Socket, St, EV_ACCEPTED, EV_DOWN, EV_FINISHED, EV_READABLE, EV_REFUSED, EV_UP, EV_WRITABLE,
-    NONE, W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT,
+    NONE, W_ADMIT, W_CLOSE, W_CONNECT, W_FLUSH, W_READ, W_REFUSE, W_SHUT, W_WAKE,
 };
 use super::Net;
 use crate::addr::{Addr, ServerName};
@@ -237,6 +237,9 @@ impl<T: Transport> Net<T> {
         }
         if want & W_SHUT != 0 {
             self.shut_if_sent(d, slot);
+        }
+        if want & W_WAKE != 0 {
+            self.wake(d, slot);
         }
         if want & W_READ != 0 {
             self.resume_reading(d, slot);

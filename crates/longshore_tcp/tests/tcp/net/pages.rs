@@ -49,6 +49,11 @@ fn a_set_without_pages_or_without_an_area_refuses_the_mode() {
         w.client.connect(&mut w.io, ADDR, zc()),
         Err(NetError::Framing)
     );
+    // With TLS asked for, the mode is refused for that first, as
+    // `connect_tls` refuses it, though the set has no pages either.
+    let mut plain = World::new(0, Faults::NONE);
+    let tls = listens(&mut plain, ADDR, ListenConfig::new(zc()).with_tls(true));
+    assert_eq!(tls, Err(NetError::NoTls));
     // Pages in the sizes, and a backend built without an area.
     let paged_world = world_with(0, Faults::NONE, paged(64, 8, 256));
     let limits = paged_world.limits.with_area_pages(0);
@@ -118,4 +123,42 @@ fn the_returns_are_sized_by_the_pieces_out_not_by_the_spare() {
     // A spare of 64 MiB grows the area, not its ring of returns.
     assert!(large.area_pages() > small.area_pages() + 16_000);
     assert_eq!(large.area_returns(), small.area_returns());
+}
+
+#[test]
+fn a_set_planned_on_top_of_an_area_grows_it_for_the_turn_it_lengthens() {
+    let paged = sizes(2, 2, 1).with_zc(64, 8, 32);
+    let plain = sizes(3, 0, 0).with_token_base(1 << 20);
+    let (under, _) = Config::plan(Limits::BASE, paged).unwrap();
+    let (paged_first, _) = Config::plan(under, plain).unwrap();
+    let (over, _) = Config::plan(Limits::BASE, plain).unwrap();
+    let (paged_last, _) = Config::plan(over, paged).unwrap();
+    // In either order the area holds what one turn of the whole ring
+    // brings.
+    assert_eq!(paged_first.ops_max(), paged_last.ops_max());
+    assert_eq!(paged_first.area_pages(), paged_last.area_pages());
+    assert_eq!(paged_first.area_pieces(), paged_last.area_pieces());
+    // A set without pages on a backend without an area asks for none.
+    assert_eq!(over.area_pages(), 0);
+}
+
+#[test]
+fn counts_that_overflow_are_refused() {
+    let s = sizes(2, 2, 1);
+    let full = [
+        Limits::BASE.with_sockets_max(u32::MAX - 2),
+        Limits::BASE
+            .with_aligned_buffers(u32::MAX - 4)
+            .with_aligned_buffer_size(8192),
+        Limits::BASE
+            .with_small_buffers(u32::MAX - 4)
+            .with_small_buffer_size(4096),
+    ];
+    for base in full {
+        assert_eq!(
+            Config::plan(base, s).map(|_| ()),
+            Err(ConfigError::TooSmall),
+            "{base:?}"
+        );
+    }
 }

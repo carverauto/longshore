@@ -40,6 +40,8 @@ pub(super) const W_SHUT: u8 = 1 << 3;
 pub(super) const W_CONNECT: u8 = 1 << 4;
 pub(super) const W_REFUSE: u8 = 1 << 5;
 pub(super) const W_ADMIT: u8 = 1 << 6;
+/// The cancel of a receive a full completion ring may have left silent.
+pub(super) const W_WAKE: u8 = 1 << 7;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum St {

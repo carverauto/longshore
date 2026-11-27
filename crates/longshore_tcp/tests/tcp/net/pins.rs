@@ -293,3 +293,50 @@ fn the_set_bounds_the_memory_out_as_each_connection_does() {
         );
     }
 }
+
+/// One send segment, two connections refused it while a zero-copy send
+/// still reads it: the report that its bytes were taken frees a place in
+/// the queue but no segment, so neither is told it may send; when the
+/// memory is back, one of them is, and its send is accepted. Every
+/// `Writable` is one a send can follow.
+#[test]
+fn a_parked_segment_tells_no_connection_it_may_send() {
+    let one = lending(4, 0, 0, 2).with_segments(1, 4096);
+    for seed in 0..20 {
+        let mut w = World::with(seed, Faults::NONE, one, lending(2, 4, 2, 2));
+        let (c1, s1) = w.pair(prefix());
+        let (c2, s2) = w.connect(prefix());
+        let frame = prefixed(1000, seed as u8);
+        assert!(send(&mut w, c1, &frame));
+        // Sent with the poll: the segment is the transport's now.
+        let now = w.io.now_ns();
+        w.client.poll(&mut w.io, now);
+        assert!(!send(&mut w, c1, &frame) && !send(&mut w, c2, &frame));
+        let (mut waiting, mut got) = (vec![c1, c2], 0);
+        for _ in 0..20_000 {
+            if waiting.is_empty() && got == 3 {
+                break;
+            }
+            w.turn();
+            while let Some(e) = w.client.next_event() {
+                let Event::Writable(conn) = e else {
+                    panic!("{e:?}");
+                };
+                assert!(send(&mut w, conn, &frame), "seed {seed}: told in vain");
+                waiting.retain(|c| *c != conn);
+            }
+            while w.server.next_event().is_some() {
+                for s in [s1, s2] {
+                    for (f, _) in w.pull_all(s) {
+                        w.server.release(f);
+                        got += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            waiting.is_empty() && got == 3,
+            "seed {seed}: {waiting:?}, {got}"
+        );
+    }
+}

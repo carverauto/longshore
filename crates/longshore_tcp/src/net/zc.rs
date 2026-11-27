@@ -23,12 +23,12 @@
 //! landing, and the rest follows there.
 
 use super::cover::Col;
-use super::state::{best_effort, St, EV_READABLE, NEVER, NONE, W_READ};
+use super::state::{best_effort, St, EV_READABLE, NEVER, NONE, W_READ, W_WAKE};
 use super::Net;
 use crate::config::Rx;
 use crate::event::Why;
 use crate::framing::Framing;
-use crate::transport::Transport;
+use crate::transport::{Refused, Transport};
 use crate::Addr;
 use longshore_common::io::extents::Extent;
 use longshore_common::io::{BufId, Limits, ECANCELED, ENOMEM, ENOSPC};
@@ -318,11 +318,23 @@ impl<T: Transport> Net<T> {
             return;
         }
         for slot in 0..self.cfg.conns() {
-            let c = &self.conns[slot as usize];
-            let silent = c.opts.rx == Rx::ZeroCopy && c.st == St::Up && c.armed && !c.cancelling;
-            if silent && self.t.cancel_recv(d, slot).is_ok() {
-                self.conns[slot as usize].cancelling = true;
-            }
+            self.wake(d, slot);
+        }
+    }
+
+    /// Stop `slot`'s receive of the mode, if one is armed and not being
+    /// stopped already. A driver with no room for the cancel is asked
+    /// again on the next `poll`: the flag that said the receive may be
+    /// silent is spent.
+    pub(super) fn wake(&mut self, d: &mut T::Driver, slot: u32) {
+        let c = &self.conns[slot as usize];
+        if c.opts.rx != Rx::ZeroCopy || c.st != St::Up || !c.armed || c.cancelling {
+            return;
+        }
+        match self.t.cancel_recv(d, slot) {
+            Ok(()) => self.conns[slot as usize].cancelling = true,
+            Err(Refused::Busy) => self.add_work(slot, W_WAKE),
+            Err(Refused::Unsupported) => {}
         }
     }
 
@@ -349,6 +361,14 @@ impl<T: Transport> Net<T> {
         }
     }
 
+    /// Give the headers' pieces given up back to the transport: after
+    /// every completion, so that however many a driver's turns give up
+    /// before the next `poll`, they do not pile up.
+    pub(super) fn return_headers(&mut self, d: &mut T::Driver) {
+        let Net { zc, t, .. } = self;
+        zc.drain_headers(|page, off, len| t.give_back_piece(d, page, off, len));
+    }
+
     /// Give the pieces that wait back to the transport, and free the runs
     /// nothing holds any more.
     pub(super) fn return_pieces(&mut self, d: &mut T::Driver) {
@@ -362,6 +382,8 @@ impl<T: Transport> Net<T> {
     /// `Net` dropped without it leaves its pieces out until the backend
     /// is dropped, and a second set on that backend a smaller area.
     pub fn give_back_all(&mut self, d: &mut T::Driver) {
+        // What waits goes first, so that the headers given up below fit.
+        self.return_pieces(d);
         for slot in 0..self.cfg.conns() {
             self.drop_zc(slot);
         }

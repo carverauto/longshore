@@ -36,11 +36,13 @@ impl<T: Transport> Net<T> {
     ) -> Result<Listener, NetError> {
         let addr: Addr = addr.into();
         self.now = self.t.now_ns(d);
-        if !self.fits(&cfg.conn) || Self::zc_refuses(&cfg.conn, &addr, cfg.reuse_port) {
-            return Err(NetError::Framing);
-        }
+        // TLS first, as `connect_tls` asks: the mode is refused with it
+        // whether or not the set could read in pages.
         if cfg.tls {
             self.fits_tls(&cfg.conn, false)?;
+        }
+        if !self.fits(&cfg.conn) || Self::zc_refuses(&cfg.conn, &addr, cfg.reuse_port) {
+            return Err(NetError::Framing);
         }
         // A slot whose failed bind is still to be reported keeps its handle.
         let unused = |l: &ListenerState| l.st == LSt::Free && l.failed.is_none();

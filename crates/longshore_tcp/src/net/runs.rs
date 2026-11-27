@@ -124,11 +124,16 @@ impl Pages {
             len: 0,
             tail: NONE,
         };
-        let recs = s.zc_pieces;
+        // Without pages no connection reads in them: no tables either.
+        let (frames, recs) = if s.zc_pages == 0 {
+            (0, 0)
+        } else {
+            (s.zc_frames, s.zc_pieces)
+        };
         Pages {
-            runs: vec![quiet; s.zc_frames as usize].into_boxed_slice(),
-            run_free: (0..s.zc_frames).rev().collect(),
-            run_free_len: s.zc_frames as usize,
+            runs: vec![quiet; frames as usize].into_boxed_slice(),
+            run_free: (0..frames).rev().collect(),
+            run_free_len: frames as usize,
             // Free records are chained through `next`.
             recs: (0..recs)
                 .map(|i| Rec {
@@ -140,16 +145,17 @@ impl Pages {
                 .collect(),
             rec_free: if recs == 0 { NONE } else { 0 },
             recs_out: 0,
-            tail_free: (0..s.zc_frames).rev().collect(),
-            tail_free_len: s.zc_frames as usize,
+            tail_free: (0..frames).rev().collect(),
+            tail_free_len: frames as usize,
             tail_first: cfg.tail_first,
             tails_per_buf: (s.frame_size / Limits::PAGE).max(1),
             budget: s.zc_pages,
             pages_max: s.zc_pages,
-            retired: vec![0; s.zc_frames as usize].into_boxed_slice(),
+            retired: vec![0; frames as usize].into_boxed_slice(),
             retired_len: 0,
-            // A header a connection, and one more for a connection that
-            // ends again in its slot before the next `poll`.
+            // A header a connection: a slot holds one at a time, and what
+            // it gives up goes back with the completion it came in, or
+            // with the next call that has the driver. Twice that, to spare.
             returns: vec![(BufId::new(0), 0, 0); 2 * cfg.conns() as usize].into_boxed_slice(),
             returns_len: 0,
             headers: 0,
@@ -356,12 +362,17 @@ impl Pages {
         self.returns_len as u32
     }
 
-    /// Give every piece that waits to `back`, and free the retired runs:
-    /// their records, their tail blocks, their pages of the budget.
-    pub(super) fn drain(&mut self, mut back: impl FnMut(BufId, u32, u32)) {
+    /// Give the headers' pieces that wait to `back`.
+    pub(super) fn drain_headers(&mut self, mut back: impl FnMut(BufId, u32, u32)) {
         for (page, off, len) in &self.returns[..core::mem::take(&mut self.returns_len)] {
             back(*page, *off, *len);
         }
+    }
+
+    /// Give every piece that waits to `back`, and free the retired runs:
+    /// their records, their tail blocks, their pages of the budget.
+    pub(super) fn drain(&mut self, mut back: impl FnMut(BufId, u32, u32)) {
+        self.drain_headers(&mut back);
         for i in 0..core::mem::take(&mut self.retired_len) {
             let index = self.retired[i];
             let state = self.runs[index as usize];

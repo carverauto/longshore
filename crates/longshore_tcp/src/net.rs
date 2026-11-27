@@ -270,6 +270,7 @@ impl<T: Transport> Net<T> {
             }
             Happened::ListenerClosed { listener } => self.on_listener_closed(listener),
         }
+        self.return_headers(d);
         true
     }
 

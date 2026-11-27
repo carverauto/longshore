@@ -103,8 +103,10 @@ impl<T: Transport> Net<T> {
         }
     }
 
-    /// The bytes of `frame`; `None` once it has been released, or for a
-    /// frame lent from the buffer ring after the next `poll`.
+    /// The bytes of `frame`; `None` once it has been released, for a
+    /// frame lent from the buffer ring after the next `poll`, and for a
+    /// frame in pages (`Rx::ZeroCopy`), which is not one run of memory:
+    /// [`Net::pages`] says where its bytes lie.
     pub fn bytes<'d>(&self, d: &'d mut T::Driver, frame: &Frame) -> Option<&'d [u8]> {
         if !self.is_live(frame) {
             return None;
