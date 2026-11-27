@@ -34,7 +34,8 @@ impl Set {
     /// The set of `config`, planned into `limits`, writing from and reading
     /// into `exts`, which the caller holds.
     pub(crate) fn new(config: FileConfig, limits: &Limits, exts: &[Extent]) -> Set {
-        let ops = usize::try_from(config.tokens() / 2).or_die("operation slots");
+        // A job a record, keyed by ticket index: one a token.
+        let ops = usize::try_from(config.tokens()).or_die("records");
         Set {
             files: Files::new(config, limits),
             exts: exts.into(),
