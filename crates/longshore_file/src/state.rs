@@ -170,6 +170,9 @@ pub(crate) struct OpRec {
     pub(crate) next: u32,
     /// At a lead: steps of its chain still at the backend.
     pub(crate) out: u32,
+    /// At a lead: steps of the sequence its chain holds; the steps after
+    /// them wait for the chain to be read.
+    pub(crate) sent: u32,
 }
 
 impl OpRec {
@@ -186,6 +189,7 @@ impl OpRec {
         lead: NONE,
         next: NONE,
         out: 0,
+        sent: 0,
     };
 }
 

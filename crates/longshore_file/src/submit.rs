@@ -194,9 +194,10 @@ impl Files {
         self.waiting.push_back(lead);
     }
 
-    /// Gives the steps from `lead` on to the backend as one chain. A step
-    /// of a Poisoned file that it may not run ends there, and the steps
-    /// after it are cancelled; those before it go.
+    /// Gives the steps from `lead` on to the backend as one chain, up to
+    /// and with the first path step. A step of a Poisoned file that it may
+    /// not run ends there, and the steps after it are cancelled; those
+    /// before it go.
     fn submit_chain<IO: Io>(
         &mut self,
         io: &mut IO,
@@ -220,17 +221,24 @@ impl Files {
             self.chain[n] = (self.token(r), op);
             n += 1;
             (last, r) = (r, self.recs[r as usize].next);
+            if matches!(self.recs[last as usize].work, Work::Path { .. }) {
+                // A chain ends with a path step: a kernel need not end its
+                // link when one fails, so what follows goes only once it
+                // has reported success.
+                break;
+            }
         }
         if n == 0 {
             return Ok(());
         }
         io.submit_chain(&self.chain[..n])?;
         let mut k = lead;
-        while k != NONE {
+        for _ in 0..n {
             self.recs[k as usize].state = OState::Submitted;
             k = self.recs[k as usize].next;
         }
-        self.recs[lead as usize].out = n as u32;
+        let l = &mut self.recs[lead as usize];
+        (l.out, l.sent) = (n as u32, n as u32);
         Ok(())
     }
 

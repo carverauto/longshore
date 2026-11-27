@@ -8,7 +8,7 @@
 
 use crate::record::Entry;
 use crate::rig::{rw, Rig};
-use longshore_common::io::{Op, OpenFlags};
+use longshore_common::io::{Op, OpenFlags, Token};
 use longshore_file::{FileError, FileSizes, Span, Step, Ticket};
 
 #[test]
@@ -126,4 +126,63 @@ fn a_refused_call_submits_nothing() {
     for h in held {
         assert_eq!(r.wait(h).1, Ok(0));
     }
+}
+
+/// The backend token of ticket `t` of the rig's set.
+fn token_of(r: &Rig, t: Ticket) -> Token {
+    Token::new(r.files.config().token_base() + u64::from(t.index()))
+}
+
+/// A sequence of a write, a status of `path` and a write behind it.
+fn write_status_write(r: &mut Rig, path: &str) -> [Ticket; 3] {
+    let f = r.open("/a", rw());
+    let e = r.extent(1);
+    let steps = [
+        Step::Write {
+            file: f,
+            extent: e,
+            at: 0,
+            len: 100,
+            file_off: 0,
+        },
+        Step::Status { path },
+        Step::Write {
+            file: f,
+            extent: e,
+            at: 0,
+            len: 100,
+            file_off: 50_000,
+        },
+    ];
+    let mut t = [Ticket::NONE; 3];
+    assert_eq!(r.files.sequence(&mut r.io, &mut r.x, &steps, &mut t), Ok(3));
+    t
+}
+
+#[test]
+fn a_path_step_ends_its_chain_and_what_follows_waits_for_it() {
+    let mut r = Rig::new(FileSizes::new(1, 3).with_shared(2));
+    let t = write_status_write(&mut r, "/a");
+    assert_eq!(r.wait(t[0]).1, Ok(100));
+    assert_eq!(r.wait(t[1]).1, Ok(100));
+    assert_eq!(r.wait(t[2]).1, Ok(100));
+    let (status, last) = (token_of(&r, t[1]), token_of(&r, t[2]));
+    let subs = r.io.submitted();
+    let (k, _, _) = *subs.iter().find(|(_, tok, _)| *tok == status).unwrap();
+    let (status_done, _) = r.io.done_at(status, k).unwrap();
+    let (w, _, _) = *subs.iter().find(|(_, tok, _)| *tok == last).unwrap();
+    assert!(w > status_done, "the write behind the status went with it");
+}
+
+#[test]
+fn a_path_step_that_fails_keeps_what_follows_from_the_backend() {
+    let mut r = Rig::new(FileSizes::new(1, 3).with_shared(2));
+    let t = write_status_write(&mut r, "/missing");
+    assert_eq!(r.wait(t[0]).1, Ok(100));
+    assert_eq!(r.wait(t[1]).1, Err(FileError::NotFound));
+    assert_eq!(r.wait(t[2]).1, Err(FileError::Cancelled));
+    let last = token_of(&r, t[2]);
+    assert!(r.io.submitted().iter().all(|(_, tok, _)| *tok != last));
+    let s = r.files.status(&mut r.io, "/a").unwrap();
+    assert_eq!(r.wait(s).1, Ok(100), "the last write never ran");
 }

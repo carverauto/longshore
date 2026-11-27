@@ -5,17 +5,21 @@
 
 //! Ordered sequences on the backend's chains (contract C7).
 //!
-//! A sequence goes to the backend as one chain. Its steps' completions are
-//! kept until every step of the chain has completed; then they are read in
-//! order. Whole steps report; the first that failed reports and the rest
-//! are cancelled; the first that has more to move, or that the backend did
+//! A sequence goes to the backend as chains: one, unless it has path steps
+//! (status, rename, unlink, mkdir), each of which ends its chain, since a
+//! kernel need not end a link when one of them fails. A chain's
+//! completions are kept until every step of it has completed; then they
+//! are read in order. Whole steps report; the first that failed reports
+//! and the rest are cancelled (a step the backend ran all the same reports
+//! what it did); the first that has more to move, or that the backend did
 //! not run because the step before it was short, leads a new chain of
-//! itself and the rest.
+//! itself and the rest, as does the step after a chain whose steps were
+//! all whole.
 
 use crate::complete::Outcome;
-use crate::errno::{errno_of, error, ECANCELED};
+use crate::errno::{ended, errno_of, error, ECANCELED};
 use crate::state::{OState, PathKind, Work, NONE};
-use crate::{FileError, Files, Step, Ticket};
+use crate::{ErrorKind, FileError, Files, Step, Ticket};
 use longshore_common::io::extents::Extents;
 use longshore_common::io::Io;
 
@@ -138,12 +142,13 @@ impl Files {
     /// and cancelled the rest with it. A lead the backend refused itself
     /// reports its own errno as any failed step does.
     fn read_chain<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, lead: u32) {
+        let sent = self.recs[lead as usize].sent;
         if self.recs[lead as usize].raw == -ECANCELED {
-            self.refused(io, x, lead);
+            self.refused(io, x, lead, sent);
             return;
         }
         let mut r = lead;
-        while r != NONE {
+        for k in 0..sent {
             let next = self.recs[r as usize].next;
             let res = self.recs[r as usize].raw;
             let outcome = if res == -ECANCELED {
@@ -156,21 +161,57 @@ impl Files {
                 Outcome::Done(Ok(v)) => self.finish(io, x, r, Ok(v)),
                 Outcome::Done(Err(e)) => {
                     self.finish(io, x, r, Err(e));
-                    self.cancel_from(io, x, next);
+                    self.end_after(io, x, next, sent - k - 1);
                     return;
                 }
                 Outcome::More => {
-                    let mut k = r;
-                    while k != NONE {
-                        self.recs[k as usize].lead = r;
-                        k = self.recs[k as usize].next;
-                    }
-                    self.launch_chain(io, x, r);
+                    self.relaunch(io, x, r);
                     return;
                 }
             }
             r = next;
         }
+        // Every step of the chain whole: the rest of the sequence goes.
+        if r != NONE {
+            self.relaunch(io, x, r);
+        }
+    }
+
+    /// The steps from `r` on, a chain of their own led by `r`.
+    fn relaunch<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, r: u32) {
+        let mut k = r;
+        while k != NONE {
+            self.recs[k as usize].lead = r;
+            k = self.recs[k as usize].next;
+        }
+        self.launch_chain(io, x, r);
+    }
+
+    /// Ends the sequence after a failed step: the `ran` steps from `r` on
+    /// were in its chain, and report `Cancelled` if the backend did not
+    /// run them, or what they did if it did; the steps after them are
+    /// cancelled.
+    fn end_after<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, mut r: u32, ran: u32) {
+        for _ in 0..ran {
+            let next = self.recs[r as usize].next;
+            let res = self.recs[r as usize].raw;
+            let result = if res == -ECANCELED {
+                Err(FileError::Cancelled)
+            } else {
+                match self.outcome(io, x, r, res) {
+                    Outcome::Done(result) => result,
+                    // A transfer that ran short, with no sequence left to
+                    // finish it in.
+                    Outcome::More => Err(ended(
+                        self.recs[r as usize].done,
+                        ErrorKind::Os { errno: ECANCELED },
+                    )),
+                }
+            };
+            self.finish(io, x, r, result);
+            r = next;
+        }
+        self.cancel_from(io, x, r);
     }
 
     /// The backend refused the chain as a whole: the step it named
@@ -178,9 +219,9 @@ impl Files {
     /// had none of, such as a gather row; `Invalid` for what the set's
     /// checks are there to prevent), the rest `Cancelled`. Nothing ran, so
     /// no file is poisoned.
-    fn refused<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, lead: u32) {
+    fn refused<IO: Io>(&mut self, io: &mut IO, x: &mut Extents, lead: u32, sent: u32) {
         let mut r = lead;
-        while r != NONE {
+        for _ in 0..sent {
             let next = self.recs[r as usize].next;
             let res = self.recs[r as usize].raw;
             let e = if res < 0 && res != -ECANCELED {
@@ -191,5 +232,6 @@ impl Files {
             self.finish(io, x, r, Err(e));
             r = next;
         }
+        self.cancel_from(io, x, r);
     }
 }
