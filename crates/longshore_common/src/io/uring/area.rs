@@ -56,7 +56,8 @@ fn can_register(ring: &mut Ring) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!(
-                "this kernel's pages are {size} bytes; a receive area is laid out in pages of {}",
+                "no zero-copy receive: this kernel's pages are {size} bytes, and a receive \
+                 area is laid out in pages of {}",
                 Limits::PAGE
             ),
         ));
@@ -153,7 +154,8 @@ impl Area {
             len: u64::from(limits.area_pages) * u64::from(Limits::PAGE),
             ..Default::default()
         };
-        let desc = io_uring_region_desc {
+        // The kernel writes both back, the area and the region, on success.
+        let mut desc = io_uring_region_desc {
             user_addr: base as u64,
             size: region_len as u64,
             flags: IORING_MEM_REGION_TYPE_USER,
@@ -165,7 +167,7 @@ impl Area {
             if_rxq,
             rq_entries: entries,
             area_ptr: &raw mut area as u64,
-            region_ptr: &raw const desc as u64,
+            region_ptr: &raw mut desc as u64,
             ..Default::default()
         };
         ring.register_zcrx(&mut reg)
@@ -175,7 +177,8 @@ impl Area {
         if ring.flush_zcrx(reg.zcrx_id).is_err() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "the kernel cannot be asked to read a receive area's returns (needs Linux 7.0)",
+                "no zero-copy receive: the kernel cannot be asked to read a receive area's \
+                 returns (needs Linux 7.0)",
             ));
         }
         let at = |off: u32| unsafe { base.add(off as usize) };
