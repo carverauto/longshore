@@ -25,11 +25,10 @@ fn turn_filled(w: &mut World, fill: bool) {
         w.ticking = true;
     }
     let mut n = 0;
-    while fill {
-        let submitted = w.io.submit(Token::new(FILL + n), Op::Timeout { nanos: 1 });
-        if submitted.is_err() {
-            break;
-        }
+    let mut room = fill;
+    while room {
+        let filler = Op::Timeout { nanos: 1 };
+        room = w.io.submit(Token::new(FILL + n), filler).is_ok();
         n += 1;
     }
     w.server.poll(&mut w.io, now);

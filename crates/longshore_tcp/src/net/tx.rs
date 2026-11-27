@@ -255,9 +255,9 @@ impl<T: Transport> Net<T> {
             // A place in its queue is free. One that waits for a segment
             // is told when a segment returns, which a segment a send
             // still reads does not (`segment_returned`).
-            let c = &mut self.conns[slot as usize];
-            if c.full && !c.seg_listed {
-                c.full = false;
+            let room = &mut self.conns[slot as usize];
+            if room.full && !room.seg_listed {
+                room.full = false;
                 self.mark_writable(slot);
             }
         }
