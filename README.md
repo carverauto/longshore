@@ -16,35 +16,45 @@
   <strong>The fastest object-storage client on the planet.</strong>
 </p>
 
+<p align="center">
+  <a href="https://crates.io/crates/longshore"><img src="https://img.shields.io/crates/v/longshore.svg" alt="crates.io" /></a>
+  <a href="https://docs.rs/longshore"><img src="https://img.shields.io/docsrs/longshore" alt="docs.rs" /></a>
+  <a href="https://github.com/carverauto/longshore/blob/main/LICENSE"><img src="https://img.shields.io/crates/l/longshore.svg" alt="License" /></a>
+</p>
+
 # longshore
 
-longshore is an object storage client written in Rust. It is built to move a
-lot of data with little CPU: one thread per core on Linux `io_uring`, all memory
-allocated at start-up, and no copy of an upload's body made by the client,
-which hands large sends to the kernel as zero-copy sends. On macOS (`kqueue`)
-and on Linux hosts without `io_uring` (`epoll`), it also runs on a portable
-POSIX readiness backend for development, tests, and non-ring environments.
+longshore is an object storage client in Rust that moves a lot of data with
+little CPU. It runs one thread per core on Linux `io_uring`, allocates all its
+memory at start-up, and never copies an upload's body: it hands large sends to
+the kernel as zero-copy sends. The same code runs on a portable backend,
+`kqueue` on macOS and `epoll` on Linux hosts without `io_uring`, for
+development, tests and hosts without the ring.
 
-It talks to:
+Its object store talks to:
 
 - Amazon S3
 - S3-compatible stores, with the bucket in the host name or in the path. Run
   against Linode Object Storage and versitygw
 - Google Cloud Storage, with a bearer token
 
+On the same thread and backend, longshore also carries protocols that run
+straight over TCP ([`longshore::tcp`](#tcp-connections)) and does file I/O
+for programs that keep their own data on disk ([`longshore::file`](#files)).
+
 The design follows the TigerBeetle talk
 [The Fastest Object Storage Client in the World](https://youtu.be/NJrqmoNpVGg).
 
-This is a library under development. It is published on crates.io, and its
-API will change between releases.
-[Status][status] lists what works and against which stores, and
-[Limits][limits] lists what has not been done, measured or proven.
+longshore is published on crates.io and still under development; its API
+will change between releases. [Status][status] lists what works and against
+which stores, and [Limits][limits] lists what has not been done, measured or
+proven.
 
 ## Performance
 
-These figures are for the Linux `io_uring` backend (not the portable POSIX
-backend). One client thread against Amazon S3, 8 MiB objects, from instances in
-the same region as the bucket. Medians of five runs. GB means 10^9 bytes.
+These figures come from the Linux `io_uring` backend, not the portable one:
+one client thread against Amazon S3, 8 MiB objects, instances in the bucket's
+region, medians of five runs. GB means 10^9 bytes.
 
 | Request | Graviton4, 300 Gbit/s card | AMD Zen 5, 200 Gbit/s card |
 |---|---|---|
@@ -54,16 +64,16 @@ the same region as the bucket. Medians of five runs. GB means 10^9 bytes.
 | HTTPS PUT | 5.1 GB/s | 7.6 GB/s |
 | HTTPS GET | 2.8 GB/s | 5.2 GB/s |
 
-Plain PUT fills the 300 Gbit/s card with half of the client's thread idle.
-Every row below it is bound by the one core the client runs on, and grows
-with more I/O threads: eight of them store 31.1 GB/s over HTTPS on the
-Graviton4 instance, with a checksum on every body.
+Plain PUT fills the 300 Gbit/s card and leaves half the client's thread
+idle. The client's one core bounds every row below it, and each grows with
+more I/O threads: on the Graviton4 instance, eight threads store 31.1 GB/s
+over HTTPS with a checksum on every body.
 
-These figures need the preference for large-segment addresses, which is off
-by default. [Measurements][benchmarks] has the conditions, the
-figures for several threads, the comparison with s5cmd and the AWS CLI, and
-runs between two machines. Every measurement is in
-[`bench/results/`][results] with the conditions it was taken under.
+The figures need the preference for large-segment addresses, which is off
+by default. [Measurements][benchmarks] has the conditions, the figures for
+several threads, the comparison with s5cmd and the AWS CLI, and runs
+between two machines. [`bench/results/`][results] holds every measurement
+with its conditions.
 
 ## Using it
 
@@ -101,52 +111,75 @@ assert_eq!(fetched.unwrap(), Some(5));
 assert_eq!(&body.as_slice()[..5], b"hello");
 ```
 
-Every operation returns a value that is a `Future` and also has a blocking
-`wait`, so the same calls work under any async executor and from plain
-threads. [The shareable client][client] covers multipart uploads,
-the calls that report exactly what the store answered, the settings, and
-how it is tested. The store's own API is lower level:
-[Building, testing and running against a store][testing] shows how
-to drive it.
+Every operation returns a `Future` that also has a blocking `wait`, so the
+same calls work under any async executor and from plain threads.
+[The shareable client][client] covers multipart uploads, the calls that
+report exactly what the store answered, the settings, and how the client is
+tested. The store's own API is lower level:
+[Building, testing and running against a store][testing] shows how to
+drive it.
+
+## Crates
+
+longshore is eleven crates. `longshore` gathers the other ten under one
+name, and most programs depend on it alone. The crates are released
+together: depend on all of them at the same version.
+
+| Crate | In `longshore` as | What it does |
+|---|---|---|
+| [`longshore`](https://crates.io/crates/longshore) | | Re-exports every crate below; this README |
+| [`longshore_s3`][c-s3] | `store`, `client`, `crypto` | The object store, and the client any thread can share |
+| [`longshore_tcp`][c-tcp] | `tcp` | Connections and listeners for protocols over TCP: framing, frames lent in place |
+| [`longshore_file`][c-file] | `file` | File I/O: a fixed set of files and operations, ordered sequences, direct I/O |
+| [`longshore_common`][c-common] | `io`, `sim` | The `Io` trait, the `io_uring` and portable backends, and the simulator |
+| [`longshore_http_client`][c-http] | `http` | HTTP/1.1: a connection pool, and an object server for tests |
+| [`longshore_stream`][c-stream] | `stream` | One connection's byte stream, plain or TLS |
+| [`longshore_tls`][c-tls] | `tls` | TLS 1.3: the record layer, and the handshake from rustls |
+| [`longshore_mailbox`][c-mailbox] | `mailbox` | Lock-free mailboxes between threads and I/O cores |
+| [`longshore_dns`][c-dns] | `dns` | DNS for a fixed set of names, read from a cache |
+| [`longshore_crc`][c-crc] | `checksum` | CRC-64/NVME and CRC-32C |
+
+`longshore-bench`, in the same workspace and not published, holds the
+benchmarks and the real-kernel checks.
 
 ## The I/O layer
 
-The client is built on `longshore::io`, a single-threaded operation queue
-that other storage code can use directly. It has direct file I/O with linked
-chains, server-side networking with armed accept and receive over a buffer
-ring, lock-free mailboxes between cores, and a simulated disk with power
-loss and fault injection.
+`longshore::io` is a single-threaded operation queue. The client is built
+on it, and other storage code can use it directly. It gives direct file
+I/O with linked chains, server-side networking with armed accept and
+receive over a buffer ring, lock-free mailboxes between cores, and a
+simulated disk with power loss and fault injection.
 [The I/O layer][io] describes each part.
 
 ## TCP connections
 
-`longshore::tcp` is for protocols that run straight over TCP or Unix-domain
-sockets: replication, messaging, a database's own wire protocol. A fixed set
-of connections and listeners is driven from the caller's loop on the same
-backend and thread as file I/O and the object storage client. Frames arrive
-whole and are lent where they were received; a frame can be written to a
-direct-I/O log and sent on to other peers from that same memory, so its
-bytes are moved once. TLS works with every provider, and nothing allocates
-after the set is built.
+`longshore::tcp` carries protocols that run straight over TCP or
+Unix-domain sockets: replication, messaging, a database's own wire
+protocol. The caller's loop drives a fixed set of connections and
+listeners on the same backend and thread as file I/O and the object
+storage client. Frames arrive whole and are lent where they were received:
+a frame can be written to a direct-I/O log and sent on to other peers from
+that same memory, so its bytes move once. TLS works with every provider,
+and nothing allocates after the set is built.
 [TCP connections][tcp] describes the API, the receive modes and sizing.
 
 ## Files
 
-`longshore::file` is file I/O for programs that keep their own data on
-disk. A fixed set of files and operations is driven from the caller's loop
-on the same backend and thread as connections and the object storage
-client. Reads and writes are resumed until whole, operations that must
-happen in order go to the kernel as one chain, direct-I/O alignment is
-checked before anything is submitted, and every backend reports the same
-errors, a failed sync among them. It is file I/O only: logs, pages,
-records and checksums are left to the program that uses it.
+`longshore::file` does file I/O for programs that keep their own data on
+disk. The caller's loop drives a fixed set of files and operations on the
+same backend and thread as connections and the object storage client. The
+set resumes reads and writes until they are whole, sends operations that
+must happen in order to the kernel as one chain, and checks direct-I/O
+alignment before it submits anything. Every backend reports the same
+errors, a failed sync among them. Logs, pages, records and checksums are
+left to the program that uses the crate.
 [Files][file] describes the API, sizing and durability.
 
 ## TLS and crypto providers
 
-HTTPS is TLS 1.3 with AES-GCM. The handshake always runs in rustls; the
-crypto provider decides who seals and opens the records, and which crypto
-library rustls uses for the handshake. Each provider is a Cargo feature.
+HTTPS is TLS 1.3 with AES-GCM. rustls always runs the handshake. The crypto
+provider, a Cargo feature, decides who seals and opens the records and
+which crypto library rustls uses for the handshake.
 
 | Provider | Feature flag | Records sealed and opened by | Handshake crypto | Use it when |
 |---|---|---|---|---|
@@ -168,12 +201,11 @@ and 8 MiB bodies; CPU is the client thread's per GB moved.
 | ring | 6.8 GB/s | 6.6 GB/s | 5.14 GB/s | 195 ms | 2.59 GB/s | 385 ms |
 | rustls | 6.2 GB/s | 6.7 GB/s | 4.61 GB/s | 217 ms | 2.49 GB/s | 402 ms |
 
-Seal and open are the record layer alone (`cargo bench -p longshore-bench
---bench tls_providers`); PUT and GET are `http_uring --provider`. What TLS
-adds to an upload's CPU is about twice as much with ring as with AWS-LC.
-Conditions and ranges are in
-[`bench/results/m29-tls-providers.md`][results]; x86-64 and cloud hosts are
-still to be measured.
+Seal and open measure the record layer alone (`cargo bench -p
+longshore-bench --bench tls_providers`); PUT and GET come from `http_uring
+--provider`. With ring, TLS adds about twice as much CPU to an upload as
+with AWS-LC. [`bench/results/m29-tls-providers.md`][m29] has the
+conditions and ranges; x86-64 and cloud hosts are still to be measured.
 
 ### Switching a provider on
 
@@ -278,6 +310,17 @@ Apache License 2.0. See `LICENSE`.
 [io]: https://github.com/carverauto/longshore/blob/main/docs/io.md
 [tcp]: https://github.com/carverauto/longshore/blob/main/docs/tcp.md
 [limits]: https://github.com/carverauto/longshore/blob/main/docs/limits.md
+[m29]: https://github.com/carverauto/longshore/blob/main/bench/results/m29-tls-providers.md
+[c-common]: https://github.com/carverauto/longshore/blob/main/crates/longshore_common/README.md
+[c-crc]: https://github.com/carverauto/longshore/blob/main/crates/longshore_crc/README.md
+[c-dns]: https://github.com/carverauto/longshore/blob/main/crates/longshore_dns/README.md
+[c-file]: https://github.com/carverauto/longshore/blob/main/crates/longshore_file/README.md
+[c-http]: https://github.com/carverauto/longshore/blob/main/crates/longshore_http_client/README.md
+[c-mailbox]: https://github.com/carverauto/longshore/blob/main/crates/longshore_mailbox/README.md
+[c-s3]: https://github.com/carverauto/longshore/blob/main/crates/longshore_s3/README.md
+[c-stream]: https://github.com/carverauto/longshore/blob/main/crates/longshore_stream/README.md
+[c-tcp]: https://github.com/carverauto/longshore/blob/main/crates/longshore_tcp/README.md
+[c-tls]: https://github.com/carverauto/longshore/blob/main/crates/longshore_tls/README.md
 [results]: https://github.com/carverauto/longshore/tree/main/bench/results
 [status]: https://github.com/carverauto/longshore/blob/main/docs/status.md
 [testing]: https://github.com/carverauto/longshore/blob/main/docs/testing.md
