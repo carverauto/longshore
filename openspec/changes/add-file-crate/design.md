@@ -81,7 +81,7 @@ FileConfig), ConfigError>` adds to `limits`:
 | `Limits::files_max` | + `files` |
 | `Limits::gather_ops` | + `ops` (a row for every operation slot), `gather_spans = max(existing, spans_max)` |
 | small buffers | + `files` (each file slot's path, for its open) + `paths` (each path operation's paths and status area) + `ops` (a span list for every operation slot) |
-| tokens | `tokens()` from `token_base`, one a slot (`FileConfig::tokens`) |
+| tokens | `tokens()` from `token_base`, one a record: `ops` operation records and one a file slot for its open and close (`FileConfig::tokens`) |
 
 The small class's size is the pool's (shared with other layers, as
 `longshore_tcp` does): the plan refuses one that cannot hold a list of
@@ -106,7 +106,7 @@ of 0 or above 1,024 (`ConfigError::Spans`), a small class too small
 
 | State | Entered by | Accepts | Left by |
 |---|---|---|---|
-| Free | build; a close's completion; a failed open; `power_lost` | `open` | `open` accepted → Opening |
+| Free | build; a close's completion; a failed open; `power_lost` | `open`, once the close's or failed open's event was taken | `open` accepted → Opening |
 | Opening | `open` accepted | nothing | the open's completion: success → Open, failure → Free (generation + 1) |
 | Open | the open's success | every operation | `close` → Closing; a failed sync, or a failed write on a durable-write file → Poisoned |
 | Poisoned | as above | `read_at` and `close`; the rest `Poisoned` | `close` → Closing |
@@ -122,8 +122,11 @@ event has been taken. A close error is reported in its event and the slot
 is freed all the same. Generations are `u32` and wrap.
 
 ### C4 Operations, tickets and events
-Each accepted operation takes an operation slot and returns `Ticket {
-index, generation }`. States of an operation slot:
+Each accepted operation takes a record and returns `Ticket { index,
+generation }`: an operation slot (indexes 0 to `ops − 1`), or, for an open
+or a close, its file slot's own record (`ops` and above). `Ticket::NONE`
+names no record and fills the slice given to `sequence`. States of an
+operation record:
 
 | State | Entered by | Left by |
 |---|---|---|
@@ -136,9 +139,9 @@ index, generation }`. States of an operation slot:
 The outcome is one `Event::Done { ticket, file: Option<File>, result:
 Result<u64, FileError> }`; `u64` is bytes transferred, the size for
 `status`, 0 otherwise; `file` is the new handle for `open`, the file for
-file operations, `None` for path operations. The event queue holds `ops`
-events; a slot is free only when its event is taken, so the queue never
-overflows. Waiting work goes first in, first out: a sequence waiting for
+file operations, `None` for path operations. The event queue holds `ops +
+files` events, one a record; a record is free only when its event is
+taken, so the queue never overflows. Waiting work goes first in, first out: a sequence waiting for
 room is not overtaken, so nothing waits for ever while room comes back.
 
 ### C5 Operations
@@ -158,7 +161,7 @@ room is not overtaken, so nothing waits for ever while room comes back.
 A directory is a file: `open` with `OpenFlags::with_directory` and `sync`
 it, to make a create or a rename durable. `Span` is `Span::Extent { extent,
 at, len }`, held by the set, or `Span::Page { page, off, len }`, a page of
-the receive area that the caller holds (`longshore_tcp`'s `WriteHold`)
+the receive area (`Limits::is_page`, else `TooLarge`) that the caller holds (`longshore_tcp`'s `WriteHold`)
 until the event: a received frame goes to a file without a copy. Paths are
 copied into path buffers (a path is not payload); a path longer than
 `path_max` or with a NUL inside is refused `BadPath`. There is no cancel:
@@ -171,8 +174,9 @@ completes with 0 bytes, or a read with 0 before the end it asked for, ends
 the transfer (a read: at end of file; a write: `FileError::NoProgress`).
 On a direct-I/O file a short write resumes from what was written rounded
 down to a block (the same bytes rewritten from the same buffer); one that
-wrote less than a block ends `NoProgress`, so every resume moves at least
-a block. A short read ending off a block boundary is the end of the file. An error
+wrote less than a block is rewritten from the same offset, and only four
+such writes in a row with no whole block end `NoProgress`, so resumes are
+bounded. A short read ending off a block boundary is the end of the file. An error
 ends the transfer with `FileError::Partial { done, kind }` when bytes were
 done, the plain error when none were.
 
@@ -182,7 +186,10 @@ caller's slice) takes up to `sequence_max` steps; a step is any operation
 but `open` and `close`, of any file or a path. Each step counts against its
 own file's share or the path slots; the whole sequence is refused `Full`
 unless every step has room. The set pre-checks every step, so the backend
-never refuses the chain (a refusal would be a bug, reported `Invalid`).
+never refuses the chain for its operations. Should it refuse one for
+want of its own resources all the same (another layer took room the plan
+gave the set), the refused step reports `Os { errno }`, the others
+`Cancelled`, and no file is poisoned by it.
 Steps go to the backend as one chain. When the backend ends a chain early
 because a transfer was short, the set waits until every member has
 reported, resumes the short one, and submits it and the rest as a new
@@ -213,14 +220,17 @@ kind: ErrorKind }`, and the backend's: `NotFound` (`ENOENT`), `Exists`
 (`EEXIST`), `Denied` (`EACCES`, `EPERM`), `NoSpace` (`ENOSPC`, `EDQUOT`),
 `Unsupported` (`EOPNOTSUPP`), `SyncFailed { errno }`, `Io { errno }`,
 `Invalid { errno }` (`EINVAL`, `EBADF`: impossible after C9, a bug),
-`Os { errno }`. `ErrorKind` names the same without `Partial`.
+`Os { errno }`. `ErrorKind` names the errors a transfer can end with
+after bytes were done: `Poisoned`, `NoProgress`, `NoSpace`, `Unsupported`,
+`SyncFailed`, `Io`, `Invalid`, `Os`; the others come as `Os { errno }`.
 
 **Poisoning.** Every failure of a sync, whatever its errno (the portable
 backend reports unknown errors as `EIO`, the ring passes the kernel's, and
 a failed write-back can come as `ENOSPC`), except `Unsupported`, is
-`SyncFailed` and poisons the file; so does any failed write on a file
-opened for durable writes (`OpenFlags::with_dsync`), which is a failed
-sync and reports `SyncFailed`. A Poisoned file's waiting operations end `Poisoned`, its transfers
+`SyncFailed` and poisons the file; so does a write on a file opened for
+durable writes (`OpenFlags::with_dsync`) that fails with `EIO`, `ENOSPC` or
+`EDQUOT`, which is a failed sync and reports `SyncFailed`; other errors of
+such a write are reported as they are and do not poison. A Poisoned file's waiting operations end `Poisoned`, its transfers
 in progress end `Partial { done, kind: Poisoned }`, and its operations in
 flight report their own outcomes. Reads stay allowed: the bytes are
 readable, only their durability is lost.
@@ -241,8 +251,9 @@ done, a flipped bit) are not detected: that takes checksums of the bytes,
 which the crate leaves to its users.
 
 ### Invariants, checked after every step of the model test
-- F1 Nothing is submitted for a stale handle, or for a file slot not Open
-  or Poisoned (a read), but its own open and its held-back close.
+- F1 Nothing is submitted for a stale handle, or for a file slot that is
+  not Open, Poisoned (a read) or Closing (the operations accepted before the
+  close), but its own open and its held-back close.
 - F2 Every accepted ticket reports exactly once, unless `power_lost` ended
   it; no event names an unknown ticket.
 - F3 Every extent named by an operation not yet reported is held by the
