@@ -262,11 +262,12 @@ pub trait Transport {
     fn recv_zc(&mut self, d: &mut Self::Driver, slot: u32, credit: u32) -> Result<(), Refused>;
     /// Return a piece a [`Happened::Piece`] named: once, as it was given.
     fn give_back_piece(&mut self, d: &mut Self::Driver, page: BufId, off: u32, len: u32);
-    /// Whether the driver found no room to report in since this was last
-    /// asked, in any number of its turns: a zero-copy receive with credit
-    /// left may then stay silent though bytes wait for it, until it is
-    /// stopped and started again. Asking clears it.
-    fn take_ring_full(&self, d: &mut Self::Driver) -> bool;
+    /// How many times the driver has found no room to report in: a count
+    /// that only grows, which reading does not clear, so that every set
+    /// on one driver sees it grow. When it has grown since a set last
+    /// looked, a zero-copy receive with credit left may stay silent
+    /// though bytes wait for it, until it is stopped and started again.
+    fn ring_full_count(&self, d: &Self::Driver) -> u64;
     /// Mark every send on `slot` from now on as the end of one of the
     /// kernel's buffers (`MSG_EOR`), so that the next send begins a packet
     /// of its own; until the slot's connection ends. A transport that has

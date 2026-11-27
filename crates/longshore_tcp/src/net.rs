@@ -120,6 +120,9 @@ pub struct Net<T: Transport> {
     names: Box<[ServerName]>,
     /// Which cells of the state table were reached, in debug builds.
     coverage: Coverage,
+    /// The driver's count of full completion rings when `poll` last
+    /// looked (`Transport::ring_full_count`).
+    ring_full_seen: u64,
 }
 
 impl<T: Transport> Net<T> {
@@ -192,6 +195,7 @@ impl<T: Transport> Net<T> {
             tx_busy: 0,
             names: vec![ServerName::NONE; names].into_boxed_slice(),
             coverage: Coverage::NONE,
+            ring_full_seen: 0,
         }
     }
 

@@ -310,11 +310,17 @@ impl<T: Transport> Net<T> {
         }
     }
 
-    /// A turn in which the driver found no room to report in: a receive
-    /// of the mode with credit left may stay silent though bytes wait
-    /// for it. Each is stopped, once, and armed again when its end comes.
+    /// The driver found no room to report in since the last look, in
+    /// this set's turns or another's: a receive of the mode with credit
+    /// left may stay silent though bytes wait for it. Each is stopped,
+    /// once, and armed again when its end comes. The count is read, not
+    /// taken, so that every set on the driver sees it.
     pub(super) fn wake_silent(&mut self, d: &mut T::Driver) {
-        if self.cfg.sizes.zc_pages == 0 || !self.t.take_ring_full(d) {
+        if self.cfg.sizes.zc_pages == 0 {
+            return;
+        }
+        let count = self.t.ring_full_count(d);
+        if core::mem::replace(&mut self.ring_full_seen, count) == count {
             return;
         }
         for slot in 0..self.cfg.conns() {
@@ -324,8 +330,8 @@ impl<T: Transport> Net<T> {
 
     /// Stop `slot`'s receive of the mode, if one is armed and not being
     /// stopped already. A driver with no room for the cancel is asked
-    /// again on the next `poll`: the flag that said the receive may be
-    /// silent is spent.
+    /// again on the next `poll`: the count that said the receive may be
+    /// silent has been seen.
     pub(super) fn wake(&mut self, d: &mut T::Driver, slot: u32) {
         let c = &self.conns[slot as usize];
         if c.opts.rx != Rx::ZeroCopy || c.st != St::Up || !c.armed || c.cancelling {

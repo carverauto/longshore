@@ -77,13 +77,14 @@ fn receive_zc<R: Rig>(
         let left = credit - got.len() as u32;
         let (from, before) = (seen.len(), count(seen, ended(slot)));
         with(rig, |t, d| must(t.recv_zc(d, slot, left), "recv_zc"));
-        let mut cancelled = false;
+        let (mut cancelled, mut full) = (false, with(rig, |t, d| t.ring_full_count(d)));
         for _ in 0..20_000 {
             if count(seen, ended(slot)) > before {
                 break;
             }
             rig.turn(seen);
-            if !cancelled && with(rig, |t, d| t.take_ring_full(d)) {
+            let now = with(rig, |t, d| t.ring_full_count(d));
+            if !cancelled && core::mem::replace(&mut full, now) < now {
                 cancelled = with(rig, |t, d| t.cancel_recv(d, slot).is_ok());
             }
         }

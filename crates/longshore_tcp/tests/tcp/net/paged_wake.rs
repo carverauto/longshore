@@ -5,9 +5,10 @@
 
 //! A receive in pages that a full completion ring left silent is woken
 //! (C5) also when the backend has no room for the cancel on the turn
-//! that finds the ring full: the cancel is asked for again on the next.
+//! that finds the ring full, the cancel then being asked for again on the
+//! next; and in every set on the backend, whichever polls first.
 
-use super::paged::{mixed, none_out, paired, read, settle, world};
+use super::paged::{exchange, mixed, none_out, paged, paired, read, settle, world};
 use super::*;
 
 /// The first of the tokens of the harness's own timers that fill the
@@ -82,6 +83,22 @@ fn a_silent_receive_whose_cancel_found_no_room_is_woken_on_a_later_turn() {
         for _ in 0..8 {
             turn_filled(&mut w, false);
         }
+        settle(&mut w);
+        none_out(&mut w);
+    }
+}
+
+/// Two sets on one backend, both with pages: the client's polls first.
+/// A full ring that the client's set saw must still wake the server's
+/// silent receives.
+#[test]
+fn a_full_ring_wakes_the_silent_receives_of_every_set_on_the_backend() {
+    let faults = Faults::NONE.with_ring_full(200_000);
+    let client = sizes(4, 0, 0).with_segments(8, 8192).with_zc(64, 8, 256);
+    for seed in 0..40 {
+        let mut w = World::with(seed, faults, client, paged(64, 8, 256));
+        let pair = paired(&mut w);
+        let _none: Vec<Frame> = exchange(&mut w, pair, &mixed(seed as u8), |_| false);
         settle(&mut w);
         none_out(&mut w);
     }
