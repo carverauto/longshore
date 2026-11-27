@@ -13,6 +13,7 @@
 
 mod accept;
 mod buffers;
+pub mod check;
 mod complete;
 mod config;
 mod errno;

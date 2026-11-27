@@ -765,6 +765,7 @@ dependencies = [
 name = "longshore_file"
 version = "0.2.0"
 dependencies = [
+ "hegeltest",
  "longshore_common",
 ]
 

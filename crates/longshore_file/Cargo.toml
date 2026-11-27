@@ -14,10 +14,27 @@ longshore_common.workspace = true
 [dev-dependencies]
 # Turns the simulator on for this crate's own tests.
 longshore_common = { workspace = true, features = ["sim"] }
+hegeltest.workspace = true
 
 [[test]]
 name = "file_units"
 path = "tests/units/main.rs"
+
+[[test]]
+name = "file_contract"
+path = "tests/contract/main.rs"
+
+[[test]]
+name = "file_model"
+path = "tests/model/main.rs"
+
+[[test]]
+name = "file_alloc"
+path = "tests/alloc/main.rs"
+
+[[test]]
+name = "file_props"
+path = "tests/props/main.rs"
 
 [lints]
 workspace = true
