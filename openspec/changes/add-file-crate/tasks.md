@@ -7,10 +7,10 @@ change.
 - [x] 0.2 (independent review: not ready; A1 to A11, B1 to B11, C1 to C13 and D folded into C1 to C12 and F1 to F10: direct-I/O resumes at blocks, durable-write failures and every failed sync poison, `power_lost`, a held-back close, path and gather shares per slot, operation and sequence state tables, a flat error type, receive-area pages as spans, the API) Review of the contract; corrections made there first
 
 ## 1. The crate and its plan
-- [ ] 1.1 `crates/longshore_file` (Apache headers, workspace lints), re-exported by `longshore` as `file`
+- [x] 1.1 (in the workspace, `longshore::file` re-exported, its docs link disambiguated from the `file!` macro) `crates/longshore_file` (Apache headers, workspace lints), re-exported by `longshore` as `file`
 - [x] 1.2 (`src/plan.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): `plan::*`, the table's counts and every refusal) `FileSizes`, `FileConfig::plan` adding file slots, operations, tokens and chain room to `Limits`, with typed refusals for what does not fit
 - [x] 1.3 (`src/files.rs`, `state.rs`, `accept.rs`, `events.rs`; open and close records of each file slot's own, `Ticket::NONE` for sequence slices; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): stale handles, events once, usage at rest) `Files::new`, handles with generations, tickets, `on_completion`, `poll`, `next_event`
-- [ ] 1.4 Review of group 1
+- [x] 1.4 (reviewed with group 2, below) Review of group 1
 
 ## 2. Operations
 - [x] 2.1 (file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): open, close held back, directory open and sync, status, rename, unlink, mkdir, a failed open; flags beyond read, write, create, direct, directory and dsync passed through, not tested one by one) Open and close, with every flag of `OpenFlags`; status, rename, unlink, mkdir
@@ -19,7 +19,7 @@ change.
 - [x] 2.4 (`src/sequence.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): write, sync, rename in order; a short write resumed in a new chain; a failed sync cancelling the rest; refusals whole) Ordered sequences on the backend's chains
 - [x] 2.5 (`src/accept.rs`, `buffers.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): holds counted during and released after, stale extents refused, direct-I/O alignment refused before submission) Buffers through `Extents`, held while an operation uses them; direct-I/O alignment checked before submission
 - [x] 2.6 (`src/errno.rs`; file_units on SimIo, clippy and tests on macOS and Linux (rust:1-bookworm): a failed sync and a failed durable write `SyncFailed` and poisoning, reads still taken, power loss keeping what was synced) One `FileError`, and the failed-sync semantics of the contract
-- [ ] 2.7 Review of group 2
+- [x] 2.7 (independent review of groups 1 and 2: no fault with a correctly planned backend; seven findings fixed (bounded sub-block rewrites, durable writes poisoning only on lost writes, refused chains as plain errors, page spans checked, tokens one a record, a function under 70 lines) and nine faults the review planted that no test caught, each now caught by a named test; the contract brought in line) Review of group 2
 
 ## 3. Tests
 - [ ] 3.1 The contract suite, generic over `IO: Io`, run on `SimIo`, `PosixIo` (macOS and Linux) and `UringIo` (`file_uring`)
@@ -30,6 +30,6 @@ change.
 - [ ] 3.6 Review of group 3
 
 ## 4. Measurement and documentation
-- [ ] 4.1 A bench through the crate against the raw operations, on this Mac and on a DGX Spark's NVMe: buffered and direct, several operations in flight, syncs; results in `bench/results/`
-- [ ] 4.2 `docs/file.md`: the API, sizing, direct I/O, ordering and durability, what a failed sync means, and what the crate does not do
+- [x] 4.1 (milestone 36 on this Mac, 108 cells: the set's median against raw 0.99 to 1.00 in GB/s, 1.00 to 1.02 in CPU a GB; milestone 37 on donbot's NVMe, 100 cells, both backends, direct I/O: the set's range overlaps or beats raw in every cell) A bench through the crate against the raw operations, on this Mac and on a DGX Spark's NVMe: buffered and direct, several operations in flight, syncs; results in `bench/results/`
+- [x] 4.2 (`docs/file.md`, following the revised contract; `bench/README.md` and `docs/benchmarks.md`) `docs/file.md`: the API, sizing, direct I/O, ordering and durability, what a failed sync means, and what the crate does not do
 - [ ] 4.3 Review of group 4
