@@ -46,7 +46,7 @@ def runs(paths):
 
 
 def table(cells, show_p99=False):
-    head = "| Kind | MTU | Frame | Mode | Cores | Sender's option | Spare | GB/s | Thread CPU-s a GB | Threads' cores | Queues' cores | Kept | Drops |"
+    head = "| Kind | MTU | Frame | Mode | Cores | Sender's option | Spare | GB/s | Thread CPU-s a GB | Queues' cores CPU-s a GB | Kept | Drops |"
     if show_p99:
         head += " p99 µs |"
     print(head)
@@ -55,9 +55,9 @@ def table(cells, show_p99=False):
         kind, mtu, frame, mode, cores, fop, spare = key
         rs = cells[key]
         f = lambda name, fmt: ", ".join(fmt.format(r[name]) for r in rs)
-        kept = f"{min(r['kept'] for r in rs):.0f} to {max(r['kept'] for r in rs):.0f} %" if mode == "zc" else "-"
+        kept = f"{min(r['kept'] for r in rs):.3f} to {max(r['kept'] for r in rs):.3f} %" if mode == "zc" else "-"
         row = (f"| {kind} | {mtu} | {size(frame)} | {MODE[mode]} | {cores} | {fop} | {spare} | {f('rate', '{:.2f}')} | "
-               f"{f('own', '{:.3f}')} | {f('threads', '{:.3f}')} | {f('queues', '{:.3f}')} | {kept} | {f('drops', '{}')} |")
+               f"{f('own', '{:.3f}')} | {f('queues', '{:.3f}')} | {kept} | {f('drops', '{}')} |")
         if show_p99:
             row += " " + ", ".join("-" if r["p99"] is None else f"{r['p99']:.0f}" for r in rs) + " |"
         errors = [e for r in rs for e in r["errors"]]

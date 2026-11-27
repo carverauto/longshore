@@ -211,11 +211,12 @@ connection, what one turn can bring, and `with_zc_spare` pages more for
 what the kernel holds and no program can count: the card's ring and pool
 and the sockets' receive queues. A rule of thumb for the spare is the
 card's receive ring entries (`ethtool -g IFACE`) times the pages a packet
-fills (two at MTU 8244, three at 9000), plus each connection's receive
-buffer in pages. Below the ring's share the queue does not start: on the
-DGX Spark's ConnectX-7, an area of about 200 pages for a ring of 1,024
-entries at MTU 8244 took no packet at all, connection setup included
-(`ethtool -S IFACE`, `rxN_buff_alloc_err`). The backend's ring of returns is sized by the pieces that can be
+fills (two at MTU 8244), plus each connection's receive buffer in pages.
+On the DGX Spark's ConnectX-7, with a ring of 1,024 entries at MTU 8244,
+an area of about 200 pages took no frame at all, one of about 1,200 was
+starved and dropped packets, and one of about 4,300 ran as one of 16,000;
+the line between lies somewhere from 1,200 to 4,300 pages and was not
+found more closely. The backend's ring of returns is sized by the pieces that can be
 out, not by the area, so a large spare costs pages and nothing more. The
 plan gives no room for gathered writes: a program that writes frames in
 pages adds `Limits::with_gather(writes, pages a frame + 1)` itself, a
@@ -244,13 +245,12 @@ of about 110 Gb/s, one receiving core
 
 | Traffic | Mode | Why |
 |---|---|---|
-| Frames of whole 4 KiB blocks, MTU 8244, sender with `with_frame_on_packet` | `Rx::ZeroCopy` | every frame kept in its pages; 64 KiB frames 5.6 to 5.8 GB/s at 0.125 CPU-s a GB, against 4.2 to 4.8 at 0.174 direct |
-| Large frames that do not line up (MTU 9000, any length) | `Rx::Direct` | nothing is kept, and every frame is moved: 1 MiB frames 7.4 GB/s direct against 5.6 in pages |
-| Small requests and answers | `Rx::Ring` or `Rx::Direct` | a cost a frame, about 330,000 frames a second a core in every mode; in pages, fewer round trips and a longer tail |
+| Frames of whole 4 KiB blocks, MTU 8244, sender with `with_frame_on_packet` | `Rx::ZeroCopy` | 99.9 % of frames or more kept in their pages; the receiving thread's CPU a GB about 0.7 of direct mode's at 64 KiB and 0.6 at 1 MiB |
+| Large frames that do not line up (MTU 9000) | `Rx::Direct` | almost no frame lines up, and moving them costs zero-copy more: 1 MiB frames 0.134 CPU-s a GB direct against 0.18 |
+| Small frames, and requests and answers | `Rx::Ring` or `Rx::Direct` | no frame is kept below `zc_min_frame`, and zero-copy cost the most a frame and had a longer tail in two runs of three |
 
-Three cores filled the interface in every mode with frames of 64 KiB and
-more: where the link is the limit, the mode decides the CPU it costs,
-not the rate.
+Where the link or the sender sets the rate, the mode decides the CPU a
+GB, not the GB/s.
 
 **Before the set is dropped** while its backend lives on, call
 `Net::give_back_all`: the pages it holds go back to the card. Dropping

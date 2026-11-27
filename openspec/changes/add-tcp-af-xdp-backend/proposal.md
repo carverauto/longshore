@@ -23,28 +23,28 @@ something for a user-space stack to win, and its case is then restated
 from them (task 0.0).
 
 **The case, restated from `add-tcp-zero-copy-receive`** (milestones 31
-and 34, one interface of a Spark's port, about 110 Gb/s):
+and 34, one interface of a Spark's port, about 110 Gb/s; milestone 34 as
+corrected by its review):
 
-- *Large frames: nothing left to win in bytes.* With zero-copy receive
-  the kernel's TCP delivers frames of whole pages into the area: 64 KiB
-  frames at 5.6 to 5.8 GB/s a core and 0.125 CPU-s a GB in the thread
-  (0.21 with the queue's core), 1 MiB frames at 0.08 to 0.09. This
-  change's own design moves every payload once from UMEM into frame
-  memory, which is what direct mode costs today (0.17 to 0.18 CPU-s a
-  GB): on large frames it would be dearer than zero-copy receive, not
-  cheaper. Three cores fill the interface in every mode.
-- *Small frames: the cost of a frame is all there is.* 324-byte frames
-  come to about 330,000 a second a core in every mode, and a request and
-  its answer take a median of 32 µs and 150 to 170 µs at the 99th
-  percentile. That is system calls, the kernel's TCP a segment and the
-  set's own work a frame, which no receive mode changes and a user-space
-  stack batching packets could.
+- *Large frames: no case.* With zero-copy receive the kernel's TCP keeps
+  99.9 % of frames of whole pages in the area, and the receiving thread
+  spends 0.124 to 0.125 CPU-s a GB on 64 KiB frames and 0.076 to 0.093
+  on 1 MiB, against direct mode's 0.174 and 0.149 to 0.156. This change's
+  own design moves every payload once from UMEM into frame memory, the
+  cost of a move like direct mode's: on large frames it would be dearer
+  than zero-copy receive, not cheaper.
+- *Small frames: not shown either way.* 324-byte frames came to 282,000
+  to 403,000 a second a core, with the queue's core nearly busy, the
+  card dropping packets, and every sender sending one frame at a time
+  (`with_frame_on_packet`); request and answer took a median of 31 to
+  35 µs. Where the cost of a small frame lies (the sender's pacing, the
+  kernel's work a packet, system calls, the set's own work a frame) was
+  not measured; only the last two are what a user-space stack removes,
+  and the set's own it can cut in place.
 
-So what is left is small messages: their rate a core and their latency.
-Before this change is started for them, a profile of the 324-byte cells
-says how much of a frame's cost is the kernel's and how much the set's
-own: what the set spends it can cut in place. Go or close is decided on
-that (task 0.0).
+So the measurements give this change no case yet. Before go or close: the
+324-byte cells again without the sender's option, with the senders' lines
+kept, and a profile of the receiving and the queue's cores (task 0.0).
 
 ## What Changes
 - `XdpTransport` behind the `Transport` seam, its `Driver` the core's

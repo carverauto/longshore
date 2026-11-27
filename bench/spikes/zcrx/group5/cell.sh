@@ -12,9 +12,11 @@ set -u
 MODE=$1 N=$2 SECS=$3 CONNS=$4 SPARE=${5:-16384} KIND=${6:-bulk} FRAME=${7:-65536}
 I=enP2p1s0f0np0
 B=$HOME/longshore-bench-src/target/release/tcp_uring
-busy() { # busy jiffies of the cores given, from /proc/stat
+busy() { # busy jiffies of the cores given, from /proc/stat: user, nice,
+  # system, irq, softirq and steal; not idle, and not iowait, which counts a
+  # thread asleep in io_uring_enter as busy
   awk -v list="$1" 'BEGIN{n=split(list,c," "); for(i=1;i<=n;i++) want["cpu"c[i]]=1}
-    want[$1]{b+=$2+$3+$4+$6+$7+$8} END{print b+0}' /proc/stat
+    want[$1]{b+=$2+$3+$4+$7+$8+$9} END{print b+0}' /proc/stat
 }
 drops() { ethtool -S $I | awk '/ rx_out_of_buffer:| rx_discards_phy:| rx_buffer_passed_thres_phy:/{gsub(":","",$1); printf "\"%s\":%s,", $1, $2}'; }
 THREADS="" QUEUES=""
