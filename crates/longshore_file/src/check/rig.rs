@@ -21,6 +21,13 @@ const EVENTS: usize = 1024;
 const KNOWN: usize = 32;
 
 /// One set on one spied backend, and the caller's extents.
+///
+/// # Panics
+///
+/// Its methods are checks: each one that finds the set or the backend
+/// breaking the contract (a refused call that took a slot or a hold, an
+/// event missing, a turn that never settles, a build that fails) stops
+/// the thread through [`fail`](super::fail).
 pub struct Rig<IO: Io> {
     io: Spy<IO>,
     files: Files,

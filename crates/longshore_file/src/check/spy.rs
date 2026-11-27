@@ -56,7 +56,8 @@ impl Submitted {
 }
 
 /// A backend wrapped so that a check sees what the set does with it.
-/// Its record is a ring of fixed length, allocated once, here.
+/// Its record is a ring of fixed length, allocated once, here. It never
+/// panics: it records and passes on, and the checks judge.
 pub struct Spy<IO> {
     inner: IO,
     log: Vec<Option<Submitted>>,

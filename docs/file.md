@@ -529,6 +529,12 @@ left it; with `--runs 3` the set goes first in runs 1 and 3.
 | Properties | The plan refuses or adds exactly what its table says and never lets one file take every slot; a write cut short any number of times ends whole; `Unaligned` exactly when a transfer is off a block | `cargo test -p longshore_file --test file_props` |
 | Units | Focused cases on a recording backend that logs every submission: a close goes only after the file's other operations, a refused call submits nothing, steps behind a path step wait | `cargo test -p longshore_file --test file_units` |
 
+`longshore_file::check` ships in the library so that `files_uring` can
+run it on a real kernel. It is test code and the only part of the crate
+that panics: a failed check unwinds with its place and reason, as a failed
+assertion does. Nothing in `Files` calls it; a program calls it only from
+a test or a self-check.
+
 Faults planted one at a time in the crate, and the suites that caught
 them, are in `crates/longshore_file/tests/README.md`, with the rows of the
 contract's tables no test reaches: errors no backend here can produce

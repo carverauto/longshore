@@ -18,6 +18,17 @@
 //! [`Rig`] is a set on a backend wrapped in a [`Spy`], which records what
 //! the set submits and can refuse it room, with the caller's loop around
 //! them; the model, property and allocation tests build on it.
+//!
+//! # Panics
+//!
+//! This module is test code shipped in the library, and the only part of
+//! the crate that panics. A check that fails stops the thread through
+//! [`fail`], which unwinds with a message naming the place and the reason,
+//! as a failed assertion does; [`must`], [`some`], [`run_all`] and the
+//! methods of [`Rig`] fail that way. [`Spy`] never does. Nothing in
+//! [`Files`](crate::Files) or the rest of the crate calls into this module,
+//! so a program that only uses the set never reaches a panic; it should
+//! call `check` only from a test or a self-check such as `files_uring`.
 
 use core::fmt;
 use longshore_common::io::{Io, Limits, OpenFlags};
@@ -43,6 +54,11 @@ use crate::FileSizes;
 /// message is how it fails. The message goes to standard error with the
 /// place of the call, and the thread unwinds with it, as a failed
 /// assertion does.
+///
+/// # Panics
+///
+/// Always: it unwinds with the message (`std::panic::resume_unwind`), the
+/// one panic of the crate, which every other failing check goes through.
 #[track_caller]
 pub fn fail(why: fmt::Arguments<'_>) -> ! {
     let at = core::panic::Location::caller();
@@ -56,6 +72,10 @@ pub fn fail(why: fmt::Arguments<'_>) -> ! {
 }
 
 /// The value a check needs, or fail naming `what`.
+///
+/// # Panics
+///
+/// Through [`fail`], when `value` is an error.
 #[track_caller]
 pub fn must<V, E: fmt::Debug>(value: Result<V, E>, what: &str) -> V {
     match value {
@@ -65,6 +85,10 @@ pub fn must<V, E: fmt::Debug>(value: Result<V, E>, what: &str) -> V {
 }
 
 /// The value a check needs to be there, or fail naming `what`.
+///
+/// # Panics
+///
+/// Through [`fail`], when `value` is `None`.
 #[track_caller]
 pub fn some<V>(value: Option<V>, what: &str) -> V {
     match value {
@@ -122,6 +146,11 @@ pub fn bytes(seed: u8, len: usize) -> Vec<u8> {
 /// Run every check of the contract on backends `make` builds, with files
 /// under `root` (a directory path ending in `/`, which must exist and be
 /// empty enough for the checks' names).
+///
+/// # Panics
+///
+/// Through [`fail`], at the first check the backend does not pass, with
+/// the place and the reason; a backend that passes every check returns.
 pub fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) -> Ran {
     basics::run_all(make, root);
     transfers::run_all(make, root);

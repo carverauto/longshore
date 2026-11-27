@@ -72,7 +72,7 @@ model was promised, F9 by sealing every call of the set and the backend.
 | `status(path)` | a path slot | path buffer, status area | the size | `check::basics::paths`, `check::bounds::one_file_at_its_cap` (a second path operation `Full`), `model` (size against the model) |
 | `rename`, `unlink`, `mkdir` | a path slot | path buffer | 0 | `check::basics::paths` (and `NotFound`, `Exists`), `check::sequences::steps_of_several_files_and_a_path` (a rename as a step), `model` (names, and their durability after power loss) |
 | (paths) | longer than `path_max` or a NUL → `BadPath` | | | `check::refusals::bad_paths` (every operation that names a path, and a step; a path of `path_max` bytes taken) |
-| (steps) | a sequence's steps of any operation but open and close | | `Write`, `Read`, `Sync`, `Status`: `check::sequences::*`, `model`; `Rename`: `check::sequences::steps_of_several_files_and_a_path`. **Not reached** as steps: `WriteSpans`, `Reserve`, `Punch`, `Unlink`, `Mkdir` |
+| (steps) | a sequence's steps of any operation but open and close | | `Write`, `Read`, `Sync`, `Status`: `check::sequences::*`, `model`; `Rename`: `check::sequences::steps_of_several_files_and_a_path`. `WriteSpans`: `units::review`, only as a step the backend refuses. **Not reached** as steps: `Reserve`, `Punch`, `Unlink`, `Mkdir` |
 | (pages) | a `Span::Page` that is no page of the receive area is `TooLarge` | | `check::refusals::past_the_plan_and_the_extent` |
 | (directories) | a directory is a file, synced to make a create or rename durable | | | `check::basics::paths`, `contract::power::power_loss_keeps_what_was_synced_…`, `model` (F8: a name is promised once its directories are synced) |
 
@@ -101,10 +101,10 @@ model was promised, F9 by sealing every call of the set and the backend.
 | `Io { errno }` | `contract::faults::the_disks_errors_map_to_one_type` (read, buffered write, read error), `model` |
 | `Denied` | **not reached**: no backend in the tests refuses an open for want of permission (the Linux checks run as root) |
 | `Invalid { errno }` | **not reached**: impossible after the set's checks; nothing makes a backend refuse what they let through |
-| `Os { errno }` | **not asserted**: `check::refusals::bad_paths` sends a name too long to every backend, and checks only that the set took it |
+| `Os { errno }` | `units::review` (a chain step the backend refuses with `ENOBUFS` reports `Os { errno: 105 }`); `check::refusals::bad_paths` sends a name too long to every backend and checks only that the set took it |
 | a failed sync poisons whatever its errno, except `Unsupported` | the poisoning, with `EIO`: as above. **Not reached**: a sync failing with another errno, and the `Unsupported` exception (no backend in the tests fails a sync so) |
 | a durable write failing `EIO`, `ENOSPC`, `EDQUOT` poisons and is `SyncFailed`; other errnos are their plain error and do not poison | `EIO`: `contract::faults::a_failed_durable_write_poisons_…`, `model` (no durable write's `EIO` reported plain). **Not reached**: `ENOSPC`, `EDQUOT` and other errnos on a durable write (the simulated disk fails writes `EIO` only) |
-| a step the backend refuses for want of a resource reports its own error and does not poison | **not reached**: the set's plan leaves no backend short of gather rows or slots in the tests |
+| a step the backend refuses for want of a resource reports its own error and does not poison | `units::review` (a backend with one gather row refuses a `WriteSpans` step: `Os`, the rest `Cancelled`, nothing poisoned) |
 | `NoSpace` from a write | **not reached**: only a refused reserve gives `NoSpace` in the tests |
 | a failed sync: the bytes since the last good sync are not made durable by a later one | `model` (F8 in SyncFails: no promise after a failed sync of the file) |
 | a failed buffered write does not poison | `contract::faults::a_failed_durable_write_poisons_and_a_failed_buffered_one_does_not`, `contract::faults::the_disks_errors_map_to_one_type` |
@@ -133,7 +133,13 @@ nothing, takes no slot and no hold, and reports nothing.
 
 Each fault below was planted alone in `crates/longshore_file/src`, all
 four suites run (the model in debug, forty seeds a campaign), and the
-fault taken out again. A suite that fails caught it.
+fault taken out again. A suite that fails caught it. The table predates
+the review of group 3; the model now runs 60 seeds a campaign in debug
+and 2,000 in release, and two faults the review planted (a sync of a
+poisoned file let through, a chain submitted without its poisoning
+check) were caught by the model only at 1,000 seeds; the contract tests
+of poisoned waiting work added after the review are meant to catch them
+at once, and have not been re-run against them.
 
 | Fault planted | Where | contract | model | props | alloc |
 |---|---|---|---|---|---|
@@ -162,3 +168,12 @@ A failing run names its campaign and seed:
 FILE_MODEL=SyncFails:113 cargo test -p longshore_file --test file_model replay -- --nocapture
 FILE_MODEL_SEEDS=20000 cargo test --release -p longshore_file --test file_model
 ```
+
+## Not reached, from the review of group 3
+
+- A short read before the end of the file is resumed: no backend in the
+  tests returns one, and the model's cut reads were not merged.
+- A full sync sent as `data_only`: no suite tells them apart.
+- A failed open's event naming no file is checked only by `units`.
+- C3's "Free accepts `open` only once the close's or failed open's event
+  was taken" is reached by `units::review` only.
