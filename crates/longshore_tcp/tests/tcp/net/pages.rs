@@ -49,6 +49,11 @@ fn a_set_without_pages_or_without_an_area_refuses_the_mode() {
         w.client.connect(&mut w.io, ADDR, zc()),
         Err(NetError::Framing)
     );
+    // With TLS asked for, the mode is refused for that first, as
+    // `connect_tls` refuses it, though the set has no pages either.
+    let mut plain = World::new(0, Faults::NONE);
+    let tls = listens(&mut plain, ADDR, ListenConfig::new(zc()).with_tls(true));
+    assert_eq!(tls, Err(NetError::NoTls));
     // Pages in the sizes, and a backend built without an area.
     let paged_world = world_with(0, Faults::NONE, paged(64, 8, 256));
     let limits = paged_world.limits.with_area_pages(0);
