@@ -87,6 +87,8 @@ pub struct Handle {
     pub state: HState,
     /// A failed sync or durable write poisoned it, also while closing.
     pub poisoned: bool,
+    /// The model's clock when its poisoning was seen; 0 before.
+    pub poisoned_at: u64,
 }
 
 /// What an accepted operation is, and what it must report.

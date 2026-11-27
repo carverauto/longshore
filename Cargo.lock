@@ -767,6 +767,7 @@ version = "0.2.0"
 dependencies = [
  "hegeltest",
  "longshore_common",
+ "longshore_tcp",
 ]
 
 [[package]]

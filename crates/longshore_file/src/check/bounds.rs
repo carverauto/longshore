@@ -46,6 +46,12 @@ fn one_file_at_its_cap<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) 
     }
     let full = FileError::Full;
     rig.refused("a at its cap", full, |s, io, _| s.sync(io, a, true));
+    // A write refused for want of room leaves its extent's holds alone.
+    let spare = rig.extent();
+    rig.refused("a write at its cap", full, |s, io, x| {
+        s.write_at(io, x, a, (spare, 0, 1), 0)
+    });
+    rig.release(spare);
     let of_b = must(sync(&mut rig, b), "b's own slot");
     rig.refused("b, no shared slot", full, |s, io, _| s.sync(io, b, true));
     let of_c = must(sync(&mut rig, c), "c's own slot");

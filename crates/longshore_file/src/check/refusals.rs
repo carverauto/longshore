@@ -49,6 +49,27 @@ fn stale_handles<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
     rig.refused("a step", stale, |s, io, x| {
         s.sequence(io, x, &steps, &mut ts)
     });
+    // A sequence whose second step is refused leaves the extent of its
+    // first, a write of a live file, as it was.
+    let g = rig.open(&format!("{root}live.dat"), rw_create());
+    let mixed = [
+        Step::Write {
+            file: g,
+            extent: e,
+            at: 0,
+            len: 1,
+            file_off: 0,
+        },
+        Step::Sync {
+            file: f,
+            data_only: true,
+        },
+    ];
+    let mut two = tickets::<2>();
+    rig.refused("a live step, then a stale one", stale, |s, io, x| {
+        s.sequence(io, x, &mixed, &mut two)
+    });
+    assert_eq!(rig.close(g), Ok(0));
     rig.release(e);
     rig.at_rest(0);
 }

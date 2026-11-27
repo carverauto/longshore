@@ -17,6 +17,8 @@ use longshore_common::io::{Completion, Completions, Io, Limits, OpenFlags};
 const TURNS: u32 = 20_000;
 /// Events kept at most (the set never has more than its operation slots).
 const EVENTS: usize = 1024;
+/// Extents taken last whose holds a refusal must leave as they were.
+const KNOWN: usize = 32;
 
 /// One set on one spied backend, and the caller's extents.
 pub struct Rig<IO: Io> {
@@ -29,6 +31,8 @@ pub struct Rig<IO: Io> {
     events: Vec<(u64, Event)>,
     seq: u64,
     foreign: Vec<Completion>,
+    known: [Option<Extent>; KNOWN],
+    taken: usize,
 }
 
 impl<IO: Io> Rig<IO> {
@@ -55,6 +59,8 @@ impl<IO: Io> Rig<IO> {
             events: Vec::with_capacity(EVENTS),
             seq: 0,
             foreign: Vec::with_capacity(STAGED),
+            known: [None; KNOWN],
+            taken: 0,
         }
     }
 
@@ -106,17 +112,37 @@ impl<IO: Io> Rig<IO> {
     /// Turn the backend once, waiting only when something is in flight,
     /// route what completed, poll, and keep the events.
     pub fn turn(&mut self) {
+        self.tick();
+        while self.complete_one() {}
+        self.poll();
+    }
+
+    /// Turn the backend, waiting only when something is in flight; what
+    /// completed waits for [`Rig::complete_one`].
+    pub fn tick(&mut self) {
         let wait = self.io.outstanding() > 0;
         must(self.io.tick(wait, &mut self.out), "tick");
-        while let Some(c) = self.out.pop() {
-            let ticks = self.io.ticks();
-            if !self.files.on_completion(&mut self.io, &mut self.x, c) {
-                self.foreign.push(c);
-            }
-            if self.io.ticks() != ticks {
-                fail(format_args!("the set turned the backend in on_completion"));
-            }
+    }
+
+    /// Route the oldest completion the last tick brought to the set, and
+    /// keep the events; whether there was one.
+    pub fn complete_one(&mut self) -> bool {
+        let Some(c) = self.out.pop() else {
+            return false;
+        };
+        let ticks = self.io.ticks();
+        if !self.files.on_completion(&mut self.io, &mut self.x, c) {
+            self.foreign.push(c);
         }
+        if self.io.ticks() != ticks {
+            fail(format_args!("the set turned the backend in on_completion"));
+        }
+        self.collect();
+        true
+    }
+
+    /// Poll the set, and keep the events.
+    pub fn poll(&mut self) {
         self.call(|f, io, x| f.poll(io, x));
         self.collect();
     }
@@ -215,7 +241,15 @@ impl<IO: Io> Rig<IO> {
 
     /// A free extent with the caller's hold on it.
     pub fn extent(&mut self) -> Extent {
-        some(self.x.take(), "a free extent")
+        let e = some(self.x.take(), "a free extent");
+        self.known[self.taken % KNOWN] = Some(e);
+        self.taken += 1;
+        e
+    }
+
+    /// Holds on the extents taken last.
+    fn known_holds(&self) -> [Option<u16>; KNOWN] {
+        self.known.map(|e| e.and_then(|e| self.x.holds(e)))
     }
 
     /// Release the caller's hold on `e`.
@@ -303,7 +337,8 @@ impl<IO: Io> Rig<IO> {
     }
 
     /// C11: `call` is refused with `want`, and submits nothing, takes no
-    /// slot and no hold, and reports nothing.
+    /// slot and no hold (on any of the extents taken last, the ones it
+    /// names among them), and reports nothing.
     pub fn refused<V: core::fmt::Debug>(
         &mut self,
         what: &str,
@@ -316,6 +351,7 @@ impl<IO: Io> Rig<IO> {
             self.io.submitted(),
             self.x.free_count(),
             self.seq,
+            self.known_holds(),
         );
         let got = self.call(call);
         if !matches!(&got, Err(e) if *e == want) {
@@ -327,6 +363,7 @@ impl<IO: Io> Rig<IO> {
             self.io.submitted(),
             self.x.free_count(),
             self.seq,
+            self.known_holds(),
         );
         if after != before {
             fail(format_args!(

@@ -287,6 +287,8 @@ impl Run {
                 assert_eq!(held, self.st.ours(*x), "C12: the set let go of {x:?}");
             }
         }
+        let lost: Vec<_> = self.st.pending.iter().map(|p| p.ticket).collect();
+        self.lost.extend(lost);
         self.st.pending.clear();
         self.pages_busy = [false; super::world::PAGES as usize];
         for (e, n) in self.st.ours.clone() {

@@ -68,6 +68,7 @@ pub struct Spy<IO> {
     clock_reads: Cell<u64>,
     ticks: u64,
     room: Option<u32>,
+    cut_reads: u32,
 }
 
 impl<IO: Io> Spy<IO> {
@@ -84,6 +85,7 @@ impl<IO: Io> Spy<IO> {
             clock_reads: Cell::new(0),
             ticks: 0,
             room: None,
+            cut_reads: 0,
         }
     }
 
@@ -125,6 +127,36 @@ impl<IO: Io> Spy<IO> {
     /// Calls of `tick` so far.
     pub const fn ticks(&self) -> u64 {
         self.ticks
+    }
+
+    /// Cut the next `n` reads that complete with two bytes or more to half
+    /// of what they read, as a kernel may.
+    pub fn cut_reads(&mut self, n: u32) {
+        self.cut_reads = n;
+    }
+
+    /// The operation last given under `token`, while the record holds it.
+    fn op_of(&self, token: Token) -> Option<Op> {
+        (0..self.submitted)
+            .rev()
+            .take(self.log.len())
+            .filter_map(|n| self.at(n))
+            .find(|s| s.token == token)
+            .map(|s| s.op)
+    }
+
+    /// A completion as the backend gave it, or a read's cut to half its
+    /// bytes while reads are to be cut: a short read before the end of the
+    /// file, which a kernel may return and the simulator never does.
+    fn cut(&mut self, c: Completion) -> Completion {
+        if self.cut_reads == 0 || c.result() < 2 {
+            return c;
+        }
+        if !matches!(self.op_of(c.token()), Some(Op::FileRead { .. })) {
+            return c;
+        }
+        self.cut_reads -= 1;
+        Completion::new(c.token(), c.result() / 2).with_more(c.more())
     }
 
     /// The backend lost power: what was in flight will never complete.
@@ -253,7 +285,8 @@ impl<IO: Io> Io for Spy<IO> {
             }
             n += 1;
         }
-        for (i, c) in staged[..n].iter().flatten().enumerate() {
+        for (i, got) in staged[..n].iter().flatten().enumerate() {
+            let c = if i >= before { self.cut(*got) } else { *got };
             if i >= before {
                 let at = (self.completed % self.results.len() as u64) as usize;
                 self.results[at] = Some((c.token(), c.result()));
@@ -261,7 +294,7 @@ impl<IO: Io> Io for Spy<IO> {
                     self.completed += 1;
                 }
             }
-            out.push(*c);
+            out.push(c);
         }
         Ok(())
     }

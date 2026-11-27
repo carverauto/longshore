@@ -39,5 +39,8 @@ impl Drop for TempDir {
 fn the_contract_holds_on_the_portable_backend() {
     let dir = TempDir::new("contract");
     let root = format!("{}/", dir.0.display());
-    check::run_all(&mut |l| PosixIo::new(l).unwrap(), &root);
+    let ran = check::run_all(&mut |l| PosixIo::new(l).unwrap(), &root);
+    // macOS opens any file with F_NOCACHE; a Linux temporary directory
+    // on tmpfs or overlayfs may refuse O_DIRECT, which run_all reported.
+    assert!(ran.direct() || cfg!(target_os = "linux"), "{ran:?}");
 }

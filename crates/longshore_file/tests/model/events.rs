@@ -32,7 +32,7 @@ impl Run {
         let path = p.of_path();
         match (opened, path) {
             (true, _) if result.is_ok() => assert!(file.is_some(), "an open's file"),
-            (true, _) => {}
+            (true, _) => assert_eq!(file, None, "a failed open names no file"),
             (false, true) => assert_eq!(file, None, "a path operation's file"),
             (false, false) => assert_eq!(file, p.file, "the file of {e:?}"),
         }
@@ -212,7 +212,7 @@ impl Run {
     ) {
         let put: Option<Option<u8>> = match result {
             Ok(0) => Some(Some(0)),
-            Err(FileError::Unsupported | FileError::Cancelled | FileError::Poisoned) => Some(None),
+            Err(FileError::Unsupported | FileError::Cancelled) => Some(None),
             Err(_) | Ok(_) => None,
         };
         if let Err(e) = result {
@@ -241,7 +241,9 @@ impl Run {
                 ino.size = ino.size.map(|s| s.max(hi as u64));
             }
             Err(e) => {
-                let untouched = matches!(e, FileError::Cancelled | FileError::Poisoned);
+                // A write that ends in an error leaves its range past
+                // `done` unknown; only a cancelled step was not run (C7).
+                let untouched = e == FileError::Cancelled;
                 ino.end(
                     lo,
                     hi,
@@ -339,6 +341,15 @@ impl Run {
         accepted: u64,
         result: Result<u64, FileError>,
     ) {
+        // A sync taken after its file was poisoned is refused; one that
+        // waited ends Poisoned: none succeeds (C10, F6).
+        let after_poison = f
+            .and_then(|f| self.st.handle(f))
+            .is_some_and(|h| h.poisoned && h.poisoned_at < accepted);
+        assert!(
+            result.is_err() || !after_poison,
+            "a sync of a poisoned file succeeded"
+        );
         match (result, target) {
             (Ok(0), Target::Inode(i)) => self.st.inodes[i].synced(accepted),
             (Ok(0), dir) => {

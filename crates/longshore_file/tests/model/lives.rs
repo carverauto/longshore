@@ -59,9 +59,12 @@ impl Run {
 
     /// Poison the handle `f`, as a failed sync or durable write does.
     pub fn poison(&mut self, f: Option<longshore_file::File>) {
-        let step = self.turns;
+        let (step, now) = (self.turns, self.st.clock);
         if let Some(h) = f.and_then(|f| self.st.handle_mut(f)) {
             h.poisoned = true;
+            if h.poisoned_at == 0 {
+                h.poisoned_at = now;
+            }
             if h.state == HState::Open {
                 h.state = HState::Poisoned(step);
             }
@@ -117,6 +120,7 @@ impl Run {
             flags,
             state: HState::Open,
             poisoned: false,
+            poisoned_at: 0,
         });
     }
 

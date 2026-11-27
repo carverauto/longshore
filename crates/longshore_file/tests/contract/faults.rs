@@ -11,7 +11,7 @@
 
 use super::sim::{place, rig};
 use longshore_common::sim::{DiskFaults, PlacedFault};
-use longshore_file::check::{bytes, must, rw_create, tickets};
+use longshore_file::check::{self, bytes, must, rw_create, tickets};
 use longshore_file::{ErrorKind, FileError, Span, Step};
 
 const EIO: i32 = 5;
@@ -84,23 +84,82 @@ fn a_failed_durable_write_poisons_and_a_failed_buffered_one_does_not() {
 
 #[test]
 fn waiting_work_of_a_poisoned_file_ends_poisoned_unsubmitted() {
-    let mut rig = rig();
+    // Room for a sync and four operations waiting behind it.
+    let five = longshore_file::FileSizes::new(1, 5)
+        .with_shared(4)
+        .with_sequence_max(3)
+        .with_spans_max(4);
+    let mut rig = longshore_file::check::Rig::new(&mut super::sim::sim, check::limits(), five);
     let f = rig.open("/waiting.dat", rw_create());
+    assert_eq!(rig.write(f, &[5; 8192], 0), Ok(8192));
     place(&mut rig, 1, PlacedFault::Fail);
     let y = must(rig.call(|s, io, _| s.sync(io, f, true)), "sync");
     rig.io().set_room(Some(0));
     let e = rig.extent();
-    let w = must(
+    let waiting = [
         rig.call(|s, io, x| s.write_at(io, x, f, (e, 0, 100), 0)),
-        "a write that waits",
-    );
+        rig.call(|s, io, _| s.sync(io, f, false)),
+        rig.call(|s, io, _| s.reserve(io, f, (8192, 4096), false)),
+        rig.call(|s, io, _| s.punch(io, f, (0, 4096))),
+    ];
     rig.release(e);
     let mark = rig.io().submitted();
     assert_eq!(rig.done(y), Err(FileError::SyncFailed { errno: EIO }));
-    assert_eq!(rig.done(w), Err(FileError::Poisoned));
-    assert_eq!(rig.io().submitted(), mark, "the waiting write never went");
-    assert!(!rig.x().is_live(e), "its extent was let go of");
+    // Room comes back: what waited must not go, and ends Poisoned.
     rig.io().set_room(None);
+    for (what, t) in ["write", "sync", "reserve", "punch"].iter().zip(waiting) {
+        let t = must(t, "taken, to wait");
+        assert_eq!(rig.done(t), Err(FileError::Poisoned), "the waiting {what}");
+    }
+    assert_eq!(rig.io().submitted(), mark, "nothing that waited went");
+    assert!(!rig.x().is_live(e), "the write's extent was let go of");
+    assert_eq!(rig.close(f), Ok(0));
+    rig.at_rest(0);
+}
+
+/// A step that waits behind a path step ends `Poisoned` when its chain
+/// comes up and its file is poisoned by then, unsubmitted, and the steps
+/// after it are cancelled (F5).
+#[test]
+fn a_waiting_step_of_a_file_poisoned_meanwhile_ends_poisoned() {
+    let mut rig = rig();
+    let f = rig.open("/relaunch.dat", rw_create());
+    place(&mut rig, 1, PlacedFault::Fail);
+    let y = must(rig.call(|s, io, _| s.sync(io, f, true)), "sync");
+    let e = rig.extent();
+    rig.fill(e, 0, &bytes(3, 512));
+    let steps = [
+        Step::Status {
+            path: "/relaunch.dat",
+        },
+        Step::Write {
+            file: f,
+            extent: e,
+            at: 0,
+            len: 512,
+            file_off: 0,
+        },
+        Step::Sync {
+            file: f,
+            data_only: false,
+        },
+    ];
+    let mut ts = tickets::<3>();
+    assert_eq!(
+        rig.call(|s, io, x| s.sequence(io, x, &steps, &mut ts)),
+        Ok(3)
+    );
+    let mark = rig.io().submitted();
+    assert_eq!(rig.done(y), Err(FileError::SyncFailed { errno: EIO }));
+    let got = ts.map(|t| rig.done(t));
+    let ended = [Ok(0), Err(FileError::Poisoned), Err(FileError::Cancelled)];
+    assert_eq!(got, ended);
+    assert_eq!(
+        rig.io().submitted(),
+        mark,
+        "the steps behind the status never went"
+    );
+    rig.release(e);
     assert_eq!(rig.close(f), Ok(0));
     rig.at_rest(0);
 }

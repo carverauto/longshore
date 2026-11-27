@@ -51,8 +51,8 @@ mod campaigns {
 
     /// Steps of a run.
     const STEPS: usize = 600;
-    /// Seeds of a campaign: a thousand in release, fewer in debug.
-    const SEEDS: u64 = if cfg!(debug_assertions) { 40 } else { 1000 };
+    /// Seeds of a campaign: two thousand in release, sixty in debug.
+    const SEEDS: u64 = if cfg!(debug_assertions) { 60 } else { 2000 };
 
     /// One step of a run, drawn from its generator.
     fn one(r: &mut Run) {
