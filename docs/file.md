@@ -503,8 +503,12 @@ file, one thread, three runs of one second a cell:
   25 of them against the set.
 - On a DGX Spark's NVMe (`bench/results/m37-file-bench-dgx-spark-nvme.md`;
   direct I/O, sequential, 64 KiB and 1 MiB, depth 1 to 32 on the ring, 1
-  and 4 on `epoll`), the two paths' ranges overlap in throughput and CPU
-  a GB, with the caveats that file gives.
+  and 4 on `epoll`), the two paths are within a few per cent of each
+  other in nearly every cell: of 50 cells, the three runs' GB/s ranges
+  are apart in 4, three of them in the set's favour and one in raw's, and
+  the CPU-a-GB ranges in 5, three with the set lower and two with it
+  higher; three runs a cell do not resolve differences of a few per cent,
+  and the other caveats are in that file.
 
 How a program makes its writes durable is its own choice, and these
 figures say nothing of it beyond the drive's: on that Mac a sync
