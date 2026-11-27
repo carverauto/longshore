@@ -15,6 +15,41 @@ pub(super) fn run_all<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root_dir: &st
     direct_spans_of_aligned_buffers(make, root_dir);
     more_spans_than_built_for(make, root_dir);
     more_writes_than_built_for(make, root_dir);
+    no_room_for_any(make, root_dir);
+}
+
+/// Tokens 1-4: a backend built with no room for a gathered write refuses
+/// one for that (`-ENOBUFS`), alone and in a chain, before it looks at
+/// the list: not for more spans than it was built for.
+fn no_room_for_any<IO: Io>(make: &mut impl FnMut(Limits) -> IO, root: &str) {
+    let limits = base_limits();
+    let mut io = make(limits);
+    let mut out = Completions::new(8);
+    let path = format!("{root}spans_none.dat");
+    let opened = open_file(
+        &mut io,
+        &mut out,
+        1,
+        FileSlot(0),
+        BufId(0),
+        &path,
+        rw_create(),
+    );
+    assert_eq!(opened, 0);
+    let spans = [(BufId(1), 0, 8)];
+    let list = limits.small(0);
+    put_list(&mut io, list, &spans);
+    let write = spans_op(FileSlot(0), list, &spans, 0);
+    let alone = drive_one(&mut io, &mut out, Token(2), write);
+    assert_eq!(alone, -ENOBUFS, "alone");
+    assert!(io.submit_chain(&[(Token(3), write)]).is_ok());
+    let mut chained = None;
+    while chained.is_none() {
+        assert!(io.tick(true, &mut out).is_ok());
+        chained = out.pop().map(|c| (c.token(), c.result()));
+    }
+    assert_eq!(chained, Some((Token(3), -ENOBUFS)), "in a chain");
+    assert_eq!(close_file(&mut io, &mut out, 4, FileSlot(0)), 0);
 }
 
 /// Tokens 1-12: with room for two gathered writes in flight, a third is

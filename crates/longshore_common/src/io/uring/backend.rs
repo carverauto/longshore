@@ -275,12 +275,13 @@ impl UringIo {
     #[inline]
     fn precheck(&mut self, op: &Op) -> Result<(), i32> {
         if op.is_file_op() {
-            let pool = &self.bufs[self.pool_base..];
-            self.files_table.check_op(op, pool, &self.limits)?;
             if matches!(op, Op::FileWriteSpans { .. }) && !self.gather.has_row() {
-                // As many gathered writes in flight as were given room.
+                // As many gathered writes in flight as were given room;
+                // before the list is looked at, as on the other backends.
                 return Err(-ENOBUFS);
             }
+            let pool = &self.bufs[self.pool_base..];
+            self.files_table.check_op(op, pool, &self.limits)?;
         }
         match *op {
             Op::ArmedAccept { listener } => {
