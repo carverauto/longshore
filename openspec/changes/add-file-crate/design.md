@@ -174,9 +174,9 @@ completes with 0 bytes, or a read with 0 before the end it asked for, ends
 the transfer (a read: at end of file; a write: `FileError::NoProgress`).
 On a direct-I/O file a short write resumes from what was written rounded
 down to a block (the same bytes rewritten from the same buffer); one that
-wrote less than a block is rewritten from the same offset, and only four
-such writes in a row with no whole block end `NoProgress`, so resumes are
-bounded. A short read ending off a block boundary is the end of the file. An error
+wrote less than a block is rewritten from the same offset, four times at
+most: a fifth such write in a row with no whole block ends `NoProgress`,
+so resumes are bounded. A short read ending off a block boundary is the end of the file. An error
 ends the transfer with `FileError::Partial { done, kind }` when bytes were
 done, the plain error when none were.
 
@@ -188,8 +188,9 @@ own file's share or the path slots; the whole sequence is refused `Full`
 unless every step has room. The set pre-checks every step, so the backend
 never refuses the chain for its operations. Should it refuse one for
 want of its own resources all the same (another layer took room the plan
-gave the set), the refused step reports `Os { errno }`, the others
-`Cancelled`, and no file is poisoned by it.
+gave the set), the refused step reports its own error as C10 maps it
+(`ENOBUFS` as `Os { errno }`), the others `Cancelled`, and no file is
+poisoned by it.
 Steps go to the backend as one chain. When the backend ends a chain early
 because a transfer was short, the set waits until every member has
 reported, resumes the short one, and submits it and the rest as a new
